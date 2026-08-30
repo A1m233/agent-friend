@@ -210,6 +210,15 @@ fn service_for(group: RuntimeConfigGroup) -> RuntimeServiceKind {
     }
 }
 
+fn restart_reason_for(group: RuntimeConfigGroup) -> &'static str {
+    match group {
+        RuntimeConfigGroup::Deepseek
+        | RuntimeConfigGroup::Kimi
+        | RuntimeConfigGroup::Openrouter => "model_provider_changed",
+        _ => "request_settings_changed",
+    }
+}
+
 fn random_id() -> String {
     let mut bytes = [0_u8; 16];
     OsRng.fill_bytes(&mut bytes);
@@ -749,7 +758,11 @@ async fn persist_and_apply(
     )
     .await;
     let restart = supervisor
-        .restart(Some(app), service_for(pending.group))
+        .restart_with_reason(
+            Some(app),
+            service_for(pending.group),
+            restart_reason_for(pending.group),
+        )
         .await;
     let operation = match restart {
         Ok(_) => RuntimeCredentialOperation {
@@ -1057,7 +1070,11 @@ pub async fn retry_runtime_credential_apply(
     )
     .await;
     let operation = match supervisor
-        .restart(Some(&app), service_for(payload.group))
+        .restart_with_reason(
+            Some(&app),
+            service_for(payload.group),
+            restart_reason_for(payload.group),
+        )
         .await
     {
         Ok(_) => RuntimeCredentialOperation {
@@ -1250,6 +1267,18 @@ mod tests {
             &["OPENROUTER_API_KEY"]
         );
         assert!(validation_supported(RuntimeConfigGroup::Openrouter));
+    }
+
+    #[test]
+    fn provider_credentials_use_a_provider_restart_reason() {
+        assert_eq!(
+            restart_reason_for(RuntimeConfigGroup::Deepseek),
+            "model_provider_changed"
+        );
+        assert_eq!(
+            restart_reason_for(RuntimeConfigGroup::Amap),
+            "request_settings_changed"
+        );
     }
 
     #[test]

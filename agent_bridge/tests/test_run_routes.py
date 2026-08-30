@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from agent.conversation_events import TextDelta
 from agent.runtime import (
     AgentRuntime,
     ConsumerAbandonPolicy,
@@ -79,6 +80,49 @@ def test_run_query_returns_recent_terminal(tmp_path: Path) -> None:
     assert fetched.status_code == 200
     assert fetched.json()["status"] == "terminal"
     assert fetched.json()["outcome"] == "rejected"
+
+
+def test_run_event_route_returns_runtime_owned_journal(tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    assert runtime.agent_runtime is not None
+    runtime.agent_runtime.submit(UserEvent(session_id="s", user_input="hello"), run_id="r1")
+    runtime.agent_runtime.listeners.fan_out_event(
+        UserEvent(session_id="s", user_input="hello"),
+        TextDelta(text="continued"),
+        run_id="r1",
+    )
+    client = TestClient(create_app_with_runtime(runtime))
+
+    response = client.get("/v1/runs/r1/events?afterSeq=0")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert runtime.agent_runtime is not None
+    assert (
+        payload["runtime_instance_id"] == runtime.agent_runtime.runtime_identity.bridge_instance_id
+    )
+    assert payload["events"] == [
+        {"event_seq": 1, "event": {"type": "text_delta", "text": "continued"}}
+    ]
+
+
+def test_session_runtime_snapshot_is_content_free(tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    client = TestClient(create_app_with_runtime(runtime))
+
+    response = client.get("/v1/sessions/s/runtime-snapshot")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert runtime.agent_runtime is not None
+    assert (
+        payload["runtime"]["bridgeInstanceId"]
+        == runtime.agent_runtime.runtime_identity.bridge_instance_id
+    )
+    assert payload["sessionRuntime"] is None
+    assert payload["runs"] == []
+    assert payload["approvals"] == []
+    assert payload["commandProcesses"] == []
 
 
 def test_precise_cancel_endpoint_only_controls_matching_desktop_run(tmp_path: Path) -> None:

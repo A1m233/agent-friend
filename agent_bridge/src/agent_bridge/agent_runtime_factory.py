@@ -14,7 +14,7 @@ import logging
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 
-from agent.runtime import AgentRuntime
+from agent.runtime import AgentRuntime, RuntimeInstanceIdentity
 from agent.runtime.sources import (
     BedtimeSource,
     IdleReflectionSource,
@@ -34,6 +34,7 @@ def build_agent_runtime(
     settings: BridgeSettings,
     session_manager: SessionManager,
     memory: Memory | None,
+    runtime_identity: RuntimeInstanceIdentity | None = None,
     session_turn_guard: Callable[[str], AbstractContextManager[None]] | None = None,
 ) -> AgentRuntime:
     """装配 :class:`AgentRuntime`：注入 conversation_factory + 注册启用的 source。
@@ -61,6 +62,7 @@ def build_agent_runtime(
         max_queued_runs=settings.agent_runtime_max_queued_runs,
         max_session_queue=settings.agent_runtime_max_session_queue,
         session_turn_guard=session_turn_guard,
+        runtime_identity=runtime_identity,
     )
 
     # UserSource 永远注册（dev / 测试场景可用）；生产 pull 路径不走它

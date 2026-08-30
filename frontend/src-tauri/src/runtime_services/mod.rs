@@ -38,9 +38,17 @@ pub async fn stop_runtime_service(
 pub async fn restart_runtime_service(
     app: AppHandle,
     service: RuntimeServiceKind,
+    reason: Option<String>,
     state: State<'_, Arc<RuntimeServiceSupervisor>>,
 ) -> Result<RuntimeServiceSnapshot, String> {
-    state.restart(Some(&app), service).await
+    match reason {
+        Some(reason) => {
+            state
+                .restart_with_reason(Some(&app), service, &reason)
+                .await
+        }
+        None => state.restart(Some(&app), service).await,
+    }
 }
 
 #[tauri::command]

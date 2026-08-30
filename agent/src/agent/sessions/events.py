@@ -25,6 +25,7 @@ EventType = Literal[
     "channel_change",
     "tool_call_request",
     "tool_call_result",
+    "tool_execution_checkpoint",
     "model_output_rejection",
     "compaction",
     "tool_context_edit",
@@ -32,6 +33,7 @@ EventType = Literal[
     "memory_observation",
     "turn_rewrite",
     "run_error",
+    "run_terminal",
     "todo_reminder",
     "model_context",
     "provider_reasoning_state",
@@ -50,6 +52,7 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "channel_change",
         "tool_call_request",
         "tool_call_result",
+        "tool_execution_checkpoint",
         "model_output_rejection",
         "compaction",
         "tool_context_edit",
@@ -57,6 +60,7 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "memory_observation",
         "turn_rewrite",
         "run_error",
+        "run_terminal",
         "todo_reminder",
         "model_context",
         "provider_reasoning_state",
@@ -110,6 +114,10 @@ result uuid；原始 ``tool_call_result`` 仍完整保留，同样是纯加性�
     095 起新增 ``model_output_rejection``，记录无法组成可靠 tool request/result
     对的模型输出失败。它只进入模型历史投影，不生成普通消息或工具卡片；同样是
     纯加性事件，故 ``SCHEMA_VERSION`` **不递增**。
+
+    111 起新增 ``tool_execution_checkpoint`` 与 ``run_terminal``，分别记录副作用
+    调用前的 write-ahead owner/recovery 事实和 run 唯一持久终态。二者不进入消息
+    历史，不改写旧 request/result，仍为纯加性事件，故 ``SCHEMA_VERSION`` 不递增。
     """
 
 

@@ -40,6 +40,10 @@ export interface PushEnvelope {
   events: PushEvent[];
   /** Runtime run correlation；run_event / terminal agent_turn 会携带。 */
   run_id?: string | null;
+  /** Bridge process identity used as the desktop stale-event fence. */
+  runtime_instance_id?: string | null;
+  /** Per-run journal cursor; unlike seq it survives subscriber reconnects. */
+  run_event_seq?: number | null;
   outcome?: string | null;
   reason_code?: string;
   revision?: number | null;

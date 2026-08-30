@@ -13,9 +13,11 @@ bridge 的 ``/push/subscribe`` 端点对接订阅者；dev CLI 通过该端点�
 from __future__ import annotations
 
 import asyncio
+import copy
+import json
 import logging
 import threading
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -73,6 +75,36 @@ class PushEnvelope:
     approval: dict[str, Any] | None = None
     command_process: dict[str, Any] | None = None
     sandbox_capability: dict[str, Any] | None = None
+    runtime_instance_id: str | None = None
+    run_event_seq: int | None = None
+
+
+@dataclass(frozen=True)
+class RunEventRecord:
+    event_seq: int
+    event: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class RunEventJournalSnapshot:
+    runtime_instance_id: str
+    run_id: str
+    session_id: str
+    first_seq: int
+    next_seq: int
+    truncated: bool
+    gap_before_requested_seq: bool
+    events: tuple[RunEventRecord, ...]
+
+
+@dataclass
+class _RunJournal:
+    session_id: str
+    next_seq: int = 1
+    first_seq: int = 1
+    truncated: bool = False
+    total_bytes: int = 0
+    events: list[tuple[RunEventRecord, int]] = field(default_factory=list)
 
 
 def _serialize_conversation_event(cev: ConversationEvent) -> dict[str, Any]:
@@ -111,12 +143,90 @@ class ListenerRegistry:
     loop closed 时 log warning 后丢弃，**绝不阻塞 dispatch thread**。
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        runtime_instance_id: str = "",
+        journal_max_events: int = 2048,
+        journal_max_bytes: int = 2 * 1024 * 1024,
+    ) -> None:
+        if journal_max_events <= 0 or journal_max_bytes <= 0:
+            raise ValueError("run event journal limits must be positive")
         self._subs: dict[str, Subscriber] = {}
         self._seq: dict[str, int] = {}
         # (sub_id, session_id, run_id) → 累积 events；新 Runtime 在 terminal 时 flush。
         self._turn_buffers: dict[tuple[str, str, str | None], list[dict[str, Any]]] = {}
+        self._runtime_instance_id = runtime_instance_id
+        self._journal_max_events = journal_max_events
+        self._journal_max_bytes = journal_max_bytes
+        self._run_journals: dict[str, _RunJournal] = {}
         self._lock = threading.Lock()
+
+    def run_event_journal(
+        self,
+        run_id: str,
+        *,
+        after_seq: int = 0,
+    ) -> RunEventJournalSnapshot | None:
+        if after_seq < 0:
+            raise ValueError("after_seq must be non-negative")
+        with self._lock:
+            journal = self._run_journals.get(run_id)
+            if journal is None:
+                return None
+            records = tuple(
+                RunEventRecord(record.event_seq, copy.deepcopy(record.event))
+                for record, _size in journal.events
+                if record.event_seq > after_seq
+            )
+            return RunEventJournalSnapshot(
+                runtime_instance_id=self._runtime_instance_id,
+                run_id=run_id,
+                session_id=journal.session_id,
+                first_seq=journal.first_seq,
+                next_seq=journal.next_seq,
+                truncated=journal.truncated,
+                gap_before_requested_seq=after_seq < journal.first_seq - 1,
+                events=records,
+            )
+
+    def drop_run_journal(self, run_id: str) -> None:
+        with self._lock:
+            self._run_journals.pop(run_id, None)
+
+    def _record_run_event_locked(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        event: dict[str, Any],
+    ) -> int:
+        journal = self._run_journals.get(run_id)
+        if journal is None:
+            journal = _RunJournal(session_id=session_id)
+            self._run_journals[run_id] = journal
+        elif journal.session_id != session_id:
+            raise RuntimeError(f"run {run_id!r} journal session changed")
+        event_seq = journal.next_seq
+        journal.next_seq += 1
+        size = len(
+            json.dumps(event, ensure_ascii=False, separators=(",", ":"), default=str).encode(
+                "utf-8"
+            )
+        )
+        journal.events.append(
+            (RunEventRecord(event_seq=event_seq, event=copy.deepcopy(event)), size)
+        )
+        journal.total_bytes += size
+        while (
+            len(journal.events) > self._journal_max_events
+            or journal.total_bytes > self._journal_max_bytes
+        ):
+            removed, removed_size = journal.events.pop(0)
+            journal.total_bytes -= removed_size
+            journal.first_seq = removed.event_seq + 1
+            journal.truncated = True
+        return event_seq
 
     def register(self, sub: Subscriber) -> None:
         with self._lock:
@@ -146,9 +256,9 @@ class ListenerRegistry:
         """每个 :class:`ConversationEvent` 调一次；累积到 :class:`TurnDone`
         时打包一次性推送给订阅者。
 
-        桌面对话内的主动 run 还会额外逐事件发送 ``run_event``。这个增量通道
-        只覆盖 ``presentation=conversation`` 的 SystemTriggerEvent；最终的
-        ``agent_turn`` 仍保留为桌宠/气泡消费者的完整 turn envelope。
+        桌面 user run 与 ``presentation=conversation`` 的主动 run 还会额外逐事件
+        发送 ``run_event``；最终的 ``user_turn`` / ``agent_turn`` 仍保留完整 turn
+        envelope。
 
         silent turn（``output_visibility="memory_only"``）的
         :meth:`Conversation.dispatch_system_turn` **不 yield 任何 event**——
@@ -167,11 +277,25 @@ class ListenerRegistry:
         is_turn_done = isinstance(cev, TurnDone)
 
         with self._lock:
+            run_event_seq = (
+                self._record_run_event_locked(
+                    session_id=agent_event.session_id,
+                    run_id=run_id,
+                    event=serialized,
+                )
+                if run_id is not None
+                else None
+            )
             for sub in list(self._subs.values()):
                 if (
                     run_id is not None
-                    and isinstance(agent_event, SystemTriggerEvent)
-                    and agent_event.presentation == "conversation"
+                    and (
+                        isinstance(agent_event, UserEvent)
+                        or (
+                            isinstance(agent_event, SystemTriggerEvent)
+                            and agent_event.presentation == "conversation"
+                        )
+                    )
                     and "run_event" in sub.accept_kinds
                 ):
                     self._seq[sub.id] += 1
@@ -184,7 +308,13 @@ class ListenerRegistry:
                             source_kind=source_kind,
                             events=[serialized],
                             run_id=run_id,
-                            presentation=agent_event.presentation,
+                            presentation=(
+                                agent_event.presentation
+                                if isinstance(agent_event, SystemTriggerEvent)
+                                else "conversation"
+                            ),
+                            runtime_instance_id=self._runtime_instance_id,
+                            run_event_seq=run_event_seq,
                         ),
                     )
                 if kind not in sub.accept_kinds:
@@ -205,6 +335,7 @@ class ListenerRegistry:
                             if isinstance(agent_event, SystemTriggerEvent)
                             else None
                         ),
+                        runtime_instance_id=self._runtime_instance_id,
                     )
                     del self._turn_buffers[key]
                     self._safe_push(sub, envelope)
@@ -245,6 +376,7 @@ class ListenerRegistry:
                             if isinstance(agent_event, SystemTriggerEvent)
                             else None
                         ),
+                        runtime_instance_id=self._runtime_instance_id,
                     ),
                 )
 
@@ -317,6 +449,7 @@ class ListenerRegistry:
                         source_kind=None,
                         events=[],
                         run=snapshot,
+                        runtime_instance_id=snapshot.runtime_instance_id,
                     ),
                 )
 

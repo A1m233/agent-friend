@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, ClassVar, cast
@@ -51,6 +52,7 @@ COMMAND_TOOL_CALL_ID_ARG = "__agent_friend_current_tool_call_id"
 COMMAND_SURFACE_ARG = "__agent_friend_interaction_surface"
 COMMAND_RUN_CONTEXT_ARG = "__agent_friend_tool_run_context"
 COMMAND_SKILL_SNAPSHOT_ARG = "__agent_friend_skill_turn_snapshot"
+COMMAND_EXECUTION_CHECKPOINT_ARG = "__agent_friend_execution_checkpoint"
 
 MAX_COMMAND_CHARS = 32 * 1024
 MAX_STDIN_BYTES = 64 * 1024
@@ -119,6 +121,26 @@ def _result(
     authorization_requested: bool | None = None,
     diagnostic_meta: dict[str, object] | None = None,
 ) -> ToolResult:
+    process_status = payload.get("process_status")
+    if not isinstance(process_status, str):
+        legacy_status = payload.get("status")
+        if legacy_status in {"running", "exited", "cancelled", "timed_out", "runtime_lost"}:
+            process_status = legacy_status
+        elif (
+            legacy_status in {"denied", "expired", "rejected", "unavailable"}
+            or executed is False
+            or payload.get("executed") is False
+        ):
+            process_status = "not_started"
+        else:
+            nested = payload.get("process")
+            nested_status = nested.get("process_status") if isinstance(nested, dict) else None
+            process_status = nested_status if isinstance(nested_status, str) else "unknown"
+        payload["process_status"] = process_status
+    if not isinstance(payload.get("semantic_status"), str):
+        payload["semantic_status"] = (
+            "not_evaluated" if process_status in {"not_started", "running", "exited"} else "unknown"
+        )
     error_kind = payload.get("error")
     meta: dict[str, object] = {}
     if error and isinstance(error_kind, str) and error_kind:
@@ -236,7 +258,13 @@ def _bounded_process_result(snapshot: CommandProcessSnapshot) -> dict[str, objec
     # ToolResult.meta instead.
     payload: dict[str, object] = {
         "status": snapshot.status,
+        "process_status": snapshot.status,
+        "semantic_status": (
+            "not_evaluated" if snapshot.status in {"running", "exited"} else "unknown"
+        ),
         "mode": snapshot.mode,
+        "process_id": snapshot.process_id,
+        "recovery_mode": snapshot.recovery_mode,
         "duration_seconds": snapshot.duration_seconds,
         "output_seq": snapshot.output_seq,
         "dropped_bytes": snapshot.dropped_bytes,
@@ -245,8 +273,6 @@ def _bounded_process_result(snapshot: CommandProcessSnapshot) -> dict[str, objec
         "terminal_reason": snapshot.terminal_reason,
         "sandbox_type": snapshot.sandbox_type,
     }
-    if not snapshot.terminal():
-        payload["process_id"] = snapshot.process_id
     streams = [
         ("stdout", snapshot.stdout_tail),
         ("stderr", snapshot.stderr_tail),
@@ -273,6 +299,7 @@ def _process_diagnostic_meta(snapshot: CommandProcessSnapshot) -> dict[str, obje
             "run_id": snapshot.run_id,
             "tool_call_id": snapshot.tool_call_id,
             "mode": snapshot.mode,
+            "recovery_mode": snapshot.recovery_mode,
             "status": snapshot.status,
             "started_at_utc": snapshot.started_at,
             "finished_at_utc": snapshot.finished_at,
@@ -718,7 +745,12 @@ class ExecCommandTool:
                 and details.filesystem_access == "read_only"
             ):
                 self._runtime.prepare_owned_read_only_workdir(workdir, sandbox)
+            process_id = f"proc_{uuid4().hex}"
+            checkpoint = args.get(COMMAND_EXECUTION_CHECKPOINT_ARG)
+            if callable(checkpoint):
+                cast(Callable[[str, str], None], checkpoint)(process_id, "resident_only")
             snapshot = self._runtime.start_process(
+                process_id=process_id,
                 argv=details.launch_argv or details.argv,
                 workdir=workdir,
                 env=(

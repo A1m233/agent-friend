@@ -14,6 +14,8 @@ vi.mock("@/services", () => ({
     get: vi.fn(),
     list: vi.fn(async () => ({ runs: [] })),
     cancel: vi.fn(),
+    events: vi.fn(),
+    runtimeSnapshot: vi.fn(),
   },
 }));
 vi.mock("@/lib/persistence/chatUi", () => ({ setLastChatSessionId: vi.fn() }));
@@ -25,10 +27,13 @@ import {
   handleRunEventForSync,
   handleRunChangedForSync,
   handleSessionChangedForSync,
+  reattachSessionRuntimeForSync,
   resetSessionSyncForTests,
   startSessionSyncSubscriber,
 } from "./sessionSync";
 import { useSessionsStore } from "./sessions";
+import { useCommandRuntimeStore } from "./commandRuntime";
+import { useFilesystemApprovalsStore } from "./filesystemApprovals";
 import { emptySnapshotFence } from "./snapshotFence";
 import { isSessionBusy, sessionActiveRun } from "./runPresentation";
 
@@ -256,5 +261,78 @@ describe("sessionSync", () => {
       },
     });
     expect(useConversationStore.getState().messages.at(-1)?.status).toBe("complete");
+  });
+
+  it("reattaches an active run from its runtime journal and deduplicates live overlap", async () => {
+    const running = { ...activeRun("run-resident"), runtime_instance_id: "bridge-1" };
+    vi.mocked(runsApi.runtimeSnapshot).mockResolvedValueOnce({
+      runtime: {
+        bridgeInstanceId: "bridge-1",
+        supervisorGeneration: 4,
+        startedAt: "2026-08-18T00:00:00Z",
+        startReason: "desktop_start",
+      },
+      sessionRuntime: {
+        resident: true,
+        modelHistoryGeneration: 0,
+        providerRequestCount: 1,
+        cacheEpochGeneration: 0,
+        cacheEpochReason: null,
+      },
+      runs: [running],
+      approvals: [],
+      commandProcesses: [],
+    });
+    vi.mocked(runsApi.events).mockResolvedValueOnce({
+      runtime_instance_id: "bridge-1",
+      run_id: running.run_id,
+      session_id: running.session_id,
+      first_seq: 1,
+      next_seq: 3,
+      truncated: false,
+      gap_before_requested_seq: false,
+      events: [
+        { event_seq: 1, event: { type: "text_delta", text: "仍在" } },
+        { event_seq: 2, event: { type: "text_delta", text: "运行" } },
+      ],
+    });
+    vi.spyOn(useConversationStore.getState(), "calibrateRuns").mockResolvedValue();
+    vi.spyOn(useCommandRuntimeStore.getState(), "refresh").mockResolvedValue();
+    vi.spyOn(useFilesystemApprovalsStore.getState(), "refresh").mockResolvedValue();
+
+    await reattachSessionRuntimeForSync("s1");
+    await vi.advanceTimersByTimeAsync(33);
+    expect(useConversationStore.getState().messages.at(-1)).toMatchObject({
+      id: "proactive:run-resident",
+      status: "streaming",
+      blocks: [{ kind: "text", text: "仍在运行" }],
+    });
+
+    handleRunEventForSync({
+      kind: "run_event",
+      session_id: "s1",
+      seq: 10,
+      source_kind: null,
+      presentation: "conversation",
+      run_id: running.run_id,
+      runtime_instance_id: "bridge-1",
+      run_event_seq: 2,
+      events: [{ type: "text_delta", text: "重复" }],
+    });
+    handleRunEventForSync({
+      kind: "run_event",
+      session_id: "s1",
+      seq: 11,
+      source_kind: null,
+      presentation: "conversation",
+      run_id: running.run_id,
+      runtime_instance_id: "bridge-1",
+      run_event_seq: 3,
+      events: [{ type: "text_delta", text: "中" }],
+    });
+    await vi.advanceTimersByTimeAsync(33);
+    expect(useConversationStore.getState().messages.at(-1)?.blocks).toEqual([
+      expect.objectContaining({ kind: "text", text: "仍在运行中" }),
+    ]);
   });
 });

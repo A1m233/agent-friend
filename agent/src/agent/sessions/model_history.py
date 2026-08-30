@@ -51,8 +51,16 @@ class SessionModelHistory:
     def from_session(
         cls, session: Session, *, reason: str = "session_start"
     ) -> SessionModelHistory:
+        return cls.from_business_session(session, reason=reason)
+
+    @classmethod
+    def from_business_session(
+        cls, session: Session, *, reason: str = "session_start"
+    ) -> SessionModelHistory:
+        """Build a new-process baseline without persisted model-only items."""
+
         return cls(
-            items=copy.deepcopy(session.llm_messages),
+            items=copy.deepcopy(session.business_llm_messages),
             active_event_uuids=tuple(event.uuid for event in session.active_events),
             last_relation="baseline",
             last_reason=reason,
@@ -88,7 +96,7 @@ class SessionModelHistory:
                 existing_uuids = {message.uuid for message in self.items}
                 additions = [
                     message
-                    for message in session.llm_messages
+                    for message in session.business_llm_messages
                     if message.uuid in suffix_uuids and message.uuid not in existing_uuids
                 ]
                 if additions:
@@ -99,7 +107,7 @@ class SessionModelHistory:
                 self.last_reason = None
                 return HistoryUpdate(relation, previous, len(self.items))
         previous = len(self.items)
-        self.items = copy.deepcopy(session.llm_messages)
+        self.items = copy.deepcopy(session.business_llm_messages)
         self.active_event_uuids = current
         self.generation += 1
         self.last_relation = "rewrite"

@@ -40,6 +40,7 @@ from agent.command_runtime.runtime import (
 )
 from agent.command_runtime.skill_snapshot import prepare_skill_snapshot
 from agent.command_runtime.tools import (
+    COMMAND_EXECUTION_CHECKPOINT_ARG,
     COMMAND_RUN_CONTEXT_ARG,
     COMMAND_RUN_ID_ARG,
     COMMAND_SESSION_ID_ARG,
@@ -1295,6 +1296,7 @@ def test_command_tool_uses_shared_approval_and_buffered_semantics(
     tool = ExecCommandTool(runtime, broker)
     context = ToolRunContext.create("")
     result_box = []
+    checkpoints: list[tuple[str, str]] = []
     args = {
         "cmd": "fake:buffered",
         "workdir": str(tmp_path.resolve()),
@@ -1304,6 +1306,9 @@ def test_command_tool_uses_shared_approval_and_buffered_semantics(
         COMMAND_TOOL_CALL_ID_ARG: "call-a",
         COMMAND_SURFACE_ARG: "desktop_chat",
         COMMAND_RUN_CONTEXT_ARG: context,
+        COMMAND_EXECUTION_CHECKPOINT_ARG: (
+            lambda operation_id, recovery_mode: checkpoints.append((operation_id, recovery_mode))
+        ),
     }
 
     thread = threading.Thread(target=lambda: result_box.append(tool.invoke(args)))
@@ -1323,9 +1328,15 @@ def test_command_tool_uses_shared_approval_and_buffered_semantics(
     assert not thread.is_alive()
     payload = json.loads(result_box[0].text)
     assert payload["status"] == "exited"
+    assert payload["process_status"] == "exited"
+    assert payload["semantic_status"] == "not_evaluated"
     assert payload["stdout"] == "buffered output"
+    assert payload["process_id"].startswith("proc_")
+    assert payload["recovery_mode"] == "resident_only"
+    assert len(checkpoints) == 1
+    assert checkpoints[0][0].startswith("proc_")
+    assert checkpoints[0][1] == "resident_only"
     assert {
-        "process_id",
         "session_id",
         "run_id",
         "tool_call_id",

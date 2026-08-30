@@ -47,6 +47,62 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             )
         return _snapshot_payload(snapshot)
 
+    @router.get("/runs/{run_id}/events")
+    def get_run_events(
+        run_id: str,
+        after_seq: int = Query(0, alias="afterSeq", ge=0),
+    ) -> dict[str, Any]:
+        agent_runtime = _agent_runtime()
+        snapshot = agent_runtime.get_run_snapshot(run_id)
+        journal = agent_runtime.listeners.run_event_journal(run_id, after_seq=after_seq)
+        if snapshot is None or journal is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "run_events_not_found",
+                    "message": "运行事件不存在、已过期或属于其它运行实例。",
+                },
+            )
+        if snapshot.runtime_instance_id != journal.runtime_instance_id:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "run_runtime_mismatch",
+                    "message": "运行事件属于其它运行实例，请刷新运行状态。",
+                },
+            )
+        return dataclasses.asdict(journal)
+
+    @router.get("/sessions/{session_id}/runtime-snapshot")
+    def get_session_runtime_snapshot(session_id: str) -> dict[str, Any]:
+        agent_runtime = _agent_runtime()
+        runs = agent_runtime.list_run_snapshots(session_ids=(session_id,))
+        approvals = (
+            [
+                request.to_dict()
+                for request in runtime.approval_broker.pending_for_session(session_id)
+            ]
+            if runtime.approval_broker is not None
+            else []
+        )
+        command_processes = (
+            [
+                snapshot.to_dict()
+                for snapshot in runtime.command_runtime.snapshots(session_id=session_id)
+            ]
+            if runtime.command_runtime is not None
+            else []
+        )
+        return {
+            "runtime": agent_runtime.runtime_identity.to_public_dict(),
+            "sessionRuntime": runtime.persistent_session_manager.runtime_state_diagnostics(
+                session_id
+            ),
+            "runs": [_snapshot_payload(snapshot) for snapshot in runs],
+            "approvals": approvals,
+            "commandProcesses": command_processes,
+        }
+
     @router.post("/sessions/{session_id}/runs/{run_id}/cancel")
     def cancel_run(session_id: str, run_id: str) -> dict[str, Any]:
         result, snapshot = _agent_runtime().cancel_run(

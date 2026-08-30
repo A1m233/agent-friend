@@ -48,6 +48,7 @@ class BridgeLifecycleController:
         return {
             "status": "ready" if ready else "not_ready",
             **readiness_identity("bridge"),
+            "runtime": self.runtime.runtime_identity.to_public_dict(),
             "accepting": activity.accepting if activity is not None else False,
             "checks": {
                 "runtime": "ready" if ready else "not_ready",

@@ -56,7 +56,7 @@ describe("runtime config changes", () => {
     expect(mockInvoke).toHaveBeenCalledWith("set_runtime_secret", {
       payload: { name: "AMAP_WEBSERVICE_KEY", value: "secret" },
     });
-    expect(mockRestartLocalService).toHaveBeenCalledWith("bridge");
+    expect(mockRestartLocalService).toHaveBeenCalledWith("bridge", "request_settings_changed");
     expect(result).toEqual({
       persisted,
       applied: true,
@@ -76,7 +76,7 @@ describe("runtime config changes", () => {
     expect(mockInvoke).toHaveBeenCalledWith("delete_runtime_secret", {
       payload: { name: "VOLC_ACCESS_KEY" },
     });
-    expect(mockRestartLocalService).toHaveBeenCalledWith("voice");
+    expect(mockRestartLocalService).toHaveBeenCalledWith("voice", "request_settings_changed");
     expect(result.applied).toBe(true);
   });
 
@@ -121,8 +121,16 @@ describe("runtime config changes", () => {
     const result = await persistBridgeRuntimeSetting(persist);
 
     expect(persist).toHaveBeenCalledOnce();
-    expect(mockRestartLocalService).toHaveBeenCalledWith("bridge");
+    expect(mockRestartLocalService).toHaveBeenCalledWith("bridge", "request_settings_changed");
     expect(result.applied).toBe(true);
+  });
+
+  it("classifies a default conversation model restart as a new model epoch", async () => {
+    const persist = vi.fn().mockResolvedValue(undefined);
+
+    await persistBridgeRuntimeSetting(persist, "default_model_changed");
+
+    expect(mockRestartLocalService).toHaveBeenCalledWith("bridge", "default_model_changed");
   });
 
   it("serializes configuration persistence and restarts", async () => {

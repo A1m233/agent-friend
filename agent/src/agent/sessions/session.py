@@ -480,11 +480,12 @@ class Session:
                 # 保留原始事件以兼容旧 session，但永远不再投影给模型。
                 last_assistant = None
             elif ev.type == "skill_catalog_state":
-                if include_model_only:
+                content = ev.payload.get("content")
+                if include_model_only and isinstance(content, str) and content:
                     result.append(
                         Message(
                             role="system",
-                            content=str(ev.payload.get("content", "")),
+                            content=content,
                             timestamp=ev.ts,
                             meta={**ev.meta, "synthetic": "skill_catalog_state"},
                             uuid=ev.uuid,
@@ -492,11 +493,12 @@ class Session:
                     )
                 last_assistant = None
             elif ev.type == "skill_context":
-                if include_model_only:
+                rendered = ev.payload.get("rendered")
+                if include_model_only and isinstance(rendered, str) and rendered:
                     result.append(
                         Message(
                             role="user",
-                            content=str(ev.payload.get("rendered", "")),
+                            content=rendered,
                             timestamp=ev.ts,
                             meta={**ev.meta, "synthetic": "skill_instructions"},
                             uuid=ev.uuid,
@@ -646,6 +648,15 @@ class Session:
         已经成功的模型 / 工具事务，只把最后一条 assistant 及其后续工具结果
         替换为安全占位。若首次模型调用就失败，则不重放该轮原始用户输入。
         """
+        return self._normalized_model_messages(include_model_only=True)
+
+    @property
+    def business_llm_messages(self) -> list[Message]:
+        """Safe cross-process baseline with model-only persistent items excluded."""
+
+        return self._normalized_model_messages(include_model_only=False)
+
+    def _normalized_model_messages(self, *, include_model_only: bool) -> list[Message]:
         active_events, partial_history_normalized = self._normalize_partial_assistants(
             self.active_events
         )
@@ -675,7 +686,10 @@ class Session:
             )
             if not partial_history_normalized and not tool_history_normalized:
                 normalized_events = active_events
-            return self._project_messages(normalized_events, include_model_only=True)
+            return self._project_messages(
+                normalized_events,
+                include_model_only=include_model_only,
+            )
 
         excluded_event_uuids: set[str] = set()
         placeholders: dict[str, Event] = {}
@@ -723,7 +737,10 @@ class Session:
                 sanitized_events.append(placeholder)
             sanitized_events.append(event)
         normalized_events, _ = self._normalize_tool_transactions(sanitized_events)
-        return self._project_messages(normalized_events, include_model_only=True)
+        return self._project_messages(
+            normalized_events,
+            include_model_only=include_model_only,
+        )
 
     @property
     def latest_skill_catalog_state(self) -> Event | None:

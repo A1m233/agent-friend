@@ -1,4 +1,10 @@
-import type { CancelRunResponse, RunListResponse, RunSnapshot } from "@/types/run";
+import type {
+  CancelRunResponse,
+  RunEventJournalResponse,
+  RunListResponse,
+  RunSnapshot,
+  SessionRuntimeSnapshotResponse,
+} from "@/types/run";
 import { http } from "../http";
 
 export const runsApi = {
@@ -10,6 +16,18 @@ export const runsApi = {
 
   get(runId: string): Promise<RunSnapshot> {
     return http.get<unknown, RunSnapshot>(`/v1/runs/${encodeURIComponent(runId)}`);
+  },
+
+  events(runId: string, afterSeq = 0): Promise<RunEventJournalResponse> {
+    return http.get<unknown, RunEventJournalResponse>(
+      `/v1/runs/${encodeURIComponent(runId)}/events?afterSeq=${afterSeq}`,
+    );
+  },
+
+  runtimeSnapshot(sessionId: string): Promise<SessionRuntimeSnapshotResponse> {
+    return http.get<unknown, SessionRuntimeSnapshotResponse>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/runtime-snapshot`,
+    );
   },
 
   cancel(sessionId: string, runId: string): Promise<CancelRunResponse> {
