@@ -57,6 +57,9 @@ export function ChatApp() {
   const ping = useConnectionStore((s) => s.ping);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
   const newSession = useConversationStore((s) => s.newSession);
+  const resolveNewConversationDraftRuntimeConfig = useConversationStore(
+    (s) => s.resolveNewConversationDraftRuntimeConfig,
+  );
   const loadModelCatalog = useModelCatalogStore((state) => state.load);
   const target = useWorkspaceNavigationStore((state) => state.target);
   const navigateWorkspace = useWorkspaceNavigationStore((state) => state.navigate);
@@ -84,8 +87,10 @@ export function ChatApp() {
   }, [blockAutoRestore, navigateWorkspace, newSession]);
 
   useEffect(() => {
-    if (status === "online") void loadModelCatalog();
-  }, [loadModelCatalog, status]);
+    if (status === "online") {
+      void loadModelCatalog().then(resolveNewConversationDraftRuntimeConfig);
+    }
+  }, [loadModelCatalog, resolveNewConversationDraftRuntimeConfig, status]);
 
   useEffect(() => {
     void ping();

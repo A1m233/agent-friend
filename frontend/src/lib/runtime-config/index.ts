@@ -263,12 +263,11 @@ export function persistRuntimeConfigChange<T>(
 
 export function persistBridgeRuntimeSetting(
   persist: () => Promise<void>,
-  reason: "default_model_changed" | "request_settings_changed" = "request_settings_changed",
 ): Promise<RuntimeConfigChangeResult<void>> {
   const run = runtimeConfigMutationTail.then(async () => {
     await persist();
     try {
-      await restartLocalService("bridge", reason);
+      await restartLocalService("bridge", "request_settings_changed");
       return { persisted: undefined, applied: true, applyError: null };
     } catch (error) {
       return { persisted: undefined, applied: false, applyError: String(error) };

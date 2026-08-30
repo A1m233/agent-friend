@@ -12,7 +12,7 @@ import { setLastChatSessionId } from "@/lib/persistence/chatUi";
 import {
   credentialGroupForModel,
   defaultModelRuntimeConfig,
-  resolveDefaultConversationModel,
+  modelOption,
   resolveDefaultConversationRuntimeConfig,
   type ModelRuntimeConfig,
 } from "@/lib/model-config";
@@ -171,6 +171,7 @@ export interface ConversationState {
   searchTarget: SearchNavigationTarget | null;
   /** 开一个新会话（清空当前视图；session 在首次 send 时由 bridge 自动创建）。 */
   newSession: () => void;
+  resolveNewConversationDraftRuntimeConfig: () => void;
   /** 切换到历史会话并加载其上下文。 */
   openSession: (sessionId: string, options?: OpenSessionOptions) => Promise<boolean>;
   openSearchResult: (result: SessionSearchResult, query: string) => Promise<boolean>;
@@ -232,7 +233,13 @@ export type StopOutcome = "accepted" | "already-pending" | "noop" | "failed";
 export type SendStartResult =
   | {
       accepted: false;
-      reason: "empty" | "busy" | "history-loading" | "model-switching" | "editing";
+      reason:
+        | "empty"
+        | "busy"
+        | "history-loading"
+        | "model-switching"
+        | "model-unavailable"
+        | "editing";
     }
   | {
       accepted: true;
@@ -490,6 +497,18 @@ function emptyView(): SessionConversationView {
   };
 }
 
+function newConversationDraftView(): SessionConversationView {
+  const runtimeConfig = resolveDefaultConversationRuntimeConfig();
+  return {
+    ...emptyView(),
+    currentModel: runtimeConfig.model,
+    // 首帧时 catalog 可能尚未加载；null 表示草稿仍在等待权威默认 preset。
+    currentReasoningPreset: modelOption(runtimeConfig.model)
+      ? runtimeConfig.reasoningPreset
+      : null,
+  };
+}
+
 function viewFields(view: SessionConversationView) {
   return {
     messages: view.messages,
@@ -503,10 +522,12 @@ function viewFields(view: SessionConversationView) {
   };
 }
 
+const initialHomeView = newConversationDraftView();
+
 export const useConversationStore = create<ConversationState>((set, get) => ({
   currentSessionId: null,
-  currentModel: null,
-  currentReasoningPreset: null,
+  currentModel: initialHomeView.currentModel,
+  currentReasoningPreset: initialHomeView.currentReasoningPreset,
   approvalMode: "per_request",
   approvalModeVersion: 0,
   approvalModeChanging: false,
@@ -517,7 +538,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   historyLoading: false,
   historyLoadSeq: 0,
   syncRefreshSeq: 0,
-  sessionViews: {},
+  sessionViews: { [HOME_VIEW_KEY]: initialHomeView },
   runSnapshots: {},
   runCalibrationPhase: "calibrating",
   runFence: emptySnapshotFence(),
@@ -539,7 +560,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     rememberLastChatSession(null);
     set((state) => {
       const previousKey = sessionViewKey(state.currentSessionId);
-      const home = state.sessionViews[HOME_VIEW_KEY] ?? emptyView();
+      const home = state.currentSessionId === null
+        ? currentViewSnapshot(state)
+        : state.sessionViews[HOME_VIEW_KEY] ?? newConversationDraftView();
       return {
         ...viewFields(home),
         currentSessionId: null,
@@ -552,11 +575,35 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         sessionViews: {
           ...state.sessionViews,
           [previousKey]: currentViewSnapshot(state),
+          [HOME_VIEW_KEY]: home,
         },
         viewAccessedAt: { ...state.viewAccessedAt, [HOME_VIEW_KEY]: Date.now() },
       };
     });
+    get().resolveNewConversationDraftRuntimeConfig();
     get().pruneCaches();
+  },
+
+  resolveNewConversationDraftRuntimeConfig() {
+    set((state) => {
+      if (
+        state.currentSessionId !== null
+        || state.currentModel === null
+        || state.currentReasoningPreset !== null
+        || modelOption(state.currentModel) === null
+      ) {
+        return state;
+      }
+      const runtimeConfig = defaultModelRuntimeConfig(state.currentModel);
+      const home = {
+        ...currentViewSnapshot(state),
+        currentReasoningPreset: runtimeConfig.reasoningPreset,
+      };
+      return {
+        currentReasoningPreset: runtimeConfig.reasoningPreset,
+        sessionViews: { ...state.sessionViews, [HOME_VIEW_KEY]: home },
+      };
+    });
   },
 
   async openSession(sessionId, options) {
@@ -629,7 +676,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       if (token !== openSessionToken || get().currentSessionId !== sessionId) return false;
       if (failureMode === "home") {
         set((s) => {
-          const home = s.sessionViews[HOME_VIEW_KEY] ?? emptyView();
+          const home = s.sessionViews[HOME_VIEW_KEY] ?? newConversationDraftView();
           return {
             ...viewFields(home),
             currentSessionId: null,
@@ -642,6 +689,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             historyLoadSeq: s.historyLoadSeq + 1,
           };
         });
+        get().resolveNewConversationDraftRuntimeConfig();
         return false;
       }
       if (failureMode === "previous") {
@@ -1010,11 +1058,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   async selectRuntimeConfig(config) {
     const current = get();
-    const effectiveModel = current.currentModel ?? resolveDefaultConversationModel();
-    const effectiveReasoningPreset = current.currentReasoningPreset
-      ?? defaultModelRuntimeConfig(effectiveModel).reasoningPreset;
+    const effectiveModel = current.currentModel;
+    const effectiveReasoningPreset = effectiveModel
+      ? current.currentReasoningPreset
+        ?? defaultModelRuntimeConfig(effectiveModel).reasoningPreset
+      : null;
     if (
-      config.model === effectiveModel
+      effectiveModel !== null
+      && config.model === effectiveModel
       && config.reasoningPreset === effectiveReasoningPreset
     ) {
       return {
@@ -1193,22 +1244,44 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (get().modelSwitching) return { accepted: false, reason: "model-switching" };
     if (get().editingMessage) return { accepted: false, reason: "editing" };
 
-    const existingSessionId = get().currentSessionId;
+    let runtimeState = get();
+    if (runtimeState.currentSessionId === null && runtimeState.currentModel === null) {
+      const normalizedDraft = newConversationDraftView();
+      set((state) => {
+        if (state.currentSessionId !== null || state.currentModel !== null) return state;
+        const home = {
+          ...currentViewSnapshot(state),
+          currentModel: normalizedDraft.currentModel,
+          currentReasoningPreset: normalizedDraft.currentReasoningPreset,
+        };
+        return {
+          currentModel: home.currentModel,
+          currentReasoningPreset: home.currentReasoningPreset,
+          sessionViews: { ...state.sessionViews, [HOME_VIEW_KEY]: home },
+        };
+      });
+      runtimeState = get();
+    }
+    if (
+      runtimeState.currentModel === null
+      || runtimeState.currentReasoningPreset === null
+    ) {
+      return { accepted: false, reason: "model-unavailable" };
+    }
+
+    const existingSessionId = runtimeState.currentSessionId;
     const sessionId = existingSessionId ?? newId();
     const runId = newId();
-    const initialApprovalMode = get().approvalMode;
+    const initialApprovalMode = runtimeState.approvalMode;
     const shouldBootstrapApprovalMode = initialApprovalMode === "session_auto"
-      && get().messages.length === 0;
+      && runtimeState.messages.length === 0;
     const initialApprovalModeVersion = shouldBootstrapApprovalMode
-      ? Math.max(1, get().approvalModeVersion)
-      : get().approvalModeVersion;
-    const initialConfig = get().currentModel
-      ? {
-          model: get().currentModel!,
-          reasoningPreset: get().currentReasoningPreset
-            ?? defaultModelRuntimeConfig(get().currentModel!).reasoningPreset,
-        }
-      : resolveDefaultConversationRuntimeConfig();
+      ? Math.max(1, runtimeState.approvalModeVersion)
+      : runtimeState.approvalModeVersion;
+    const initialConfig = {
+      model: runtimeState.currentModel,
+      reasoningPreset: runtimeState.currentReasoningPreset,
+    };
     const initialModel = initialConfig.model;
     const credentialGroup = runtimeCredentialGroupForModel(initialModel);
     const credentialRevision = credentialGroup
@@ -1251,6 +1324,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         syncRefreshSeq: s.syncRefreshSeq,
         revision: s.sessionViews[sessionId]?.revision ?? 0,
       };
+      const sessionViews = {
+        ...s.sessionViews,
+        [sessionId]: view,
+      };
+      if (s.currentSessionId === null) {
+        delete sessionViews[HOME_VIEW_KEY];
+      }
       return {
         currentSessionId: sessionId,
         currentModel: initialModel,
@@ -1258,11 +1338,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         approvalMode: initialApprovalMode,
         approvalModeVersion: initialApprovalModeVersion,
         messages,
-        sessionViews: {
-          ...s.sessionViews,
-          [sessionId]: view,
-          ...(s.currentSessionId === null ? { [HOME_VIEW_KEY]: emptyView() } : {}),
-        },
+        sessionViews,
         runSnapshots: {
           ...s.runSnapshots,
           [runId]: optimisticRunSnapshot(runId, sessionId, sentAt),

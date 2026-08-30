@@ -115,7 +115,7 @@ describe("runtime config changes", () => {
     expect(result.applyError).toBe("environment override remains active");
   });
 
-  it("applies a persisted model setting by restarting Bridge", async () => {
+  it("applies a persisted Bridge runtime setting with the ordinary restart reason", async () => {
     const persist = vi.fn().mockResolvedValue(undefined);
 
     const result = await persistBridgeRuntimeSetting(persist);
@@ -123,14 +123,6 @@ describe("runtime config changes", () => {
     expect(persist).toHaveBeenCalledOnce();
     expect(mockRestartLocalService).toHaveBeenCalledWith("bridge", "request_settings_changed");
     expect(result.applied).toBe(true);
-  });
-
-  it("classifies a default conversation model restart as a new model epoch", async () => {
-    const persist = vi.fn().mockResolvedValue(undefined);
-
-    await persistBridgeRuntimeSetting(persist, "default_model_changed");
-
-    expect(mockRestartLocalService).toHaveBeenCalledWith("bridge", "default_model_changed");
   });
 
   it("serializes configuration persistence and restarts", async () => {

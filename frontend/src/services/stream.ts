@@ -32,6 +32,11 @@ export interface RunStreamInput {
   references?: ChatTextReference[];
 }
 
+/** 专用 Agent 可由服务端决定自己的模型，不继承桌面新对话默认值。 */
+export type SpecializedRunStreamInput = Omit<RunStreamInput, "modelConfig"> & {
+  modelConfig?: ModelRuntimeConfig;
+};
+
 export interface EditResendLatestInput {
   /** 已存在的 session_id。 */
   sessionId: string;
@@ -110,7 +115,7 @@ function referenceToWire(reference: ChatTextReference) {
  * 构造 AG-UI `RunAgentInput`（camelCase wire 格式，与 bridge 的 pydantic alias 对齐）。
  * 每轮只带最新一条 user message——历史以 bridge 的 jsonl 为真相源（design §3.5）。
  */
-export function buildRunAgentInput(input: RunStreamInput): RunAgentInput {
+export function buildRunAgentInput(input: SpecializedRunStreamInput): RunAgentInput {
   const content = input.attachments?.length
     ? [
         ...input.attachments.map((draft) =>
@@ -145,7 +150,7 @@ export function buildRunAgentInput(input: RunStreamInput): RunAgentInput {
     context: [],
     state: {},
     forwardedProps: {
-      modelConfig: input.modelConfig,
+      ...(input.modelConfig ? { modelConfig: input.modelConfig } : {}),
       ...(input.initialApprovalMode === "session_auto"
         ? {
             initialApprovalMode: {
@@ -177,7 +182,7 @@ export async function* runAgentStream(
 /** 供专用 Agent 复用同一套 RunAgentInput 与 SSE 消费，只替换后端 endpoint。 */
 export async function* runAgentStreamAtPath(
   path: string,
-  input: RunStreamInput,
+  input: SpecializedRunStreamInput,
   opts: RunStreamOptions = {},
 ): AsyncGenerator<BaseEvent> {
   await ensureLocalServiceReady("bridge");

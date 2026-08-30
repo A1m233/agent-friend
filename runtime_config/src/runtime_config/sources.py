@@ -14,8 +14,6 @@ from dotenv import dotenv_values
 from .credentials import (
     DEEPSEEK_MEMORY_MODEL,
     DEEPSEEK_MODEL,
-    LLM_CHAT_MODEL,
-    LLM_CHAT_PROVIDER,
     LLM_MEMORY_MODEL,
     LLM_MEMORY_PROVIDER,
     RUNTIME_ONLY_NAMES,
@@ -35,8 +33,6 @@ SETTINGS_NAME_MAP: dict[str, str] = {
     DEEPSEEK_MEMORY_MODEL: "deepseekMemoryModel",
 }
 
-DEFAULT_CHAT_PROVIDER = "kimi"
-DEFAULT_CHAT_MODEL = "kimi/kimi-k2.5"
 DEFAULT_MEMORY_PROVIDER = "deepseek"
 DEFAULT_MEMORY_MODEL = "deepseek/deepseek-v4-flash"
 
@@ -301,12 +297,6 @@ class SettingsFileSource:
         return legacy_default_provider, legacy_default_model
 
     def _projected_model_value(self, name: str) -> str | None:
-        chat_provider, chat_model = self._model_selection(
-            "chatModel",
-            legacy_key="deepseekModel",
-            legacy_default_provider=DEFAULT_CHAT_PROVIDER,
-            legacy_default_model=DEFAULT_CHAT_MODEL,
-        )
         memory_provider, memory_model = self._model_selection(
             "memoryModel",
             legacy_key="deepseekMemoryModel",
@@ -314,8 +304,6 @@ class SettingsFileSource:
             legacy_default_model=DEFAULT_MEMORY_MODEL,
         )
         values = {
-            LLM_CHAT_PROVIDER: chat_provider,
-            LLM_CHAT_MODEL: chat_model,
             LLM_MEMORY_PROVIDER: memory_provider,
             LLM_MEMORY_MODEL: memory_model,
         }
@@ -326,8 +314,6 @@ class SettingsFileSource:
         if settings_key is not None:
             value = _string_setting(self._settings(), settings_key)
         elif name in {
-            LLM_CHAT_PROVIDER,
-            LLM_CHAT_MODEL,
             LLM_MEMORY_PROVIDER,
             LLM_MEMORY_MODEL,
         }:
