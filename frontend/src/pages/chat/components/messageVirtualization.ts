@@ -29,3 +29,28 @@ export function getMessageVirtualItemKey(
 ): string | number {
   return messages[index]?.id ?? index;
 }
+
+/**
+ * TanStack Virtual exposes a per-measurement override but does not provide a
+ * "use the default" sentinel. Keep its current default for unrelated rows and
+ * suppress only the message row whose disclosure was toggled by the user.
+ */
+export function shouldAdjustMessageScrollPositionOnItemSizeChange({
+  activeMessageId,
+  itemKey,
+  itemStart,
+  scrollOffset,
+  scrollDirection,
+  previouslyMeasured,
+}: {
+  activeMessageId: string | null;
+  itemKey: string | number | bigint;
+  itemStart: number;
+  scrollOffset: number;
+  scrollDirection: "forward" | "backward" | null;
+  previouslyMeasured: boolean;
+}): boolean {
+  if (activeMessageId !== null && itemKey === activeMessageId) return false;
+  return itemStart < scrollOffset
+    && (!previouslyMeasured || scrollDirection !== "backward");
+}

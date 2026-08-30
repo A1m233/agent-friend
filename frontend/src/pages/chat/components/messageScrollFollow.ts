@@ -63,6 +63,10 @@ export function shouldFollowAfterTotalSizeChange(
   following: boolean,
   previousTotalSize: number | null,
   nextTotalSize: number,
+  userLayoutMutationActive = false,
 ): boolean {
-  return following && previousTotalSize !== null && previousTotalSize !== nextTotalSize;
+  return !userLayoutMutationActive
+    && following
+    && previousTotalSize !== null
+    && previousTotalSize !== nextTotalSize;
 }

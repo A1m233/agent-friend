@@ -113,7 +113,13 @@ function ToolActivityItem({
   );
 }
 
-export function ToolActivity({ blocks }: { blocks: ToolBlock[] }) {
+export function ToolActivity({
+  blocks,
+  onDisclosureChange,
+}: {
+  blocks: ToolBlock[];
+  onDisclosureChange?: () => void;
+}) {
   const [groupOpen, setGroupOpen] = useState(false);
   const [itemOpenById, setItemOpenById] = useState<Record<string, boolean>>({});
   if (blocks.length === 0) return null;
@@ -131,6 +137,7 @@ export function ToolActivity({ blocks }: { blocks: ToolBlock[] }) {
           block={block}
           open={open}
           onOpenChange={(nextOpen) => {
+            onDisclosureChange?.();
             setGroupOpen(nextOpen);
             setItemOpen(block.toolCallId, nextOpen);
           }}
@@ -143,7 +150,10 @@ export function ToolActivity({ blocks }: { blocks: ToolBlock[] }) {
     <div className="w-full">
       <ToolDisclosureRow
         open={groupOpen}
-        onOpenChange={setGroupOpen}
+        onOpenChange={(open) => {
+          onDisclosureChange?.();
+          setGroupOpen(open);
+        }}
         summary={toolActivitySummary(blocks)}
         category={toolPresentation(blocks[0]).category}
         contentClassName="ml-2 mt-1 space-y-0.5 border-l border-border pl-2"
@@ -153,7 +163,10 @@ export function ToolActivity({ blocks }: { blocks: ToolBlock[] }) {
             key={block.toolCallId}
             block={block}
             open={itemOpenById[block.toolCallId] ?? false}
-            onOpenChange={(open) => setItemOpen(block.toolCallId, open)}
+            onOpenChange={(open) => {
+              onDisclosureChange?.();
+              setItemOpen(block.toolCallId, open);
+            }}
           />
         ))}
       </ToolDisclosureRow>
