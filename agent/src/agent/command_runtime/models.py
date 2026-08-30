@@ -196,6 +196,8 @@ class CommandProcessSnapshot:
     run_id: str
     tool_call_id: str
     mode: CommandMode
+    recovery_mode: str = "resident_only"
+    runtime_instance_id: str = ""
     status: CommandProcessStatus = "running"
     started_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     finished_at: str | None = None
@@ -221,7 +223,10 @@ class CommandProcessSnapshot:
             "run_id": self.run_id,
             "tool_call_id": self.tool_call_id,
             "mode": self.mode,
+            "recovery_mode": self.recovery_mode,
+            "runtime_instance_id": self.runtime_instance_id,
             "status": self.status,
+            "process_status": self.status,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "duration_seconds": self.duration_seconds,

@@ -28,6 +28,7 @@ from agent import (
     Conversation,
     JsonlSessionStore,
     MarkdownPromptBuilder,
+    Message,
     NaiveContextManager,
     PersonaCatalog,
     PromptBuilder,
@@ -176,10 +177,16 @@ def test_skill_context_order_persistence_and_general_projection(tmp_path: Path) 
         "assistant_message",
     ]
     assert [message.content for message in conversation.session.messages] == ["hello", "ok"]
-    assert any(
-        message.meta.get("synthetic") == "skill_instructions"
-        for message in conversation.session.llm_messages
+    skill_event = next(
+        event for event in conversation.session.events if event.type == "skill_context"
     )
+    assert skill_event.meta["content_persistence"] == "metadata_only"
+    assert {"path", "contents", "rendered"}.isdisjoint(skill_event.payload)
+    catalog_event = next(
+        event for event in conversation.session.events if event.type == "skill_catalog_state"
+    )
+    assert catalog_event.meta["content_persistence"] == "metadata_only"
+    assert "content" not in catalog_event.payload
     assert [event for event in events if isinstance(event, SkillActivationStatus)] == [
         SkillActivationStatus(
             status="activated",
@@ -446,7 +453,9 @@ def test_unknown_structured_selection_becomes_model_visible_load_error(tmp_path:
     assert status.error_code == "skill_not_found"
 
 
-def test_restart_replays_frozen_skill_context_without_reactivation(tmp_path: Path) -> None:
+def test_restart_builds_business_baseline_without_persisted_skill_instructions(
+    tmp_path: Path,
+) -> None:
     conversation, _, service, selection = _conversation(tmp_path)
     list(conversation.stream("first", skill_selections=(selection,)))
 
@@ -473,10 +482,69 @@ def test_restart_replays_frozen_skill_context_without_reactivation(tmp_path: Pat
     current_user_index = next(
         index for index, item in enumerate(messages) if item["content"] == "after restart"
     )
-    assert any("FIRST VERSION" in item["content"] for item in messages[:current_user_index])
+    assert all("FIRST VERSION" not in item["content"] for item in messages)
     assert all("SECOND VERSION" not in item["content"] for item in messages)
+    assert any("<skills_catalog>" in item["content"] for item in messages[:current_user_index])
     assert all("<skill>" not in item["content"] for item in messages[current_user_index + 1 :])
     assert sum(event.type == "skill_context" for event in loaded.events) == skill_event_count
+
+
+def test_next_user_turn_appends_skill_expiry_without_rewriting_provider_prefix(
+    tmp_path: Path,
+) -> None:
+    conversation, llm, _, selection = _conversation(tmp_path)
+
+    list(conversation.stream("first", skill_selections=(selection,)))
+    first_request = llm.received[0]
+    list(conversation.stream("second"))
+    second_request = llm.received[1]
+
+    assert second_request[: len(first_request)] == first_request
+    expiry_index = next(
+        index
+        for index, item in enumerate(second_request)
+        if "<skill_activation_delta" in item["content"]
+    )
+    second_user_index = next(
+        index for index, item in enumerate(second_request) if item["content"] == "second"
+    )
+    assert expiry_index < second_user_index
+    assert selection.id in second_request[expiry_index]["content"]
+
+
+def test_next_user_turn_appends_filesystem_scope_expiry_after_original_grant(
+    tmp_path: Path,
+) -> None:
+    conversation, llm, _, _ = _conversation(tmp_path)
+    conversation._session_model_history.append(
+        [
+            Message(
+                role="user",
+                content="scope grant for scope-1",
+                meta={
+                    "synthetic": "skill_filesystem_scope_delta",
+                    "model_only": True,
+                    "trusted_host_context": True,
+                    "filesystem_scope_ids": ["scope-1"],
+                    "filesystem_scope_state": "active",
+                },
+            )
+        ]
+    )
+
+    list(conversation.stream("next user turn"))
+
+    messages = llm.received[0]
+    grant_index = next(
+        index for index, item in enumerate(messages) if item["content"] == "scope grant for scope-1"
+    )
+    expiry_index = next(
+        index for index, item in enumerate(messages) if "<filesystem_scope_delta" in item["content"]
+    )
+    user_index = next(
+        index for index, item in enumerate(messages) if item["content"] == "next user turn"
+    )
+    assert grant_index < expiry_index < user_index
 
 
 def test_edit_resend_deactivates_old_skill_without_implicit_reselection(tmp_path: Path) -> None:

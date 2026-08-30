@@ -15,6 +15,7 @@ docs/requirements/014-engine-main-loop-and-bridge-push/design.md §8.6。
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -199,6 +200,13 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
             runtime.first_party_skill_updater.start()
         if runtime.agent_runtime is not None:
             runtime.agent_runtime.start()
+        reconciliation_task = (
+            asyncio.create_task(
+                asyncio.to_thread(runtime.transaction_reconciler.reconcile_known_sessions)
+            )
+            if runtime.transaction_reconciler is not None
+            else None
+        )
         if runtime.im_runtime is not None:
             runtime.im_runtime.start()
         if runtime.scheduled_run_tracker is not None:
@@ -208,6 +216,11 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
         try:
             yield
         finally:
+            if reconciliation_task is not None:
+                try:
+                    await asyncio.wait_for(asyncio.shield(reconciliation_task), timeout=5.0)
+                except TimeoutError:
+                    reconciliation_task.cancel()
             if runtime.schedule_coordinator is not None:
                 runtime.schedule_coordinator.stop(timeout=5.0)
             if runtime.im_runtime is not None:

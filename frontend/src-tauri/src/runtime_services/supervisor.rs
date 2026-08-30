@@ -21,6 +21,22 @@ use tokio::sync::Mutex;
 const EVENT_CHANGED: &str = "runtime-service://changed";
 const READINESS_ATTEMPTS: usize = 50;
 const POLL_DELAY: Duration = Duration::from_millis(200);
+const DEFAULT_RUNTIME_START_REASON: &str = "desktop_start";
+const CONTROLLED_RUNTIME_RESTART_REASON: &str = "controlled_restart";
+
+fn validate_runtime_start_reason(reason: &str) -> Result<&str, String> {
+    match reason {
+        "desktop_start"
+        | "controlled_restart"
+        | "default_model_changed"
+        | "model_provider_changed"
+        | "request_settings_changed"
+        | "service_recovery"
+        | "host_resume_unknown"
+        | "direct_start" => Ok(reason),
+        _ => Err(format!("unsupported_runtime_start_reason: {reason}")),
+    }
+}
 
 #[cfg(target_os = "windows")]
 struct PackagedProcessJob {
@@ -451,6 +467,17 @@ impl RuntimeServiceSupervisor {
         app: Option<&AppHandle>,
         service: RuntimeServiceKind,
     ) -> Result<RuntimeServiceSnapshot, String> {
+        self.start_with_reason(app, service, DEFAULT_RUNTIME_START_REASON)
+            .await
+    }
+
+    pub async fn start_with_reason(
+        &self,
+        app: Option<&AppHandle>,
+        service: RuntimeServiceKind,
+        start_reason: &str,
+    ) -> Result<RuntimeServiceSnapshot, String> {
+        let start_reason = validate_runtime_start_reason(start_reason)?;
         let operation_ref = self.operation(service);
         let _operation = operation_ref.lock().await;
         let voice_public_url = if service == RuntimeServiceKind::Voice {
@@ -497,6 +524,8 @@ impl RuntimeServiceSupervisor {
             &token,
             voice_public_url.as_deref(),
             self.process_job.as_deref(),
+            generation,
+            start_reason,
         ) {
             Ok(child) => {
                 slot.child = Some(child);
@@ -690,8 +719,19 @@ impl RuntimeServiceSupervisor {
         app: Option<&AppHandle>,
         service: RuntimeServiceKind,
     ) -> Result<RuntimeServiceSnapshot, String> {
+        self.restart_with_reason(app, service, CONTROLLED_RUNTIME_RESTART_REASON)
+            .await
+    }
+
+    pub async fn restart_with_reason(
+        &self,
+        app: Option<&AppHandle>,
+        service: RuntimeServiceKind,
+        start_reason: &str,
+    ) -> Result<RuntimeServiceSnapshot, String> {
+        validate_runtime_start_reason(start_reason)?;
         self.stop(app, service).await?;
-        self.start(app, service).await
+        self.start_with_reason(app, service, start_reason).await
     }
 
     pub async fn cleanup_owned_children(&self) {
@@ -961,6 +1001,8 @@ fn spawn_service(
     token: &str,
     voice_public_url: Option<&str>,
     process_job: Option<&PackagedProcessJob>,
+    supervisor_generation: u64,
+    start_reason: &str,
 ) -> Result<Child, String> {
     let mut command = match context {
         RuntimeLaunchContext::Source(root) => {
@@ -1056,6 +1098,11 @@ fn spawn_service(
             },
         )
         .env("AGENT_FRIEND_LIFECYCLE_TOKEN", token)
+        .env(
+            "AGENT_FRIEND_BRIDGE_SUPERVISOR_GENERATION",
+            supervisor_generation.to_string(),
+        )
+        .env("AGENT_FRIEND_BRIDGE_START_REASON", start_reason)
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .stdin(Stdio::null())
@@ -1258,6 +1305,20 @@ mod tests {
         assert_eq!(RuntimeServiceKind::Bridge.port(), 18800);
         assert_eq!(RuntimeServiceKind::Voice.module(), "voice_bridge");
         assert_eq!(RuntimeServiceKind::Voice.port(), 18900);
+    }
+
+    #[test]
+    fn runtime_start_reason_allowlist_distinguishes_configuration_epochs() {
+        for reason in [
+            "controlled_restart",
+            "default_model_changed",
+            "model_provider_changed",
+            "request_settings_changed",
+            "host_resume_unknown",
+        ] {
+            assert_eq!(validate_runtime_start_reason(reason), Ok(reason));
+        }
+        assert!(validate_runtime_start_reason("guessed_crash").is_err());
     }
 
     #[test]

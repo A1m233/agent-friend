@@ -34,6 +34,7 @@ from .changes import SessionChangeBroker
 from .metadata import SessionMetadataStore
 from .model_context import SessionModelContext
 from .model_history import SessionModelHistory
+from .recovery import ToolTransactionReconciler
 from .session import Session
 from .store import SessionStore, SessionSummary
 
@@ -69,6 +70,8 @@ class _SessionRuntimeState:
     context_manager: ContextManager
     prompt_cache_trace_tracker: PromptCacheTraceTracker
     cache_epoch: SessionCacheEpoch
+    runtime_instance_id: str = ""
+    runtime_start_reason: str = "direct_start"
 
 
 def _default_title(now: datetime | None = None) -> str:
@@ -117,6 +120,9 @@ class SessionManager:
         skill_service: SkillCatalogService | None = None,
         command_workspaces_root: Path | None = None,
         time_provider: TimeProvider | None = None,
+        transaction_reconciler: ToolTransactionReconciler | None = None,
+        runtime_instance_id: str = "",
+        runtime_start_reason: str = "direct_start",
     ) -> None:
         self._store = store
         self._llm_client_factory = llm_client_factory
@@ -131,9 +137,28 @@ class SessionManager:
         self._skill_service = skill_service
         self._time_provider = time_provider or SystemTimeProvider()
         self._runtime_states: dict[str, _SessionRuntimeState] = {}
+        self._transaction_reconciler = transaction_reconciler
+        self._runtime_instance_id = runtime_instance_id
+        self._runtime_start_reason = runtime_start_reason
         self._command_workspaces_root = (
             command_workspaces_root.resolve() if command_workspaces_root is not None else None
         )
+
+    def runtime_state_diagnostics(self, session_id: str) -> dict[str, object] | None:
+        """Return content-free process-local state for desktop reattachment."""
+
+        state = self._runtime_states.get(session_id)
+        if state is None:
+            return None
+        return {
+            "resident": True,
+            "modelHistoryGeneration": state.model_history.generation,
+            "providerRequestCount": state.model_history.provider_request_count,
+            "cacheEpochGeneration": state.cache_epoch.generation,
+            "cacheEpochReason": state.cache_epoch.reason,
+            "runtimeInstanceId": state.runtime_instance_id,
+            "runtimeStartReason": state.runtime_start_reason,
+        }
 
     # ----- 会话 CRUD -----
 
@@ -469,17 +494,29 @@ class SessionManager:
         prompt_builder = _session_aware_factory(persona_id)
         runtime_state = self._runtime_states.get(session.session_id)
         if runtime_state is None:
+            if self._transaction_reconciler is not None and session.business_llm_messages:
+                session = self._transaction_reconciler.reconcile_session(session.session_id).session
             runtime_state = _SessionRuntimeState(
-                model_history=SessionModelHistory.from_session(
+                model_history=SessionModelHistory.from_business_session(
                     session,
-                    reason=("process_resume_degraded" if session.llm_messages else "session_start"),
+                    reason=(
+                        "process_resume_degraded"
+                        if session.business_llm_messages
+                        else "session_start"
+                    ),
                 ),
                 model_context=SessionModelContext(),
                 context_manager=self._context_manager_factory(),
                 prompt_cache_trace_tracker=PromptCacheTraceTracker(),
                 cache_epoch=SessionCacheEpoch(
-                    reason=("process_resume_degraded" if session.llm_messages else "session_start")
+                    reason=(
+                        "process_resume_degraded"
+                        if session.business_llm_messages
+                        else "session_start"
+                    )
                 ),
+                runtime_instance_id=self._runtime_instance_id,
+                runtime_start_reason=self._runtime_start_reason,
             )
             self._runtime_states[session.session_id] = runtime_state
         else:

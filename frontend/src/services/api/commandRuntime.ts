@@ -70,6 +70,8 @@ export interface CommandProcessSnapshot {
   run_id: string;
   tool_call_id: string;
   mode: "buffered" | "streaming";
+  recovery_mode?: "resident_only" | "queryable" | "reattachable";
+  runtime_instance_id?: string;
   status: CommandProcessStatus;
   started_at: string;
   finished_at?: string | null;

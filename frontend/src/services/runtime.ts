@@ -45,10 +45,20 @@ export function ensureLocalServiceReady(service: LocalService): Promise<void> {
 }
 
 /** 配置已持久化后，重启对应本机服务并刷新 readiness 缓存。 */
-export async function restartLocalService(service: LocalService): Promise<void> {
+export type RuntimeStartReason =
+  | "controlled_restart"
+  | "default_model_changed"
+  | "model_provider_changed"
+  | "request_settings_changed"
+  | "service_recovery";
+
+export async function restartLocalService(
+  service: LocalService,
+  reason: RuntimeStartReason = "controlled_restart",
+): Promise<void> {
   resetLocalServiceReadiness(service);
   if (!isTauri()) return;
-  await invoke("restart_runtime_service", { service });
+  await invoke("restart_runtime_service", { service, reason });
 }
 
 /** 配置变化等已知恢复动作后，允许对应服务立即重新拉起。 */

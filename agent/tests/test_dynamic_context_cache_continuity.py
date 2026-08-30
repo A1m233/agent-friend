@@ -471,6 +471,7 @@ def test_restart_is_degraded_and_does_not_persist_model_context(tmp_path: Path) 
         "generation": 0,
         "reason": "process_resume_degraded",
         "exact_process_continuation": False,
+        "runtime_start_reason": "direct_start",
     }
     list(conversation.stream("continue", surface=DESKTOP_CHAT_SURFACE))
     assert restarted_llm.received[0][: len(first_llm.received[0])] != first_llm.received[0]

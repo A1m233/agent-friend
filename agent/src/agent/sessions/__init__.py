@@ -51,6 +51,14 @@ from .model_history import (
     PreparedModelHistory,
     SessionModelHistory,
 )
+from .recovery import (
+    ReconciliationReport,
+    RecoveredToolResult,
+    RecoveryProbe,
+    RecoveryProbeOutcome,
+    ToolRecoveryAdapter,
+    ToolTransactionReconciler,
+)
 from .search import (
     SearchTextSegment,
     SessionMessageSearchResult,
@@ -85,6 +93,10 @@ __all__ = [
     "PreparedCacheEpoch",
     "PreparedModelHistory",
     "PromptBuilderFactory",
+    "ReconciliationReport",
+    "RecoveredToolResult",
+    "RecoveryProbe",
+    "RecoveryProbeOutcome",
     "SearchTextSegment",
     "Session",
     "SessionCacheEpoch",
@@ -111,6 +123,8 @@ __all__ = [
     "SessionSummary",
     "SessionTitleSearchResult",
     "TitleGenerator",
+    "ToolRecoveryAdapter",
+    "ToolTransactionReconciler",
     "current_session_mutation_context",
     "normalize_session_title",
     "session_mutation_context",

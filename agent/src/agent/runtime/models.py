@@ -110,6 +110,7 @@ class RunExecutionResult:
 class RunRequest:
     event: AgentEvent
     run_id: str = field(default_factory=lambda: uuid4().hex)
+    runtime_instance_id: str = ""
     priority: RunPriority = RunPriority.INTERACTIVE
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime | None = None
@@ -148,6 +149,7 @@ class RunSnapshot:
     started_at: datetime | None
     finished_at: datetime | None
     version: int
+    runtime_instance_id: str = ""
     turn_status: TurnStatus | None = None
     total_tool_calls: int = 0
     tool_call_items: int = 0
@@ -334,6 +336,7 @@ class RunHandle:
             started_at=self._started_at,
             finished_at=terminal.finished_at if terminal is not None else None,
             version=self._version,
+            runtime_instance_id=self.request.runtime_instance_id,
             turn_status=terminal.turn_status if terminal is not None else None,
             total_tool_calls=terminal.total_tool_calls if terminal is not None else 0,
             tool_call_items=terminal.tool_call_items if terminal is not None else 0,

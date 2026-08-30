@@ -32,6 +32,10 @@ pub struct PushEnvelope {
     #[serde(default)]
     pub run_id: Option<String>,
     #[serde(default)]
+    pub runtime_instance_id: Option<String>,
+    #[serde(default)]
+    pub run_event_seq: Option<u64>,
+    #[serde(default)]
     pub outcome: Option<String>,
     #[serde(default)]
     pub reason_code: String,
@@ -67,6 +71,8 @@ pub struct RunSnapshot {
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub version: u64,
+    #[serde(default)]
+    pub runtime_instance_id: Option<String>,
 }
 
 const RECONNECT_INITIAL_DELAY: Duration = Duration::from_millis(400);
@@ -390,6 +396,8 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
             presentation: Some("ambient".into()),
             events: vec![serde_json::json!({"type": "memory_observation"})],
             run_id: Some("r1".into()),
+            runtime_instance_id: Some("bridge-1".into()),
+            run_event_seq: Some(3),
             outcome: Some("completed".into()),
             reason_code: String::new(),
             revision: None,
@@ -409,6 +417,8 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
         assert_eq!(parsed.source_kind, original.source_kind);
         assert_eq!(parsed.presentation, original.presentation);
         assert_eq!(parsed.run_id, original.run_id);
+        assert_eq!(parsed.runtime_instance_id, original.runtime_instance_id);
+        assert_eq!(parsed.run_event_seq, original.run_event_seq);
         assert_eq!(parsed.outcome, original.outcome);
         assert_eq!(parsed.events.len(), 1);
     }
@@ -436,10 +446,12 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
 
     #[test]
     fn parse_run_event_envelope() {
-        let frame = br#"data: {"kind":"run_event","session_id":"s1","seq":6,"source_kind":"social_auth_completed","presentation":"conversation","events":[{"type":"text_delta","text":"streaming"}],"run_id":"r1"}"#;
+        let frame = br#"data: {"kind":"run_event","session_id":"s1","seq":6,"source_kind":"social_auth_completed","presentation":"conversation","events":[{"type":"text_delta","text":"streaming"}],"run_id":"r1","runtime_instance_id":"bridge-1","run_event_seq":7}"#;
         let env = parse_envelope_frame(frame).unwrap();
         assert_eq!(env.kind, "run_event");
         assert_eq!(env.run_id.as_deref(), Some("r1"));
+        assert_eq!(env.runtime_instance_id.as_deref(), Some("bridge-1"));
+        assert_eq!(env.run_event_seq, Some(7));
         assert_eq!(env.presentation.as_deref(), Some("conversation"));
         assert_eq!(env.events.len(), 1);
     }

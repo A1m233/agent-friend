@@ -81,6 +81,7 @@ describe("ensureLocalServiceReady", () => {
 
     expect(mockInvoke).toHaveBeenCalledWith("restart_runtime_service", {
       service: "bridge",
+      reason: "controlled_restart",
     });
   });
 

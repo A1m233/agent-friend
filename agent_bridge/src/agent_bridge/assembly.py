@@ -43,6 +43,7 @@ from agent.runtime import (
     HookKind,
     PostTurnContext,
     PreTurnDecision,
+    RuntimeInstanceIdentity,
 )
 from agent.scheduled_tasks import (
     ScheduledTaskDriver,
@@ -50,6 +51,7 @@ from agent.scheduled_tasks import (
     ScheduledTaskStore,
 )
 from agent.scheduling import ScheduleCoordinator
+from agent.sessions import ToolTransactionReconciler
 from agent.time_provider import SystemTimeProvider, TimeProvider
 from agent.todos import ReminderDriver, TodoService, TodoStore
 from agent.tools import ToolRegistry
@@ -123,6 +125,28 @@ from .self_presentation import DesktopSelfPresentationModeProvider
 
 logger = logging.getLogger(__name__)
 
+RUNTIME_START_REASON_ENV = "AGENT_FRIEND_BRIDGE_START_REASON"
+RUNTIME_SUPERVISOR_GENERATION_ENV = "AGENT_FRIEND_BRIDGE_SUPERVISOR_GENERATION"
+
+
+def _runtime_identity_from_env() -> RuntimeInstanceIdentity:
+    raw_generation = os.environ.get(RUNTIME_SUPERVISOR_GENERATION_ENV)
+    generation: int | None = None
+    if raw_generation:
+        try:
+            parsed = int(raw_generation)
+        except ValueError:
+            logger.warning("invalid bridge supervisor generation: %r", raw_generation)
+        else:
+            if parsed >= 0:
+                generation = parsed
+            else:
+                logger.warning("negative bridge supervisor generation: %r", raw_generation)
+    return RuntimeInstanceIdentity.create(
+        supervisor_generation=generation,
+        start_reason=os.environ.get(RUNTIME_START_REASON_ENV),
+    )
+
 
 def _llm_factory(model: ModelRuntimeConfig) -> LanguageModel:
     raise RuntimeError("BridgeRuntime.llm_client_factory is required before creating sessions")
@@ -185,10 +209,14 @@ class BridgeRuntime:
     prompt_builder_factory: Callable[[str], MarkdownPromptBuilder]
     default_persona: str
     default_model: str
+    runtime_identity: RuntimeInstanceIdentity = field(
+        default_factory=RuntimeInstanceIdentity.create
+    )
     time_provider: TimeProvider = field(default_factory=SystemTimeProvider)
     attachment_store: AttachmentStore | None = None
     llm_client_factory: LanguageModelFactory | None = None
     memory: Memory | None = None
+    transaction_reconciler: ToolTransactionReconciler | None = None
     recall_buffer: RecallBuffer | None = None
     skill_service: SkillCatalogService | None = None
     first_party_skill_updater: FirstPartySkillUpdateService | None = None
@@ -297,6 +325,8 @@ def _make_persistent_session_manager(
     multimodal_adapter: MultimodalInputAdapter | None = None,
     skill_service: SkillCatalogService | None = None,
     time_provider: TimeProvider | None = None,
+    transaction_reconciler: ToolTransactionReconciler | None = None,
+    runtime_identity: RuntimeInstanceIdentity | None = None,
 ) -> SessionManager:
     from agent.paths import command_workspaces_dir
 
@@ -313,6 +343,11 @@ def _make_persistent_session_manager(
         skill_service=skill_service,
         command_workspaces_root=command_workspaces_dir(),
         time_provider=time_provider,
+        transaction_reconciler=transaction_reconciler,
+        runtime_instance_id=(runtime_identity.bridge_instance_id if runtime_identity else ""),
+        runtime_start_reason=(
+            runtime_identity.start_reason.value if runtime_identity else "direct_start"
+        ),
     )
 
 
@@ -350,6 +385,14 @@ def build_runtime(
         llm_providers.LLMAuthError: ``DEEPSEEK_API_KEY`` 缺失或非法（仅做格式预检；
             真正调 LLM 时仍可能再次抛）。
     """
+    runtime_identity = _runtime_identity_from_env()
+    logger.info(
+        "[RuntimeContinuity] bridge_runtime_started runtime_instance_id=%s "
+        "supervisor_generation=%s start_reason=%s",
+        runtime_identity.bridge_instance_id,
+        runtime_identity.supervisor_generation,
+        runtime_identity.start_reason.value,
+    )
     base_persistent_store = JsonlSessionStore(settings.sessions_dir)
     attachment_store = AttachmentStore(settings.attachments_dir)
     multimodal_adapter = MultimodalInputAdapter(
@@ -432,6 +475,7 @@ def build_runtime(
         codex_executable,
         codex_home=command_runtime_root / "codex-home",
         execution_root=Path(tempfile.gettempdir()) / "agent-friend-command-execution",
+        runtime_instance_id=runtime_identity.bridge_instance_id,
     )
     execution_environment_root = settings.sessions_dir.parent / "execution-environments"
     try:
@@ -583,6 +627,10 @@ def build_runtime(
         llm_client_factory=llm_client_factory,
         workspace=persona_editor_workspace,
     )
+    transaction_reconciler = ToolTransactionReconciler(
+        persistent_store,
+        runtime_instance_id=runtime_identity.bridge_instance_id,
+    )
     persistent_session_manager = _make_persistent_session_manager(
         persistent_store,
         tool_registry,
@@ -594,6 +642,8 @@ def build_runtime(
         multimodal_adapter,
         skill_service,
         time_provider,
+        transaction_reconciler,
+        runtime_identity,
     )
 
     turn_coordinator = SessionTurnCoordinator()
@@ -602,6 +652,7 @@ def build_runtime(
         session_manager=persistent_session_manager,
         memory=memory,
         session_turn_guard=turn_coordinator.hold,
+        runtime_identity=runtime_identity,
     )
 
     def prepare_execution_environment(event: AgentEvent) -> PreTurnDecision:
@@ -700,9 +751,11 @@ def build_runtime(
             llm_client_factory=llm_client_factory,
             default_persona=default_persona,
             default_model=default_model,
+            runtime_identity=runtime_identity,
             time_provider=time_provider,
             attachment_store=attachment_store,
             memory=memory,
+            transaction_reconciler=transaction_reconciler,
             recall_buffer=recall_buffer,
             skill_service=skill_service,
             first_party_skill_updater=first_party_skill_updater,
@@ -821,9 +874,11 @@ def build_runtime(
         llm_client_factory=llm_client_factory,
         default_persona=default_persona,
         default_model=default_model,
+        runtime_identity=runtime_identity,
         time_provider=time_provider,
         attachment_store=attachment_store,
         memory=memory,
+        transaction_reconciler=transaction_reconciler,
         recall_buffer=recall_buffer,
         skill_service=skill_service,
         first_party_skill_updater=first_party_skill_updater,

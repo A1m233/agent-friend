@@ -76,6 +76,7 @@ from memory import (
 from .approvals.models import SessionApprovalModeState
 from .attachments import AttachmentRef
 from .command_runtime.tools import (
+    COMMAND_EXECUTION_CHECKPOINT_ARG,
     COMMAND_RUN_CONTEXT_ARG,
     COMMAND_RUN_ID_ARG,
     COMMAND_SESSION_ID_ARG,
@@ -475,6 +476,8 @@ class Conversation:
         self._prompt_surface_override: InteractionSurfaceId | None = None
         self._interaction_destination_id_override: str | None = None
         self._run_id_override: str | None = None
+        self._runtime_instance_id = ""
+        self._runtime_start_reason = "direct_start"
         self._turn_context_override = ""
         self._turn_prompt_builder: PromptBuilder | None = None
         self._last_built_model_messages: list[Message] | None = None
@@ -510,6 +513,12 @@ class Conversation:
         """Attach the runtime-owned, content-free timeline for the active run."""
         self._run_latency_context = context
 
+    def set_runtime_identity(self, runtime_instance_id: str, start_reason: str) -> None:
+        """Bind content-free process ownership for durable recovery metadata."""
+
+        self._runtime_instance_id = runtime_instance_id
+        self._runtime_start_reason = start_reason
+
     # ----- 只读视图 -----
 
     @property
@@ -522,6 +531,7 @@ class Conversation:
         return {
             "generation": self._cache_epoch.generation,
             "reason": self._cache_epoch.reason,
+            "runtime_start_reason": self._runtime_start_reason,
             "exact_process_continuation": (self._cache_epoch.reason != "process_resume_degraded"),
         }
 
@@ -1757,11 +1767,15 @@ class Conversation:
         snapshot = self._active_skill_turn_snapshot
         if snapshot is None:
             return None
-        latest = self._session.latest_skill_catalog_state
-        if (
-            latest is not None
-            and latest.payload.get("render_fingerprint") == snapshot.rendered_catalog.fingerprint
-        ):
+        latest_fingerprint = next(
+            (
+                message.meta.get("skill_catalog_fingerprint")
+                for message in reversed(self._session_model_history.snapshot())
+                if message.meta.get("synthetic") == "skill_catalog_state"
+            ),
+            None,
+        )
+        if latest_fingerprint == snapshot.rendered_catalog.fingerprint:
             return None
         return Message(
             role="system",
@@ -1770,6 +1784,7 @@ class Conversation:
                 "synthetic": "skill_catalog_state",
                 "model_only": True,
                 "prompt_cache_domain": "runtime",
+                "skill_catalog_fingerprint": snapshot.rendered_catalog.fingerprint,
             },
         )
 
@@ -1834,18 +1849,115 @@ class Conversation:
         )
 
     def _skill_context_messages(self) -> list[Message]:
-        return [
-            Message(
-                role="user",
-                content=str(payload["rendered"]),
-                meta={
-                    "synthetic": "skill_instructions",
-                    "model_only": True,
-                    "prompt_cache_domain": "runtime",
-                },
+        messages: list[Message] = []
+        for payload in self._skill_context_payloads():
+            messages.append(
+                Message(
+                    role="user",
+                    content=str(payload["rendered"]),
+                    meta={
+                        "synthetic": "skill_instructions",
+                        "model_only": True,
+                        "trusted_host_context": True,
+                        "prompt_cache_domain": "runtime",
+                        "skill_activation_id": str(payload.get("skill_id", "")),
+                        "skill_activation_version": str(payload.get("version", "")),
+                        "skill_activation_state": "active",
+                        "scope_lifetime": "current_user_turn",
+                    },
+                )
             )
-            for payload in self._skill_context_payloads()
-        ]
+        return messages
+
+    @staticmethod
+    def _active_model_context_ids(
+        history: list[Message],
+        *,
+        id_key: str,
+        state_key: str,
+        synthetic_values: set[str],
+    ) -> tuple[str, ...]:
+        """Return ids whose latest append-only model state is still active."""
+
+        latest: dict[str, str] = {}
+        for message in history:
+            if message.meta.get("synthetic") not in synthetic_values:
+                continue
+            raw_ids = message.meta.get(id_key)
+            ids = raw_ids if isinstance(raw_ids, list) else [raw_ids]
+            state = str(message.meta.get(state_key, ""))
+            for raw_id in ids:
+                if isinstance(raw_id, str) and raw_id:
+                    latest[raw_id] = state
+        return tuple(sorted(item_id for item_id, state in latest.items() if state == "active"))
+
+    def _expired_model_context_delta_messages(
+        self,
+        history: list[Message],
+    ) -> list[Message]:
+        """Append expiry facts at a new user boundary without rewriting old items."""
+
+        messages: list[Message] = []
+        skill_ids = self._active_model_context_ids(
+            history,
+            id_key="skill_activation_id",
+            state_key="skill_activation_state",
+            synthetic_values={"skill_instructions", "skill_activation_delta"},
+        )
+        if skill_ids:
+            rendered_ids = ", ".join(html.escape(item_id) for item_id in skill_ids)
+            messages.append(
+                Message(
+                    role="user",
+                    content=(
+                        '<skill_activation_delta source="host" state="inactive">\n'
+                        f"The prior user turn's Skill activation expired: {rendered_ids}. "
+                        "Do not follow those prior Skill instructions unless the host appends "
+                        "a new active Skill item for this turn.\n"
+                        "</skill_activation_delta>"
+                    ),
+                    meta={
+                        "synthetic": "skill_activation_delta",
+                        "model_only": True,
+                        "trusted_host_context": True,
+                        "prompt_cache_domain": "runtime",
+                        "skill_activation_id": list(skill_ids),
+                        "skill_activation_state": "inactive",
+                    },
+                )
+            )
+
+        filesystem_scope_ids = self._active_model_context_ids(
+            history,
+            id_key="filesystem_scope_ids",
+            state_key="filesystem_scope_state",
+            synthetic_values={
+                "skill_filesystem_scope_delta",
+                "skill_filesystem_scope_expiry_delta",
+            },
+        )
+        if filesystem_scope_ids:
+            rendered_ids = ", ".join(html.escape(scope_id) for scope_id in filesystem_scope_ids)
+            messages.append(
+                Message(
+                    role="user",
+                    content=(
+                        '<filesystem_scope_delta source="host" state="expired">\n'
+                        f"The prior user turn's filesystem scopes expired: {rendered_ids}. "
+                        "The host will reject them; use only a newly appended active scope.\n"
+                        "</filesystem_scope_delta>"
+                    ),
+                    meta={
+                        "synthetic": "skill_filesystem_scope_expiry_delta",
+                        "model_only": True,
+                        "trusted_host_context": True,
+                        "prompt_cache_domain": "runtime",
+                        "filesystem_scope_ids": list(filesystem_scope_ids),
+                        "filesystem_scope_state": "inactive",
+                    },
+                )
+            )
+        return messages
 
     def _filesystem_scope_delta_message(self) -> Message | None:
         context = self._active_tool_run_context
@@ -1875,6 +1987,8 @@ class Conversation:
                 "synthetic": "skill_filesystem_scope_delta",
                 "prompt_cache_domain": "runtime",
                 "scope_lifetime": "current_user_turn",
+                "filesystem_scope_ids": sorted(new_ids),
+                "filesystem_scope_state": "active",
             },
         )
         self._pending_filesystem_scope_announcements[message.uuid] = set(new_ids)
@@ -1912,12 +2026,10 @@ class Conversation:
                 "render_fingerprint": snapshot.rendered_catalog.fingerprint,
                 "catalog_fingerprint": snapshot.catalog.fingerprint,
                 "budget_profile": snapshot.rendered_catalog.budget_profile,
-                "content": snapshot.rendered_catalog.content,
             },
             meta={
                 "model": self._session.current_model,
-                "model_only": True,
-                "prompt_cache_domain": "runtime",
+                "content_persistence": "metadata_only",
             },
         )
         self._store.append_event(self._session.session_id, event)
@@ -1925,16 +2037,20 @@ class Conversation:
 
     def _append_skill_context_events(self, user_event_id: str) -> None:
         for payload in self._skill_context_payloads():
+            durable_payload = {
+                key: value
+                for key, value in payload.items()
+                if key not in {"path", "contents", "rendered"}
+            }
             event = Event(
                 type="skill_context",
                 uuid=str(uuid4()),
                 ts=datetime.now(UTC),
-                payload={**payload, "user_event_id": user_event_id},
+                payload={**durable_payload, "user_event_id": user_event_id},
                 meta=self._run_event_meta(
                     {
                         "model": self._session.current_model,
-                        "model_only": True,
-                        "prompt_cache_domain": "runtime",
+                        "content_persistence": "metadata_only",
                     }
                 ),
             )
@@ -2204,6 +2320,43 @@ class Conversation:
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
 
+    def append_run_terminal_event(
+        self,
+        *,
+        run_id: str,
+        status: Literal["completed", "interrupted", "failed"],
+        reason_code: str,
+        owner_runtime_instance_id: str,
+        source: Literal["runtime", "startup_reconciliation"] = "runtime",
+        recovered: bool = False,
+    ) -> bool:
+        """Append the unique durable run terminal without changing model history."""
+
+        if any(
+            event.type == "run_terminal" and event.payload.get("run_id") == run_id
+            for event in self._session.events
+        ):
+            return False
+        event = Event(
+            type="run_terminal",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload={
+                "run_id": run_id,
+                "status": status,
+                "reason_code": reason_code,
+                "source": source,
+                "recovered": recovered,
+            },
+            meta={
+                "run_id": run_id,
+                "owner_runtime_instance_id": owner_runtime_instance_id,
+            },
+        )
+        self._store.append_event(self._session.session_id, event)
+        self._session.append(event)
+        return True
+
     @staticmethod
     def _drain_assembled_messages(
         stream: Generator[ConversationEvent, None, list[dict[str, Any]]],
@@ -2257,6 +2410,10 @@ class Conversation:
         若注入了 memory，先 ``retrieve`` 召回相关记忆，渲染成单条临时 system
         消息走 ``turn_context`` 尾部注入。空召回不注入任何记忆段；召回结果不落盘。
         """
+        effective_history = (
+            self._session_model_history.snapshot() if history_override is None else history_override
+        )
+        expired_context_deltas = self._expired_model_context_delta_messages(effective_history)
         turn_context = self._skill_context_messages()
         if self._turn_context_override:
             turn_context.append(
@@ -2357,7 +2514,11 @@ class Conversation:
                 escape=escape_internal_prompt_markers,
             ),
             new_user_attachments=attachments,
-            pre_user_context=[catalog_message] if catalog_message is not None else None,
+            pre_user_context=[
+                *expired_context_deltas,
+                *([catalog_message] if catalog_message is not None else []),
+            ]
+            or None,
             turn_context=turn_context or None,
             history_override=history_override,
             prior_summary_override=prior_summary_override,
@@ -4227,6 +4388,16 @@ class Conversation:
                     COMMAND_TOOL_CALL_ID_ARG: tool_call_id,
                     COMMAND_RUN_CONTEXT_ARG: tool_run_context,
                     COMMAND_SKILL_SNAPSHOT_ARG: self._active_skill_turn_snapshot,
+                    COMMAND_EXECUTION_CHECKPOINT_ARG: (
+                        lambda operation_id, recovery_mode: (
+                            self._append_tool_execution_checkpoint_event(
+                                tool_call_id=tool_call_id,
+                                tool_name=name,
+                                operation_id=operation_id,
+                                recovery_mode=recovery_mode,
+                            )
+                        )
+                    ),
                 }
             )
         if name in FILESYSTEM_TOOL_NAMES:
@@ -4934,7 +5105,12 @@ class Conversation:
 
     def _append_tool_call_request_event(self, tc: dict[str, Any]) -> Event:
         """落 ``tool_call_request`` 事件。"""
-        meta = self._run_event_meta({"tool_call_origin": tc.get("origin", "model")})
+        meta = self._run_event_meta(
+            {
+                "tool_call_origin": tc.get("origin", "model"),
+                "owner_runtime_instance_id": self._runtime_instance_id,
+            }
+        )
         if self._pending_context_usage is not None:
             # Tool-only model turns have no user-visible assistant message. Preserve
             # their usage diagnostics on the first durable tool request instead of
@@ -4963,6 +5139,46 @@ class Conversation:
         self._session.append(event)
 
         self._session_model_history.note_active_events(self._session)
+        return event
+
+    def _append_tool_execution_checkpoint_event(
+        self,
+        *,
+        tool_call_id: str,
+        tool_name: str,
+        operation_id: str | None,
+        recovery_mode: str,
+    ) -> Event:
+        """Persist one content-free write-ahead execution owner fact."""
+
+        run_id = self._run_id_override or ""
+        for existing in self._session.events:
+            if (
+                existing.type == "tool_execution_checkpoint"
+                and existing.meta.get("run_id") == run_id
+                and existing.payload.get("tool_call_id") == tool_call_id
+            ):
+                return existing
+        event = Event(
+            type="tool_execution_checkpoint",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload={
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "recovery_mode": recovery_mode,
+                "operation_id": operation_id,
+                "execution_state": "launch_committed",
+            },
+            meta=self._run_event_meta(
+                {
+                    "owner_runtime_instance_id": self._runtime_instance_id,
+                    "source": "host",
+                }
+            ),
+        )
+        self._store.append_event(self._session.session_id, event)
+        self._session.append(event)
         return event
 
     def _append_completed_provider_assistant(

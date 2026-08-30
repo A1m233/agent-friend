@@ -236,7 +236,10 @@ export function RuntimeConfigPanel({ focusGroup }: { focusGroup?: RuntimeConfigG
     setSavingModel(key);
     try {
       await modelsApi.validate(selection.model);
-      const result = await persistBridgeRuntimeSetting(() => setSetting(key, selection));
+      const result = await persistBridgeRuntimeSetting(
+        () => setSetting(key, selection),
+        key === "chatModel" ? "default_model_changed" : "request_settings_changed",
+      );
       if (result.applied) {
         toast.success("模型设置已保存并生效", { description: "对话服务已自动重启" });
       } else {

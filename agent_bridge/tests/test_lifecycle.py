@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import cast
 
+from agent.runtime import RuntimeInstanceIdentity, RuntimeStartReason
 from agent.runtime.scheduler import RuntimeActivitySnapshot, RuntimeDrainReport
 from agent_bridge.assembly import BridgeRuntime
 from agent_bridge.lifecycle import BridgeLifecycleController, register_lifecycle_routes
@@ -46,7 +47,14 @@ def make_client(
     )
     bridge_runtime = cast(
         BridgeRuntime,
-        SimpleNamespace(agent_runtime=runtime, im_runtime=im_runtime),
+        SimpleNamespace(
+            agent_runtime=runtime,
+            im_runtime=im_runtime,
+            runtime_identity=RuntimeInstanceIdentity.create(
+                supervisor_generation=7,
+                start_reason=RuntimeStartReason.DEFAULT_MODEL_CHANGED,
+            ),
+        ),
     )
     controller = BridgeLifecycleController(
         bridge_runtime,
@@ -72,7 +80,11 @@ def test_readiness_and_quiesce_are_distinct() -> None:
     runtime = FakeAgentRuntime()
     client = make_client(runtime, [])
     headers = {"X-Agent-Friend-Lifecycle-Token": "secret-token"}
-    assert client.get("/internal/lifecycle/readiness", headers=headers).json()["status"] == "ready"
+    readiness = client.get("/internal/lifecycle/readiness", headers=headers).json()
+    assert readiness["status"] == "ready"
+    assert readiness["runtime"]["supervisorGeneration"] == 7
+    assert readiness["runtime"]["startReason"] == "default_model_changed"
+    assert readiness["runtime"]["bridgeInstanceId"]
     assert client.post("/internal/lifecycle/quiesce", headers=headers).json()["accepting"] is False
     assert (
         client.get("/internal/lifecycle/readiness", headers=headers).json()["status"] == "not_ready"

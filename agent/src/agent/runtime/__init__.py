@@ -28,7 +28,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Collection
 from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime, timedelta
-from typing import Any, ClassVar, Protocol, runtime_checkable
+from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
 from memory import Memory
 
@@ -52,8 +52,15 @@ from .hooks import (
     PreTurnDecision,
     pre_tool_block,
 )
+from .identity import RuntimeInstanceIdentity, RuntimeStartReason
 from .inbox import AgentEvent, SystemTriggerEvent, UserEvent
-from .listeners import ListenerRegistry, PushEnvelope, Subscriber
+from .listeners import (
+    ListenerRegistry,
+    PushEnvelope,
+    RunEventJournalSnapshot,
+    RunEventRecord,
+    Subscriber,
+)
 from .models import (
     ConsumerAbandonPolicy,
     ConversationFactory,
@@ -89,6 +96,8 @@ __all__ = [
     "PreTurnDecision",
     "PushEnvelope",
     "RunCancelResult",
+    "RunEventJournalSnapshot",
+    "RunEventRecord",
     "RunExecutionResult",
     "RunHandle",
     "RunOutcome",
@@ -98,6 +107,8 @@ __all__ = [
     "RunStatus",
     "RuntimeActivitySnapshot",
     "RuntimeDrainReport",
+    "RuntimeInstanceIdentity",
+    "RuntimeStartReason",
     "SessionBusyError",
     "Subscriber",
     "SystemTriggerEvent",
@@ -162,15 +173,19 @@ class AgentRuntime:
         session_turn_guard: Callable[[str], AbstractContextManager[None]] | None = None,
         recent_terminal_ttl: timedelta = timedelta(minutes=15),
         recent_terminal_limit: int = 512,
+        runtime_identity: RuntimeInstanceIdentity | None = None,
     ) -> None:
         if recent_terminal_ttl.total_seconds() <= 0 or recent_terminal_limit <= 0:
             raise ValueError("recent terminal limits must be positive")
         self._conversation_factory = conversation_factory
+        self._runtime_identity = runtime_identity or RuntimeInstanceIdentity.create()
         self._memory = memory
         self._inbox: queue.Queue[Any] = queue.Queue()
         self._sources: list[EventSource] = []
         self._hooks = HookRegistry()
-        self._listeners = ListenerRegistry()
+        self._listeners = ListenerRegistry(
+            runtime_instance_id=self._runtime_identity.bridge_instance_id
+        )
         self._run_lock = threading.Lock()
         self._active_run_snapshots: dict[str, RunSnapshot] = {}
         self._recent_terminal_snapshots: OrderedDict[str, RunSnapshot] = OrderedDict()
@@ -195,6 +210,10 @@ class AgentRuntime:
     def inbox(self) -> queue.Queue[Any]:
         """暴露 inbox 给 EventSource 直接 put（也可在 start 时通过参数注入）。"""
         return self._inbox
+
+    @property
+    def runtime_identity(self) -> RuntimeInstanceIdentity:
+        return self._runtime_identity
 
     @property
     def listeners(self) -> ListenerRegistry:
@@ -334,6 +353,7 @@ class AgentRuntime:
             )
         kwargs: dict[str, Any] = {
             "event": event,
+            "runtime_instance_id": self._runtime_identity.bridge_instance_id,
             "priority": priority,
             "expires_at": expires_at,
             "dedupe_key": dedupe_key,
@@ -447,6 +467,7 @@ class AgentRuntime:
             ):
                 break
             self._recent_terminal_snapshots.pop(first_run_id, None)
+            self._listeners.drop_run_journal(first_run_id)
 
     def _register_default_hooks(self) -> None:
         """默认 PostTurn hook：把 ``_observe_turn`` 从 conversation.py 硬编码迁过来
@@ -557,6 +578,10 @@ class AgentRuntime:
             started_ms=request.latency_started_ms,
         )
         conv.set_run_latency_context(run_latency)
+        conv.set_runtime_identity(
+            request.runtime_instance_id,
+            self._runtime_identity.start_reason.value,
+        )
         log_run_latency(
             logger,
             run_latency,
@@ -652,6 +677,7 @@ class AgentRuntime:
                     logger.warning("run error callback 失败: %s", request.run_id, exc_info=True)
             raise
         finally:
+            terminal_persist_error: BaseException | None = None
             try:
                 self._last_dispatch_finished_at = datetime.now(UTC)
                 self._hooks.run_post_turn(
@@ -664,18 +690,52 @@ class AgentRuntime:
                         error=error,
                     )
                 )
+                terminal_status: TurnStatus = (
+                    TurnStatus.INTERRUPTED
+                    if outcome is RunOutcome.CANCELLED
+                    else TurnStatus.FAILED
+                    if outcome is RunOutcome.FAILED
+                    else TurnStatus.COMPLETED
+                )
+                terminal_status_value: Literal["completed", "interrupted", "failed"] = (
+                    "interrupted"
+                    if terminal_status is TurnStatus.INTERRUPTED
+                    else "failed"
+                    if terminal_status is TurnStatus.FAILED
+                    else "completed"
+                )
+                terminal_reason = (
+                    run_failure_reason_code(error, default=type(error).__name__)
+                    if error is not None
+                    else execution_result.reason_code
+                    if execution_result is not None
+                    else "end_turn"
+                )
+                try:
+                    conv.append_run_terminal_event(
+                        run_id=request.run_id,
+                        status=terminal_status_value,
+                        reason_code=terminal_reason,
+                        owner_runtime_instance_id=request.runtime_instance_id,
+                    )
+                except BaseException as persist_error:
+                    logger.exception("run terminal persistence failed: %s", request.run_id)
+                    if error is None:
+                        terminal_persist_error = persist_error
+                        error = persist_error
+                        outcome = RunOutcome.FAILED
+                        terminal_reason = run_failure_reason_code(
+                            persist_error,
+                            default="run_terminal_persist_failed",
+                        )
                 self._listeners.finish_run(
                     request.event,
                     run_id=request.run_id,
                     outcome=outcome,
-                    reason_code=(
-                        run_failure_reason_code(error, default=type(error).__name__)
-                        if error is not None
-                        else execution_result.reason_code
-                        if execution_result is not None
-                        else ""
-                    ),
+                    reason_code=terminal_reason,
                 )
+                if terminal_persist_error is not None:
+                    raise terminal_persist_error
             finally:
                 log_run_latency(
                     logger,

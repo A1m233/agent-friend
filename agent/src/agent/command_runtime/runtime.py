@@ -363,6 +363,7 @@ class CommandRuntime:
         base_env: Mapping[str, str] | None = None,
         output_tail_bytes: int = OUTPUT_TAIL_BYTES,
         exec_server_command: list[str] | None = None,
+        runtime_instance_id: str = "",
     ) -> None:
         self._codex_executable = codex_executable.resolve() if codex_executable else None
         self._codex_home = codex_home.resolve()
@@ -376,6 +377,7 @@ class CommandRuntime:
         self._base_env = dict(base_env or os.environ)
         self._output_tail_bytes = output_tail_bytes
         self._exec_server_command = list(exec_server_command) if exec_server_command else None
+        self._runtime_instance_id = runtime_instance_id
         self._lock = threading.RLock()
         self._setup_lock = threading.Lock()
         self._client: ExecServerClient | None = None
@@ -661,6 +663,7 @@ class CommandRuntime:
     def start_process(
         self,
         *,
+        process_id: str | None = None,
         argv: tuple[str, ...],
         workdir: Path,
         env: Mapping[str, str],
@@ -676,13 +679,21 @@ class CommandRuntime:
                 "Windows command sandbox is not initialized; run the explicit setup action first",
             )
         client = self._ensure_client()
-        process_id = f"proc_{uuid4().hex}"
+        process_id = process_id or f"proc_{uuid4().hex}"
+        if not process_id.startswith("proc_"):
+            raise CommandRuntimeError("invalid_process_id", "process id must use the proc_ prefix")
+        with self._lock:
+            if process_id in self._processes:
+                raise CommandRuntimeError(
+                    "duplicate_process_id", "process id is already registered"
+                )
         snapshot = CommandProcessSnapshot(
             process_id=process_id,
             session_id=session_id,
             run_id=run_id,
             tool_call_id=tool_call_id,
             mode=mode,
+            runtime_instance_id=self._runtime_instance_id,
         )
         state = _ProcessState(snapshot)
         with self._lock:

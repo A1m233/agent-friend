@@ -226,7 +226,10 @@ function replaceItem(
 export function applyRuntimeConfigEffect(
   effect: RuntimeConfigEffect,
 ): Promise<void> {
-  return restartLocalService(effect === "restartBridge" ? "bridge" : "voice");
+  return restartLocalService(
+    effect === "restartBridge" ? "bridge" : "voice",
+    "request_settings_changed",
+  );
 }
 
 /**
@@ -260,8 +263,22 @@ export function persistRuntimeConfigChange<T>(
 
 export function persistBridgeRuntimeSetting(
   persist: () => Promise<void>,
+  reason: "default_model_changed" | "request_settings_changed" = "request_settings_changed",
 ): Promise<RuntimeConfigChangeResult<void>> {
-  return persistRuntimeConfigChange(persist, () => "restartBridge");
+  const run = runtimeConfigMutationTail.then(async () => {
+    await persist();
+    try {
+      await restartLocalService("bridge", reason);
+      return { persisted: undefined, applied: true, applyError: null };
+    } catch (error) {
+      return { persisted: undefined, applied: false, applyError: String(error) };
+    }
+  });
+  runtimeConfigMutationTail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }
 
 export function describeRuntimeConfigEffect(effect: RuntimeConfigEffect): string {
