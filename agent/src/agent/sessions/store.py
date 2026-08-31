@@ -9,11 +9,12 @@ JSONL append-only 实现。
 from __future__ import annotations
 
 import base64
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import BinaryIO, Protocol, cast
 
 import portalocker
 from portalocker.exceptions import LockException
@@ -29,9 +30,11 @@ from .errors import (
     SessionCorruptError,
     SessionNotFoundError,
     SessionPersistError,
+    SessionWriterConflictError,
 )
 from .events import Event
 from .session import Session
+from .store_types import SessionLoadDiagnostics
 
 _LOCK_TIMEOUT_SECONDS = 10.0
 """``JsonlSessionStore`` 写操作等待 OS advisory 文件锁的最长秒数。
@@ -41,6 +44,32 @@ _LOCK_TIMEOUT_SECONDS = 10.0
 重试或降级。"""
 
 _REVERSE_READ_CHUNK_BYTES = 8192
+
+
+class SessionWriterLease(Protocol):
+    """Lifetime ownership for one writable resident session."""
+
+    def release(self) -> None:
+        """Release the OS writer lease. Safe to call repeatedly."""
+
+
+class _NullWriterLease:
+    def release(self) -> None:
+        return None
+
+
+class _PortalockerWriterLease:
+    def __init__(self, lock: portalocker.Lock, handle: object) -> None:
+        self._lock = lock
+        self._handle = handle
+
+    def release(self) -> None:
+        if self._handle is None:
+            return
+        try:
+            self._lock.release()
+        finally:
+            self._handle = None
 
 
 def _iter_lines_reverse(path: Path) -> Iterator[str]:
@@ -212,6 +241,9 @@ class JsonlSessionStore:
     def _legacy_raw_path(self, session_id: str) -> Path:
         return self._base_dir / f"{session_id}.jsonl"
 
+    def _writer_lease_path(self, session_id: str) -> Path:
+        return self._base_dir / f".{_session_filename_stem(session_id)}.writer.lock"
+
     def _candidate_paths(self, session_id: str) -> list[Path]:
         current = self._path(session_id)
         legacy = self._legacy_raw_path(session_id)
@@ -238,10 +270,13 @@ class JsonlSessionStore:
                 "Session 必须以 session_meta 事件开头（请用 Session.new 构造）"
             )
         try:
-            with portalocker.Lock(path, "w", encoding="utf-8", timeout=_LOCK_TIMEOUT_SECONDS) as f:
+            with portalocker.Lock(path, "wb", timeout=_LOCK_TIMEOUT_SECONDS) as f:
+                binary = cast(BinaryIO, f)
                 for ev in session.events:
-                    f.write(ev.to_jsonl())
-                    f.write("\n")
+                    binary.write(ev.to_jsonl().encode("utf-8"))
+                    binary.write(b"\n")
+                binary.flush()
+                os.fsync(binary.fileno())
         except LockException as e:
             raise SessionPersistError(
                 f"获取会话文件写锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {path}: {e}"
@@ -250,13 +285,29 @@ class JsonlSessionStore:
             raise SessionPersistError(f"写入会话文件失败: {path}: {e}") from e
 
     def append_event(self, session_id: str, event: Event) -> None:
+        self.append_events(session_id, [event])
+
+    def append_events(self, session_id: str, events: list[Event]) -> None:
+        if not events:
+            return
         path = self._existing_path(session_id)
         if path is None:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
         try:
-            with portalocker.Lock(path, "a", encoding="utf-8", timeout=_LOCK_TIMEOUT_SECONDS) as f:
-                f.write(event.to_jsonl())
-                f.write("\n")
+            with portalocker.Lock(path, "a+b", timeout=_LOCK_TIMEOUT_SECONDS) as f:
+                binary = cast(BinaryIO, f)
+                binary.seek(0, os.SEEK_END)
+                if binary.tell():
+                    binary.seek(-1, os.SEEK_END)
+                    if binary.read(1) != b"\n":
+                        binary.seek(0, os.SEEK_END)
+                        binary.write(b"\n")
+                binary.seek(0, os.SEEK_END)
+                for item in events:
+                    binary.write(item.to_jsonl().encode("utf-8"))
+                    binary.write(b"\n")
+                binary.flush()
+                os.fsync(binary.fileno())
         except LockException as e:
             raise SessionPersistError(
                 f"获取会话文件写锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {session_id}: {e}"
@@ -264,33 +315,102 @@ class JsonlSessionStore:
         except OSError as e:
             raise SessionPersistError(f"追加事件失败: {path}: {e}") from e
 
+    def acquire_writer_lease(self, session_id: str) -> SessionWriterLease:
+        if self._existing_path(session_id) is None:
+            raise SessionNotFoundError(f"会话不存在: {session_id}")
+        path = self._writer_lease_path(session_id)
+        lock = portalocker.Lock(
+            path,
+            "a",
+            encoding="utf-8",
+            timeout=0.0,
+            flags=portalocker.LOCK_EX | portalocker.LOCK_NB,
+        )
+        try:
+            handle = lock.acquire()
+        except LockException as exc:
+            raise SessionWriterConflictError(
+                f"session 已由另一个 Bridge 持有写入 lease: {session_id}"
+            ) from exc
+        return _PortalockerWriterLease(lock, handle)
+
+    def delete_writer_lease(self, session_id: str) -> None:
+        path = self._writer_lease_path(session_id)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise SessionPersistError(f"删除 session writer lease 失败: {path}: {exc}") from exc
+
     def load(self, session_id: str) -> Session:
         path = self._existing_path(session_id)
         if path is None:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
         events: list[Event] = []
+        parsed_records: list[tuple[int, Event]] = []
+        parse_errors: list[tuple[int, int]] = []
         try:
             with portalocker.Lock(
                 path,
-                "r",
-                encoding="utf-8",
+                "rb",
                 flags=portalocker.LOCK_SH | portalocker.LOCK_NB,
                 timeout=_LOCK_TIMEOUT_SECONDS,
             ) as f:
-                for lineno, line in enumerate(f, start=1):
+                raw = cast(BinaryIO, f).read()
+                for lineno, line in enumerate(raw.splitlines(keepends=True), start=1):
                     if not line.strip():
                         continue
                     try:
-                        events.append(Event.from_jsonl(line))
-                    except SessionCorruptError as e:
-                        raise SessionCorruptError(f"会话文件 {path} 第 {lineno} 行损坏: {e}") from e
+                        event = Event.from_jsonl(line.decode("utf-8"))
+                    except (UnicodeDecodeError, SessionCorruptError):
+                        parse_errors.append((lineno, len(line)))
+                        continue
+                    parsed_records.append((lineno, event))
+                    events.append(event)
         except LockException as e:
             raise SessionPersistError(
                 f"获取会话文件读锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {path}: {e}"
             ) from e
         except OSError as e:
             raise SessionPersistError(f"读取会话文件失败: {path}: {e}") from e
-        return Session.from_events(events)
+        diagnostics = self._validate_recoverable_errors(path, parsed_records, parse_errors)
+        session = Session.from_events(events)
+        session.load_diagnostics = diagnostics
+        return session
+
+    @staticmethod
+    def _validate_recoverable_errors(
+        path: Path,
+        parsed_records: list[tuple[int, Event]],
+        parse_errors: list[tuple[int, int]],
+    ) -> SessionLoadDiagnostics:
+        if not parse_errors:
+            return SessionLoadDiagnostics()
+        first_error_line = min(line for line, _ in parse_errors)
+        last_error_line = max(line for line, _ in parse_errors)
+        has_commit_before_error = any(
+            line < first_error_line and event.type == "rollout_commit"
+            for line, event in parsed_records
+        )
+        records_after_error = [event for line, event in parsed_records if line > last_error_line]
+        handled = bool(
+            records_after_error
+            and records_after_error[0].type == "rollout_segment"
+            and records_after_error[0].payload.get("starts_after_corruption") is True
+        )
+        if not has_commit_before_error:
+            raise SessionCorruptError(
+                f"会话文件 {path} 在任何 rollout commit 之前损坏，无法安全恢复"
+            )
+        if records_after_error and not handled:
+            raise SessionCorruptError(
+                f"会话文件 {path} committed chain 中间损坏，且没有恢复 segment"
+            )
+        return SessionLoadDiagnostics(
+            parse_error_count=len(parse_errors),
+            malformed_bytes=sum(size for _, size in parse_errors),
+            last_error_line=last_error_line,
+            unhandled_tail_corruption=not handled,
+        )
 
     def list(self) -> list[SessionSummary]:
         summaries: list[SessionSummary] = []
@@ -478,6 +598,15 @@ class NullSessionStore:
     def append_event(self, session_id: str, event: Event) -> None:
         return None
 
+    def append_events(self, session_id: str, events: list[Event]) -> None:
+        return None
+
+    def acquire_writer_lease(self, session_id: str) -> SessionWriterLease:
+        return _NullWriterLease()
+
+    def delete_writer_lease(self, session_id: str) -> None:
+        return None
+
     def load(self, session_id: str) -> Session:
         raise SessionNotFoundError(f"NullSessionStore 不持有任何会话；无法加载 {session_id!r}")
 
@@ -510,6 +639,17 @@ class NotifyingSessionStore:
         self._inner.append_event(session_id, event)
         self._broker.record_change(session_id, change_kind="content")
 
+    def append_events(self, session_id: str, events: list[Event]) -> None:
+        append_session_events(self._inner, session_id, events)
+        if events:
+            self._broker.record_change(session_id, change_kind="content")
+
+    def acquire_writer_lease(self, session_id: str) -> SessionWriterLease:
+        return acquire_session_writer_lease(self._inner, session_id)
+
+    def delete_writer_lease(self, session_id: str) -> None:
+        delete_session_writer_lease(self._inner, session_id)
+
     def load(self, session_id: str) -> Session:
         return self._inner.load(session_id)
 
@@ -522,6 +662,35 @@ class NotifyingSessionStore:
 
     def latest(self) -> SessionSummary | None:
         return self._inner.latest()
+
+
+def append_session_events(store: SessionStore, session_id: str, events: list[Event]) -> None:
+    """Use the optional batch/fsync capability without widening SessionStore."""
+
+    method = getattr(store, "append_events", None)
+    if callable(method):
+        method(session_id, events)
+        return
+    for event in events:
+        store.append_event(session_id, event)
+
+
+def acquire_session_writer_lease(
+    store: SessionStore,
+    session_id: str,
+) -> SessionWriterLease:
+    """Acquire a lifetime lease when supported; transient stores remain no-op."""
+
+    method = getattr(store, "acquire_writer_lease", None)
+    if callable(method):
+        return cast(SessionWriterLease, method(session_id))
+    return _NullWriterLease()
+
+
+def delete_session_writer_lease(store: SessionStore, session_id: str) -> None:
+    method = getattr(store, "delete_writer_lease", None)
+    if callable(method):
+        method(session_id)
 
 
 def _session_filename_stem(session_id: str) -> str:

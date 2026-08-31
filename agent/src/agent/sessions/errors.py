@@ -28,6 +28,10 @@ class SessionPersistError(SessionError):
     """
 
 
+class SessionWriterConflictError(SessionPersistError):
+    """另一个 Bridge 已持有目标 session 的可写运行时 lease。"""
+
+
 class SessionCorruptError(SessionError):
     """会话文件结构损坏。
 

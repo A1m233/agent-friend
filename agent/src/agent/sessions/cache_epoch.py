@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class CacheEpochUpdate:
 class PreparedCacheEpoch:
     envelope: CacheEnvelopeState
     update: CacheEpochUpdate
+    epoch_id: str
 
 
 @dataclass
@@ -35,10 +37,15 @@ class SessionCacheEpoch:
     generation: int = 0
     reason: str = "session_start"
     envelope: CacheEnvelopeState | None = None
+    epoch_id: str = field(default_factory=lambda: str(uuid4()))
+    recovery_disposition: str = "fresh"
+    exact_continuation_candidate: bool = False
 
     def advance(self, reason: str) -> CacheEpochUpdate:
         self.generation += 1
         self.reason = reason
+        self.epoch_id = str(uuid4())
+        self.exact_continuation_candidate = False
         return CacheEpochUpdate(self.generation, True, reason)
 
     def observe(
@@ -84,22 +91,28 @@ class SessionCacheEpoch:
             return PreparedCacheEpoch(
                 current,
                 CacheEpochUpdate(self.generation, False, self.reason),
+                self.epoch_id,
             )
         reason = history_rewrite_reason or _envelope_change_reason(previous, current)
         if reason is None:
             return PreparedCacheEpoch(
                 current,
                 CacheEpochUpdate(self.generation, False, self.reason),
+                self.epoch_id,
             )
         return PreparedCacheEpoch(
             current,
             CacheEpochUpdate(self.generation + 1, True, reason),
+            str(uuid4()),
         )
 
     def commit(self, prepared: PreparedCacheEpoch) -> None:
         self.envelope = prepared.envelope
         self.generation = prepared.update.generation
         self.reason = prepared.update.reason
+        self.epoch_id = prepared.epoch_id
+        if prepared.update.changed:
+            self.exact_continuation_candidate = False
 
 
 def _canonical(value: object) -> str:

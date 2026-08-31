@@ -27,6 +27,7 @@ from agent import (
     PersonaCatalog,
     PersonaNotFoundError,
     Session,
+    SessionManager,
     ToolRegistry,
     personas_dir,
     sessions_dir,
@@ -899,6 +900,155 @@ def _run_deepseek_long_session_dialogue(
     }
 
 
+def _run_deepseek_rollout_recovery_dialogue(
+    *,
+    model: str,
+    switch_model: str,
+    history_chars: int,
+    source_session_ref: str,
+) -> dict[str, Any]:
+    """Run the requirement-113 no-restart/restart/model-switch smoke matrix."""
+
+    source_store = JsonlSessionStore(sessions_dir())
+    source_session, stats = _select_long_session(
+        store=source_store,
+        model=model,
+        source_session_ref=source_session_ref,
+        min_history_chars=history_chars,
+    )
+    product_events = [
+        event
+        for event in source_session.events
+        if event.type
+        not in {
+            "rollout_segment",
+            "model_transcript_item",
+            "rollout_request_prepared",
+            "rollout_commit",
+        }
+    ]
+    cloned_session = Session.from_events(product_events)
+    catalog = PersonaCatalog(external_dir=personas_dir())
+    runtime_config = resolve_bridge_runtime_config(credential_source_for_mode("desktop"))
+    scenarios: list[dict[str, Any]] = []
+
+    with TemporaryDirectory(prefix="agent-friend-prompt-cache-rollout-") as temp_dir:
+        session_root = Path(temp_dir) / "sessions"
+        JsonlSessionStore(session_root).create(cloned_session)
+
+        def build_manager() -> SessionManager:
+            return SessionManager(
+                store=JsonlSessionStore(session_root),
+                llm_client_factory=runtime_config.llm_client_factory,
+                prompt_builder_factory=lambda persona_id: MarkdownPromptBuilder(
+                    persona_id=persona_id,
+                    catalog=catalog,
+                ),
+                context_manager_factory=NaiveContextManager,
+                runtime_instance_id=f"rollout-smoke-{uuid4().hex[:8]}",
+                runtime_start_reason="prompt_cache_smoke",
+            )
+
+        def run_turn(
+            manager: SessionManager,
+            *,
+            scenario: str,
+            prompt: str,
+            switch_to: str | None = None,
+        ) -> None:
+            conversation = manager.start_conversation(manager.open(cloned_session.session_id))
+            if switch_to is not None:
+                conversation.switch_model(switch_to)
+            list(conversation.stream(prompt, run_id=f"rollout-smoke-{scenario}"))
+            observation = _latest_prompt_cache_observation(
+                conversation,
+                call_index=len(scenarios) + 1,
+            )
+            structure = observation.get("structure")
+            usage = observation.get("usage")
+            structure = structure if isinstance(structure, dict) else {}
+            usage = usage if isinstance(usage, dict) else {}
+            diagnostics = conversation.cache_epoch_diagnostics
+            cache_read = usage.get("cache_read")
+            input_total = usage.get("input_total")
+            scenarios.append(
+                {
+                    "scenario": scenario,
+                    "client": {
+                        "strict_extension": (
+                            structure.get("final_wire_relation") == "strict_extension"
+                        ),
+                        "final_wire_relation": structure.get("final_wire_relation"),
+                        "first_divergence_domain": structure.get("first_divergence_domain"),
+                        "first_divergence_index": structure.get("first_divergence_index"),
+                        "recovery_disposition": diagnostics.get("recovery_disposition"),
+                        "cache_epoch_id": diagnostics.get("epoch_id"),
+                        "cache_epoch_reason": diagnostics.get("reason"),
+                    },
+                    "provider": {
+                        "cache_hit": isinstance(cache_read, int) and cache_read > 0,
+                        "cache_read": cache_read,
+                        "input_total": input_total,
+                    },
+                    "observation": observation,
+                }
+            )
+
+        manager = build_manager()
+        run_turn(
+            manager,
+            scenario="baseline",
+            prompt="请用两三句话解释刚烧开的水为什么会逐渐变凉，不使用工具。",
+        )
+        run_turn(
+            manager,
+            scenario="no_restart_continuation",
+            prompt="沿着刚才的解释，再举一个日常例子，不使用工具。",
+        )
+        manager.close()
+
+        manager = build_manager()
+        run_turn(
+            manager,
+            scenario="bridge_restart_recovery",
+            prompt="继续刚才的话题，说说散热速度受什么影响，不使用工具。",
+        )
+        manager.close()
+
+        manager = build_manager()
+        run_turn(
+            manager,
+            scenario="app_restart_recovery",
+            prompt="再补充一个保持热饮温度的方法，不使用工具。",
+        )
+        run_turn(
+            manager,
+            scenario="explicit_model_switch",
+            prompt="切换模型后，用一句话总结前面的讨论，不使用工具。",
+            switch_to=switch_model,
+        )
+        manager.close()
+
+    total_input_tokens = sum(
+        item["provider"]["input_total"]
+        for item in scenarios
+        if isinstance(item["provider"]["input_total"], int)
+    )
+    return {
+        "model": model,
+        "switch_model": switch_model,
+        "real_llm_calls": len(scenarios),
+        "experiment": "deepseek_rollout_recovery_dialogue",
+        "source_session": asdict(stats),
+        "scenarios": scenarios,
+        "total_input_tokens": total_input_tokens,
+        "interpretation": {
+            "client_prefix_restoration_and_provider_cache_hit_are_independent": True,
+            "cache_read_zero_does_not_invalidate_client_strict_extension": True,
+        },
+    }
+
+
 def _run_deepseek_dynamic_context_dialogue(
     *,
     model: str,
@@ -1138,8 +1288,10 @@ def run(
     deepseek_cross_user_turn: bool = False,
     deepseek_long_session_dialogue: bool = False,
     deepseek_dynamic_context_dialogue: bool = False,
+    deepseek_rollout_recovery_dialogue: bool = False,
     source_session_ref: str | None = None,
     dialogue_turns: int = 2,
+    switch_model: str | None = None,
 ) -> dict[str, Any]:
     if model.startswith("deepseek/"):
         if exact_repeat_only:
@@ -1169,6 +1321,17 @@ def run(
                 raise ValueError("dynamic-context dialogue requires a safe source session ref")
             return _run_deepseek_dynamic_context_dialogue(
                 model=model,
+                history_chars=history_chars,
+                source_session_ref=source_session_ref,
+            )
+        if deepseek_rollout_recovery_dialogue:
+            if source_session_ref is None or switch_model is None:
+                raise ValueError(
+                    "rollout-recovery dialogue requires source session ref and switch model"
+                )
+            return _run_deepseek_rollout_recovery_dialogue(
+                model=model,
+                switch_model=switch_model,
                 history_chars=history_chars,
                 source_session_ref=source_session_ref,
             )
@@ -1238,6 +1401,14 @@ def main() -> None:
         help="clone one approved long session and exercise current-time/day/timezone deltas",
     )
     parser.add_argument(
+        "--deepseek-rollout-recovery-dialogue",
+        action="store_true",
+        help=(
+            "clone one approved long session and run no-restart, Bridge restart, "
+            "app restart, and explicit model-switch turns"
+        ),
+    )
+    parser.add_argument(
         "--source-session-ref",
         help="content-free safe ref of the approved local source session",
     )
@@ -1247,6 +1418,15 @@ def main() -> None:
         choices=(2, 3),
         default=2,
         help="number of ordinary questions for long-session dialogue",
+    )
+    parser.add_argument(
+        "--switch-model",
+        help="canonical target model id for the rollout recovery model-switch turn",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="optional UTF-8 JSON report path",
     )
     args = parser.parse_args()
     if not args.allow_llm:
@@ -1266,12 +1446,15 @@ def main() -> None:
             args.deepseek_cross_user_turn,
             args.deepseek_long_session_dialogue,
             args.deepseek_dynamic_context_dialogue,
+            args.deepseek_rollout_recovery_dialogue,
         )
     )
     if deepseek_modes > 1:
         parser.error("choose only one DeepSeek experiment mode")
     source_session_mode = (
-        args.deepseek_long_session_dialogue or args.deepseek_dynamic_context_dialogue
+        args.deepseek_long_session_dialogue
+        or args.deepseek_dynamic_context_dialogue
+        or args.deepseek_rollout_recovery_dialogue
     )
     if source_session_mode and not args.source_session_ref:
         parser.error("selected long-session mode requires --source-session-ref")
@@ -1279,26 +1462,35 @@ def main() -> None:
         parser.error("--source-session-ref is only valid for long-session modes")
     if args.dialogue_turns != 2 and not args.deepseek_long_session_dialogue:
         parser.error("--dialogue-turns is only configurable for long-session dialogue")
-    print(
-        json.dumps(
-            run(
-                model=args.model,
-                history_chars=args.history_chars,
-                settle_seconds=args.settle_seconds,
-                exact_repeat_only=args.exact_repeat_only,
-                deepseek_production_shape=args.deepseek_production_shape,
-                deepseek_shape_matrix=args.deepseek_shape_matrix,
-                deepseek_tool_loop_ab=args.deepseek_tool_loop_ab,
-                deepseek_cross_user_turn=args.deepseek_cross_user_turn,
-                deepseek_long_session_dialogue=args.deepseek_long_session_dialogue,
-                deepseek_dynamic_context_dialogue=(args.deepseek_dynamic_context_dialogue),
-                source_session_ref=args.source_session_ref,
-                dialogue_turns=args.dialogue_turns,
-            ),
-            ensure_ascii=False,
-            indent=2,
-        )
+    if args.deepseek_rollout_recovery_dialogue and not args.switch_model:
+        parser.error("rollout-recovery dialogue requires --switch-model")
+    if args.switch_model and not args.deepseek_rollout_recovery_dialogue:
+        parser.error("--switch-model is only valid for rollout-recovery dialogue")
+    rendered = json.dumps(
+        run(
+            model=args.model,
+            history_chars=args.history_chars,
+            settle_seconds=args.settle_seconds,
+            exact_repeat_only=args.exact_repeat_only,
+            deepseek_production_shape=args.deepseek_production_shape,
+            deepseek_shape_matrix=args.deepseek_shape_matrix,
+            deepseek_tool_loop_ab=args.deepseek_tool_loop_ab,
+            deepseek_cross_user_turn=args.deepseek_cross_user_turn,
+            deepseek_long_session_dialogue=args.deepseek_long_session_dialogue,
+            deepseek_dynamic_context_dialogue=(args.deepseek_dynamic_context_dialogue),
+            deepseek_rollout_recovery_dialogue=(args.deepseek_rollout_recovery_dialogue),
+            source_session_ref=args.source_session_ref,
+            dialogue_turns=args.dialogue_turns,
+            switch_model=args.switch_model,
+        ),
+        ensure_ascii=False,
+        indent=2,
     )
+    if args.output is None:
+        print(rendered)
+    else:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(rendered + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

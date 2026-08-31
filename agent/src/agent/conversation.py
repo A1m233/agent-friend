@@ -149,6 +149,7 @@ from .sessions import (
     SessionCacheEpoch,
     SessionModelContext,
     SessionModelHistory,
+    SessionRolloutRecorder,
     SessionStore,
 )
 from .skills import (
@@ -402,6 +403,7 @@ class Conversation:
         session_model_context: SessionModelContext | None = None,
         prompt_cache_trace_tracker: PromptCacheTraceTracker | None = None,
         cache_epoch: SessionCacheEpoch | None = None,
+        rollout_recorder: SessionRolloutRecorder | None = None,
         time_provider: TimeProvider | None = None,
         approval_mode_provider: Callable[[], SessionApprovalModeState] | None = None,
     ):
@@ -454,6 +456,7 @@ class Conversation:
         self._pending_context_usage: dict[str, Any] | None = None
         self._prompt_cache_trace_tracker = prompt_cache_trace_tracker or PromptCacheTraceTracker()
         self._cache_epoch = cache_epoch or SessionCacheEpoch()
+        self._rollout_recorder = rollout_recorder
         self._last_cache_epoch_changed = False
         self._prompt_item_domain_by_identity: dict[str, str] = {}
         self._last_prompt_cache_diagnostics: dict[str, Any] | None = None
@@ -530,9 +533,11 @@ class Conversation:
     def cache_epoch_diagnostics(self) -> dict[str, object]:
         return {
             "generation": self._cache_epoch.generation,
+            "epoch_id": self._cache_epoch.epoch_id,
             "reason": self._cache_epoch.reason,
+            "recovery_disposition": self._cache_epoch.recovery_disposition,
             "runtime_start_reason": self._runtime_start_reason,
-            "exact_process_continuation": (self._cache_epoch.reason != "process_resume_degraded"),
+            "exact_process_continuation": self._cache_epoch.exact_continuation_candidate,
         }
 
     @property
@@ -3085,6 +3090,35 @@ class Conversation:
         self._pending_cache_epoch = None
         if prepared_epoch is not None:
             self._cache_epoch.commit(prepared_epoch)
+        if self._rollout_recorder is not None:
+            self._rollout_recorder.commit(
+                history=self._session_model_history,
+                model_context=self._session_model_context,
+                cache_epoch=self._cache_epoch,
+                boundary="provider_input_accepted",
+                turn_terminal=False,
+            )
+
+    def _stage_pending_rollout_request(self) -> None:
+        recorder = self._rollout_recorder
+        history = self._pending_model_history
+        epoch = self._pending_cache_epoch
+        if recorder is None or history is None or epoch is None:
+            return
+        plan = self._pending_model_context_plan
+        context_snapshot = (
+            plan.next_snapshot if plan is not None else self._session_model_context.snapshot
+        )
+        recorder.stage_request(
+            history=history.items,
+            model_context=context_snapshot,
+            cache_epoch=epoch,
+            history_generation=(
+                self._session_model_history.generation
+                + (1 if history.update.relation == "rewrite" else 0)
+            ),
+            run_id=self._run_id_override,
+        )
 
     def _discard_pending_model_request_state(self) -> None:
         self._pending_model_history = None
@@ -3189,6 +3223,7 @@ class Conversation:
                     comparison_witness_builder() if comparison_witness_builder is not None else None
                 )
                 continuation_disposition = self._model_history_disposition()
+                self._stage_pending_rollout_request()
                 stream = client.stream(
                     ModelRequest(
                         messages=current_messages,
@@ -3709,6 +3744,15 @@ class Conversation:
                             }
                         )
                         self._last_prompt_cache_diagnostics = durable
+                    if self._rollout_recorder is not None:
+                        self._rollout_recorder.note_final_wire(
+                            (
+                                event.diagnostics.request_witness
+                                if event.diagnostics is not None
+                                else None
+                            ),
+                            self._last_prompt_cache_diagnostics,
+                        )
                     self._session_model_history.note_provider_request()
                 yield event
         except BaseException as exc:
@@ -4744,6 +4788,14 @@ class Conversation:
                 )
 
             if not tool_calls:
+                if self._rollout_recorder is not None:
+                    self._rollout_recorder.commit(
+                        history=self._session_model_history,
+                        model_context=self._session_model_context,
+                        cache_epoch=self._cache_epoch,
+                        boundary="assistant_completed",
+                        turn_terminal=True,
+                    )
                 if not frame.current_text_persisted:
                     # A tool-free empty turn is handled by provider recovery before this
                     # point. Keep the session free of zero-content assistant messages.
@@ -4796,6 +4848,16 @@ class Conversation:
                 arguments_state=tc.get("arguments_state", "valid_object"),
                 execution_disposition=tc.get("execution_disposition", "execute"),
                 origin=tc.get("origin", "model"),
+            )
+
+        if self._rollout_recorder is not None:
+            self._session_model_history.note_active_events(self._session)
+            self._rollout_recorder.commit(
+                history=self._session_model_history,
+                model_context=self._session_model_context,
+                cache_epoch=self._cache_epoch,
+                boundary="tool_call_received",
+                turn_terminal=False,
             )
 
         executable = [
@@ -5204,6 +5266,15 @@ class Conversation:
             run_id=self._run_id_override,
         )
         self._session_model_history.note_active_events(self._session)
+        if self._rollout_recorder is not None:
+            has_tool_calls = bool(assistant.tool_calls)
+            self._rollout_recorder.commit(
+                history=self._session_model_history,
+                model_context=self._session_model_context,
+                cache_epoch=self._cache_epoch,
+                boundary="tool_call_received" if has_tool_calls else "assistant_completed",
+                turn_terminal=not has_tool_calls,
+            )
 
     def _append_tool_call_result_event(
         self,
@@ -5268,6 +5339,14 @@ class Conversation:
             is_error=result.is_error,
         )
         self._session_model_history.note_active_events(self._session)
+        if self._rollout_recorder is not None:
+            self._rollout_recorder.commit(
+                history=self._session_model_history,
+                model_context=self._session_model_context,
+                cache_epoch=self._cache_epoch,
+                boundary="tool_result_completed",
+                turn_terminal=False,
+            )
         return event
 
     def _append_model_output_rejection_event(self, tc: dict[str, Any]) -> None:
@@ -5328,6 +5407,14 @@ class Conversation:
             ]
         )
         self._session_model_history.note_active_events(self._session)
+        if self._rollout_recorder is not None:
+            self._rollout_recorder.commit(
+                history=self._session_model_history,
+                model_context=self._session_model_context,
+                cache_epoch=self._cache_epoch,
+                boundary="model_output_rejected",
+                turn_terminal=False,
+            )
 
     def _append_system_trigger_event(
         self,

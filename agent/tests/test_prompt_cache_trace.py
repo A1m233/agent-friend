@@ -118,6 +118,29 @@ def test_restored_lineage_reports_idle_time_without_claiming_prefix_continuity()
     assert current.previous_request_prefix_preserved is None
 
 
+def test_restored_exact_final_wire_remains_a_comparison_anchor_only() -> None:
+    tracker = PromptCacheTraceTracker()
+    previous_messages = [{"role": "user", "content": "previous"}]
+    witness = _witness(previous_messages)
+    tracker.restore_exact_witness(
+        witness,
+        input_tokens=23,
+        response_model="kimi-k2.6",
+    )
+    current = _begin(
+        tracker,
+        [*previous_messages, {"role": "assistant", "content": "answer"}],
+    )
+    comparison = tracker.comparison_for(current, run_id="resumed-run")
+
+    assert comparison.scope == "cross_process_resume"
+    assert comparison.precision == "exact_item"
+    assert comparison.previous_witness == witness
+    assert comparison.previous_item_count == len(witness.transcript_item_digests)
+    assert comparison.previous_input_tokens == 23
+    assert comparison.previous_response_model == "kimi-k2.6"
+
+
 def test_new_user_run_compares_with_previous_run_final_wire_witness() -> None:
     tracker = PromptCacheTraceTracker()
     tools = [{"type": "function", "function": {"name": "weather_query"}}]

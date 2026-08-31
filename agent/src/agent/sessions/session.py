@@ -24,7 +24,15 @@ from ..attachments import AttachmentRef
 from ..message_references import parse_quoted_text_references
 from ..messages import Message
 from .errors import SessionCorruptError
-from .events import SCHEMA_VERSION, Event, _ensure_utc, _parse_ts, _serialize_ts
+from .events import (
+    ROLLOUT_EVENT_TYPES,
+    SCHEMA_VERSION,
+    Event,
+    _ensure_utc,
+    _parse_ts,
+    _serialize_ts,
+)
+from .store_types import SessionLoadDiagnostics
 
 Channel = Literal["voice", "text"]
 """会话与用户的交流模态。
@@ -148,6 +156,7 @@ class Session:
     initial_model: str
     initial_reasoning_preset: str | None = None
     events: list[Event] = field(default_factory=list)
+    load_diagnostics: SessionLoadDiagnostics = field(default_factory=SessionLoadDiagnostics)
 
     @classmethod
     def new(
@@ -306,8 +315,18 @@ class Session:
                 inactive.update(item for item in raw if isinstance(item, str))
 
         if not inactive:
-            return [ev for ev in self.events if ev.type != "turn_rewrite"]
-        return [ev for ev in self.events if ev.type != "turn_rewrite" and ev.uuid not in inactive]
+            return [
+                ev
+                for ev in self.events
+                if ev.type != "turn_rewrite" and ev.type not in ROLLOUT_EVENT_TYPES
+            ]
+        return [
+            ev
+            for ev in self.events
+            if ev.type != "turn_rewrite"
+            and ev.type not in ROLLOUT_EVENT_TYPES
+            and ev.uuid not in inactive
+        ]
 
     @property
     def current_persona(self) -> str:
