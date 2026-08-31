@@ -1,7 +1,7 @@
 import type { PixelRegion } from "@/pet/petAlphaHitTest";
 import {
-  ARK_AMIYA_ACTION_MAPPING,
-  ARK_AMIYA_CAPABILITIES,
+  ARK_SPINE_ACTION_MAPPING,
+  DEFAULT_SPINE38_CAPABILITIES,
 } from "@/avatar-models";
 import {
   chooseInitialAnimation as chooseRuntimeInitialAnimation,
@@ -43,10 +43,11 @@ export const RUNTIME_OPTIONS: Array<{ value: RuntimeMode; label: string }> = [
   { value: "spine38-pixi7", label: "Pixi 7 / Spine 3.8" },
 ];
 
-export const ARK_SPINE_CAPABILITIES: PetAvatarCapabilities = ARK_AMIYA_CAPABILITIES;
+export const ARK_SPINE_CAPABILITIES: PetAvatarCapabilities =
+  DEFAULT_SPINE38_CAPABILITIES;
 
 export const ARK_ACTION_MAPPING: Record<PetAvatarAction, PetActionMapping> =
-  ARK_AMIYA_ACTION_MAPPING;
+  ARK_SPINE_ACTION_MAPPING;
 
 export function chooseInitialAnimation(animations: string[], preferred: string): string {
   return chooseRuntimeInitialAnimation(animations, preferred)?.animation ?? "";

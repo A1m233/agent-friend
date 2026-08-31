@@ -281,7 +281,7 @@ export function Spine38AvatarSurface({
       const spine = spineRef.current;
       if (!spine) return { status: "skipped", reason: "spine runtime not ready" };
 
-      const mapping = resolveSpineActionMapping(entry, action);
+      const mapping = resolveSpineActionMapping(entry, action, animationsRef.current);
       const resolved = resolveAnimationName(
         animationsRef.current,
         mapping.animation,
@@ -302,7 +302,11 @@ export function Spine38AvatarSurface({
         ) {
           currentPhaseRef.current = action;
         } else if (mapping.returnToPhase) {
-          const phaseMapping = resolveSpineActionMapping(entry, currentPhaseRef.current);
+          const phaseMapping = resolveSpineActionMapping(
+            entry,
+            currentPhaseRef.current,
+            animationsRef.current,
+          );
           const phaseAnimation = resolveAnimationName(
             animationsRef.current,
             phaseMapping.animation,

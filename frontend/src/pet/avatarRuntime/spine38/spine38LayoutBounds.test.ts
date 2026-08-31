@@ -89,6 +89,18 @@ describe("spine38LayoutBounds", () => {
     ).toEqual(["Default"]);
   });
 
+  it("includes an inferred conventional idle animation for unconfigured models", () => {
+    const entry = {
+      spine: {
+        defaultAnimation: "Default",
+      },
+    } as SpineAvatarModelEntry;
+
+    expect(
+      resolveSpine38CanonicalLayoutAnimationNames(entry, ["Default", "Relax"]),
+    ).toEqual(["Relax", "Default"]);
+  });
+
   it("samples an animation and unions its bounds over time", () => {
     const bounds = sampleSpine38AnimationBounds(
       makeFakeSpine() as never,
