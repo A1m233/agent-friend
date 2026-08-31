@@ -48,7 +48,7 @@ COMPLETED
 - `agent/tests/test_session_rollout.py`：22 个用例覆盖旧会话同步迁移、迁移写失败释放 lease、重复重启保持 migration epoch、禁止业务历史恢复 fallback、exact restart、Memory/model-only 原位、tool 顺序与不重放、accepted-but-unsent user、坏尾、writer lease、credential 字段过滤、archive/delete、unknown schema、identity matrix、模型切换隔离、compaction rewrite 和 witness round-trip。
 - `agent/tests/test_dynamic_context_cache_continuity.py`：重启后 provider input 对重启前 final wire 做严格前缀比较。
 - `agent/tests/test_prompt_cache_trace.py` 与 `llm_providers/tests/test_prompt_cache_observation.py`：覆盖跨进程 exact witness，以及 `strict_extension + cache_read=0` 与客户端 rebase 的独立解释。
-- 2026-09-01 旧会话迁移修正后的最终门禁：backend 2397 passed / 4 skipped；frontend 115 files、683 tests、production build 通过；Rust 224 tests 通过、1 个既有 ignored，release check 通过。frontend CSS pseudo-element/chunk、Rust dead-code 与 Python bilibili atexit 输出均为既有 warning，未导致门禁失败。
+- 2026-09-01 同步 `origin/main@79b7e59` 后的最终门禁：backend 2397 passed / 4 skipped；frontend 115 files、685 tests、production build 通过；Rust 224 tests 通过、1 个既有 ignored，release check 通过。frontend CSS pseudo-element/chunk、Rust dead-code 与 Python bilibili atexit 输出均为既有 warning，未导致门禁失败。
 
 ### 真实长会话 smoke
 
@@ -76,3 +76,4 @@ COMPLETED
 | 2026-09-01 | 用户澄清旧会话迁移边界，回溯 requirement/design | 旧会话必须先落成 rollout checkpoint；原 `legacy_bootstrap` 内存 fallback 不满足唯一持久化事实源 |
 | 2026-09-01 | 完成旧会话同步 migration checkpoint 与产品 active-event 投影隔离 | 迁移失败不建立 runtime；重复重启保持同一 degraded epoch；业务-only suffix 不进入恢复 history；完整三阶段门禁通过 |
 | 2026-09-01 | 用户确认验收并授权一路合入主干、推送远端 | AC、三阶段门禁与真实长会话 smoke 证据齐备，工作流状态更新为 `COMPLETED` |
+| 2026-09-01 | 变基到 `origin/main@79b7e59` 并完成最终复验 | backend 2397 / frontend 685 / Rust 224 全部通过；公开 Guide 已更新并发布 immutable `agent-friend-guide-r26` |
