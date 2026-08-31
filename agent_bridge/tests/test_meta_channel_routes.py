@@ -690,7 +690,17 @@ class TestAgUiRunChannelBoundary:
         assert "RUN_ERROR" in resp.text
         assert "这轮回答中断了，没有生成完整回复。请稍后重试。" in resp.text
         loaded = runtime.persistent_session_manager.open(sid)
-        assert [event.type for event in loaded.events] == [
+        assert [
+            event.type
+            for event in loaded.events
+            if event.type
+            not in {
+                "rollout_segment",
+                "model_transcript_item",
+                "rollout_request_prepared",
+                "rollout_commit",
+            }
+        ] == [
             "session_meta",
             "user_message",
             "run_error",

@@ -323,3 +323,39 @@ def test_deepseek_dynamic_context_mode_routes_safe_ref(monkeypatch: Any) -> None
             "source_session_ref": "safe-ref",
         }
     ]
+
+
+def test_deepseek_rollout_recovery_mode_routes_safe_ref_and_switch_model(
+    monkeypatch: Any,
+) -> None:
+    module = _load_module()
+    received: list[dict[str, Any]] = []
+
+    def fake_rollout_recovery(**kwargs: Any) -> dict[str, Any]:
+        received.append(dict(kwargs))
+        return {"experiment": "rollout-recovery-dialogue"}
+
+    monkeypatch.setattr(
+        module,
+        "_run_deepseek_rollout_recovery_dialogue",
+        fake_rollout_recovery,
+    )
+
+    result = module.run(
+        model="deepseek/deepseek-v4-flash",
+        history_chars=8_000,
+        settle_seconds=0,
+        deepseek_rollout_recovery_dialogue=True,
+        source_session_ref="safe-ref",
+        switch_model="kimi/kimi-k2.6",
+    )
+
+    assert result == {"experiment": "rollout-recovery-dialogue"}
+    assert received == [
+        {
+            "model": "deepseek/deepseek-v4-flash",
+            "switch_model": "kimi/kimi-k2.6",
+            "history_chars": 8_000,
+            "source_session_ref": "safe-ref",
+        }
+    ]

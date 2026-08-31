@@ -1,0 +1,681 @@
+{
+  "model": "deepseek/deepseek-v4-flash",
+  "switch_model": "kimi/kimi-k2.6",
+  "real_llm_calls": 5,
+  "experiment": "deepseek_rollout_recovery_dialogue",
+  "source_session": {
+    "session_ref": "24f9616a08f5",
+    "history_chars": 83633,
+    "history_messages": 80,
+    "complete_turns": 13,
+    "tool_events": 50,
+    "attachments": 0
+  },
+  "scenarios": [
+    {
+      "scenario": "baseline",
+      "client": {
+        "strict_extension": false,
+        "final_wire_relation": "unavailable",
+        "first_divergence_domain": null,
+        "first_divergence_index": null,
+        "recovery_disposition": "legacy_bootstrap",
+        "cache_epoch_id": "8657021f-d525-4e51-942e-406065ced6ee",
+        "cache_epoch_reason": "legacy_bootstrap"
+      },
+      "provider": {
+        "cache_hit": true,
+        "cache_read": 4608,
+        "input_total": 33436
+      },
+      "observation": {
+        "schema": "agent-friend.prompt-cache-observation",
+        "schema_revision": 2,
+        "observed_at": "2026-08-31T16:25:16.261+00:00",
+        "identity": {
+          "operation": "conversation",
+          "surface": null,
+          "run_ref": "171da25a5a10a6ba",
+          "session_ref": "3af49a748c31cc5f",
+          "call_kind": "initial",
+          "call_index": 1,
+          "turn_index": 0,
+          "recovery_attempt": 0,
+          "message_count": 81,
+          "tool_count": 0,
+          "code": {
+            "mode": "source",
+            "collector": "llm-providers",
+            "collector_revision": 2
+          }
+        },
+        "model": {
+          "requested": "deepseek/deepseek-v4-flash",
+          "response": "deepseek-v4-flash",
+          "provider": "deepseek",
+          "transport": "litellm",
+          "service_tier": null
+        },
+        "usage": {
+          "input_total": 33436,
+          "cache_read": 4608,
+          "cache_write": 0,
+          "input_other": 28828,
+          "output": 79,
+          "accounting": "inclusive_total",
+          "buckets_reconciled": true,
+          "sources": {
+            "usage": "top_level",
+            "input_total": "prompt_tokens",
+            "output": "completion_tokens",
+            "cache_read": "prompt_tokens_details.cached_tokens",
+            "cache_write": "_cache_creation_input_tokens",
+            "input_other": "derived_input_total_minus_cache_read_write"
+          },
+          "derived": {
+            "input_other": true,
+            "legacy_cache_miss": true
+          }
+        },
+        "structure": {
+          "final_wire_relation": "unavailable",
+          "raw_final_wire_relation": "baseline",
+          "comparison_scope": "unavailable",
+          "comparison_precision": "unavailable",
+          "unavailable_reason": null,
+          "cross_turn_relation": "unavailable",
+          "common_prefix_items": null,
+          "first_divergence_domain": null,
+          "first_divergence_index": null,
+          "first_divergence_role": null,
+          "first_divergence_previous_domain": null,
+          "first_divergence_current_domain": null,
+          "contributor_mapping_precision": "exact_item",
+          "lost_prefix_items": null,
+          "lost_prefix_tokens_estimate": null,
+          "change_flags": {
+            "tools_changed": null,
+            "persona_changed": null,
+            "system_changed": null,
+            "settings_changed": null,
+            "memory_content_changed": null,
+            "messages_changed": null,
+            "memory_position_changed": null,
+            "memory_presence_changed": null,
+            "model_route_changed": null,
+            "messages_rewritten": null,
+            "skills_changed": null,
+            "runtime_changed": null,
+            "messages_appended": null
+          },
+          "request_bytes": 201212,
+          "continuation_disposition": "baseline",
+          "rebase_reason": null,
+          "adapter": {
+            "system_fingerprint": "b7cf779df437cb1a37a8bc07",
+            "tool_schema_fingerprint": "e1ba0c279e3113ddf131f320",
+            "prompt_fingerprint": "7a232892e89d066fb3e6c81a",
+            "max_tool_result_chars": 23619,
+            "lineage_state": "new",
+            "tool_result_count": 25,
+            "total_message_chars": 97834,
+            "namespace": "83af29ed0a340a1ba23e6674",
+            "prompt_payload_bytes": 138946,
+            "tool_result_chars": 63152
+          }
+        },
+        "timing": {
+          "stream_open_ms": 3059,
+          "first_chunk_ms": 3065,
+          "first_reasoning_delta_ms": null,
+          "total_ms": 5412
+        },
+        "outcome": {
+          "status": "completed",
+          "error_type": null,
+          "interpretation": "cache_read_structure_unavailable",
+          "cache_reporting_state": "reported_nonzero",
+          "provider_request_ref": null,
+          "response_ref": "b2e215b3d137f536",
+          "response_cost": null,
+          "response_cost_source": null
+        }
+      }
+    },
+    {
+      "scenario": "no_restart_continuation",
+      "client": {
+        "strict_extension": true,
+        "final_wire_relation": "strict_extension",
+        "first_divergence_domain": "messages",
+        "first_divergence_index": 81,
+        "recovery_disposition": "legacy_bootstrap",
+        "cache_epoch_id": "8657021f-d525-4e51-942e-406065ced6ee",
+        "cache_epoch_reason": "legacy_bootstrap"
+      },
+      "provider": {
+        "cache_hit": true,
+        "cache_read": 33408,
+        "input_total": 33532
+      },
+      "observation": {
+        "schema": "agent-friend.prompt-cache-observation",
+        "schema_revision": 2,
+        "observed_at": "2026-08-31T16:25:21.579+00:00",
+        "identity": {
+          "operation": "conversation",
+          "surface": null,
+          "run_ref": "343c847b802b5b55",
+          "session_ref": "3af49a748c31cc5f",
+          "call_kind": "initial",
+          "call_index": 1,
+          "turn_index": 0,
+          "recovery_attempt": 0,
+          "message_count": 83,
+          "tool_count": 0,
+          "code": {
+            "mode": "source",
+            "collector": "llm-providers",
+            "collector_revision": 2
+          }
+        },
+        "model": {
+          "requested": "deepseek/deepseek-v4-flash",
+          "response": "deepseek-v4-flash",
+          "provider": "deepseek",
+          "transport": "litellm",
+          "service_tier": null
+        },
+        "usage": {
+          "input_total": 33532,
+          "cache_read": 33408,
+          "cache_write": 0,
+          "input_other": 124,
+          "output": 105,
+          "accounting": "inclusive_total",
+          "buckets_reconciled": true,
+          "sources": {
+            "usage": "top_level",
+            "input_total": "prompt_tokens",
+            "output": "completion_tokens",
+            "cache_read": "prompt_tokens_details.cached_tokens",
+            "cache_write": "_cache_creation_input_tokens",
+            "input_other": "derived_input_total_minus_cache_read_write"
+          },
+          "derived": {
+            "input_other": true,
+            "legacy_cache_miss": true
+          }
+        },
+        "structure": {
+          "final_wire_relation": "strict_extension",
+          "raw_final_wire_relation": "strict_extension",
+          "comparison_scope": "cross_user_turn",
+          "comparison_precision": "exact_item",
+          "unavailable_reason": null,
+          "cross_turn_relation": "strict_extension",
+          "common_prefix_items": 81,
+          "first_divergence_domain": "messages",
+          "first_divergence_index": 81,
+          "first_divergence_role": "assistant",
+          "first_divergence_previous_domain": null,
+          "first_divergence_current_domain": "messages",
+          "contributor_mapping_precision": "exact_item",
+          "lost_prefix_items": 0,
+          "lost_prefix_tokens_estimate": 0,
+          "change_flags": {
+            "tools_changed": false,
+            "persona_changed": false,
+            "system_changed": false,
+            "settings_changed": false,
+            "memory_content_changed": false,
+            "messages_changed": true,
+            "memory_position_changed": false,
+            "memory_presence_changed": false,
+            "model_route_changed": false,
+            "messages_rewritten": false,
+            "skills_changed": false,
+            "runtime_changed": false,
+            "messages_appended": true
+          },
+          "request_bytes": 202201,
+          "continuation_disposition": "continued",
+          "rebase_reason": null,
+          "adapter": {
+            "previous_cache_state": "reported_nonzero",
+            "previous_request_prefix_preserved": true,
+            "system_fingerprint": "b7cf779df437cb1a37a8bc07",
+            "tool_schema_fingerprint": "e1ba0c279e3113ddf131f320",
+            "tool_schema_preserved": true,
+            "prompt_fingerprint": "5eff4f30ae315859798e8b4e",
+            "max_tool_result_chars": 23619,
+            "lineage_state": "continuous",
+            "tool_result_count": 25,
+            "total_message_chars": 98048,
+            "namespace": "83af29ed0a340a1ba23e6674",
+            "prompt_payload_bytes": 139468,
+            "cache_idle_ms": 110,
+            "common_prefix_estimated_tokens": 73375,
+            "tool_result_chars": 63152,
+            "common_prefix_messages": 81
+          }
+        },
+        "timing": {
+          "stream_open_ms": 2974,
+          "first_chunk_ms": 2975,
+          "first_reasoning_delta_ms": null,
+          "total_ms": 5176
+        },
+        "outcome": {
+          "status": "completed",
+          "error_type": null,
+          "interpretation": "structure_preserved_cache_read",
+          "cache_reporting_state": "reported_nonzero",
+          "provider_request_ref": null,
+          "response_ref": "c5c0f95e5e99077c",
+          "response_cost": null,
+          "response_cost_source": null
+        }
+      }
+    },
+    {
+      "scenario": "bridge_restart_recovery",
+      "client": {
+        "strict_extension": true,
+        "final_wire_relation": "strict_extension",
+        "first_divergence_domain": "messages",
+        "first_divergence_index": 83,
+        "recovery_disposition": "exact",
+        "cache_epoch_id": "8657021f-d525-4e51-942e-406065ced6ee",
+        "cache_epoch_reason": "legacy_bootstrap"
+      },
+      "provider": {
+        "cache_hit": true,
+        "cache_read": 33536,
+        "input_total": 33655
+      },
+      "observation": {
+        "schema": "agent-friend.prompt-cache-observation",
+        "schema_revision": 2,
+        "observed_at": "2026-08-31T16:25:27.510+00:00",
+        "identity": {
+          "operation": "conversation",
+          "surface": null,
+          "run_ref": "b2227f98ec2ec568",
+          "session_ref": "3af49a748c31cc5f",
+          "call_kind": "initial",
+          "call_index": 1,
+          "turn_index": 0,
+          "recovery_attempt": 0,
+          "message_count": 85,
+          "tool_count": 0,
+          "code": {
+            "mode": "source",
+            "collector": "llm-providers",
+            "collector_revision": 2
+          }
+        },
+        "model": {
+          "requested": "deepseek/deepseek-v4-flash",
+          "response": "deepseek-v4-flash",
+          "provider": "deepseek",
+          "transport": "litellm",
+          "service_tier": null
+        },
+        "usage": {
+          "input_total": 33655,
+          "cache_read": 33536,
+          "cache_write": 0,
+          "input_other": 119,
+          "output": 160,
+          "accounting": "inclusive_total",
+          "buckets_reconciled": true,
+          "sources": {
+            "usage": "top_level",
+            "input_total": "prompt_tokens",
+            "output": "completion_tokens",
+            "cache_read": "prompt_tokens_details.cached_tokens",
+            "cache_write": "_cache_creation_input_tokens",
+            "input_other": "derived_input_total_minus_cache_read_write"
+          },
+          "derived": {
+            "input_other": true,
+            "legacy_cache_miss": true
+          }
+        },
+        "structure": {
+          "final_wire_relation": "strict_extension",
+          "raw_final_wire_relation": "strict_extension",
+          "comparison_scope": "cross_process_resume",
+          "comparison_precision": "exact_item",
+          "unavailable_reason": null,
+          "cross_turn_relation": "unavailable_precision_reduced",
+          "common_prefix_items": 83,
+          "first_divergence_domain": "messages",
+          "first_divergence_index": 83,
+          "first_divergence_role": "assistant",
+          "first_divergence_previous_domain": null,
+          "first_divergence_current_domain": "messages",
+          "contributor_mapping_precision": "exact_item",
+          "lost_prefix_items": null,
+          "lost_prefix_tokens_estimate": null,
+          "change_flags": {
+            "tools_changed": null,
+            "persona_changed": null,
+            "system_changed": null,
+            "settings_changed": null,
+            "memory_content_changed": null,
+            "messages_changed": null,
+            "memory_position_changed": null,
+            "memory_presence_changed": null,
+            "model_route_changed": false,
+            "messages_rewritten": null,
+            "skills_changed": null,
+            "runtime_changed": null,
+            "messages_appended": null
+          },
+          "request_bytes": 203428,
+          "continuation_disposition": "continued",
+          "rebase_reason": null,
+          "adapter": {
+            "previous_cache_state": "reported_nonzero",
+            "system_fingerprint": "b7cf779df437cb1a37a8bc07",
+            "tool_schema_fingerprint": "e1ba0c279e3113ddf131f320",
+            "prompt_fingerprint": "ab89f2f3d59e9ca7bc24e8d5",
+            "max_tool_result_chars": 23619,
+            "lineage_state": "restored_without_prefix",
+            "tool_result_count": 25,
+            "total_message_chars": 98305,
+            "namespace": "83af29ed0a340a1ba23e6674",
+            "prompt_payload_bytes": 140111,
+            "cache_idle_ms": 244,
+            "tool_result_chars": 63152
+          }
+        },
+        "timing": {
+          "stream_open_ms": 2996,
+          "first_chunk_ms": 2997,
+          "first_reasoning_delta_ms": null,
+          "total_ms": 5665
+        },
+        "outcome": {
+          "status": "completed",
+          "error_type": null,
+          "interpretation": "structure_preserved_cache_read",
+          "cache_reporting_state": "reported_nonzero",
+          "provider_request_ref": null,
+          "response_ref": "ba74c267c8ac950c",
+          "response_cost": null,
+          "response_cost_source": null
+        }
+      }
+    },
+    {
+      "scenario": "app_restart_recovery",
+      "client": {
+        "strict_extension": true,
+        "final_wire_relation": "strict_extension",
+        "first_divergence_domain": "messages",
+        "first_divergence_index": 85,
+        "recovery_disposition": "exact",
+        "cache_epoch_id": "8657021f-d525-4e51-942e-406065ced6ee",
+        "cache_epoch_reason": "legacy_bootstrap"
+      },
+      "provider": {
+        "cache_hit": true,
+        "cache_read": 33792,
+        "input_total": 33831
+      },
+      "observation": {
+        "schema": "agent-friend.prompt-cache-observation",
+        "schema_revision": 2,
+        "observed_at": "2026-08-31T16:25:32.911+00:00",
+        "identity": {
+          "operation": "conversation",
+          "surface": null,
+          "run_ref": "78884ef22ff4af16",
+          "session_ref": "3af49a748c31cc5f",
+          "call_kind": "initial",
+          "call_index": 1,
+          "turn_index": 0,
+          "recovery_attempt": 0,
+          "message_count": 87,
+          "tool_count": 0,
+          "code": {
+            "mode": "source",
+            "collector": "llm-providers",
+            "collector_revision": 2
+          }
+        },
+        "model": {
+          "requested": "deepseek/deepseek-v4-flash",
+          "response": "deepseek-v4-flash",
+          "provider": "deepseek",
+          "transport": "litellm",
+          "service_tier": null
+        },
+        "usage": {
+          "input_total": 33831,
+          "cache_read": 33792,
+          "cache_write": 0,
+          "input_other": 39,
+          "output": 103,
+          "accounting": "inclusive_total",
+          "buckets_reconciled": true,
+          "sources": {
+            "usage": "top_level",
+            "input_total": "prompt_tokens",
+            "output": "completion_tokens",
+            "cache_read": "prompt_tokens_details.cached_tokens",
+            "cache_write": "_cache_creation_input_tokens",
+            "input_other": "derived_input_total_minus_cache_read_write"
+          },
+          "derived": {
+            "input_other": true,
+            "legacy_cache_miss": true
+          }
+        },
+        "structure": {
+          "final_wire_relation": "strict_extension",
+          "raw_final_wire_relation": "strict_extension",
+          "comparison_scope": "cross_process_resume",
+          "comparison_precision": "exact_item",
+          "unavailable_reason": null,
+          "cross_turn_relation": "unavailable_precision_reduced",
+          "common_prefix_items": 85,
+          "first_divergence_domain": "messages",
+          "first_divergence_index": 85,
+          "first_divergence_role": "assistant",
+          "first_divergence_previous_domain": null,
+          "first_divergence_current_domain": "messages",
+          "contributor_mapping_precision": "exact_item",
+          "lost_prefix_items": null,
+          "lost_prefix_tokens_estimate": null,
+          "change_flags": {
+            "tools_changed": null,
+            "persona_changed": null,
+            "system_changed": null,
+            "settings_changed": null,
+            "memory_content_changed": null,
+            "messages_changed": null,
+            "memory_position_changed": null,
+            "memory_presence_changed": null,
+            "model_route_changed": false,
+            "messages_rewritten": null,
+            "skills_changed": null,
+            "runtime_changed": null,
+            "messages_appended": null
+          },
+          "request_bytes": 205083,
+          "continuation_disposition": "continued",
+          "rebase_reason": null,
+          "adapter": {
+            "previous_cache_state": "reported_nonzero",
+            "system_fingerprint": "b7cf779df437cb1a37a8bc07",
+            "tool_schema_fingerprint": "e1ba0c279e3113ddf131f320",
+            "prompt_fingerprint": "31d507d24015113fb763aea4",
+            "max_tool_result_chars": 23619,
+            "lineage_state": "restored_without_prefix",
+            "tool_result_count": 25,
+            "total_message_chars": 98660,
+            "namespace": "83af29ed0a340a1ba23e6674",
+            "prompt_payload_bytes": 140984,
+            "cache_idle_ms": 107,
+            "tool_result_chars": 63152
+          }
+        },
+        "timing": {
+          "stream_open_ms": 3009,
+          "first_chunk_ms": 3011,
+          "first_reasoning_delta_ms": null,
+          "total_ms": 5265
+        },
+        "outcome": {
+          "status": "completed",
+          "error_type": null,
+          "interpretation": "structure_preserved_cache_read",
+          "cache_reporting_state": "reported_nonzero",
+          "provider_request_ref": null,
+          "response_ref": "609e04676aec917c",
+          "response_cost": null,
+          "response_cost_source": null
+        }
+      }
+    },
+    {
+      "scenario": "explicit_model_switch",
+      "client": {
+        "strict_extension": false,
+        "final_wire_relation": "rebase",
+        "first_divergence_domain": "model-route",
+        "first_divergence_index": 87,
+        "recovery_disposition": "exact",
+        "cache_epoch_id": "c1ca4d28-69c6-45e8-95f5-43914fceb2c2",
+        "cache_epoch_reason": "model_route_changed"
+      },
+      "provider": {
+        "cache_hit": false,
+        "cache_read": null,
+        "input_total": 31349
+      },
+      "observation": {
+        "schema": "agent-friend.prompt-cache-observation",
+        "schema_revision": 2,
+        "observed_at": "2026-08-31T16:25:49.219+00:00",
+        "identity": {
+          "operation": "conversation",
+          "surface": null,
+          "run_ref": "d8520ecbf6af2f8a",
+          "session_ref": "3af49a748c31cc5f",
+          "call_kind": "initial",
+          "call_index": 1,
+          "turn_index": 0,
+          "recovery_attempt": 0,
+          "message_count": 89,
+          "tool_count": 0,
+          "code": {
+            "mode": "source",
+            "collector": "llm-providers",
+            "collector_revision": 2
+          }
+        },
+        "model": {
+          "requested": "openai/kimi-k2.6",
+          "response": "kimi-k2.6",
+          "provider": "kimi",
+          "transport": "kimi_direct",
+          "service_tier": null
+        },
+        "usage": {
+          "input_total": 31349,
+          "cache_read": null,
+          "cache_write": null,
+          "input_other": null,
+          "output": 327,
+          "accounting": "inclusive_total",
+          "buckets_reconciled": false,
+          "sources": {
+            "usage": "top_level",
+            "input_total": "prompt_tokens",
+            "output": "completion_tokens",
+            "cache_read": null,
+            "cache_write": null,
+            "input_other": null
+          },
+          "derived": {
+            "input_other": false,
+            "legacy_cache_miss": false
+          }
+        },
+        "structure": {
+          "final_wire_relation": "rebase",
+          "raw_final_wire_relation": "rebase",
+          "comparison_scope": "cross_user_turn",
+          "comparison_precision": "exact_item",
+          "unavailable_reason": null,
+          "cross_turn_relation": "rebase",
+          "common_prefix_items": 87,
+          "first_divergence_domain": "model-route",
+          "first_divergence_index": 87,
+          "first_divergence_role": "assistant",
+          "first_divergence_previous_domain": null,
+          "first_divergence_current_domain": "messages",
+          "contributor_mapping_precision": "exact_item",
+          "lost_prefix_items": 87,
+          "lost_prefix_tokens_estimate": 33831,
+          "change_flags": {
+            "tools_changed": false,
+            "persona_changed": false,
+            "system_changed": false,
+            "settings_changed": true,
+            "memory_content_changed": false,
+            "messages_changed": true,
+            "memory_position_changed": false,
+            "memory_presence_changed": false,
+            "model_route_changed": true,
+            "messages_rewritten": false,
+            "skills_changed": false,
+            "runtime_changed": false,
+            "messages_appended": true
+          },
+          "request_bytes": 141759,
+          "continuation_disposition": "rebuilt",
+          "rebase_reason": "model_route_changed",
+          "adapter": {
+            "system_fingerprint": "b7cf779df437cb1a37a8bc07",
+            "tool_schema_fingerprint": "e1ba0c279e3113ddf131f320",
+            "prompt_fingerprint": "ae6b7d36afff9226736b11c5",
+            "max_tool_result_chars": 23619,
+            "lineage_state": "new",
+            "tool_result_count": 25,
+            "total_message_chars": 98916,
+            "namespace": "c0cf96d9eb5f3d11bdf24d36",
+            "prompt_payload_bytes": 141608,
+            "tool_result_chars": 63152
+          }
+        },
+        "timing": {
+          "stream_open_ms": 8501,
+          "first_chunk_ms": 8509,
+          "first_reasoning_delta_ms": 8509,
+          "total_ms": 16178
+        },
+        "outcome": {
+          "status": "completed",
+          "error_type": null,
+          "interpretation": "structure_changed",
+          "cache_reporting_state": "unavailable",
+          "provider_request_ref": null,
+          "response_ref": "dca97bede8e126b8",
+          "response_cost": null,
+          "response_cost_source": null
+        }
+      }
+    }
+  ],
+  "total_input_tokens": 165803,
+  "interpretation": {
+    "client_prefix_restoration_and_provider_cache_hit_are_independent": true,
+    "cache_read_zero_does_not_invalidate_client_strict_extension": true
+  }
+}

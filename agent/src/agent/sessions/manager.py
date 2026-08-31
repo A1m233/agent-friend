@@ -31,12 +31,20 @@ from ..prompt_cache_trace import PromptCacheTraceTracker
 from ..time_provider import SystemTimeProvider, TimeProvider
 from .cache_epoch import SessionCacheEpoch
 from .changes import SessionChangeBroker
+from .errors import SessionCorruptError
 from .metadata import SessionMetadataStore
 from .model_context import SessionModelContext
 from .model_history import SessionModelHistory
 from .recovery import ToolTransactionReconciler
+from .rollout import SessionRolloutRecorder, restore_rollout
 from .session import Session
-from .store import SessionStore, SessionSummary
+from .store import (
+    SessionStore,
+    SessionSummary,
+    SessionWriterLease,
+    acquire_session_writer_lease,
+    delete_session_writer_lease,
+)
 
 if TYPE_CHECKING:
     from memory import Memory
@@ -70,6 +78,10 @@ class _SessionRuntimeState:
     context_manager: ContextManager
     prompt_cache_trace_tracker: PromptCacheTraceTracker
     cache_epoch: SessionCacheEpoch
+    rollout_recorder: SessionRolloutRecorder
+    writer_lease: SessionWriterLease
+    recovery_disposition: str = "fresh"
+    exact_continuation_candidate: bool = False
     runtime_instance_id: str = ""
     runtime_start_reason: str = "direct_start"
 
@@ -155,10 +167,21 @@ class SessionManager:
             "modelHistoryGeneration": state.model_history.generation,
             "providerRequestCount": state.model_history.provider_request_count,
             "cacheEpochGeneration": state.cache_epoch.generation,
+            "cacheEpochId": state.cache_epoch.epoch_id,
             "cacheEpochReason": state.cache_epoch.reason,
+            "recoveryDisposition": state.recovery_disposition,
+            "exactContinuationCandidate": state.exact_continuation_candidate,
             "runtimeInstanceId": state.runtime_instance_id,
             "runtimeStartReason": state.runtime_start_reason,
         }
+
+    def close(self) -> None:
+        """Release all resident writer leases during a clean Bridge shutdown."""
+
+        states = tuple(self._runtime_states.values())
+        self._runtime_states.clear()
+        for state in states:
+            state.writer_lease.release()
 
     # ----- 会话 CRUD -----
 
@@ -337,8 +360,17 @@ class SessionManager:
 
     def delete(self, session_id: str) -> None:
         """删除指定会话（hard delete）。"""
-        self._store.delete(session_id)
-        self._runtime_states.pop(session_id, None)
+        state = self._runtime_states.pop(session_id, None)
+        lease = (
+            state.writer_lease
+            if state is not None
+            else acquire_session_writer_lease(self._store, session_id)
+        )
+        try:
+            self._store.delete(session_id)
+        finally:
+            lease.release()
+        delete_session_writer_lease(self._store, session_id)
         if self._metadata_store is not None:
             self._metadata_store.delete(session_id)
         self._delete_command_workspace(session_id)
@@ -494,33 +526,15 @@ class SessionManager:
         prompt_builder = _session_aware_factory(persona_id)
         runtime_state = self._runtime_states.get(session.session_id)
         if runtime_state is None:
-            if self._transaction_reconciler is not None and session.business_llm_messages:
-                session = self._transaction_reconciler.reconcile_session(session.session_id).session
-            runtime_state = _SessionRuntimeState(
-                model_history=SessionModelHistory.from_business_session(
-                    session,
-                    reason=(
-                        "process_resume_degraded"
-                        if session.business_llm_messages
-                        else "session_start"
-                    ),
-                ),
-                model_context=SessionModelContext(),
-                context_manager=self._context_manager_factory(),
-                prompt_cache_trace_tracker=PromptCacheTraceTracker(),
-                cache_epoch=SessionCacheEpoch(
-                    reason=(
-                        "process_resume_degraded"
-                        if session.business_llm_messages
-                        else "session_start"
-                    )
-                ),
-                runtime_instance_id=self._runtime_instance_id,
-                runtime_start_reason=self._runtime_start_reason,
-            )
+            writer_lease = acquire_session_writer_lease(self._store, session.session_id)
+            try:
+                session, runtime_state = self._restore_runtime_state(session, writer_lease)
+            except BaseException:
+                writer_lease.release()
+                raise
             self._runtime_states[session.session_id] = runtime_state
         else:
-            runtime_state.model_history.reconcile(session)
+            session = runtime_state.rollout_recorder.session
         return Conversation(
             session=session,
             store=self._store,
@@ -544,8 +558,81 @@ class SessionManager:
             session_model_context=runtime_state.model_context,
             prompt_cache_trace_tracker=runtime_state.prompt_cache_trace_tracker,
             cache_epoch=runtime_state.cache_epoch,
+            rollout_recorder=runtime_state.rollout_recorder,
             time_provider=self._time_provider,
             approval_mode_provider=lambda: self._approval_mode_state_without_load(
                 session.session_id
             ),
+        )
+
+    def _restore_runtime_state(
+        self,
+        session: Session,
+        writer_lease: SessionWriterLease,
+    ) -> tuple[Session, _SessionRuntimeState]:
+        context_manager_factory = self._context_manager_factory
+        if context_manager_factory is None:  # guarded by start_conversation
+            raise AgentError("context_manager_factory 未配置")
+        if self._transaction_reconciler is not None and session.business_llm_messages:
+            session = self._transaction_reconciler.reconcile_session(session.session_id).session
+        restored = restore_rollout(session)
+        if restored.runtime_blocked:
+            raise SessionCorruptError(
+                f"会话 {session.session_id} 的 rollout 无有效提交点，"
+                f"无法建立可写 runtime: {restored.reason}"
+            )
+        trace_tracker = PromptCacheTraceTracker()
+        if restored.commit is not None and restored.commit.cache_diagnostics is not None:
+            cache_diagnostics = restored.commit.cache_diagnostics
+            finished_at = cache_diagnostics.get("finished_at_unix_ms")
+            trace_tracker.restore(
+                cache_diagnostics,
+                finished_at_unix_ms=(finished_at if isinstance(finished_at, int) else 0),
+            )
+        if (
+            restored.exact_continuation_candidate
+            and restored.commit is not None
+            and restored.commit.final_wire_witness is not None
+        ):
+            cache_diagnostics = restored.commit.cache_diagnostics or {}
+            lineage = cache_diagnostics.get("cross_turn_lineage")
+            lineage = lineage if isinstance(lineage, dict) else {}
+            input_tokens = lineage.get("input_tokens")
+            response_model = cache_diagnostics.get("response_model") or lineage.get(
+                "response_model"
+            )
+            trace_tracker.restore_exact_witness(
+                restored.commit.final_wire_witness,
+                input_tokens=input_tokens if isinstance(input_tokens, int) else None,
+                response_model=(response_model if isinstance(response_model, str) else None),
+            )
+        recorder = SessionRolloutRecorder(
+            store=self._store,
+            session=session,
+            restored=restored.commit,
+            recovery_reason=restored.reason,
+            starts_after_corruption=(restored.disposition == "truncated_tail"),
+        )
+        recovery_disposition = restored.disposition
+        if restored.migration_required:
+            recorder.commit_legacy_migration(
+                history=restored.history,
+                model_context=restored.model_context,
+                cache_epoch=restored.cache_epoch,
+            )
+            recovery_disposition = "legacy_migrated"
+        restored.cache_epoch.recovery_disposition = recovery_disposition
+        restored.cache_epoch.exact_continuation_candidate = restored.exact_continuation_candidate
+        return session, _SessionRuntimeState(
+            model_history=restored.history,
+            model_context=restored.model_context,
+            context_manager=context_manager_factory(),
+            prompt_cache_trace_tracker=trace_tracker,
+            cache_epoch=restored.cache_epoch,
+            rollout_recorder=recorder,
+            writer_lease=writer_lease,
+            recovery_disposition=recovery_disposition,
+            exact_continuation_candidate=restored.exact_continuation_candidate,
+            runtime_instance_id=self._runtime_instance_id,
+            runtime_start_reason=self._runtime_start_reason,
         )

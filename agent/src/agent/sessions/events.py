@@ -39,6 +39,10 @@ EventType = Literal[
     "provider_reasoning_state",
     "skill_catalog_state",
     "skill_context",
+    "rollout_segment",
+    "model_transcript_item",
+    "rollout_request_prepared",
+    "rollout_commit",
 ]
 
 ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
@@ -66,8 +70,22 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "provider_reasoning_state",
         "skill_catalog_state",
         "skill_context",
+        "rollout_segment",
+        "model_transcript_item",
+        "rollout_request_prepared",
+        "rollout_commit",
     }
 )
+
+ROLLOUT_EVENT_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        "rollout_segment",
+        "model_transcript_item",
+        "rollout_request_prepared",
+        "rollout_commit",
+    }
+)
+"""Internal persistence events excluded from product/UI active projections."""
 
 SCHEMA_VERSION: Final[int] = 1
 """``session_meta.payload.schema_version`` 当前值。
@@ -118,6 +136,10 @@ result uuid；原始 ``tool_call_result`` 仍完整保留，同样是纯加性�
     111 起新增 ``tool_execution_checkpoint`` 与 ``run_terminal``，分别记录副作用
     调用前的 write-ahead owner/recovery 事实和 run 唯一持久终态。二者不进入消息
     历史，不改写旧 request/result，仍为纯加性事件，故 ``SCHEMA_VERSION`` 不递增。
+
+    113 起新增四类 ``rollout_*`` / ``model_transcript_item`` 事件，在同一 session
+    JSONL 内持久化进程内 model transcript。它们不进入业务消息投影，reader 只应用
+    完整 ``rollout_commit``，仍属于纯加性事件，故业务 ``SCHEMA_VERSION`` 不递增。
     """
 
 

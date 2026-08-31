@@ -31,6 +31,7 @@ from .errors import (
     SessionError,
     SessionNotFoundError,
     SessionPersistError,
+    SessionWriterConflictError,
 )
 from .events import ALLOWED_EVENT_TYPES, SCHEMA_VERSION, Event, EventType
 from .manager import (
@@ -59,6 +60,12 @@ from .recovery import (
     ToolRecoveryAdapter,
     ToolTransactionReconciler,
 )
+from .rollout import (
+    RolloutCommitState,
+    RolloutRestoreResult,
+    SessionRolloutRecorder,
+    restore_rollout,
+)
 from .search import (
     SearchTextSegment,
     SessionMessageSearchResult,
@@ -73,6 +80,7 @@ from .store import (
     NullSessionStore,
     SessionStore,
     SessionSummary,
+    SessionWriterLease,
 )
 
 __all__ = [
@@ -97,6 +105,8 @@ __all__ = [
     "RecoveredToolResult",
     "RecoveryProbe",
     "RecoveryProbeOutcome",
+    "RolloutCommitState",
+    "RolloutRestoreResult",
     "SearchTextSegment",
     "Session",
     "SessionCacheEpoch",
@@ -117,15 +127,19 @@ __all__ = [
     "SessionPersistError",
     "SessionResolution",
     "SessionRevisionStore",
+    "SessionRolloutRecorder",
     "SessionSearchResponse",
     "SessionSearchService",
     "SessionStore",
     "SessionSummary",
     "SessionTitleSearchResult",
+    "SessionWriterConflictError",
+    "SessionWriterLease",
     "TitleGenerator",
     "ToolRecoveryAdapter",
     "ToolTransactionReconciler",
     "current_session_mutation_context",
     "normalize_session_title",
+    "restore_rollout",
     "session_mutation_context",
 ]

@@ -336,6 +336,13 @@ class _RestoredCrossTurn:
     finished_at_unix_ms: int
 
 
+@dataclass(frozen=True)
+class _RestoredExactWitness:
+    witness: ProviderRequestWitness
+    input_tokens: int | None
+    response_model: str | None
+
+
 class PromptCacheTraceTracker:
     """Track the previous request for each provider/model/cache-key namespace."""
 
@@ -345,6 +352,22 @@ class PromptCacheTraceTracker:
         self._last_completed: _PreviousRequest | None = None
         self._last_user_completed: _PreviousRequest | None = None
         self._restored_cross_turn: _RestoredCrossTurn | None = None
+        self._restored_exact_witness: _RestoredExactWitness | None = None
+
+    def restore_exact_witness(
+        self,
+        witness: ProviderRequestWitness,
+        *,
+        input_tokens: int | None = None,
+        response_model: str | None = None,
+    ) -> None:
+        """Restore a content-free final-wire anchor without treating it as history."""
+
+        self._restored_exact_witness = _RestoredExactWitness(
+            witness=witness,
+            input_tokens=input_tokens,
+            response_model=response_model,
+        )
 
     def restore(self, value: Any, *, finished_at_unix_ms: int) -> None:
         """Restore durable cache lineage without restoring content-derived digests."""
@@ -625,6 +648,17 @@ class PromptCacheTraceTracker:
                 change_flags=flags,
             )
 
+        restored_exact = self._restored_exact_witness if user_turn else None
+        if restored_exact is not None:
+            return PromptCacheComparison(
+                scope="cross_process_resume",
+                precision="exact_item",
+                previous_witness=restored_exact.witness,
+                previous_item_count=len(restored_exact.witness.transcript_item_digests),
+                previous_input_tokens=restored_exact.input_tokens,
+                previous_response_model=restored_exact.response_model,
+            )
+
         restored = self._restored_cross_turn if user_turn else None
         if restored is not None:
             flags = _coarse_change_flags(restored, trace)
@@ -673,6 +707,7 @@ class PromptCacheTraceTracker:
         if run_id is not None and user_turn:
             self._last_user_completed = completed
             self._restored_cross_turn = None
+            self._restored_exact_witness = None
         self._restored.pop(trace.namespace, None)
         durable = {
             "version": _FINGERPRINT_VERSION,

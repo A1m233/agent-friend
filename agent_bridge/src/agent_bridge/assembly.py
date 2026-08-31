@@ -298,6 +298,9 @@ class BridgeRuntime:
 
     def close(self) -> None:
         """进程退出时调用：drain 抽取队列并关库（幂等）。"""
+        self.persistent_session_manager.close()
+        if self.persona_editor_session_manager is not None:
+            self.persona_editor_session_manager.close()
         if self.first_party_skill_updater is not None:
             self.first_party_skill_updater.stop()
         if self.skill_service is not None:

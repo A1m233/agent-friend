@@ -21,6 +21,38 @@ from .session import Session
 
 HistoryRelation = Literal["baseline", "append", "rewrite", "unchanged"]
 
+_MODEL_RELEVANT_EVENT_TYPES = frozenset(
+    {
+        "session_meta",
+        "user_message",
+        "assistant_message",
+        "persona_change",
+        "model_change",
+        "model_config_change",
+        "channel_change",
+        "tool_call_request",
+        "tool_call_result",
+        "model_output_rejection",
+        "compaction",
+        "tool_context_edit",
+        "system_trigger",
+        "turn_rewrite",
+        "run_error",
+        "todo_reminder",
+        "provider_reasoning_state",
+        "skill_catalog_state",
+        "skill_context",
+    }
+)
+
+
+def model_relevant_event_uuids(session: Session) -> tuple[str, ...]:
+    """Return business/model facts while excluding rollout bookkeeping itself."""
+
+    return tuple(
+        event.uuid for event in session.active_events if event.type in _MODEL_RELEVANT_EVENT_TYPES
+    )
+
 
 @dataclass(frozen=True)
 class HistoryUpdate:
@@ -61,7 +93,26 @@ class SessionModelHistory:
 
         return cls(
             items=copy.deepcopy(session.business_llm_messages),
-            active_event_uuids=tuple(event.uuid for event in session.active_events),
+            active_event_uuids=model_relevant_event_uuids(session),
+            last_relation="baseline",
+            last_reason=reason,
+        )
+
+    @classmethod
+    def from_persisted(
+        cls,
+        items: Sequence[Message],
+        *,
+        active_event_uuids: Sequence[str],
+        generation: int,
+        provider_request_count: int,
+        reason: str,
+    ) -> SessionModelHistory:
+        return cls(
+            items=copy.deepcopy(list(items)),
+            active_event_uuids=tuple(active_event_uuids),
+            generation=generation,
+            provider_request_count=provider_request_count,
             last_relation="baseline",
             last_reason=reason,
         )
@@ -78,12 +129,15 @@ class SessionModelHistory:
         new cache generation instead of guessing item placement around model-only data.
         """
 
-        current = tuple(event.uuid for event in session.active_events)
+        current_events = [
+            event for event in session.active_events if event.type in _MODEL_RELEVANT_EVENT_TYPES
+        ]
+        current = tuple(event.uuid for event in current_events)
         if current == self.active_event_uuids:
             return HistoryUpdate("unchanged", len(self.items), len(self.items))
         if current[: len(self.active_event_uuids)] == self.active_event_uuids:
             previous = len(self.items)
-            suffix_events = session.active_events[len(self.active_event_uuids) :]
+            suffix_events = current_events[len(self.active_event_uuids) :]
             unsafe_append_types = {
                 "provider_reasoning_state",
                 "tool_call_request",
@@ -238,7 +292,7 @@ class SessionModelHistory:
         return message
 
     def note_active_events(self, session: Session) -> None:
-        self.active_event_uuids = tuple(event.uuid for event in session.active_events)
+        self.active_event_uuids = model_relevant_event_uuids(session)
 
     def note_provider_request(self) -> None:
         self.provider_request_count += 1
@@ -258,4 +312,5 @@ __all__ = [
     "HistoryUpdate",
     "PreparedModelHistory",
     "SessionModelHistory",
+    "model_relevant_event_uuids",
 ]

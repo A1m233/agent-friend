@@ -443,15 +443,17 @@ def test_cache_epoch_classifies_every_envelope_and_history_rewrite_boundary() ->
     assert compacted.reason == "compaction"
 
 
-def test_restart_is_degraded_and_does_not_persist_model_context(tmp_path: Path) -> None:
+def test_restart_restores_exact_model_context_and_extends_previous_wire(tmp_path: Path) -> None:
     clock = _MutableTimeProvider(datetime(2026, 8, 29, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai")))
     first_llm = _RecordingLLM(replies=["answer"])
     manager, session_id = _manager(tmp_path, first_llm, clock)
     _run(manager, session_id, "first")
 
     persisted = (tmp_path / "sessions" / f"{session_id}.jsonl").read_text(encoding="utf-8")
-    assert "agent_friend_environment_context" not in persisted
-    assert "agent_friend_runtime_capabilities" not in persisted
+    assert "agent_friend_environment_context" in persisted
+    assert "agent_friend_runtime_capabilities" in persisted
+    assert '"type": "rollout_commit"' in persisted
+    manager.close()
 
     restarted_llm = _RecordingLLM(replies=["after restart"])
     catalog = PersonaCatalog(external_dir=tmp_path / "personas")
@@ -469,9 +471,11 @@ def test_restart_is_degraded_and_does_not_persist_model_context(tmp_path: Path) 
 
     assert conversation.cache_epoch_diagnostics == {
         "generation": 0,
-        "reason": "process_resume_degraded",
-        "exact_process_continuation": False,
+        "epoch_id": conversation.cache_epoch_diagnostics["epoch_id"],
+        "reason": "session_start",
+        "recovery_disposition": "exact",
+        "exact_process_continuation": True,
         "runtime_start_reason": "direct_start",
     }
     list(conversation.stream("continue", surface=DESKTOP_CHAT_SURFACE))
-    assert restarted_llm.received[0][: len(first_llm.received[0])] != first_llm.received[0]
+    assert restarted_llm.received[0][: len(first_llm.received[0])] == first_llm.received[0]
