@@ -131,7 +131,7 @@ export const HIYORI_LIVE2D_MODEL = {
   },
 } satisfies Live2DAvatarModelEntry;
 
-export const ARK_AMIYA_CAPABILITIES = {
+export const DEFAULT_SPINE38_CAPABILITIES = {
   motions: true,
   alphaHitTest: true,
   mouthParams: false,
@@ -139,7 +139,7 @@ export const ARK_AMIYA_CAPABILITIES = {
   expressionParams: false,
 } satisfies AvatarModelCapabilities;
 
-export const ARK_AMIYA_ACTION_MAPPING = {
+export const ARK_SPINE_ACTION_MAPPING = {
   idle: { animation: "Relax", loop: true },
   thinking: { animation: "Sit", loop: true },
   speaking: { animation: "Relax", loop: true },
@@ -205,10 +205,10 @@ function makeBuiltinArkSpineModel(slug: BuiltinArkSpineModelSlug): SpineAvatarMo
       format: "skel",
       runtime: "spine38-pixi7",
       defaultAnimation: "Relax",
-      actionMapping: ARK_AMIYA_ACTION_MAPPING,
+      actionMapping: ARK_SPINE_ACTION_MAPPING,
       fit: DEFAULT_SPINE38_PET_FIT,
     },
-    capabilities: ARK_AMIYA_CAPABILITIES,
+    capabilities: DEFAULT_SPINE38_CAPABILITIES,
   };
 }
 
@@ -234,9 +234,9 @@ export const ARK_AMIYA_SPINE_FIXTURE_MODEL = {
     format: "skel",
     runtime: "spine38-pixi7",
     defaultAnimation: "Relax",
-    actionMapping: ARK_AMIYA_ACTION_MAPPING,
+    actionMapping: ARK_SPINE_ACTION_MAPPING,
   },
-  capabilities: ARK_AMIYA_CAPABILITIES,
+  capabilities: DEFAULT_SPINE38_CAPABILITIES,
 } satisfies SpineAvatarModelEntry;
 
 export const AVATAR_MODEL_CATALOG: readonly AvatarModelCatalogEntry[] = [

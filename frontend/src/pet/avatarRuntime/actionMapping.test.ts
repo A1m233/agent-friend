@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  ARK_AMIYA_ACTION_MAPPING,
   ARK_AMIYA_SPINE_FIXTURE_MODEL,
+  ARK_SPINE_ACTION_MAPPING,
+  type AvatarModelAction,
+  type SpineAvatarModelEntry,
 } from "@/avatar-models";
 import {
   chooseInitialAnimation,
@@ -38,10 +40,10 @@ describe("avatar runtime action mapping", () => {
 
   it("uses configured Spine mappings before generated fallbacks", () => {
     expect(resolveSpineActionMapping(ARK_AMIYA_SPINE_FIXTURE_MODEL, "idle")).toEqual(
-      ARK_AMIYA_ACTION_MAPPING.idle,
+      ARK_SPINE_ACTION_MAPPING.idle,
     );
     expect(resolveSpineActionMapping(ARK_AMIYA_SPINE_FIXTURE_MODEL, "tap")).toEqual(
-      ARK_AMIYA_ACTION_MAPPING.tap,
+      ARK_SPINE_ACTION_MAPPING.tap,
     );
     expect(
       resolveSpineActionMapping(
@@ -56,5 +58,36 @@ describe("avatar runtime action mapping", () => {
         "thinking",
       ),
     ).toEqual({ animation: "Default", loop: true, returnToPhase: false });
+  });
+
+  it("infers conventional actions only when an unconfigured model provides them", () => {
+    const entry = {
+      ...ARK_AMIYA_SPINE_FIXTURE_MODEL,
+      id: "user:spine38:test",
+      source: "user",
+      spine: {
+        ...ARK_AMIYA_SPINE_FIXTURE_MODEL.spine,
+        actionMapping: undefined,
+        defaultAnimation: "Relax",
+      },
+    } satisfies SpineAvatarModelEntry;
+    const animations = ["Default", "Interact", "Move", "Relax", "Sit", "Sleep"];
+
+    for (const action of Object.keys(ARK_SPINE_ACTION_MAPPING) as AvatarModelAction[]) {
+      expect(resolveSpineActionMapping(entry, action, animations)).toEqual(
+        ARK_SPINE_ACTION_MAPPING[action],
+      );
+    }
+
+    expect(resolveSpineActionMapping(entry, "tap", ["Relax"])).toEqual({
+      animation: "Relax",
+      loop: false,
+      returnToPhase: true,
+    });
+    expect(resolveSpineActionMapping(entry, "tap", ["interact", "Relax"])).toEqual({
+      animation: "interact",
+      loop: false,
+      returnToPhase: true,
+    });
   });
 });

@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   ARK_AMIYA_SPINE_FIXTURE_MODEL,
   ARK_MODELS_NOTICE_PATH,
+  ARK_SPINE_ACTION_MAPPING,
   BUILTIN_ARK_SPINE_MODEL_SLUGS,
   BUILTIN_ARK_SPINE_MODELS,
   DEFAULT_AVATAR_MODEL_ID,
+  DEFAULT_SPINE38_CAPABILITIES,
   DEFAULT_SPINE38_PET_FIT,
   HIYORI_LIVE2D_MODEL,
   findAvatarModelEntry,
@@ -37,6 +39,12 @@ describe("avatar model catalog", () => {
     });
     expect(ARK_AMIYA_SPINE_FIXTURE_MODEL.spine.runtime).toBe("spine38-pixi7");
     expect(ARK_AMIYA_SPINE_FIXTURE_MODEL.spine.defaultAnimation).toBe("Relax");
+    expect(ARK_AMIYA_SPINE_FIXTURE_MODEL.spine.actionMapping).toBe(
+      ARK_SPINE_ACTION_MAPPING,
+    );
+    expect(ARK_AMIYA_SPINE_FIXTURE_MODEL.capabilities).toBe(
+      DEFAULT_SPINE38_CAPABILITIES,
+    );
     expect(ARK_AMIYA_SPINE_FIXTURE_MODEL.spine.actionMapping?.idle).toEqual({
       animation: "Relax",
       loop: true,
@@ -88,6 +96,7 @@ describe("avatar model catalog", () => {
       expect(entry.spine.runtime).toBe("spine38-pixi7");
       expect(entry.spine.format).toBe("skel");
       expect(entry.spine.defaultAnimation).toBe("Relax");
+      expect(entry.spine.actionMapping).toBe(ARK_SPINE_ACTION_MAPPING);
       expect(entry.spine.actionMapping?.idle).toEqual({
         animation: "Relax",
         loop: true,
@@ -109,6 +118,7 @@ describe("avatar model catalog", () => {
         gazeParams: false,
         expressionParams: false,
       });
+      expect(entry.capabilities).toBe(DEFAULT_SPINE38_CAPABILITIES);
     }
   });
 

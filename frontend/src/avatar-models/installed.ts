@@ -5,6 +5,7 @@ import { isTauri } from "@/utils/tauri";
 import {
   AVATAR_MODEL_CATALOG,
   DEFAULT_AVATAR_MODEL_ID,
+  DEFAULT_SPINE38_CAPABILITIES,
   DEFAULT_SPINE38_PET_FIT,
   HIYORI_LIVE2D_MODEL,
   type AvatarModelBackend,
@@ -130,13 +131,7 @@ export function mergeInstalledAvatarModelResources(
         defaultAnimation: resource.defaultAnimation,
         fit: DEFAULT_SPINE38_PET_FIT,
       },
-      capabilities: {
-        motions: true,
-        alphaHitTest: true,
-        mouthParams: false,
-        gazeParams: false,
-        expressionParams: false,
-      },
+      capabilities: DEFAULT_SPINE38_CAPABILITIES,
     });
   }
 

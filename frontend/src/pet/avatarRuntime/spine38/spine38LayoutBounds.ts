@@ -61,7 +61,7 @@ export function resolveSpine38CanonicalLayoutAnimationNames(
   const names = new Set<string>();
 
   for (const action of CANONICAL_LAYOUT_ACTIONS) {
-    const mapping = resolveSpineActionMapping(entry, action);
+    const mapping = resolveSpineActionMapping(entry, action, animations);
     const resolved = resolveAnimationName(
       animations,
       mapping.animation,

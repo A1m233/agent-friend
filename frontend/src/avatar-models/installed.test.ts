@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   DEFAULT_AVATAR_MODEL_ID,
+  DEFAULT_SPINE38_CAPABILITIES,
   DEFAULT_SPINE38_PET_FIT,
   HIYORI_LIVE2D_MODEL,
   type AvatarModelCatalogEntry,
@@ -157,6 +158,10 @@ describe("installed avatar model catalog", () => {
         fit: DEFAULT_SPINE38_PET_FIT,
       },
     });
+    expect(entries[0]?.backend).toBe("spine");
+    if (entries[0]?.backend !== "spine") return;
+    expect(entries[0].spine.actionMapping).toBeUndefined();
+    expect(entries[0].capabilities).toBe(DEFAULT_SPINE38_CAPABILITIES);
     expect(entries[0]?.resources).toEqual({
       skeleton: "asset://C:/models/a/model.skel",
       atlas: "asset://C:/models/a/model.atlas",
