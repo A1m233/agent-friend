@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RunSnapshot } from "@/types/run";
 import {
+  activeRunActivityMessageId,
   sessionActiveRun,
   sessionRunPresentation,
   shouldShowMessageActionBar,
@@ -96,5 +97,29 @@ describe("session run presentation", () => {
     expect(shouldShowMessageActionBar(historicalMessage, "run-active")).toBe(true);
     expect(shouldShowMessageActionBar({ ...historicalMessage, status: "streaming" }, "run-active"))
       .toBe(false);
+  });
+
+  it("selects exactly one message to host the active run activity", () => {
+    const messages = [
+      {
+        id: "assistant-first",
+        role: "assistant" as const,
+        runId: "run-active",
+        createdAt: "2026-08-28T00:00:00Z",
+        blocks: [],
+        status: "streaming" as const,
+      },
+      {
+        id: "assistant-second",
+        role: "assistant" as const,
+        runId: "run-active",
+        createdAt: "2026-08-28T00:00:01Z",
+        blocks: [],
+        status: "streaming" as const,
+      },
+    ];
+
+    expect(activeRunActivityMessageId(messages, "run-active")).toBe("assistant-second");
+    expect(activeRunActivityMessageId(messages, "run-missing")).toBeNull();
   });
 });

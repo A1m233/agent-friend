@@ -1,7 +1,7 @@
 /**
  * 当前会话 store（design §4.3/§3.5）：消息列表 + 流式态，消费 AG-UI 事件流。
  *
- * - `send`：乐观插入 user + 占位 assistant，自写 fetch-SSE 消费、reducer 累积。
+ * - `send`：乐观插入 user + 占位 assistant；桌面由 run_event、Web 由 fetch-SSE 投影增量。
  * - `openSession`：拉历史事件投影成消息，续聊用同一 session_id 作 threadId。
  * - 错误统一为 turn 状态，不暴露技术细节。
  */
@@ -9,6 +9,7 @@
 import { create } from "zustand";
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
+import { isTauri } from "@/utils/tauri";
 import {
   credentialGroupForModel,
   defaultModelRuntimeConfig,
@@ -118,6 +119,14 @@ let detailRefreshSeq = 0;
 let modelMutationSeq = 0;
 let approvalModeMutationSeq = 0;
 let approvalModeRefreshSeq = 0;
+
+function findRunAssistantIndex(messages: readonly ChatMessage[], runId: string): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "assistant" && message.runId === runId) return index;
+  }
+  return -1;
+}
 let searchNavigationToken = 0;
 let runCalibrationSeq = 0;
 
@@ -884,8 +893,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       const view = existingView ?? (isCurrent ? currentViewSnapshot(state) : undefined);
       if (!view) return state;
 
-      const assistantId = `proactive:${runId}`;
-      const existingIndex = view.messages.findIndex((message) => message.id === assistantId);
+      const existingIndex = findRunAssistantIndex(view.messages, runId);
+      const assistantId = existingIndex >= 0
+        ? view.messages[existingIndex]!.id
+        : `proactive:${runId}`;
       const assistant: ChatMessage = existingIndex >= 0
         ? view.messages[existingIndex]
         : {
@@ -1351,6 +1362,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
     const controller = new AbortController();
     activeTransports.set(runId, { sessionId, controller });
+    const projectDirectStream = !isTauri();
 
     const patch = (fn: (m: ChatMessage) => ChatMessage) =>
       set((s) => {
@@ -1365,9 +1377,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           messages: s.currentSessionId === sessionId ? messages : s.messages,
         };
       });
-    const streamUpdates = createStreamUpdateScheduler((events) => {
-      patch((m) => applyStreamEvents(m, events));
-    });
+    const streamUpdates = projectDirectStream
+      ? createStreamUpdateScheduler((events) => {
+          patch((m) => applyStreamEvents(m, events));
+        })
+      : null;
 
     const completion = (async (): Promise<SendOutcome> => {
       let outcome: SendOutcome = "failed";
@@ -1405,10 +1419,12 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
               .reportAuthFailure(credentialGroup, credentialRevision)
               .catch(() => undefined);
           }
-          streamUpdates.enqueue(withObservedTerminalTimestamp(evt));
+          streamUpdates?.enqueue(withObservedTerminalTimestamp(evt));
         }
-        streamUpdates.flush();
-        patch((m) => (m.status === "streaming" ? markMessageTerminal(m, "complete") : m));
+        streamUpdates?.flush();
+        if (projectDirectStream) {
+          patch((m) => (m.status === "streaming" ? markMessageTerminal(m, "complete") : m));
+        }
         const assistantStatus = get().sessionViews[sessionId]?.messages
           .find((message) => message.id === assistantId)?.status;
         outcome = assistantStatus === "error"
@@ -1417,7 +1433,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             ? "interrupted"
             : "completed";
       } catch (error) {
-        streamUpdates.flush();
+        streamUpdates?.flush();
         admissionFailed = error instanceof StreamAdmissionError;
         if (controller.signal.aborted) {
           outcome = "interrupted";
@@ -1426,7 +1442,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           patch((m) => markMessageTerminal(m, "error", { error: FRIENDLY_FALLBACK }));
         }
       } finally {
-        streamUpdates.dispose();
+        streamUpdates?.dispose();
         activeTransports.delete(runId);
         let runStillActive = false;
         try {
@@ -1535,6 +1551,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const controller = new AbortController();
     activeTransports.set(runId, { sessionId, controller });
     pendingEditAdmissionBySession.set(sessionId, controller);
+    const projectDirectStream = !isTauri();
 
     const patch = (fn: (m: ChatMessage) => ChatMessage) =>
       set((s) => {
@@ -1551,9 +1568,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           messages: s.currentSessionId === sessionId ? nextMessages : s.messages,
         };
       });
-    const streamUpdates = createStreamUpdateScheduler((events) => {
-      patch((m) => applyStreamEvents(m, events));
-    });
+    const streamUpdates = projectDirectStream
+      ? createStreamUpdateScheduler((events) => {
+          patch((m) => applyStreamEvents(m, events));
+        })
+      : null;
 
     let admitted = false;
     let sawTerminalEvent = false;
@@ -1582,13 +1601,20 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
               runId,
             );
             set((current) => {
-              const view = {
-                ...(current.sessionViews[sessionId] ?? emptyView()),
-                messages: admittedMessages,
-              };
+              const currentView = current.sessionViews[sessionId] ?? emptyView();
+              const earlyRunMessageIndex = findRunAssistantIndex(currentView.messages, runId);
+              const earlyRunMessage = earlyRunMessageIndex >= 0
+                ? currentView.messages[earlyRunMessageIndex]
+                : null;
+              const nextMessages = earlyRunMessage
+                ? admittedMessages.map((message) => message.id === assistantId
+                    ? { ...earlyRunMessage, id: assistantId, runId, createdAt: sentAt }
+                    : message)
+                : admittedMessages;
+              const view = { ...currentView, messages: nextMessages };
               return {
                 ...(current.currentSessionId === sessionId
-                  ? { messages: admittedMessages }
+                  ? { messages: nextMessages }
                   : {}),
                 editingMessage:
                   current.editingMessage?.messageId === editing.messageId
@@ -1600,7 +1626,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
                 },
                 runSnapshots: {
                   ...current.runSnapshots,
-                  [runId]: optimisticRunSnapshot(runId, sessionId, sentAt),
+                  [runId]: current.runSnapshots[runId]
+                    ?? optimisticRunSnapshot(runId, sessionId, sentAt),
                 },
                 runFence: touchSnapshotKey(current.runFence, runId),
               };
@@ -1611,9 +1638,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         if (evt.type === EventType.RUN_FINISHED || evt.type === EventType.RUN_ERROR) {
           sawTerminalEvent = true;
         }
-        streamUpdates.enqueue(withObservedTerminalTimestamp(evt));
+        streamUpdates?.enqueue(withObservedTerminalTimestamp(evt));
       }
-      streamUpdates.flush();
+      streamUpdates?.flush();
       const assistant = get().sessionViews[sessionId]?.messages.find(
         (m) => m.id === assistantId,
       );
@@ -1622,11 +1649,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         outcome = "failed";
       } else if (assistant?.status === "interrupted") {
         outcome = "interrupted";
-      } else {
+      } else if (projectDirectStream) {
         patch((m) => (m.status === "streaming" ? markMessageTerminal(m, "complete") : m));
       }
     } catch {
-      streamUpdates.flush();
+      streamUpdates?.flush();
       if (!admitted) {
         outcome = "rejected";
         set((current) => current.editingMessage?.messageId === editing.messageId
@@ -1646,7 +1673,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         patch((m) => markMessageTerminal(m, "error", { error: FRIENDLY_FALLBACK }));
       }
     } finally {
-      streamUpdates.dispose();
+      streamUpdates?.dispose();
       activeTransports.delete(runId);
       pendingEditAdmissionBySession.delete(sessionId);
       if (admitted) {
@@ -1762,6 +1789,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
     const controller = new AbortController();
     activeTransports.set(runId, { sessionId, controller });
+    const projectDirectStream = !isTauri();
     const patch = (fn: (m: ChatMessage) => ChatMessage) =>
       set((s) => {
         const view = s.sessionViews[sessionId];
@@ -1777,9 +1805,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           messages: s.currentSessionId === sessionId ? nextMessages : s.messages,
         };
       });
-    const streamUpdates = createStreamUpdateScheduler((events) => {
-      patch((m) => applyStreamEvents(m, events));
-    });
+    const streamUpdates = projectDirectStream
+      ? createStreamUpdateScheduler((events) => {
+          patch((m) => applyStreamEvents(m, events));
+        })
+      : null;
     let sawTerminalEvent = false;
 
     try {
@@ -1789,19 +1819,21 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         if (evt.type === EventType.RUN_FINISHED || evt.type === EventType.RUN_ERROR) {
           sawTerminalEvent = true;
         }
-        streamUpdates.enqueue(withObservedTerminalTimestamp(evt));
+        streamUpdates?.enqueue(withObservedTerminalTimestamp(evt));
       }
-      streamUpdates.flush();
-      patch((m) => (m.status === "streaming" ? markMessageTerminal(m, "complete") : m));
+      streamUpdates?.flush();
+      if (projectDirectStream) {
+        patch((m) => (m.status === "streaming" ? markMessageTerminal(m, "complete") : m));
+      }
     } catch {
-      streamUpdates.flush();
+      streamUpdates?.flush();
       if (controller.signal.aborted) {
         patch((m) => (m.status === "streaming" ? markMessageTerminal(m, "interrupted") : m));
       } else {
         patch((m) => markMessageTerminal(m, "error", { error: FRIENDLY_FALLBACK }));
       }
     } finally {
-      streamUpdates.dispose();
+      streamUpdates?.dispose();
       activeTransports.delete(runId);
       let runStillActive = controller.signal.aborted;
       try {

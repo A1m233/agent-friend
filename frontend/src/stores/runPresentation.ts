@@ -75,6 +75,17 @@ export function isActiveRunMessage(
   );
 }
 
+export function activeRunActivityMessageId(
+  messages: readonly ChatMessage[],
+  activeRunId: string | null | undefined,
+): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message && isActiveRunMessage(message, activeRunId)) return message.id;
+  }
+  return null;
+}
+
 export function shouldShowMessageActionBar(
   message: ChatMessage,
   activeRunId: string | null | undefined,
