@@ -9,10 +9,10 @@ It stores normalized ``Message`` items, never a prepared provider request body.
 from __future__ import annotations
 
 import copy
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from llm_providers import ProviderAssistantTurn
 
@@ -234,6 +234,8 @@ class SessionModelHistory:
         run_id: str | None = None,
     ) -> Message:
         meta: dict[str, object] = {}
+        if run_id:
+            meta["provider_run_id"] = run_id
         if assistant.tool_calls:
             meta["tool_calls"] = [
                 {
@@ -276,20 +278,191 @@ class SessionModelHistory:
         timestamp: datetime,
         event_uuid: str,
         is_error: bool,
+        run_id: str | None = None,
     ) -> Message:
+        meta: dict[str, object] = {
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "is_error": is_error,
+        }
+        if run_id:
+            meta["provider_run_id"] = run_id
         message = Message(
             role="tool",
             content=content,
             timestamp=timestamp,
             uuid=event_uuid,
-            meta={
-                "tool_call_id": tool_call_id,
-                "tool_name": tool_name,
-                "is_error": is_error,
-            },
+            meta=meta,
         )
         self.append([message])
         return message
+
+    def insert_tool_result_after_call(
+        self,
+        *,
+        content: str,
+        tool_call_id: str,
+        tool_name: str,
+        timestamp: datetime,
+        event_uuid: str,
+        is_error: bool,
+        run_id: str | None = None,
+    ) -> Message:
+        """Insert a repaired result next to its call instead of at the history tail."""
+
+        meta: dict[str, object] = {
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "is_error": is_error,
+        }
+        if run_id:
+            meta["provider_run_id"] = run_id
+        message = Message(
+            role="tool",
+            content=content,
+            timestamp=timestamp,
+            uuid=event_uuid,
+            meta=meta,
+        )
+        insertion_index = self._tool_result_insertion_index(tool_call_id, run_id=run_id)
+        if insertion_index is None or insertion_index == len(self.items):
+            self.append([message])
+            return message
+        self.items.insert(insertion_index, message)
+        self.generation += 1
+        self.last_relation = "rewrite"
+        self.last_reason = "tool_result_history_repair"
+        return message
+
+    def unmatched_tool_calls(self) -> tuple[tuple[str, str, str | None], ...]:
+        """Return calls that would reach a non-tool boundary without a result."""
+
+        missing: list[tuple[str, str, str | None]] = []
+        pending: dict[str, tuple[str, str | None]] = {}
+        for message in self.items:
+            if message.role == "tool":
+                tool_call_id = message.meta.get("tool_call_id")
+                if isinstance(tool_call_id, str):
+                    pending.pop(tool_call_id, None)
+                continue
+            if pending:
+                missing.extend(
+                    (tool_call_id, tool_name, run_id)
+                    for tool_call_id, (tool_name, run_id) in pending.items()
+                )
+                pending = {}
+            if message.role != "assistant":
+                continue
+            raw_calls = message.meta.get("tool_calls")
+            if not isinstance(raw_calls, list):
+                continue
+            for raw_call in raw_calls:
+                if not isinstance(raw_call, dict):
+                    continue
+                tool_call_id = raw_call.get("id")
+                if not isinstance(tool_call_id, str) or not tool_call_id:
+                    continue
+                tool_name = raw_call.get("name")
+                raw_run_id = (
+                    message.meta.get("provider_run_id")
+                    or message.meta.get("provider_reasoning_run_id")
+                    or message.meta.get("run_id")
+                )
+                run_id = raw_run_id if isinstance(raw_run_id, str) and raw_run_id else None
+                pending[tool_call_id] = (
+                    tool_name if isinstance(tool_name, str) else "",
+                    run_id,
+                )
+        missing.extend(
+            (tool_call_id, tool_name, run_id)
+            for tool_call_id, (tool_name, run_id) in pending.items()
+        )
+        return tuple(missing)
+
+    @staticmethod
+    def validate_provider_tool_history(messages: Sequence[Mapping[str, Any]]) -> None:
+        """Fail locally when a provider message list violates tool pairing rules."""
+
+        pending: set[str] = set()
+        for index, message in enumerate(messages):
+            role = message.get("role")
+            if role == "tool":
+                tool_call_id = message.get("tool_call_id")
+                if not isinstance(tool_call_id, str) or not tool_call_id:
+                    raise ValueError(
+                        "model_history_tool_transaction_invalid: "
+                        f"tool message at index {index} has no tool_call_id"
+                    )
+                if tool_call_id not in pending:
+                    raise ValueError(
+                        "model_history_tool_transaction_invalid: "
+                        f"orphan tool result {tool_call_id!r} at index {index}"
+                    )
+                pending.remove(tool_call_id)
+                continue
+            if pending:
+                raise ValueError(
+                    "model_history_tool_transaction_invalid: missing tool results "
+                    f"{sorted(pending)!r} before message index {index}"
+                )
+            if role != "assistant":
+                continue
+            raw_calls = message.get("tool_calls")
+            if not isinstance(raw_calls, list) or not raw_calls:
+                continue
+            call_ids: list[str] = []
+            for raw_call in raw_calls:
+                call_id = raw_call.get("id") if isinstance(raw_call, Mapping) else None
+                if not isinstance(call_id, str) or not call_id:
+                    # Unbindable model output is represented by a separate
+                    # model_output_rejection fact and never starts a tool transaction.
+                    continue
+                call_ids.append(call_id)
+            if not call_ids:
+                continue
+            if len(call_ids) != len(set(call_ids)):
+                raise ValueError(
+                    "model_history_tool_transaction_invalid: duplicate tool call ids "
+                    f"at message index {index}"
+                )
+            pending = set(call_ids)
+        if pending:
+            raise ValueError(
+                "model_history_tool_transaction_invalid: missing tool results "
+                f"{sorted(pending)!r} at end of history"
+            )
+
+    def _tool_result_insertion_index(self, tool_call_id: str, *, run_id: str | None) -> int | None:
+        fallback_index: int | None = None
+        for index in range(len(self.items) - 1, -1, -1):
+            message = self.items[index]
+            if message.role != "assistant":
+                continue
+            raw_calls = message.meta.get("tool_calls")
+            if not isinstance(raw_calls, list) or not any(
+                isinstance(raw_call, dict) and raw_call.get("id") == tool_call_id
+                for raw_call in raw_calls
+            ):
+                continue
+            message_run_id = (
+                message.meta.get("provider_run_id")
+                or message.meta.get("provider_reasoning_run_id")
+                or message.meta.get("run_id")
+            )
+            if fallback_index is None:
+                fallback_index = index
+            if run_id and message_run_id != run_id:
+                continue
+            insertion_index = index + 1
+            while insertion_index < len(self.items) and self.items[insertion_index].role == "tool":
+                insertion_index += 1
+            return insertion_index
+        if fallback_index is None:
+            return None
+        insertion_index = fallback_index + 1
+        while insertion_index < len(self.items) and self.items[insertion_index].role == "tool":
+            insertion_index += 1
+        return insertion_index
 
     def note_active_events(self, session: Session) -> None:
         self.active_event_uuids = model_relevant_event_uuids(session)

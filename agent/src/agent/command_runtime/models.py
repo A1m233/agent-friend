@@ -196,6 +196,8 @@ class CommandProcessSnapshot:
     run_id: str
     tool_call_id: str
     mode: CommandMode
+    tool_name: str = "exec_command"
+    evidence_ref: str | None = None
     recovery_mode: str = "resident_only"
     runtime_instance_id: str = ""
     status: CommandProcessStatus = "running"
@@ -222,6 +224,7 @@ class CommandProcessSnapshot:
             "session_id": self.session_id,
             "run_id": self.run_id,
             "tool_call_id": self.tool_call_id,
+            "tool_name": self.tool_name,
             "mode": self.mode,
             "recovery_mode": self.recovery_mode,
             "runtime_instance_id": self.runtime_instance_id,

@@ -13,6 +13,11 @@ from uuid import uuid4
 from .events import Event
 from .session import Session
 from .store import SessionStore
+from .tool_execution_evidence import (
+    ToolExecutionEvidenceError,
+    ToolExecutionEvidenceStore,
+    render_interrupted_evidence,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +37,7 @@ class RecoveredToolResult:
     semantic_status: str = "unknown"
     executed: bool | None = None
     reason_code: str = "recovered_result"
+    evidence_ref: str = ""
 
 
 @dataclass(frozen=True)
@@ -71,10 +77,12 @@ class ToolTransactionReconciler:
         *,
         runtime_instance_id: str,
         adapters: dict[str, ToolRecoveryAdapter] | None = None,
+        tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
     ) -> None:
         self._store = store
         self._runtime_instance_id = runtime_instance_id
         self._adapters = dict(adapters or {})
+        self._tool_execution_evidence_store = tool_execution_evidence_store
         self._locks_guard = Lock()
         self._session_locks: dict[str, Lock] = {}
 
@@ -106,6 +114,7 @@ class ToolTransactionReconciler:
         results: set[tuple[str, str]] = set()
         checkpoints: dict[tuple[str, str], Event] = {}
         terminal_runs: set[str] = set()
+        request_aliases: dict[tuple[str, str], tuple[str, str]] = {}
 
         for event in session.active_events:
             run_id = self._run_id(event)
@@ -114,15 +123,34 @@ class ToolTransactionReconciler:
                 if isinstance(payload_run_id, str) and payload_run_id:
                     terminal_runs.add(payload_run_id)
                 continue
-            tool_call_id = event.payload.get("tool_call_id")
-            if not run_id or not isinstance(tool_call_id, str) or not tool_call_id:
+            if event.type != "tool_call_request" or not run_id:
                 continue
-            key = (run_id, tool_call_id)
-            if event.type == "tool_call_request":
-                requests[key] = event
-            elif event.type == "tool_call_result":
+            provider_call_id = event.payload.get("tool_call_id")
+            event_call_id = event.payload.get("event_tool_call_id")
+            transaction_id = event_call_id or provider_call_id
+            if not isinstance(transaction_id, str) or not transaction_id:
+                continue
+            key = (run_id, transaction_id)
+            requests[key] = event
+            if isinstance(provider_call_id, str) and provider_call_id:
+                request_aliases[(run_id, provider_call_id)] = key
+
+        for event in session.active_events:
+            if event.type not in {"tool_call_result", "tool_execution_checkpoint"}:
+                continue
+            run_id = self._run_id(event)
+            transaction_id = (
+                event.payload.get("event_tool_call_id")
+                if event.type == "tool_call_result"
+                else None
+            ) or event.payload.get("tool_call_id")
+            if not run_id or not isinstance(transaction_id, str) or not transaction_id:
+                continue
+            raw_key = (run_id, transaction_id)
+            key = raw_key if raw_key in requests else request_aliases.get(raw_key, raw_key)
+            if event.type == "tool_call_result":
                 results.add(key)
-            elif event.type == "tool_execution_checkpoint":
+            else:
                 checkpoints[key] = event
 
         interrupted = 0
@@ -138,7 +166,7 @@ class ToolTransactionReconciler:
         }
 
         for key, request in requests.items():
-            if key in results or key[0] in terminal_runs:
+            if key in results:
                 continue
             run_id, _tool_call_id = key
             checkpoint = checkpoints.get(key)
@@ -171,22 +199,28 @@ class ToolTransactionReconciler:
                 recovered += 1
                 continue
             if probe.outcome is RecoveryProbeOutcome.LOST:
-                result = RecoveredToolResult(
-                    content=(
-                        "原宿主运行实例已丢失，无法继续该工具事务；"
-                        "工具是否产生副作用及其领域结果均未知。"
-                    ),
-                    is_error=True,
-                    process_status=(
-                        "runtime_lost"
-                        if checkpoint is not None
-                        and checkpoint.payload.get("recovery_mode") == "resident_only"
-                        else "unknown"
-                    ),
-                    semantic_status="unknown",
-                    executed=None,
-                    reason_code=probe.reason_code or "computer_or_owner_runtime_lost",
+                result = self._interrupted_result_from_evidence(
+                    session_id,
+                    request,
+                    checkpoint,
                 )
+                if result is None:
+                    result = RecoveredToolResult(
+                        content=(
+                            "原宿主运行实例已丢失，无法继续该工具事务；"
+                            "工具是否产生副作用及其领域结果均未知。"
+                        ),
+                        is_error=True,
+                        process_status=(
+                            "runtime_lost"
+                            if checkpoint is not None
+                            and checkpoint.payload.get("recovery_mode") == "resident_only"
+                            else "unknown"
+                        ),
+                        semantic_status="unknown",
+                        executed=None,
+                        reason_code=probe.reason_code or "computer_or_owner_runtime_lost",
+                    )
                 event = self._result_event(
                     request,
                     result,
@@ -273,6 +307,66 @@ class ToolTransactionReconciler:
             reason_code="computer_or_owner_runtime_lost",
         )
 
+    def _interrupted_result_from_evidence(
+        self,
+        session_id: str,
+        request: Event,
+        checkpoint: Event | None,
+    ) -> RecoveredToolResult | None:
+        evidence_store = self._tool_execution_evidence_store
+        if evidence_store is None or checkpoint is None:
+            return None
+        evidence_ref = checkpoint.payload.get("evidence_ref")
+        operation_id = checkpoint.payload.get("operation_id")
+        tool_name = request.payload.get("tool_name")
+        run_id = self._run_id(request)
+        tool_call_ids = {
+            value
+            for value in (
+                request.payload.get("event_tool_call_id"),
+                request.payload.get("tool_call_id"),
+            )
+            if isinstance(value, str) and value
+        }
+        if (
+            not isinstance(evidence_ref, str)
+            or not isinstance(operation_id, str)
+            or not isinstance(tool_name, str)
+            or tool_name not in {"exec_command", "host_process_start"}
+            or not run_id
+        ):
+            return None
+        try:
+            evidence = evidence_store.load_for_transaction(
+                session_id=session_id,
+                evidence_ref=evidence_ref,
+                run_id=run_id,
+                tool_call_ids=tool_call_ids,
+                operation_id=operation_id,
+                tool_name=tool_name,
+            )
+        except ToolExecutionEvidenceError:
+            logger.warning(
+                "startup tool evidence rejected run_id=%s tool_call_id=%s evidence_ref=%s",
+                run_id,
+                next(iter(tool_call_ids), ""),
+                evidence_ref,
+                exc_info=True,
+            )
+            return None
+        rendered = render_interrupted_evidence(evidence) if evidence is not None else None
+        if rendered is None:
+            return None
+        return RecoveredToolResult(
+            content=rendered,
+            is_error=True,
+            process_status="runtime_lost",
+            semantic_status="unknown",
+            executed=None,
+            reason_code="computer_or_owner_runtime_lost",
+            evidence_ref=evidence_ref,
+        )
+
     def _result_event(
         self,
         request: Event,
@@ -282,26 +376,29 @@ class ToolTransactionReconciler:
         transaction_status: str = "completed",
     ) -> Event:
         executed: bool | str = result.executed if result.executed is not None else "unknown"
+        payload: dict[str, object] = {
+            "tool_call_id": request.payload.get("tool_call_id", ""),
+            "event_tool_call_id": request.payload.get("event_tool_call_id", ""),
+            "tool_name": request.payload.get("tool_name", ""),
+            "content": result.content,
+            "is_error": result.is_error,
+            "executed": executed,
+            "authorization_requested": False,
+            "error_code": result.reason_code if result.is_error else "",
+            "transaction_status": transaction_status,
+            "process_status": result.process_status,
+            "semantic_status": result.semantic_status,
+            "execution_state": executed,
+            "result_origin": result_origin,
+            "reason_code": result.reason_code,
+        }
+        if result.evidence_ref:
+            payload["evidence_ref"] = result.evidence_ref
         return Event(
             type="tool_call_result",
             uuid=str(uuid4()),
             ts=datetime.now(UTC),
-            payload={
-                "tool_call_id": request.payload.get("tool_call_id", ""),
-                "event_tool_call_id": request.payload.get("event_tool_call_id", ""),
-                "tool_name": request.payload.get("tool_name", ""),
-                "content": result.content,
-                "is_error": result.is_error,
-                "executed": executed,
-                "authorization_requested": False,
-                "error_code": result.reason_code if result.is_error else "",
-                "transaction_status": transaction_status,
-                "process_status": result.process_status,
-                "semantic_status": result.semantic_status,
-                "execution_state": executed,
-                "result_origin": result_origin,
-                "reason_code": result.reason_code,
-            },
+            payload=payload,
             meta={
                 "run_id": self._run_id(request),
                 "result_origin": result_origin,

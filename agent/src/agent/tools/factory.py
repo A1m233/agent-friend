@@ -69,6 +69,7 @@ if TYPE_CHECKING:
     from ..scheduled_tasks import ScheduledTaskService
     from ..sessions.catalog import SessionCatalog
     from ..sessions.store import SessionStore
+    from ..sessions.tool_execution_evidence import ToolExecutionEvidenceStore
     from ..skills import SkillCatalogService
     from ..todos import TodoService
 
@@ -93,6 +94,7 @@ def make_default_registry(
     filesystem_policy: ProtectedPathPolicy | None = None,
     command_runtime: CommandRuntime | None = None,
     execution_environment_manager: ExecutionEnvironmentManager | None = None,
+    tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
     stderr_warn: bool = True,
 ) -> ToolRegistry:
     """构造默认 registry，确定性本地工具始终注册，网络/记忆工具按资源注册。
@@ -144,6 +146,7 @@ def make_default_registry(
                 command_runtime,
                 approval_broker,
                 execution_environment_manager,
+                tool_execution_evidence_store,
             )
         )
 
@@ -254,7 +257,7 @@ def make_default_registry(
         )
 
     if session_store is not None:
-        tools.append(ToolResultRecoveryTool(session_store))
+        tools.append(ToolResultRecoveryTool(session_store, tool_execution_evidence_store))
 
     return ToolRegistry(tools)
 

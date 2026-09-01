@@ -82,6 +82,13 @@ from .store import (
     SessionSummary,
     SessionWriterLease,
 )
+from .tool_execution_evidence import (
+    ToolExecutionEvidence,
+    ToolExecutionEvidenceError,
+    ToolExecutionEvidenceStore,
+    render_interrupted_evidence,
+    render_recoverable_evidence,
+)
 
 __all__ = [
     "ALLOWED_EVENT_TYPES",
@@ -136,10 +143,15 @@ __all__ = [
     "SessionWriterConflictError",
     "SessionWriterLease",
     "TitleGenerator",
+    "ToolExecutionEvidence",
+    "ToolExecutionEvidenceError",
+    "ToolExecutionEvidenceStore",
     "ToolRecoveryAdapter",
     "ToolTransactionReconciler",
     "current_session_mutation_context",
     "normalize_session_title",
+    "render_interrupted_evidence",
+    "render_recoverable_evidence",
     "restore_rollout",
     "session_mutation_context",
 ]

@@ -5,7 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from agent.sessions import Event, JsonlSessionStore, Session
+from agent.sessions import (
+    Event,
+    JsonlSessionStore,
+    Session,
+    ToolExecutionEvidence,
+    ToolExecutionEvidenceStore,
+)
 from agent.tools.builtin.tool_result_recovery import ToolResultRecoveryTool
 
 _CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
@@ -100,3 +106,71 @@ def test_recovery_rejects_result_invalidated_by_turn_rewrite(tmp_path: Path) -> 
 
     assert recovered.is_error is True
     assert "有效历史" in recovered.text
+
+
+def test_recovery_reads_only_evidence_referenced_by_current_active_result(
+    tmp_path: Path,
+) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    evidence_store = ToolExecutionEvidenceStore(tmp_path / "evidence")
+    current = _create_session(store, "current")
+    other = _create_session(store, "other")
+    current_ref = evidence_store.new_reference()
+    other_ref = evidence_store.new_reference()
+    for session, evidence_ref, stdout in (
+        (current, current_ref, "prefix needle suffix"),
+        (other, other_ref, "other session secret"),
+    ):
+        evidence_store.write(
+            ToolExecutionEvidence(
+                evidence_ref=evidence_ref,
+                session_id=session.session_id,
+                run_id="run-1",
+                tool_call_id="call-1",
+                operation_id="proc-1",
+                tool_name="exec_command",
+                process_status="cancelled",
+                output_seq=1,
+                dropped_bytes=0,
+                stdout=stdout,
+                captured_at=datetime.now(UTC).isoformat(),
+            )
+        )
+        result = Event(
+            type="tool_call_result",
+            uuid=f"result-{session.session_id}",
+            ts=datetime.now(UTC),
+            payload={
+                "tool_call_id": "call-1",
+                "event_tool_call_id": "call-1",
+                "tool_name": "exec_command",
+                "content": "partial preview",
+                "is_error": True,
+                "evidence_ref": evidence_ref,
+            },
+            meta={"run_id": "run-1"},
+        )
+        store.append_event(session.session_id, result)
+        session.append(result)
+    tool = ToolResultRecoveryTool(store, evidence_store)
+
+    recovered = tool.invoke(
+        {
+            "evidence_ref": current_ref,
+            "query": "needle",
+            _CURRENT_SESSION_ID_ARG: current.session_id,
+        }
+    )
+    blocked = tool.invoke(
+        {
+            "evidence_ref": other_ref,
+            _CURRENT_SESSION_ID_ARG: current.session_id,
+        }
+    )
+
+    assert recovered.is_error is False
+    assert "needle" in recovered.text
+    assert f"evidence_ref={current_ref}" in recovered.text
+    assert recovered.meta["recovered_evidence_ref"] == current_ref
+    assert blocked.is_error is True
+    assert "当前会话" in blocked.text

@@ -151,6 +151,9 @@ from .sessions import (
     SessionModelHistory,
     SessionRolloutRecorder,
     SessionStore,
+    ToolExecutionEvidenceError,
+    ToolExecutionEvidenceStore,
+    render_interrupted_evidence,
 )
 from .skills import (
     ActivatedSkill,
@@ -169,6 +172,7 @@ from .system_prompt.surfaces import (
 )
 from .time_provider import SystemTimeProvider, TimeProvider, read_host_time
 from .tool_runtime import (
+    ExecutedToolCall,
     ToolBatchExecutor,
     ToolProgressTracker,
     ToolRunContext,
@@ -406,6 +410,7 @@ class Conversation:
         rollout_recorder: SessionRolloutRecorder | None = None,
         time_provider: TimeProvider | None = None,
         approval_mode_provider: Callable[[], SessionApprovalModeState] | None = None,
+        tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
     ):
         self._session = session
         self._store = store
@@ -437,6 +442,7 @@ class Conversation:
         )
         self._session_model_context = session_model_context or SessionModelContext()
         self._approval_mode_provider = approval_mode_provider
+        self._tool_execution_evidence_store = tool_execution_evidence_store
         self._active_skill_turn_snapshot: SkillTurnSnapshot | None = None
         self._active_skill_selections: tuple[SkillSelection, ...] = ()
         self._tool_run_policy = tool_run_policy or _resolve_tool_run_policy()
@@ -737,6 +743,7 @@ class Conversation:
             通过 :func:`sys.exc_info` 识别为中断，按"部分回复"语义落盘。
         """
         self._session_model_history.reconcile(self._session)
+        self._repair_incomplete_model_tool_transactions()
         turn_attachments = list(attachments or [])
         requested_references = parse_quoted_text_references(references or [])
         previous_prompt_channel = self._prompt_channel_override
@@ -945,6 +952,7 @@ class Conversation:
         中失活，再进行可能较慢的上下文构建。后续生成失败或取消都保留已提交的新分支。
         """
         self._session_model_history.reconcile(self._session)
+        self._repair_incomplete_model_tool_transactions()
         plan = self._latest_active_user_rewrite_plan(
             expected_user_uuid=expected_user_uuid,
             expected_user_content=expected_user_content,
@@ -2814,6 +2822,7 @@ class Conversation:
             if isinstance(prompt_cache_domain, str):
                 self._remember_prompt_item_domain(rendered, prompt_cache_domain)
             rendered_messages.append(rendered)
+        SessionModelHistory.validate_provider_tool_history(rendered_messages)
         context_index = (
             self._run_latency_context.next_context_build_index()
             if self._run_latency_context is not None
@@ -4433,12 +4442,13 @@ class Conversation:
                     COMMAND_RUN_CONTEXT_ARG: tool_run_context,
                     COMMAND_SKILL_SNAPSHOT_ARG: self._active_skill_turn_snapshot,
                     COMMAND_EXECUTION_CHECKPOINT_ARG: (
-                        lambda operation_id, recovery_mode: (
+                        lambda operation_id, recovery_mode, evidence_ref=None: (
                             self._append_tool_execution_checkpoint_event(
                                 tool_call_id=tool_call_id,
                                 tool_name=name,
                                 operation_id=operation_id,
                                 recovery_mode=recovery_mode,
+                                evidence_ref=evidence_ref,
                             )
                         )
                     ),
@@ -4916,6 +4926,12 @@ class Conversation:
                 else []
             )
         except BaseException as exc:
+            self._finalize_interrupted_tool_calls(
+                tool_calls,
+                allowed=allowed,
+                reason_code=_interruption_reason_code(exc) or type(exc).__name__,
+                duration_seconds=(monotonic_ms() - batch_started_ms) / 1000,
+            )
             log_run_latency(
                 logger,
                 self._run_latency_context,
@@ -4934,8 +4950,47 @@ class Conversation:
             executed=len(executed),
             errors=sum(1 for item in executed if item.result.is_error),
         )
+        try:
+            yield from self._persist_tool_call_results(
+                tool_calls,
+                executed,
+                runtime=runtime,
+                context=context,
+                progress=progress,
+                batch_index=batch_index,
+                allowed_count=len(allowed),
+                cancel_check=cancel_check,
+            )
+        except BaseException as exc:
+            self._finalize_interrupted_tool_calls(
+                tool_calls,
+                allowed=allowed,
+                reason_code=_interruption_reason_code(exc) or type(exc).__name__,
+                duration_seconds=(monotonic_ms() - batch_started_ms) / 1000,
+            )
+            raise
+
+        if allowed_count < len(executable):
+            runtime.mark_stopped("budget_exhausted", "total_tool_calls")
+        else:
+            dimension = runtime.hard_limit()
+            if dimension is not None:
+                runtime.mark_stopped("budget_exhausted", dimension)
+
+    def _persist_tool_call_results(
+        self,
+        tool_calls: list[dict[str, Any]],
+        executed: list[ExecutedToolCall],
+        *,
+        runtime: ToolRunState,
+        context: ToolRunContext,
+        progress: ToolProgressTracker,
+        batch_index: int | None,
+        allowed_count: int,
+        cancel_check: Callable[[], None] | None,
+    ) -> Iterator[ConversationEvent]:
         by_event_id = {item.call["event_id"]: item for item in executed}
-        runtime.total_tool_calls += len(allowed)
+        runtime.total_tool_calls += allowed_count
         for tc in tool_calls:
             if not tc.get("bindable", True):
                 self._append_model_output_rejection_event(tc)
@@ -5018,13 +5073,6 @@ class Conversation:
                 duration_seconds=duration,
                 origin=tc.get("origin", "model"),
             )
-
-        if allowed_count < len(executable):
-            runtime.mark_stopped("budget_exhausted", "total_tool_calls")
-        else:
-            dimension = runtime.hard_limit()
-            if dimension is not None:
-                runtime.mark_stopped("budget_exhausted", dimension)
 
     def _adopt_runtime_skill_activation(self, result: ToolResult) -> None:
         """Make a successful semantic Skill activation available to later tools this turn."""
@@ -5146,24 +5194,31 @@ class Conversation:
         - 已有文本时把当前轮累积内容落为 partial；已成功完成的前几轮 tool 调用
           事件不受影响
         """
-        if current_text_persisted:
-            return
-
-        if not user_event_appended:
-            if not current_text_buf:
-                return  # 完全没启动，不落盘
-            # 罕见：LLM 已经流出文本但中途中断，user_event 还没落
-            self._append_user_event(user_input)
-        if not current_text_buf and not persist_empty_partial:
-            return
-        self._append_assistant_event(
-            "".join(current_text_buf),
-            partial=True,
-            persona_name=persona_name,
-            persona_id=persona_id,
-            model=model_snapshot,
-            interruption_reason=interruption_reason,
-        )
+        if not current_text_persisted:
+            should_persist_partial = True
+            if not user_event_appended:
+                if not current_text_buf:
+                    should_persist_partial = False
+                else:
+                    # 罕见：LLM 已经流出文本但中途中断，user_event 还没落
+                    self._append_user_event(user_input)
+            if not current_text_buf and not persist_empty_partial:
+                should_persist_partial = False
+            if should_persist_partial:
+                self._append_assistant_event(
+                    "".join(current_text_buf),
+                    partial=True,
+                    persona_name=persona_name,
+                    persona_id=persona_id,
+                    model=model_snapshot,
+                    interruption_reason=interruption_reason,
+                )
+        if persist_empty_partial and self._run_id_override:
+            self._append_turn_aborted_history_fact(
+                run_id=self._run_id_override,
+                reason_code=interruption_reason or "explicit_request",
+                result_origin="runtime_cancellation",
+            )
 
     def _append_tool_call_request_event(self, tc: dict[str, Any]) -> Event:
         """落 ``tool_call_request`` 事件。"""
@@ -5210,6 +5265,7 @@ class Conversation:
         tool_name: str,
         operation_id: str | None,
         recovery_mode: str,
+        evidence_ref: str | None = None,
     ) -> Event:
         """Persist one content-free write-ahead execution owner fact."""
 
@@ -5221,17 +5277,20 @@ class Conversation:
                 and existing.payload.get("tool_call_id") == tool_call_id
             ):
                 return existing
+        payload: dict[str, object] = {
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "recovery_mode": recovery_mode,
+            "operation_id": operation_id,
+            "execution_state": "launch_committed",
+        }
+        if evidence_ref:
+            payload["evidence_ref"] = evidence_ref
         event = Event(
             type="tool_execution_checkpoint",
             uuid=str(uuid4()),
             ts=datetime.now(UTC),
-            payload={
-                "tool_call_id": tool_call_id,
-                "tool_name": tool_name,
-                "recovery_mode": recovery_mode,
-                "operation_id": operation_id,
-                "execution_state": "launch_committed",
-            },
+            payload=payload,
             meta=self._run_event_meta(
                 {
                     "owner_runtime_instance_id": self._runtime_instance_id,
@@ -5276,11 +5335,357 @@ class Conversation:
                 turn_terminal=not has_tool_calls,
             )
 
+    @staticmethod
+    def _tool_transaction_key(event: Event) -> tuple[str, str] | None:
+        run_id = event.meta.get("run_id")
+        transaction_id = event.payload.get("event_tool_call_id")
+        if not isinstance(transaction_id, str) or not transaction_id:
+            transaction_id = event.payload.get("tool_call_id")
+        if not isinstance(transaction_id, str) or not transaction_id:
+            return None
+        return (run_id if isinstance(run_id, str) else "", transaction_id)
+
+    def _tool_result_exists_for_request(self, request: Event) -> bool:
+        request_key = self._tool_transaction_key(request)
+        if request_key is None:
+            return False
+        return any(
+            event.type == "tool_call_result" and self._tool_transaction_key(event) == request_key
+            for event in self._session.active_events
+        )
+
+    def _tool_checkpoint_for_request(self, request: Event) -> Event | None:
+        run_id = request.meta.get("run_id")
+        candidate_ids = {
+            value
+            for value in (
+                request.payload.get("event_tool_call_id"),
+                request.payload.get("tool_call_id"),
+            )
+            if isinstance(value, str) and value
+        }
+        for event in reversed(self._session.active_events):
+            if event.type != "tool_execution_checkpoint":
+                continue
+            if event.meta.get("run_id") != run_id:
+                continue
+            if event.payload.get("tool_call_id") in candidate_ids:
+                return event
+        return None
+
+    def _request_as_tool_call(self, request: Event) -> dict[str, Any]:
+        event_tool_call_id = request.payload.get("event_tool_call_id")
+        return {
+            "id": str(request.payload.get("tool_call_id") or ""),
+            "event_id": str(event_tool_call_id or request.payload.get("tool_call_id") or ""),
+            "name": str(request.payload.get("tool_name") or ""),
+            "args": request.payload.get("args")
+            if isinstance(request.payload.get("args"), dict)
+            else {},
+            "origin": request.meta.get("tool_call_origin", "model"),
+        }
+
+    def _interrupted_tool_result(
+        self,
+        *,
+        may_have_started: bool,
+        reason_code: str,
+        result_origin: str,
+        request: Event | None = None,
+        checkpoint: Event | None = None,
+    ) -> ToolResult:
+        if may_have_started:
+            evidence_store = self._tool_execution_evidence_store
+            if evidence_store is not None and request is not None and checkpoint is not None:
+                evidence_ref = checkpoint.payload.get("evidence_ref")
+                operation_id = checkpoint.payload.get("operation_id")
+                tool_name = request.payload.get("tool_name")
+                run_id = request.meta.get("run_id")
+                tool_call_ids = {
+                    value
+                    for value in (
+                        request.payload.get("event_tool_call_id"),
+                        request.payload.get("tool_call_id"),
+                    )
+                    if isinstance(value, str) and value
+                }
+                if (
+                    isinstance(evidence_ref, str)
+                    and isinstance(operation_id, str)
+                    and isinstance(tool_name, str)
+                    and tool_name in {"exec_command", "host_process_start"}
+                    and isinstance(run_id, str)
+                ):
+                    try:
+                        evidence = evidence_store.load_for_transaction(
+                            session_id=self._session.session_id,
+                            evidence_ref=evidence_ref,
+                            run_id=run_id,
+                            tool_call_ids=tool_call_ids,
+                            operation_id=operation_id,
+                            tool_name=tool_name,
+                        )
+                    except ToolExecutionEvidenceError:
+                        logger.warning(
+                            "interrupted tool evidence rejected session_id=%s run_id=%s "
+                            "tool_call_id=%s evidence_ref=%s",
+                            self._session.session_id,
+                            run_id,
+                            next(iter(tool_call_ids), ""),
+                            evidence_ref,
+                            exc_info=True,
+                        )
+                    else:
+                        rendered = (
+                            render_interrupted_evidence(evidence) if evidence is not None else None
+                        )
+                        if rendered is not None:
+                            return ToolResult(
+                                text=rendered,
+                                is_error=True,
+                                meta={
+                                    "error_kind": "run_cancelled",
+                                    "executed": "unknown",
+                                    "authorization_requested": False,
+                                    "transaction_status": "interrupted",
+                                    "process_status": "cancelled_or_detached",
+                                    "semantic_status": "unknown",
+                                    "execution_state": "unknown",
+                                    "result_origin": result_origin,
+                                    "reason_code": reason_code,
+                                    "evidence_ref": evidence_ref,
+                                    "evidence_kind": "command_output",
+                                    "evidence_partial": True,
+                                },
+                            )
+            return ToolResult(
+                text=(
+                    "上一轮在工具执行期间被中断。工具可能已经部分执行，但没有取得可靠结果；"
+                    "重试前请先核实实际状态。"
+                ),
+                is_error=True,
+                meta={
+                    "error_kind": "run_cancelled",
+                    "executed": "unknown",
+                    "authorization_requested": False,
+                    "transaction_status": "interrupted",
+                    "process_status": "cancelled_or_detached",
+                    "semantic_status": "unknown",
+                    "execution_state": "unknown",
+                    "result_origin": result_origin,
+                    "reason_code": reason_code,
+                },
+            )
+        return ToolResult(
+            text="上一轮在该工具开始执行前被中断；该工具没有执行。",
+            is_error=True,
+            meta={
+                "error_kind": "run_cancelled",
+                "executed": False,
+                "authorization_requested": False,
+                "transaction_status": "interrupted",
+                "process_status": "not_started",
+                "semantic_status": "not_started",
+                "execution_state": "not_started",
+                "result_origin": result_origin,
+                "reason_code": reason_code,
+            },
+        )
+
+    def _finalize_interrupted_tool_calls(
+        self,
+        tool_calls: list[dict[str, Any]],
+        *,
+        allowed: list[dict[str, Any]],
+        reason_code: str,
+        duration_seconds: float,
+    ) -> None:
+        allowed_ids = {str(call.get("event_id") or call.get("id") or "") for call in allowed}
+        run_id = self._run_id_override or ""
+        requests_by_id = {
+            str(
+                event.payload.get("event_tool_call_id") or event.payload.get("tool_call_id") or ""
+            ): event
+            for event in self._session.active_events
+            if event.type == "tool_call_request" and event.meta.get("run_id") == run_id
+        }
+        for tool_call in tool_calls:
+            if not tool_call.get("bindable", True):
+                continue
+            event_id = str(tool_call.get("event_id") or tool_call.get("id") or "")
+            request = requests_by_id.get(event_id)
+            if request is None or self._tool_result_exists_for_request(request):
+                continue
+            checkpoint = self._tool_checkpoint_for_request(request)
+            may_have_started = event_id in allowed_ids or checkpoint is not None
+            result = self._interrupted_tool_result(
+                may_have_started=may_have_started,
+                reason_code=reason_code,
+                result_origin="runtime_cancellation",
+                request=request,
+                checkpoint=checkpoint,
+            )
+            self._append_tool_call_result_event(
+                tool_call,
+                result,
+                duration_seconds,
+                run_id=run_id,
+            )
+
+    def _repair_incomplete_model_tool_transactions(self) -> None:
+        missing_calls = list(self._session_model_history.unmatched_tool_calls())
+        results_by_key = {
+            key: event
+            for event in self._session.active_events
+            if event.type == "tool_call_result"
+            and (key := self._tool_transaction_key(event)) is not None
+        }
+        candidate_requests = [
+            event
+            for event in self._session.active_events
+            if event.type == "tool_call_request" and self._tool_transaction_key(event) is not None
+        ]
+        repaired_runs: set[str] = set()
+        for tool_call_id, tool_name, history_run_id in missing_calls:
+            request = next(
+                (
+                    event
+                    for event in candidate_requests
+                    if event.payload.get("tool_call_id") == tool_call_id
+                    and (not tool_name or event.payload.get("tool_name") == tool_name)
+                    and (history_run_id is None or event.meta.get("run_id") == history_run_id)
+                ),
+                None,
+            )
+            if request is None:
+                continue
+            candidate_requests.remove(request)
+            request_key = self._tool_transaction_key(request)
+            existing_result = results_by_key.get(request_key) if request_key is not None else None
+            checkpoint = self._tool_checkpoint_for_request(request)
+            may_have_started = (
+                request.payload.get("execution_disposition", "execute") == "execute"
+                or checkpoint is not None
+            )
+            run_id = request.meta.get("run_id")
+            stable_run_id = run_id if isinstance(run_id, str) else ""
+            if existing_result is not None:
+                self._session_model_history.insert_tool_result_after_call(
+                    content=str(existing_result.payload.get("content") or ""),
+                    tool_call_id=tool_call_id,
+                    tool_name=str(request.payload.get("tool_name") or tool_name),
+                    timestamp=existing_result.ts,
+                    event_uuid=existing_result.uuid,
+                    is_error=existing_result.payload.get("is_error") is True,
+                    run_id=stable_run_id,
+                )
+                self._session_model_history.note_active_events(self._session)
+                if self._rollout_recorder is not None:
+                    self._rollout_recorder.commit(
+                        history=self._session_model_history,
+                        model_context=self._session_model_context,
+                        cache_epoch=self._cache_epoch,
+                        boundary="tool_result_completed",
+                        turn_terminal=False,
+                    )
+            else:
+                result = self._interrupted_tool_result(
+                    may_have_started=may_have_started,
+                    reason_code="history_preflight_repair",
+                    result_origin="history_preflight_repair",
+                    request=request,
+                    checkpoint=checkpoint,
+                )
+                self._append_tool_call_result_event(
+                    self._request_as_tool_call(request),
+                    result,
+                    0.0,
+                    run_id=stable_run_id,
+                    history_insert_after_call=True,
+                )
+            if stable_run_id:
+                repaired_runs.add(stable_run_id)
+        interrupted_run_reasons = {
+            run_id: str(event.payload.get("reason_code") or "interrupted")
+            for event in self._session.active_events
+            if event.type == "run_terminal"
+            and event.payload.get("status") == "interrupted"
+            and isinstance((run_id := event.payload.get("run_id")), str)
+            and run_id
+        }
+        for repaired_run_id in sorted(repaired_runs | interrupted_run_reasons.keys()):
+            self._append_turn_aborted_history_fact(
+                run_id=repaired_run_id,
+                reason_code=interrupted_run_reasons.get(
+                    repaired_run_id, "history_preflight_repair"
+                ),
+                result_origin="history_preflight_repair",
+            )
+
+    def _append_turn_aborted_history_fact(
+        self,
+        *,
+        run_id: str,
+        reason_code: str,
+        result_origin: str,
+    ) -> bool:
+        requests = [
+            event
+            for event in self._session.active_events
+            if event.type == "tool_call_request" and event.meta.get("run_id") == run_id
+        ]
+        if not requests or any(not self._tool_result_exists_for_request(item) for item in requests):
+            return False
+        if any(
+            message.meta.get("synthetic") == "turn_aborted" and message.meta.get("run_id") == run_id
+            for message in self._session_model_history.items
+        ):
+            return False
+        interruption_summary = (
+            "上一轮工具事务被用户主动中断。"
+            if reason_code == "explicit_request"
+            else "上一轮工具事务未能完整结束。"
+        )
+        self._session_model_history.append(
+            [
+                Message(
+                    role="system",
+                    content=(
+                        "<turn_aborted>\n"
+                        f"{interruption_summary}部分工具可能已经执行；"
+                        "重试前请先核实实际状态。\n"
+                        "</turn_aborted>"
+                    ),
+                    timestamp=datetime.now(UTC),
+                    meta={
+                        "synthetic": "turn_aborted",
+                        "run_id": run_id,
+                        "reason_code": reason_code,
+                        "result_origin": result_origin,
+                        "trusted_host_context": True,
+                    },
+                )
+            ]
+        )
+        self._session_model_history.note_active_events(self._session)
+        if self._rollout_recorder is not None:
+            self._rollout_recorder.commit(
+                history=self._session_model_history,
+                model_context=self._session_model_context,
+                cache_epoch=self._cache_epoch,
+                boundary="tool_result_completed",
+                turn_terminal=True,
+            )
+        return True
+
     def _append_tool_call_result_event(
         self,
         tc: dict[str, Any],
         result: ToolResult,
         duration: float,
+        *,
+        run_id: str | None = None,
+        history_insert_after_call: bool = False,
     ) -> Event:
         """落 ``tool_call_result`` 事件。"""
         meta: dict[str, Any] = self._run_event_meta(
@@ -5289,6 +5694,8 @@ class Conversation:
                 "tool_call_origin": tc.get("origin", "model"),
             }
         )
+        if run_id is not None:
+            meta["run_id"] = run_id
         context_retention = "pinned"
         recovery_available = False
         if self._tool_registry is not None and tc["name"] in self._tool_registry:
@@ -5312,31 +5719,49 @@ class Conversation:
             elif override == "recoverable" and recovery_available:
                 context_retention = "recoverable"
             extra["context_retention"] = context_retention
+        payload: dict[str, Any] = {
+            "tool_call_id": tc["id"],
+            "event_tool_call_id": tc["event_id"],
+            "tool_name": tc["name"],
+            "content": result.text,
+            "is_error": result.is_error,
+            "executed": result.meta.get("executed", True),
+            "authorization_requested": result.meta.get("authorization_requested", False),
+            "error_code": result.meta.get("error_kind", ""),
+        }
+        for key in (
+            "transaction_status",
+            "process_status",
+            "semantic_status",
+            "execution_state",
+            "result_origin",
+            "reason_code",
+            "evidence_ref",
+        ):
+            if key in result.meta:
+                payload[key] = result.meta[key]
         event = Event(
             type="tool_call_result",
             uuid=str(uuid4()),
             ts=datetime.now(UTC),
-            payload={
-                "tool_call_id": tc["id"],
-                "event_tool_call_id": tc["event_id"],
-                "tool_name": tc["name"],
-                "content": result.text,
-                "is_error": result.is_error,
-                "executed": result.meta.get("executed", True),
-                "authorization_requested": result.meta.get("authorization_requested", False),
-                "error_code": result.meta.get("error_kind", ""),
-            },
+            payload=payload,
             meta=meta,
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
-        self._session_model_history.append_tool_result(
+        append_history_result = (
+            self._session_model_history.insert_tool_result_after_call
+            if history_insert_after_call
+            else self._session_model_history.append_tool_result
+        )
+        append_history_result(
             content=result.text,
             tool_call_id=str(tc["id"]),
             tool_name=str(tc["name"]),
             timestamp=event.ts,
             event_uuid=event.uuid,
             is_error=result.is_error,
+            run_id=run_id if run_id is not None else self._run_id_override,
         )
         self._session_model_history.note_active_events(self._session)
         if self._rollout_recorder is not None:
@@ -5347,6 +5772,24 @@ class Conversation:
                 boundary="tool_result_completed",
                 turn_terminal=False,
             )
+        execution_evidence_ref = result.meta.get("_execution_evidence_ref")
+        if (
+            isinstance(execution_evidence_ref, str)
+            and execution_evidence_ref
+            and self._tool_execution_evidence_store is not None
+        ):
+            try:
+                self._tool_execution_evidence_store.delete(
+                    self._session.session_id,
+                    execution_evidence_ref,
+                )
+            except ToolExecutionEvidenceError:
+                logger.warning(
+                    "completed command evidence cleanup failed session_id=%s evidence_ref=%s",
+                    self._session.session_id,
+                    execution_evidence_ref,
+                    exc_info=True,
+                )
         return event
 
     def _append_model_output_rejection_event(self, tc: dict[str, Any]) -> None:

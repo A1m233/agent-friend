@@ -45,6 +45,7 @@ from .store import (
     acquire_session_writer_lease,
     delete_session_writer_lease,
 )
+from .tool_execution_evidence import ToolExecutionEvidenceError, ToolExecutionEvidenceStore
 
 if TYPE_CHECKING:
     from memory import Memory
@@ -133,6 +134,7 @@ class SessionManager:
         command_workspaces_root: Path | None = None,
         time_provider: TimeProvider | None = None,
         transaction_reconciler: ToolTransactionReconciler | None = None,
+        tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
         runtime_instance_id: str = "",
         runtime_start_reason: str = "direct_start",
     ) -> None:
@@ -150,6 +152,7 @@ class SessionManager:
         self._time_provider = time_provider or SystemTimeProvider()
         self._runtime_states: dict[str, _SessionRuntimeState] = {}
         self._transaction_reconciler = transaction_reconciler
+        self._tool_execution_evidence_store = tool_execution_evidence_store
         self._runtime_instance_id = runtime_instance_id
         self._runtime_start_reason = runtime_start_reason
         self._command_workspaces_root = (
@@ -374,6 +377,14 @@ class SessionManager:
         if self._metadata_store is not None:
             self._metadata_store.delete(session_id)
         self._delete_command_workspace(session_id)
+        if self._tool_execution_evidence_store is not None:
+            try:
+                self._tool_execution_evidence_store.delete_session(session_id)
+            except ToolExecutionEvidenceError:
+                logger.exception(
+                    "failed to remove deleted session tool execution evidence",
+                    extra={"session_id": session_id},
+                )
 
     def _delete_command_workspace(self, session_id: str) -> None:
         root = self._command_workspaces_root
@@ -563,6 +574,7 @@ class SessionManager:
             approval_mode_provider=lambda: self._approval_mode_state_without_load(
                 session.session_id
             ),
+            tool_execution_evidence_store=self._tool_execution_evidence_store,
         )
 
     def _restore_runtime_state(
