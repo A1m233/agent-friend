@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventType, type BaseEvent } from "@ag-ui/core";
 
+const { isTauriMock } = vi.hoisted(() => ({
+  isTauriMock: vi.fn(() => false),
+}));
+
+vi.mock("@/utils/tauri", () => ({ isTauri: isTauriMock }));
+
 // mock services 层：只控制 runAgentStream / sessionsApi.get 的行为，验证 store 的错误兜底。
 vi.mock("@/services", () => ({
   StreamAdmissionError: class StreamAdmissionError extends Error {},
@@ -200,6 +206,7 @@ function messageTexts() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  isTauriMock.mockReturnValue(false);
   mockGet.mockReset();
   mockRunCancel.mockReset();
   vi.stubGlobal("window", {
@@ -538,6 +545,63 @@ describe("conversation store · cancel lifecycle", () => {
       .toBe("run-versioned");
     expect(useConversationStore.getState().stopRequestsByRun["run-versioned"])
       .toBe("accepted");
+  });
+});
+
+describe("conversation store · presentation ownership", () => {
+  it("desktop run_event owns the optimistic assistant without duplicating direct SSE output", async () => {
+    isTauriMock.mockReturnValue(true);
+    const release = deferred<void>();
+    mockStream.mockImplementation(async function* () {
+      yield ev({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "direct-message",
+        role: "assistant",
+      });
+      yield ev({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "direct-message",
+        delta: "不应由直接 SSE 投影",
+      });
+      await release.promise;
+      yield ev({ type: EventType.RUN_FINISHED, threadId: "unused", runId: "unused" });
+    });
+
+    const result = useConversationStore.getState().send("只显示一次");
+    expect(result.accepted).toBe(true);
+    if (!result.accepted) return;
+    const optimisticAssistant = useConversationStore
+      .getState()
+      .messages.find((message) => message.runId === result.runId);
+    expect(optimisticAssistant).toBeDefined();
+    await vi.waitFor(() => expect(mockStream).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+
+    expect(useConversationStore.getState().messages.filter(
+      (message) => message.runId === result.runId,
+    )).toEqual([expect.objectContaining({ id: optimisticAssistant!.id, blocks: [] })]);
+
+    useConversationStore.getState().applyRunSnapshot(
+      runSnapshot(result.runId, result.sessionId, "running", 2),
+    );
+    useConversationStore.getState().applyRunEvents(result.sessionId, result.runId, [
+      { type: "text_delta", text: "由 run_event 投影" },
+    ]);
+
+    expect(useConversationStore.getState().messages.filter(
+      (message) => message.runId === result.runId,
+    )).toEqual([
+      expect.objectContaining({
+        id: optimisticAssistant!.id,
+        blocks: [expect.objectContaining({ kind: "text", text: "由 run_event 投影" })],
+      }),
+    ]);
+
+    release.resolve();
+    await expect(result.completion).resolves.toBe("completed");
+    expect(useConversationStore.getState().messages.filter(
+      (message) => message.runId === result.runId,
+    )).toHaveLength(1);
   });
 });
 
@@ -1095,6 +1159,76 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     );
     expect(mockGet).toHaveBeenCalledTimes(2);
     expect(messageTexts()).toEqual(["新问题", "新回答"]);
+  });
+
+  it("desktop 编辑重发吸收 admission 前早到的 run_event，不生成第二条助手消息", async () => {
+    isTauriMock.mockReturnValue(true);
+    const release = deferred<void>();
+    mockGet.mockResolvedValueOnce({
+      session_id: "sid-1",
+      title: "sid-1",
+      persona: "default",
+      model: "test",
+      events: [
+        {
+          type: "user_message",
+          uuid: "old-user",
+          ts: "2026-06-10T00:00:00Z",
+          payload: { content: "旧问题" },
+        },
+        {
+          type: "assistant_message",
+          uuid: "old-assistant",
+          ts: "2026-06-10T00:00:01Z",
+          payload: { content: "旧回答", partial: false },
+        },
+      ],
+    });
+    mockRunGet.mockImplementationOnce(async (runId) =>
+      runSnapshot(runId, "sid-1", "terminal", 3, "completed"),
+    );
+    mockEditStream.mockImplementation((input, opts) => (async function* () {
+      useConversationStore.getState().applyRunSnapshot(
+        runSnapshot(input.runId, input.sessionId, "running", 2),
+      );
+      useConversationStore.getState().applyRunEvents(input.sessionId, input.runId, [
+        { type: "text_delta", text: "早到的 push 回答" },
+      ]);
+      opts?.onAdmitted?.();
+      await release.promise;
+      yield ev({
+        type: EventType.RUN_FINISHED,
+        threadId: input.sessionId,
+        runId: input.runId,
+      });
+    })());
+
+    await useConversationStore.getState().openSession("sid-1");
+    expect(useConversationStore.getState().beginEditingMessage("old-user")).toBe(true);
+    const resend = useConversationStore.getState().editResendLatest("新问题", [], []);
+    await vi.waitFor(() => expect(mockEditStream).toHaveBeenCalledTimes(1));
+
+    const runId = mockEditStream.mock.calls[0]![0].runId;
+    const runMessages = useConversationStore
+      .getState()
+      .messages.filter((message) => message.runId === runId);
+    expect(runMessages).toEqual([
+      expect.objectContaining({
+        blocks: [expect.objectContaining({ kind: "text", text: "早到的 push 回答" })],
+      }),
+    ]);
+    expect(runMessages[0]!.id).not.toBe(`proactive:${runId}`);
+    expect(messageTexts()).toEqual(["新问题", "早到的 push 回答"]);
+    expect(useConversationStore.getState().runSnapshots[runId]).toMatchObject({
+      status: "running",
+      version: 2,
+    });
+
+    release.resolve();
+    await expect(resend).resolves.toBe("completed");
+    expect(useConversationStore.getState().messages.filter(
+      (message) => message.runId === runId,
+    )).toHaveLength(1);
   });
 
   it("编辑重发 RUN_ERROR 已落盘时不重复追加临时错误", async () => {

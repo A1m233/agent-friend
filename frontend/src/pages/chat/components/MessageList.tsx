@@ -27,7 +27,7 @@ import {
 } from "@/stores";
 import { runtimeCredentialGroupForModel } from "@/stores/conversation";
 import {
-  isActiveRunMessage,
+  activeRunActivityMessageId,
   sessionRunPresentation,
   shouldShowMessageActionBar,
 } from "@/stores/runPresentation";
@@ -338,7 +338,7 @@ function lastRenderableBlockIndex(message: ChatMessage): number {
 function MessageContent({
   message,
   actionBar,
-  activeRunMessage,
+  showRunActivity,
   activeRunActivityLabel,
   suppressRunActivity,
   editing,
@@ -350,7 +350,7 @@ function MessageContent({
 }: {
   message: ChatMessage;
   actionBar: ReactNode;
-  activeRunMessage: boolean;
+  showRunActivity: boolean;
   activeRunActivityLabel?: string;
   suppressRunActivity?: boolean;
   editing?: boolean;
@@ -513,12 +513,12 @@ function MessageContent({
         </div>
       )}
       {!suppressRunActivity
-        && (message.status === "streaming" || activeRunMessage)
+        && showRunActivity
         && message.runStatus && (
         <ModelResponseStatus status={message.runStatus} label={activeRunActivityLabel} />
       )}
       {!suppressRunActivity
-        && (activeRunMessage || (message.status === "streaming" && !hasContent))
+        && showRunActivity
         && !message.runStatus && (
         <ModelResponseStatus label={activeRunActivityLabel} />
       )}
@@ -531,6 +531,7 @@ function MessageContent({
 const MessageItem = memo(function MessageItem({
   message,
   activeRunId,
+  activeRunActivityMessageId,
   activeRunActivityLabel,
   suppressRunActivity,
   canEdit,
@@ -544,6 +545,7 @@ const MessageItem = memo(function MessageItem({
 }: {
   message: ChatMessage;
   activeRunId?: string;
+  activeRunActivityMessageId?: string | null;
   activeRunActivityLabel?: string;
   suppressRunActivity?: boolean;
   canEdit: boolean;
@@ -555,7 +557,9 @@ const MessageItem = memo(function MessageItem({
   onReferenceSelect?: (reference: ChatTextReference) => void;
   onToolDisclosureChange: (messageId: string) => void;
 }) {
-  const activeRunMessage = isActiveRunMessage(message, activeRunId);
+  const showRunActivity = activeRunActivityMessageId === undefined
+    ? message.status === "streaming"
+    : message.id === activeRunActivityMessageId;
   const actionBar =
     !shouldShowMessageActionBar(message, activeRunId, editing) ? null : (
       <MessageActionBar
@@ -578,7 +582,7 @@ const MessageItem = memo(function MessageItem({
       <MessageContent
         message={message}
         actionBar={actionBar}
-        activeRunMessage={activeRunMessage}
+        showRunActivity={showRunActivity}
         activeRunActivityLabel={activeRunActivityLabel}
         suppressRunActivity={suppressRunActivity}
         editing={editing}
@@ -596,6 +600,7 @@ function areMessageItemsEqual(prev: MessageItemProps, next: MessageItemProps): b
   return (
     prev.message === next.message &&
     prev.activeRunId === next.activeRunId &&
+    prev.activeRunActivityMessageId === next.activeRunActivityMessageId &&
     prev.activeRunActivityLabel === next.activeRunActivityLabel &&
     prev.suppressRunActivity === next.suppressRunActivity &&
     prev.canEdit === next.canEdit &&
@@ -610,6 +615,7 @@ function areMessageItemsEqual(prev: MessageItemProps, next: MessageItemProps): b
 interface MessageItemProps {
   message: ChatMessage;
   activeRunId?: string;
+  activeRunActivityMessageId?: string | null;
   activeRunActivityLabel?: string;
   suppressRunActivity?: boolean;
   canEdit: boolean;
@@ -659,6 +665,7 @@ function HistoryLoadingState() {
 interface MessageTimelineProps {
   messages: ChatMessage[];
   activeRunId?: string;
+  activeRunActivityMessageId?: string | null;
   activeRunActivityLabel?: string;
   suppressRunActivity?: boolean;
   streaming?: boolean;
@@ -683,6 +690,7 @@ interface MessageTimelineProps {
 export function MessageTimeline({
   messages,
   activeRunId,
+  activeRunActivityMessageId,
   activeRunActivityLabel,
   suppressRunActivity,
   streaming = false,
@@ -1264,6 +1272,7 @@ export function MessageTimeline({
                   <MessageItem
                     message={m}
                     activeRunId={activeRunId}
+                    activeRunActivityMessageId={activeRunActivityMessageId}
                     activeRunActivityLabel={activeRunActivityLabel}
                     suppressRunActivity={suppressRunActivity}
                     canEdit={canEdit}
@@ -1341,6 +1350,7 @@ export function MessageList({
   )));
   const streaming = runPresentation.busy;
   const activeRunId = runPresentation.run?.run_id;
+  const activityMessageId = activeRunActivityMessageId(messages, activeRunId);
   const activeRunActivityLabel = runPresentation.phase === "stopping"
     ? "正在取消当前任务，任务尚未结束…"
     : undefined;
@@ -1414,6 +1424,7 @@ export function MessageList({
       <MessageTimeline
         messages={messages}
         activeRunId={activeRunId}
+        activeRunActivityMessageId={activityMessageId}
         activeRunActivityLabel={activeRunActivityLabel}
         suppressRunActivity={suppressRunActivity}
         streaming={streaming}
