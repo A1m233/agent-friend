@@ -138,7 +138,12 @@ sequenceDiagram
     alt tool call
         U->>U: fsync tool_execution_checkpoint
         U->>T: 执行工具
-        T-->>U: fsync tool_call_result
+        alt 正常返回
+            T-->>U: fsync tool_call_result
+        else 用户取消或运行异常
+            T-->>U: fsync interrupted/unknown tool_call_result
+            U->>H: append model-visible turn_aborted fact
+        end
         H->>H: append tool result
         R->>R: fsync rollout_commit(tool_result_completed)
     end
@@ -150,7 +155,7 @@ sequenceDiagram
 - provider 首个有效事件出现后，先按现有语义提交进程内 candidate，再写 `provider_input_accepted` commit。
 - completed assistant 在业务事件与 `SessionModelHistory` 均成功后写 commit。无后续 tool call 的 commit 标记 `turn_terminal=true`。
 - tool call 的 canonical assistant/tool call item 必须在工具执行前 commit；execution checkpoint 仍是“工具可能已产生副作用”的权威判断。
-- tool result 加入 history 后写独立 commit。后续最终 assistant terminal commit 才使整个 turn 成为 exact-restorable 终态。
+- tool result 加入 history 后写独立 commit；错误、取消和 unknown 结果与成功结果使用相同的 call/result 闭合协议。后续最终 assistant terminal commit 才使正常 turn 成为 exact-restorable 终态；被取消的 turn 以闭合后的 interrupted commit 作为安全续聊边界。
 - partial assistant 不作为完整 assistant item commit；恢复时保留产品事件，但只恢复到最近完整 rollout commit，并进入 interrupted epoch。
 
 ### 恢复算法
@@ -194,12 +199,60 @@ sequenceDiagram
 - 有 result：恢复其 canonical tool item，不再执行。
 - rollout 只持久化模型看到的 call/result 顺序，不取代 checkpoint 的副作用裁决职责。
 
+### 命令过程证据 checkpoint
+
+命令输出分成三层状态，不把 UI progress、执行事实和最终业务结果混成同一个概念：
+
+- `tool_execution_checkpoint` 继续只表示“宿主已承诺开始执行”，不承载输出正文，也不因过程证据而改变其单次 write-ahead 事实语义。
+- `CommandRuntime` 的内存 snapshot 是当前进程内的实时权威；前端 `command_process_changed` 仍只是 UI 投影，不参与恢复裁决。
+- 新增 session-owned tool execution evidence store，为每个命令 `operation_id` 保存一份最新的原子快照。该快照是运行中的恢复 checkpoint，不是第二套 model transcript；只有成功完成原子替换的版本才是可恢复事实。
+- 正式 `tool_call_result` 仍是模型可见工具结果的唯一权威。过程证据只在正式 result 缺失且事务已中断时，用于合成一个匹配的 interrupted result。
+
+证据快照由独立的内部类型定义，首期 `kind=command_output`，包含：
+
+- 稳定 `evidence_ref`、`run_id`、`tool_call_id`、`operation_id`、`tool_name` 和 evidence schema version；
+- `source=host_command_runtime`、`complete=false`、捕获时的 process status 与单调 `output_seq`；
+- 已到达宿主的有界 `stdout`、`stderr`、PTY 尾部，以及 `dropped_bytes`；
+- 内容 hash、字节长度和完整性字段，供 reader 拒绝半写、越界或错配快照。
+
+快照放在 `agent.paths` 管理的用户数据根下，不放进命令可见的 session workspace，也不向模型或诊断暴露绝对路径。每次写入使用同目录临时文件、flush + `fsync` 和 atomic replace；输出更新按固定时间/字节门槛节流，取消和终态路径强制同步刷新。快照正文复用现有 `CommandProcessSnapshot` 尾部上限，再增加 session 级总额；配额、I/O 或完整性检查失败时显式退化为无可信证据的 interrupted/unknown，不使用 UI 内容补造。
+
+命令正常完成并已提交正式 result 后，未被引用的 active snapshot 可删除。命令中断时，同一 `evidence_ref` 的 snapshot 冻结为受 session 生命周期管理的证据：
+
+- interrupted result 复用现有 `MAX_RESULT_OUTPUT_BYTES` 预算内联有界预览，并带 `partial=true`、`complete=false`、来源、`output_seq`、`dropped_bytes` 和稳定 `evidence_ref`；
+- `recover_tool_result` 在保持原 `result_ref` 行为的基础上支持模型原样提供的 `evidence_ref`，仍只允许从当前 session 中已闭合、active 的 tool result 反向验证引用，再按 query/offset 有界读取；
+- 快照只保存命令本来会进入 tool result 的输出字段，不序列化 argv、env、审批对象、宿主凭据或整个 runtime 对象。
+
+该证据类型以 `kind + schema_version` 扩展；未来其它流式工具可以提供自己的有界 payload 和 renderer，但不为本期预建通用事件溯源或 exactly-once 平台。
+
+### 取消终结与 Provider 前完整性门禁
+
+取消终结由 `Conversation` 负责，因为它同时持有本轮 call 列表、session 事件、`SessionModelHistory` 与 rollout recorder。`ToolBatchExecutor` 继续只负责有界执行和协作取消，不自行写会话状态。
+
+- 工具 batch 因用户取消或其它 `BaseException` 退出时，`Conversation` 在重新抛出异常前逐个检查本 batch 已进入模型历史、但尚无 result 的 call，并追加幂等的 `tool_call_result`。
+- 幂等键使用 `(run_id, event_tool_call_id)`；已有结果时原结果胜出，不因重复取消、finally、启动恢复或下一轮 preflight 再追加第二条。
+- 明确未被执行器接纳的 call 写入 `transaction_status=interrupted`、`process_status=not_started`、`semantic_status=not_started`、`executed=false`。缺少 `tool_execution_checkpoint` 本身不足以证明未执行，因为并非所有工具都提供宿主 checkpoint。
+- 已被执行器接纳或已有 execution checkpoint 的 call 写入 `transaction_status=interrupted`、`process_status=cancelled_or_detached`、`semantic_status=unknown`、`executed=unknown`；正文明确说明工具可能已部分执行，应先查询实际状态再决定是否重试。命令工具存在可信 evidence snapshot 时，正文同时投影其有界预览与引用，但不改变 unknown 语义。
+- interrupted result 复用现有 `tool_call_result` 事件和 `tool_result_completed` rollout boundary，不新增第二套事务事件；`result_origin` 标记为 `runtime_cancellation` 或 `history_preflight_repair`。
+- 普通取消时，命令的 cancel callback 先在有界时间内终止进程并强制刷新 evidence snapshot，再返回给 `Conversation` 闭合事务。若自然终态和取消竞态，已提交的正式 result 胜出；证据不得产生第二个 result。
+- Bridge 重启恢复时，`ToolTransactionReconciler` 先用同一事务键找 execution checkpoint，再校验其 `operation_id` 对应的 evidence snapshot。有效证据交给与普通取消共用的 renderer，生成稳定的 interrupted result；无证据、坏证据或未接入工具继续使用现有 generic unknown 结果。
+- 两条路径使用相同 `evidence_ref`、同一快照版本和同一 renderer；正文不带绝对路径或非稳定时间戳，以保证同进程续聊与 Bridge 重启后恢复内容一致。
+- 所有缺失 result 闭合并提交 rollout 后，追加一条 `synthetic=turn_aborted` 的 model-only system message，携带稳定 `run_id` 和不含工具正文的中断说明。该事实只进入模型 transcript/rollout，不生成用户可见聊天消息；同一 run 只追加一次。
+
+Provider 请求采用两级门禁：
+
+1. 新用户轮开始并完成 session/history reconcile 后，扫描 canonical `SessionModelHistory`。若发现有持久化 request、无 result 的旧 call，按 execution checkpoint 与 run terminal 事实补写 interrupted/unknown result，并提交新的 rollout commit；不得执行原工具。
+2. `ContextManager` 完成裁剪和上下文组装后、构造 `ModelRequest` 前，再验证最终 messages 中每个 assistant tool call 都恰有一个匹配 tool result，且不存在孤立或重复 result。仍无法闭合的历史以稳定的本地完整性错误终止并记录 call/run ID，不向 provider 发送已知非法请求。
+
+该门禁只维护模型协议和已持久化事务的安全终态，不提供业务级 exactly-once：它不推断工具领域操作是否成功，不自动补偿，也不自动重试可能有副作用的调用。正常中断闭合、发送前兜底和 turn-aborted 事实共同保证同进程与跨进程续聊使用相同安全语义。
+
 ### 删除、保留与安全边界
 
 - rollout 与产品事件共处同一 session JSONL，所以 archive 天然保留，hard delete 与批量删除天然同时删除正文和 rollout。
-- writer lease 文件不含正文；hard delete 会在安全释放后清理当前 session 的 lease 文件和现有 command workspace/metadata。
+- tool execution evidence 是 session-owned 用户数据：archive 保留，hard delete 和批量删除必须同步删除对应证据目录，恢复/启动清理只能删除已有正式 result 且不再被 active result 引用的孤立 snapshot。
+- writer lease 文件不含正文；hard delete 会在安全释放后清理当前 session 的 lease 文件、tool evidence 和现有 command workspace/metadata。
 - 不新增自动过期策略；沿用 session 生命周期。
-- 默认诊断只暴露 ID、generation、reason、fingerprint、item count、hash 和恢复 disposition。
+- 默认诊断只暴露 ID、generation、reason、fingerprint、item count、hash、证据字节数和恢复 disposition，不输出 evidence 正文或本地路径。
 
 ### Prompt Cache 验证
 
@@ -218,22 +271,31 @@ sequenceDiagram
 | `agent/src/agent/sessions/store.py` | 修改 | 批量 fsync append、坏尾读取、writer lease 与冲突错误 |
 | `agent/src/agent/sessions/session.py` | 修改 | 承载只读加载诊断，确保 rollout 事件不进入业务投影 |
 | `agent/src/agent/sessions/model_history.py` | 修改 | 从持久化 item 恢复并忽略 rollout 自身事件 UUID |
+| `agent/src/agent/sessions/recovery.py` | 修改 | terminal run 仍需闭合缺失 result，并统一 provider/event call ID 的事务关联 |
+| `agent/src/agent/sessions/tool_execution_evidence.py` | 新增 | 有界 evidence schema、原子快照 store、引用校验与 interrupted result renderer |
 | `agent/src/agent/sessions/model_context.py` | 修改 | snapshot 序列化与恢复 |
 | `agent/src/agent/sessions/cache_epoch.py` | 修改 | 稳定 epoch ID、manifest 恢复和兼容判断 |
-| `agent/src/agent/sessions/manager.py` | 修改 | writer lease、rollout restore、runtime state 共享和删除清理 |
-| `agent/src/agent/conversation.py` | 修改 | prepared/accepted/assistant/tool/terminal 提交接点 |
+| `agent/src/agent/sessions/manager.py` | 修改 | writer lease、rollout restore、runtime state 共享、evidence store 注入和删除清理 |
+| `agent/src/agent/paths.py` | 修改 | 提供不暴露给命令 workspace 的 tool evidence 用户数据路径 |
+| `agent/src/agent/command_runtime/runtime.py` | 修改 | 按节流门槛发布可持久快照，在取消/终态强制刷新 |
+| `agent/src/agent/command_runtime/tools.py` | 修改 | 绑定 evidence callback、取消终止和命令过程证据 |
+| `agent/src/agent/conversation.py` | 修改 | prepared/accepted/assistant/tool/terminal 提交接点，以及 evidence-aware 取消闭合 |
+| `agent/src/agent/tools/builtin/tool_result_recovery/tool.py` | 修改 | 在当前 session active result 授权下有界读取 `evidence_ref` |
 | `agent/src/agent/prompt_cache_trace.py` | 修改 | 恢复精确 final-wire witness anchor |
 | `agent/tests/test_session_rollout.py` | 新增 | 持久化、恢复、损坏、epoch、writer、删除与凭据隔离测试 |
-| 既有 conversation/cache 测试 | 修改 | 将旧的 restart degraded 预期更新为 exact，并补回归覆盖 |
+| 既有 command/conversation/recovery/cache 测试 | 修改 | 补取消竞态、有界输出、引用恢复、跨 Bridge 一致性与无重放覆盖 |
+
+本次过程证据修订在已完成的取消闭合上增加一个小型 session-owned evidence 模块；不改变 rollout transcript 事件格式，不把临时 UI delta 写成 model history，也不扩展为所有工具的通用恢复平台。
 
 ## 影响分析
 
 ### 上下游影响
 
-- Bridge 和桌面应用无需新增独立存储路径；已有 session API 继续返回相同业务投影。
+- Bridge 和桌面应用 API 仍返回相同业务投影；新增的 tool evidence 路径只是 `agent.paths` 管理的 session-owned 内部用户数据，不对 UI 或命令工作目录公开。
 - 现有 session 文件增加内部事件，旧版本读取这些新事件会因未知类型失败，因此 schema 兼容边界由本需求后的 reader 负责；不支持用旧 Bridge 写入新 rollout 文件。
 - 会话列表扫描必须忽略 rollout 事件，仍只按用户/assistant 业务事件计算更新时间。
 - compaction、edit/resend、provider transform rebase 和显式模型/persona 切换会触发新的 segment 或 epoch，但不创建新 session。
+- `recover_tool_result` 的 tool schema 增加 evidence 引用分支，因此 tool capability fingerprint 会按现有规则变化；部署后的第一次相关续聊可能正常进入新 cache epoch，不伪装为原前缀 exact continuation。
 
 ### 风险点
 
@@ -244,6 +306,10 @@ sequenceDiagram
 - **任意正文中的秘密**：不能在不改变模型前缀的情况下对用户正文做启发式脱敏；本方案保证宿主 credential 不通过 manifest/meta/runtime 对象进入 rollout，并维持现有“不要把凭据注入模型正文”的上游边界。
 - **多进程锁可靠性**：依赖项目已有 `portalocker` 的 OS advisory lock；网络文件系统的异常语义不作为本期承诺。
 - **中断恢复**：不自动重放旧 turn，可能需要用户显式重试，但优先保证不重复 assistant 和有副作用工具。
+- **执行结果不确定性**：线程或宿主进程收到取消不等于领域操作已回滚。interrupted result 与 turn-aborted fact 必须保留“可能已部分执行”的不确定性；部分输出不能把取消包装成确定成功或失败。
+- **快照时间窗口**：节流写入与 Bridge 突然退出之间仍可能有尚未完成原子替换的最新输出。恢复只陈述最后一份已提交快照，通过 `output_seq` 与 `complete=false` 显式保留这个边界。
+- **快照正文增长**：每个中断命令最多保留一份有界尾部，并受 session 总额限制。达到配额后不删除仍被 active result 引用的旧证据；新事务明确退化为 generic unknown。
+- **证据与正文机密性**：命令自身输出的秘密与普通 tool result 一样无法启发式脱敏而不改变事实。证据存储必须处于相同用户数据边界，诊断默认不包含证据正文。
 
 ## 变更记录
 
@@ -251,3 +317,5 @@ sequenceDiagram
 |---|---|---|
 | 2026-08-31 | 首次确认：同一 session JSONL 内追加 delta rollout；prepared/commit/terminal 边界；跨进程 exact witness；非破坏性坏尾续写 | 是 |
 | 2026-09-01 | 旧会话改为 writer lease 内同步提交 migration checkpoint；提交后 rollout 成为 model transcript 唯一恢复来源，迁移基线保持 degraded 直到产生新的 terminal provider commit | 是 |
+| 2026-09-01 | 增加取消终结协议、model-visible turn-aborted fact 与 Provider 前两级历史完整性门禁；复用现有 tool result/rollout 事件，不建设通用 exactly-once 平台 | 是 |
+| 2026-09-01 | 增加 session-owned 命令过程证据 checkpoint、有界 partial result 与 `evidence_ref`；普通取消和 Bridge 重启共用恢复 renderer，不改变 semantic unknown 且不重放原命令 | 是 |

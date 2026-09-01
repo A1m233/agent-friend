@@ -10,7 +10,15 @@ from uuid import uuid4
 
 import portalocker
 from agent.command_runtime.workspace import session_workspace_path
-from agent.sessions import Event, EventType, JsonlSessionStore, Session, SessionManager
+from agent.sessions import (
+    Event,
+    EventType,
+    JsonlSessionStore,
+    Session,
+    SessionManager,
+    ToolExecutionEvidence,
+    ToolExecutionEvidenceStore,
+)
 
 
 def _session(session_id: str) -> Session:
@@ -84,7 +92,9 @@ def test_delete_unsafe_session_id_removes_encoded_file(tmp_path: Path) -> None:
     assert list(tmp_path.glob("*.jsonl")) == []
 
 
-def test_session_manager_hard_delete_removes_managed_command_workspace(tmp_path: Path) -> None:
+def test_session_manager_hard_delete_removes_command_workspace_and_evidence(
+    tmp_path: Path,
+) -> None:
     sessions = tmp_path / "sessions"
     workspaces = tmp_path / "command-workspaces"
     store = JsonlSessionStore(sessions)
@@ -93,13 +103,36 @@ def test_session_manager_hard_delete_removes_managed_command_workspace(tmp_path:
     workspace = session_workspace_path(workspaces, session_id)
     workspace.mkdir(parents=True)
     (workspace / "kept-across-archive.txt").write_text("content", encoding="utf-8")
-    manager = SessionManager(store=store, command_workspaces_root=workspaces)
+    evidence_store = ToolExecutionEvidenceStore(tmp_path / "tool-evidence")
+    evidence_ref = evidence_store.new_reference()
+    evidence_store.write(
+        ToolExecutionEvidence(
+            evidence_ref=evidence_ref,
+            session_id=session_id,
+            run_id="run-1",
+            tool_call_id="call-1",
+            operation_id="proc-1",
+            tool_name="exec_command",
+            process_status="cancelled",
+            output_seq=1,
+            dropped_bytes=0,
+            stdout="partial",
+            captured_at=datetime.now(UTC).isoformat(),
+        )
+    )
+    manager = SessionManager(
+        store=store,
+        command_workspaces_root=workspaces,
+        tool_execution_evidence_store=evidence_store,
+    )
 
     manager.archive(session_id)
     assert workspace.exists()
+    assert evidence_store.load(session_id, evidence_ref) is not None
     manager.delete(session_id)
 
     assert not workspace.exists()
+    assert evidence_store.load(session_id, evidence_ref) is None
 
 
 def test_load_waits_for_in_progress_writer(tmp_path: Path) -> None:

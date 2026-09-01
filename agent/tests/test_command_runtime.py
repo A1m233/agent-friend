@@ -55,6 +55,7 @@ from agent.command_runtime.tools import (
     make_command_tools,
 )
 from agent.sessions.metadata import SessionMetadataStore
+from agent.sessions.tool_execution_evidence import ToolExecutionEvidenceStore
 from agent.skills.models import (
     ActivatedSkill,
     RenderedSkillCatalog,
@@ -1296,7 +1297,7 @@ def test_command_tool_uses_shared_approval_and_buffered_semantics(
     tool = ExecCommandTool(runtime, broker)
     context = ToolRunContext.create("")
     result_box = []
-    checkpoints: list[tuple[str, str]] = []
+    checkpoints: list[tuple[str, str, str | None]] = []
     args = {
         "cmd": "fake:buffered",
         "workdir": str(tmp_path.resolve()),
@@ -1307,7 +1308,9 @@ def test_command_tool_uses_shared_approval_and_buffered_semantics(
         COMMAND_SURFACE_ARG: "desktop_chat",
         COMMAND_RUN_CONTEXT_ARG: context,
         COMMAND_EXECUTION_CHECKPOINT_ARG: (
-            lambda operation_id, recovery_mode: checkpoints.append((operation_id, recovery_mode))
+            lambda operation_id, recovery_mode, evidence_ref=None: checkpoints.append(
+                (operation_id, recovery_mode, evidence_ref)
+            )
         ),
     }
 
@@ -1356,6 +1359,56 @@ def test_command_tool_uses_shared_approval_and_buffered_semantics(
             "sandbox_absence_proves_host_absence": False,
         }
         assert "不能证明宿主机" in payload["sandbox_observation_note"]
+
+
+def test_buffered_command_persists_host_observed_output_evidence(
+    runtime: CommandRuntime,
+    tmp_path: Path,
+) -> None:
+    broker = ApprovalBroker()
+    evidence_store = ToolExecutionEvidenceStore(tmp_path / "evidence")
+    runtime.add_evidence_listener(evidence_store.observe_process_snapshot)
+    tool = ExecCommandTool(
+        runtime,
+        broker,
+        tool_execution_evidence_store=evidence_store,
+    )
+    context = ToolRunContext.create("")
+    checkpoints: list[tuple[str, str, str | None]] = []
+    result_box = []
+    args = {
+        "cmd": "fake:buffered",
+        "workdir": str(tmp_path.resolve()),
+        COMMAND_SESSION_ID_ARG: "session-a",
+        COMMAND_RUN_ID_ARG: "run-a",
+        COMMAND_TOOL_CALL_ID_ARG: "event-call-a",
+        COMMAND_SURFACE_ARG: "desktop_chat",
+        COMMAND_RUN_CONTEXT_ARG: context,
+        COMMAND_EXECUTION_CHECKPOINT_ARG: (
+            lambda operation_id, recovery_mode, evidence_ref=None: checkpoints.append(
+                (operation_id, recovery_mode, evidence_ref)
+            )
+        ),
+    }
+
+    thread = threading.Thread(target=lambda: result_box.append(tool.invoke(args)))
+    thread.start()
+    request = _wait_for_request(broker)
+    assert broker.decide(request.request_id, CommandApprovalDecision(allow=True))
+    thread.join(timeout=3)
+
+    assert not thread.is_alive()
+    assert len(checkpoints) == 1
+    operation_id, recovery_mode, evidence_ref = checkpoints[0]
+    assert recovery_mode == "resident_only"
+    assert isinstance(evidence_ref, str)
+    assert result_box[0].meta["_execution_evidence_ref"] == evidence_ref
+    evidence = evidence_store.load("session-a", evidence_ref)
+    assert evidence is not None
+    assert evidence.operation_id == operation_id
+    assert evidence.tool_call_id == "event-call-a"
+    assert evidence.stdout == "buffered output"
+    assert evidence.output_seq > 0
 
 
 def test_streaming_handle_is_closed_with_tool_run(runtime: CommandRuntime, tmp_path: Path) -> None:

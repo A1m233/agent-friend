@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-COMPLETED
+COMPLETED（命令部分执行证据已实现、通过全量门禁并经用户验收）
 
 ## 任务列表
 
@@ -18,13 +18,23 @@ COMPLETED
 - [x] 旧会话首次建立可写 runtime 时同步提交 rollout migration checkpoint
 - [x] 迁移后重复重启仅从 rollout 恢复同一基线与 epoch
 - [x] 重跑受影响测试与项目门禁
+- [x] 取消或异常退出 tool batch 时，为所有已进入模型历史的 call 幂等补齐 interrupted/unknown result
+- [x] 持久化 model-visible turn-aborted fact，并在下一轮 provider 前执行 call/result 完整性门禁
+- [x] 覆盖同进程取消后续聊、Bridge 重启后续聊、无重复执行与本地 fail-closed
+- [x] 重跑受影响测试与 `scripts/check`
+- [x] 确认命令部分执行证据的需求边界与技术方案
+- [x] 实现 session-owned 有界 evidence snapshot 与原子持久化
+- [x] 在命令取消、终态和 Bridge 重启路径恢复同一 interrupted result
+- [x] 扩展 `recover_tool_result` 的当前会话 evidence 引用恢复
+- [x] 补齐取消竞态、输出截断、大输出引用、损坏降级和无重放测试
+- [x] 重跑受影响测试与项目门禁
 
 ## AC 验证
 
 - [x] AC-1 Bridge 重启 exact continuation
 - [x] AC-2 应用完整退出重开
 - [x] AC-3 无工具最终回答
-- [x] AC-4 工具事务恢复
+- [x] AC-4 工具事务恢复（部分执行证据修订后重新验证）
 - [x] AC-5 Model-only item 保真
 - [x] AC-6 Memory 追加语义
 - [x] AC-7 损坏尾部降级
@@ -39,13 +49,24 @@ COMPLETED
 - [x] AC-16 Compaction checkpoint
 - [x] AC-17 需求 109 长会话 smoke
 - [x] AC-18 客户端与 provider 结论分离
-- [x] AC-19 自动化门禁
+- [x] AC-19 自动化门禁（部分执行证据修订后重新验证）
+- [x] AC-20 取消后继续会话（证据投影后重新验证）
+- [x] AC-21 部分工具输出持久化
 
 ## 验证证据
 
+原需求交付证据保留如下；本次修订的新增证据将在实现和复验完成后追加，不覆盖既有验证历史。
+
 ### 确定性验证
 
-- `agent/tests/test_session_rollout.py`：22 个用例覆盖旧会话同步迁移、迁移写失败释放 lease、重复重启保持 migration epoch、禁止业务历史恢复 fallback、exact restart、Memory/model-only 原位、tool 顺序与不重放、accepted-but-unsent user、坏尾、writer lease、credential 字段过滤、archive/delete、unknown schema、identity matrix、模型切换隔离、compaction rewrite 和 witness round-trip。
+- 部分执行证据修订新增 11 个确定性用例：覆盖原子快照替换、内容 hash/事务归属校验、session 配额、有界预览与丢弃量、命令运行时输出捕获、同进程取消续聊、正式结果与证据清理竞态、Bridge 重启恢复、坏证据降级、当前会话 `evidence_ref` 恢复和 hard delete。
+- 定向组合验证：156 passed，覆盖 command runtime、conversation/runtime dispatch、startup reconciliation、result recovery、session lifecycle 及 evidence store。
+- 本次修订全量门禁（2026-09-01）：backend lint/typecheck 通过，pytest 2415 passed / 4 skipped；frontend 115 files、685 tests 与 production build 通过；Rust 224 tests 通过、1 个设备级 smoke 按约定 ignored，release check 通过。zip duplicate、frontend CSS `::highlight`/chunk、Rust dead-code 与 Python bilibili atexit 均为既有 warning，未导致门禁失败。
+- 本次没有调用真实 LLM/API：验收对象是本地命令输出 checkpoint、事务闭合、持久化顺序、跨进程恢复和引用授权，fake provider/runtime 可完整断言；真实 provider 不会增加这些确定性边界的证据。
+- 本次修订新增 7 个确定性用例：覆盖单工具与多工具 batch 取消、结果投影中途取消、同进程直接续聊、Bridge 重启后续聊、terminal run 启动恢复、已有 host-recovered result 回灌、不可修复历史本地 fail-closed；全部使用 fake provider 与受控阻塞工具，证明原工具不重复执行且不会向 provider 发送孤立 call。
+- 本次修订项目门禁（2026-09-01）：backend lint/typecheck 通过，pytest 2404 passed / 4 skipped；frontend 115 files、685 tests 与 production build 通过；Rust 224 tests 通过、1 个设备级 smoke 按约定 ignored，release check 通过。zip duplicate、frontend CSS `::highlight`/chunk、Rust dead-code 与 Python bilibili atexit 均为既有 warning，未导致门禁失败。
+- 本次未调用真实 LLM/API：验收对象是确定性的本地协议配对、持久化顺序、取消竞态与重启恢复，fake provider 能完整断言发出前 messages；真实 provider 只会重复验证同一结构约束并产生无必要 token 消耗。
+- `agent/tests/test_session_rollout.py`：23 个用例覆盖旧会话同步迁移、迁移写失败释放 lease、重复重启保持 migration epoch、禁止业务历史恢复 fallback、exact restart、Memory/model-only 原位、tool 顺序与不重放、取消结果与 turn-aborted fact 跨进程恢复、accepted-but-unsent user、坏尾、writer lease、credential 字段过滤、archive/delete、unknown schema、identity matrix、模型切换隔离、compaction rewrite 和 witness round-trip。
 - `agent/tests/test_dynamic_context_cache_continuity.py`：重启后 provider input 对重启前 final wire 做严格前缀比较。
 - `agent/tests/test_prompt_cache_trace.py` 与 `llm_providers/tests/test_prompt_cache_observation.py`：覆盖跨进程 exact witness，以及 `strict_extension + cache_read=0` 与客户端 rebase 的独立解释。
 - 2026-09-01 同步 `origin/main@79b7e59` 后的最终门禁：backend 2397 passed / 4 skipped；frontend 115 files、685 tests、production build 通过；Rust 224 tests 通过、1 个既有 ignored，release check 通过。frontend CSS pseudo-element/chunk、Rust dead-code 与 Python bilibili atexit 输出均为既有 warning，未导致门禁失败。
@@ -77,3 +98,8 @@ COMPLETED
 | 2026-09-01 | 完成旧会话同步 migration checkpoint 与产品 active-event 投影隔离 | 迁移失败不建立 runtime；重复重启保持同一 degraded epoch；业务-only suffix 不进入恢复 history；完整三阶段门禁通过 |
 | 2026-09-01 | 用户确认验收并授权一路合入主干、推送远端 | AC、三阶段门禁与真实长会话 smoke 证据齐备，工作流状态更新为 `COMPLETED` |
 | 2026-09-01 | 变基到 `origin/main@79b7e59` 并完成最终复验 | backend 2397 / frontend 685 / Rust 224 全部通过；公开 Guide 已更新并发布 immutable `agent-friend-guide-r26` |
+| 2026-09-01 | 真实取消 bad case 证明 AC-4 未覆盖 terminal run 中的孤立 tool call；用户确认在需求 113 内重开修订，不创建新需求 | 基于最新 `origin/main` 创建 `fix/tool-transaction-cancellation-integrity`；进入实现前先补齐需求、方案与回归边界 |
+| 2026-09-01 | 完成取消终结、turn-aborted model fact、启动恢复与 provider 前完整性门禁 | 新增 7 个回归用例；backend 2404、frontend 685、Rust 224 及 production/release build 全部通过，待用户验收后收口 |
+| 2026-09-01 | 用户确认命令部分执行证据的需求与技术方案 | 采用 session-owned 原子快照、有界预览 + `evidence_ref`、同进程/跨 Bridge 共用 renderer；尚未开始生产代码实现 |
+| 2026-09-01 | 完成命令部分执行证据持久化、取消/重启恢复、大输出引用与生命周期清理 | 新增 11 个确定性用例；backend 2415、frontend 685、Rust 224 及 production/release build 全部通过，待用户验收后收口 |
+| 2026-09-01 | 用户确认验收并要求合入主干、推送远端 | AC-21 与关联回归、三阶段门禁证据齐备，工作流状态更新为 `COMPLETED` |

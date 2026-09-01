@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -122,6 +123,21 @@ class _CountingEcho:
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
         self.invocations += 1
+        return ToolResult(text=str(args["message"]))
+
+
+class _BlockingCountingEcho(_CountingEcho):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.completed = threading.Event()
+
+    def invoke(self, args: dict[str, Any]) -> ToolResult:
+        self.invocations += 1
+        self.started.set()
+        self.release.wait(timeout=2)
+        self.completed.set()
         return ToolResult(text=str(args["message"]))
 
 
@@ -336,6 +352,61 @@ def test_tool_transaction_restores_in_order_without_reinvoking_tool(tmp_path: Pa
     assert restarted_llm.received[0][: len(previous_wire)] == previous_wire
     roles = [item.get("role") for item in restarted_llm.received[0]]
     assert roles.index("assistant") < roles.index("tool")
+
+
+def test_cancelled_tool_result_and_turn_marker_restore_before_followup(tmp_path: Path) -> None:
+    from agent.runtime.cancellation import CancellationToken, CancelReason, RunCancelled
+
+    tool = _BlockingCountingEcho()
+    registry = ToolRegistry([tool])
+    first_llm = _ToolLoopLLM()
+    first = _manager(tmp_path, first_llm, registry=registry)
+    session_id = _create(first)
+    conversation = first.start_conversation(first.open(session_id))
+    token = CancellationToken()
+    errors: list[BaseException] = []
+
+    def consume() -> None:
+        try:
+            list(
+                conversation.stream(
+                    "use the tool",
+                    run_id="cancelled-tool-run",
+                    surface=DESKTOP_CHAT_SURFACE,
+                    cancel_check=token.raise_if_cancelled,
+                )
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=consume)
+    worker.start()
+    assert tool.started.wait(1)
+    assert token.cancel(CancelReason.EXPLICIT_REQUEST)
+    worker.join(timeout=1)
+    tool.release.set()
+    assert tool.completed.wait(1)
+    assert not worker.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], RunCancelled)
+    first.close()
+
+    restarted_llm = _RecordingLLM(["after restart"])
+    restarted = _manager(tmp_path, restarted_llm, registry=registry)
+    restored = restarted.start_conversation(restarted.open(session_id))
+    assert restored.cache_epoch_diagnostics["recovery_disposition"] == "exact"
+    list(restored.stream("continue", surface=DESKTOP_CHAT_SURFACE))
+
+    assert tool.invocations == 1
+    persisted = JsonlSessionStore(tmp_path / "sessions").load(session_id)
+    results = [event for event in persisted.events if event.type == "tool_call_result"]
+    assert len(results) == 1
+    assert results[0].payload["executed"] == "unknown"
+    followup = restarted_llm.received[0]
+    assistant_index = next(index for index, item in enumerate(followup) if item.get("tool_calls"))
+    assert followup[assistant_index + 1]["role"] == "tool"
+    assert followup[assistant_index + 1]["tool_call_id"] == "call-1"
+    assert any("<turn_aborted>" in str(item.get("content")) for item in followup)
 
 
 def test_second_manager_cannot_write_same_resident_session(tmp_path: Path) -> None:

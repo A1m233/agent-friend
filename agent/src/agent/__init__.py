@@ -60,6 +60,7 @@ from .paths import (
     sessions_dir,
     skills_dir,
     todos_db_path,
+    tool_execution_evidence_dir,
     user_data_dir,
 )
 from .personas import (
@@ -269,5 +270,6 @@ __all__ = [
     "sessions_dir",
     "skills_dir",
     "todos_db_path",
+    "tool_execution_evidence_dir",
     "user_data_dir",
 ]

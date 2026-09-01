@@ -31,6 +31,7 @@ CONFIRMED
 - 无法严格恢复时安全继续会话，同时明确开始新的 cache epoch 并给出可诊断原因。
 - 保持已有会话自己的 model route，不受之后修改的全局新对话默认模型影响。
 - 安全处理写入中断、损坏尾部、未完成 assistant 输出和未完成工具事务，不重复已经开始执行的工具动作。
+- 保留宿主在工具中断前已经可靠观测到的有界执行证据，使同进程续聊与 Bridge 重启恢复后的模型都不会丢失这部分事实。
 - 让会话删除、归档与本地数据安全边界完整覆盖会话流水。
 - 复用需求 109 的 observation/report，分别报告客户端前缀连续性和 provider 实际 cache usage。
 
@@ -56,6 +57,7 @@ CONFIRMED
 - 无 rollout 的旧会话在首次建立可写 runtime 时，把现有可恢复业务历史一次性提交为 rollout migration checkpoint；迁移提交成功前不得进入可写对话运行态。
 - exact continuation、degraded recovery、blocked recovery 与 corrupted/unreadable 的明确区分。
 - 写入中断、尾部截断、文件损坏、旧 schema、未知新 schema 和旧会话无 rollout 数据时的安全语义。
+- 工具过程证据的有界持久化与恢复：首期完整覆盖命令工具已经到达宿主的 `stdout`、`stderr`、PTY 输出及其截断信息，并提供可供其它流式工具复用的证据契约。
 - 同一会话的单写者约束，以及多个窗口、并发请求和多个 Bridge 实例访问时的明确串行化或拒绝行为。
 - 会话 archive、hard delete、批量清理和孤立数据清理对 rollout 数据的覆盖。
 - 脱敏诊断与 Prompt Cache observation/report 扩展。
@@ -67,6 +69,7 @@ CONFIRMED
 - 不废弃或绕过现有 `SessionModelHistory`。
 - 不因为本需求建立通用事件溯源框架、完整 fork/revert 产品能力或跨设备会话同步。
 - 不为所有工具建立通用 exactly-once/idempotency 平台；本需求只要求恢复过程不自动重放已经开始执行的工具事务。
+- 不承诺恢复尚未到达宿主、只存在于工具内部或未完成持久提交的过程输出，也不要求首期一次性改造所有非命令类工具。
 - 不新增独立于会话的 rollout 自动过期时间。归档会话继续保留 rollout，hard delete 才删除对应数据。
 - 不把物理电脑关机重启纳入本期确定性 AC 或真实 smoke。持久化设计不得依赖同一进程或同一次应用生命周期，但本期以 Bridge 重启和应用完整退出重开验证恢复能力。
 
@@ -111,6 +114,14 @@ CONFIRMED
 - 半截 assistant 输出不得被恢复为完整回答，也不得与重试输出拼接成重复回答。
 - 已收到但尚未开始执行的 tool call 可以在安全恢复后进入正常执行。
 - 已经存在执行 checkpoint 但没有完整 result 的事务，恢复过程不得再次调用原工具；只能恢复既有结果、重新连接原运行，或明确标记为 interrupted/unknown 并停止自动续跑。
+- 用户取消、运行异常或进程恢复导致一轮工具事务终止时，每个已经进入模型历史的 tool call 都必须得到且只能得到一个匹配的 model-visible tool result；不得把只有 call、没有 result 的历史发送给 provider。
+- 只有宿主能够证明尚未开始执行的取消事务才可以标记为未执行；已经进入执行集合或存在执行 checkpoint 的事务只能标记为执行结果未知、可能已部分产生副作用。缺少 checkpoint 本身不能作为未执行证明，不得伪造成功或自动重试原工具。
+- 工具的最终业务语义与中断前的过程执行证据必须分开表达。存在部分输出不能据此宣称工具成功、失败或副作用已回滚；interrupted result 仍必须保持 `semantic_status=unknown` 和错误终态。
+- 对能够产生宿主可观测过程证据的工具，取消终结与恢复只能使用已经到达宿主并完成持久提交的证据。首期命令工具必须保存有界 `stdout`、`stderr`、PTY 输出、完整性/来源、截断或丢弃字节信息；大输出可以保存受生命周期治理的正文引用与有界预览。
+- 有可信过程证据时，匹配的 model-visible interrupted result 必须携带该有界证据或可恢复引用，并明确标注 `partial/incomplete`；该结果在同进程续聊和 Bridge 重启恢复后必须保持一致。只有 UI 收到但未持久提交的 progress 不能作为恢复权威。
+- 没有可信过程证据、工具未提供过程证据能力或证据未完成持久提交时，系统必须诚实返回 interrupted/unknown，不得从 UI 文本、文件副作用或领域状态反推、拼接或伪造工具输出。
+- 工具结果闭合后，模型历史还必须包含上一轮被主动中断的事实，提醒后续模型先核实可能的部分执行，再决定是否重试。
+- 每次 provider 请求发出前必须验证最终模型历史中的 tool call/result 配对。能够依据持久化事务事实确定语义的缺口应幂等补齐；无法安全判断的结构损坏必须在本地阻止请求并给出可诊断原因，不能把 provider 的通用 400 暴露给用户。
 - 已完整提交的 assistant 消息、tool call 和 tool result 不得因恢复而重复追加。
 
 ### 5. 并发所有权
@@ -123,6 +134,7 @@ CONFIRMED
 
 - rollout 与现有本地会话数据处于相同的安全与访问边界。
 - rollout 可以保存本地恢复所必需的用户、assistant、Memory、Skill 和工具正文。
+- 持久化的部分工具输出与普通 tool result 正文使用相同的本地安全、归档、删除与诊断脱敏边界；不得因为过程证据通道额外泄露凭据或绕过既有正文治理。
 - rollout 不得写入 API Key、访问令牌、Cookie、宿主权限凭据或其它 credential material。
 - 任意运行时对象不得未经字段筛选整体序列化进 rollout；诊断与日志默认只输出 ID、fingerprint、长度、状态和原因，不输出完整敏感正文。
 - archive 保留 rollout；hard delete 同时删除会话正文、rollout、相关 metadata 和现有会话专属数据。
@@ -159,7 +171,7 @@ CONFIRMED
 - [ ] **AC-1 Bridge 重启 exact continuation**：同一会话完成至少一轮后重启 Bridge；在身份兼容且数据完整时恢复为 exact continuation，下一请求 final wire 严格扩展重启前最后一次 final wire。
 - [ ] **AC-2 应用完整退出重开**：完整退出并重新打开应用后，在相同兼容条件下恢复同一 session、model route、cache epoch 和 transcript，并通过 strict-extension 验证。
 - [ ] **AC-3 无工具最终回答**：没有 tool call 的最终 assistant 回答在重启后完整恢复，不遗漏、不重复，也不被标记为 partial。
-- [ ] **AC-4 工具事务恢复**：tool call、tool result、provider reasoning state 及其原始顺序能够恢复；已存在执行 checkpoint 但没有完整 result 的事务不会重新调用原工具，只会恢复、重新连接或明确标记 interrupted/unknown。
+- [ ] **AC-4 工具事务恢复**：tool call、tool result、provider reasoning state 及其原始顺序能够恢复；已存在执行 checkpoint 但没有完整 result 的事务不会重新调用原工具，只会恢复、重新连接或以一个匹配的 model-visible result 明确标记 interrupted/unknown；已有可信部分执行证据时一并恢复为 incomplete evidence，后续 provider 历史保持结构有效。
 - [ ] **AC-5 Model-only item 保真**：动态日期、时区、surface、channel、权限、runtime capability、Skill 与 Memory 等 model-only item 的原正文、角色、domain 和位置在恢复后保持一致。
 - [ ] **AC-6 Memory 追加语义**：Memory 后续出现、变化或消失时，旧 recall 保持原位置和原正文，新 recall 只追加到实际进入模型的后续位置。
 - [ ] **AC-7 损坏尾部降级**：rollout 尾部被截断或损坏时，只恢复到最后完整提交点，明确记录 degraded/new epoch 及原因，不报告 exact continuation，也不重复 assistant 或工具事务。
@@ -175,6 +187,8 @@ CONFIRMED
 - [ ] **AC-17 需求 109 长会话 smoke**：使用需求 109 的 observation/report 分别运行并报告无重启连续会话、Bridge 重启恢复、应用完整退出重开和显式模型切换，包含 strict-extension、first divergence、`cache_read/input_total`、cache epoch 原因与总输入 token。
 - [ ] **AC-18 客户端与 provider 结论分离**：测试和 smoke 同时覆盖“客户端 strict-extension 但 provider `cache_read=0`”以及“客户端未 exact continuation”的报告分支，结论不互相替代。
 - [ ] **AC-19 自动化门禁**：持久化顺序、跨进程恢复、损坏尾部、cache identity、工具事务、并发 writer、删除和凭据隔离均有确定性测试，项目规定的 `scripts/check` 全绿。
+- [ ] **AC-20 取消后继续会话**：在工具执行期间主动取消后，同进程直接发送下一条消息和重启 Bridge 后发送下一条消息都能正常进入 provider；原 tool call 各有且仅有一个 interrupted result，执行 checkpoint 存在时明确提示结果未知及可能的部分副作用，可信部分执行证据存在时模型可继续看到该证据，原工具不会被自动重复执行，模型同时收到上一轮被主动中断的事实。
+- [ ] **AC-21 部分工具输出持久化**：命令工具分别覆盖正常取消、取消与终态竞态、Bridge 在正式 result 前重启、有输出、无输出、超限截断和大输出引用；宿主已持久提交的 `stdout`、`stderr` 或 PTY 证据在 interrupted result 中以 partial/incomplete 语义恢复，包含来源与丢弃量，重启前后内容一致且不重复执行原命令。未到达宿主或未完成持久提交的输出不被伪造；其它尚未接入过程证据契约的工具继续安全退化为 interrupted/unknown。
 
 ## 依赖与关联需求
 
@@ -190,3 +204,5 @@ CONFIRMED
 |---|---|---|
 | 2026-08-31 | 首次确认：以现有会话流水为单一持久化正文，补齐 model-only transcript、cache epoch、崩溃恢复与跨进程 strict-extension；物理电脑重启不纳入本期 AC | 全部 |
 | 2026-09-01 | 明确旧会话必须在进入可写 runtime 前一次性迁移成 rollout checkpoint；迁移后 rollout 是 model transcript 唯一恢复来源，业务消息不再作为恢复 fallback | AC-14、AC-15 与旧会话恢复边界 |
+| 2026-09-01 | 根据真实取消 bad case 重开修订：取消必须闭合已进入模型历史的工具事务，并在 provider 前做最终配对门禁；同进程与重启恢复都不得发送孤立 tool call | AC-4、AC-19、AC-20 与不完整事务边界 |
+| 2026-09-01 | 对照 Codex 与 Claude Code 后补充部分执行证据边界：最终业务语义保持 unknown；命令工具已被宿主可靠观测并持久提交的有界输出必须进入 interrupted result 并支持跨 Bridge 恢复 | 目标、范围、崩溃事务、安全边界、AC-4、AC-20、AC-21 |

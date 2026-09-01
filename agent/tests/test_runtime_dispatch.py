@@ -15,12 +15,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
@@ -35,14 +37,21 @@ from agent.runtime import (
     UserEvent,
 )
 from agent.sessions.changes import SessionChange
+from agent.sessions.tool_execution_evidence import (
+    ToolExecutionEvidence,
+    ToolExecutionEvidenceStore,
+)
 from agent.system_prompt import IM_QQ_SURFACE
+from agent.tool_runtime.control import TOOL_INVOCATION_CONTROL_ARG, ToolInvocationControl
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
     Conversation,
     ConversationEvent,
+    Event,
     JsonlSessionStore,
     MarkdownPromptBuilder,
+    Message,
     NaiveContextManager,
     PersonaCatalog,
     PromptBuilder,
@@ -110,11 +119,90 @@ class _CancelAwareBlockingLanguageModel:
         yield  # pragma: no cover - keeps this method an iterator
 
 
+class _BlockingTool:
+    name: ClassVar[str] = "blocking_tool"
+    description: ClassVar[str] = "Block until the test releases the invocation."
+    parameters_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    }
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.completed = threading.Event()
+        self.invocations = 0
+
+    def invoke(self, _args: dict[str, Any]) -> ToolResult:
+        self.invocations += 1
+        self.started.set()
+        self.release.wait(timeout=2)
+        self.completed.set()
+        return ToolResult(text="late result")
+
+
+class _BlockingCommandEvidenceTool:
+    name: ClassVar[str] = "exec_command"
+    description: ClassVar[str] = "Emit persisted partial output and block until cancelled."
+    parameters_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    }
+    supports_invocation_control: ClassVar[bool] = True
+
+    def __init__(self, evidence_store: ToolExecutionEvidenceStore) -> None:
+        self._evidence_store = evidence_store
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.invocations = 0
+
+    def invoke(self, args: dict[str, Any]) -> ToolResult:
+        from agent.command_runtime.tools import (
+            COMMAND_EXECUTION_CHECKPOINT_ARG,
+            COMMAND_RUN_ID_ARG,
+            COMMAND_SESSION_ID_ARG,
+            COMMAND_TOOL_CALL_ID_ARG,
+        )
+
+        self.invocations += 1
+        evidence_ref = self._evidence_store.new_reference()
+        checkpoint = args[COMMAND_EXECUTION_CHECKPOINT_ARG]
+        checkpoint("proc_evidence", "resident_only", evidence_ref)
+        self._evidence_store.write(
+            ToolExecutionEvidence(
+                evidence_ref=evidence_ref,
+                session_id=str(args[COMMAND_SESSION_ID_ARG]),
+                run_id=str(args[COMMAND_RUN_ID_ARG]),
+                tool_call_id=str(args[COMMAND_TOOL_CALL_ID_ARG]),
+                operation_id="proc_evidence",
+                tool_name=self.name,
+                process_status="running",
+                output_seq=4,
+                dropped_bytes=7,
+                stdout="persisted partial stdout",
+                stderr="persisted partial stderr",
+                captured_at=datetime.now(UTC).isoformat(),
+            )
+        )
+        control = args.get(TOOL_INVOCATION_CONTROL_ARG)
+        if isinstance(control, ToolInvocationControl):
+            control.add_cancel_callback(lambda _reason: self.release.set())
+        self.started.set()
+        self.release.wait(timeout=2)
+        return ToolResult(
+            text="late command result",
+            meta={"_execution_evidence_ref": evidence_ref},
+        )
+
+
 def _make_conversation(
     tmp_path: Path,
     *,
     fake_llm: LanguageModel,
     tool_registry: ToolRegistry | None = None,
+    tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
 ) -> Conversation:
     """与 AgentRuntime 装配的 Conversation 一致：post_turn_external=True，
     避免 finally 块重复跑 _observe_turn。"""
@@ -142,6 +230,7 @@ def _make_conversation(
         prompt_builder_factory=builder_factory,
         catalog=catalog,
         tool_registry=tool_registry,
+        tool_execution_evidence_store=tool_execution_evidence_store,
         post_turn_external=True,
     )
 
@@ -779,6 +868,359 @@ def test_conversation_forwards_cancel_check_while_waiting_for_model_stream(
         "interruption_reason": "explicit_request",
     }
     assert assistant.meta["run_id"] == request.run_id
+
+
+def test_cancelled_tool_is_closed_before_same_process_followup(tmp_path: Path) -> None:
+    from agent.runtime import RunRequest
+    from agent.runtime.cancellation import CancelReason, RunCancelled
+    from agent.runtime.models import RunHandle
+
+    tool = _BlockingTool()
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(0, "blocking-1", tool.name, "{}"),
+                LLMToolCallDelta(1, "blocking-2", tool.name, "{}"),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="continued"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        tool_registry=ToolRegistry([tool]),
+    )
+    request = RunRequest(event=UserEvent(session_id=conv.session.session_id, user_input="start"))
+    handle = RunHandle(request)
+    errors: list[BaseException] = []
+
+    def consume() -> None:
+        try:
+            list(
+                conv.stream(
+                    "start",
+                    run_id=request.run_id,
+                    cancel_check=handle.token.raise_if_cancelled,
+                )
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=consume)
+    worker.start()
+    assert tool.started.wait(1)
+    assert handle.cancel(CancelReason.EXPLICIT_REQUEST)
+    worker.join(timeout=1)
+    tool.release.set()
+    assert tool.completed.wait(1)
+
+    assert not worker.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], RunCancelled)
+    results = [event for event in conv.session.events if event.type == "tool_call_result"]
+    assert len(results) == 2
+    assert all(event.payload["transaction_status"] == "interrupted" for event in results)
+    assert all(event.payload["semantic_status"] == "unknown" for event in results)
+    assert all(event.payload["executed"] == "unknown" for event in results)
+    assert tool.invocations == 1
+
+    list(conv.stream("follow up", run_id="follow-up"))
+
+    assert tool.invocations == 1
+    followup = fake.received[1]
+    assistant_index = next(index for index, item in enumerate(followup) if item.get("tool_calls"))
+    tool_results = followup[assistant_index + 1 : assistant_index + 3]
+    assert [item["role"] for item in tool_results] == ["tool", "tool"]
+    assert [item["tool_call_id"] for item in tool_results] == ["blocking-1", "blocking-2"]
+    assert any("<turn_aborted>" in str(item.get("content")) for item in followup)
+
+
+def test_cancelled_command_restores_persisted_partial_output_before_followup(
+    tmp_path: Path,
+) -> None:
+    from agent.runtime import RunRequest
+    from agent.runtime.cancellation import CancelReason, RunCancelled
+    from agent.runtime.models import RunHandle
+
+    evidence_store = ToolExecutionEvidenceStore(tmp_path / "evidence")
+    tool = _BlockingCommandEvidenceTool(evidence_store)
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(0, "command-1", tool.name, "{}"),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="continued"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        tool_registry=ToolRegistry([tool]),
+        tool_execution_evidence_store=evidence_store,
+    )
+    request = RunRequest(event=UserEvent(session_id=conv.session.session_id, user_input="start"))
+    handle = RunHandle(request)
+    errors: list[BaseException] = []
+
+    def consume() -> None:
+        try:
+            list(
+                conv.stream(
+                    "start",
+                    run_id=request.run_id,
+                    cancel_check=handle.token.raise_if_cancelled,
+                )
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=consume)
+    worker.start()
+    assert tool.started.wait(1)
+    assert handle.cancel(CancelReason.EXPLICIT_REQUEST)
+    worker.join(timeout=1)
+
+    assert not worker.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], RunCancelled)
+    result = next(event for event in conv.session.events if event.type == "tool_call_result")
+    content = json.loads(str(result.payload["content"]))
+    assert result.payload["transaction_status"] == "interrupted"
+    assert result.payload["semantic_status"] == "unknown"
+    assert result.payload["evidence_ref"] == content["evidence_ref"]
+    assert content["partial"] is True
+    assert content["complete"] is False
+    assert content["stdout"] == "persisted partial stdout"
+    assert content["stderr"] == "persisted partial stderr"
+    assert content["dropped_bytes"] == 7
+
+    list(conv.stream("follow up", run_id="follow-up"))
+
+    assert tool.invocations == 1
+    followup = fake.received[1]
+    restored = next(item for item in followup if item.get("role") == "tool")
+    assert restored["content"] == result.payload["content"]
+
+
+def test_formal_command_result_cleans_transient_evidence_after_commit(tmp_path: Path) -> None:
+    evidence_store = ToolExecutionEvidenceStore(tmp_path / "evidence")
+    evidence_ref = evidence_store.new_reference()
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=_ScriptedLLMClient(),
+        tool_execution_evidence_store=evidence_store,
+    )
+    evidence_store.write(
+        ToolExecutionEvidence(
+            evidence_ref=evidence_ref,
+            session_id=conv.session.session_id,
+            run_id="run-1",
+            tool_call_id="event-call-1",
+            operation_id="proc-1",
+            tool_name="exec_command",
+            process_status="exited",
+            output_seq=1,
+            dropped_bytes=0,
+            stdout="completed output",
+            captured_at=datetime.now(UTC).isoformat(),
+        )
+    )
+    conv._session_model_history.append(
+        [
+            Message(
+                role="assistant",
+                content="",
+                meta={
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "name": "exec_command",
+                            "args": {},
+                            "arguments_json": "{}",
+                        }
+                    ]
+                },
+            )
+        ]
+    )
+
+    conv._append_tool_call_result_event(
+        {
+            "id": "call-1",
+            "event_id": "event-call-1",
+            "name": "exec_command",
+            "origin": "model",
+        },
+        ToolResult(
+            text="completed",
+            meta={"_execution_evidence_ref": evidence_ref},
+        ),
+        0.1,
+        run_id="run-1",
+    )
+
+    assert evidence_store.load(conv.session.session_id, evidence_ref) is None
+
+
+def test_postprocess_interruption_closes_remaining_tool_results(tmp_path: Path) -> None:
+    tool = _BlockingTool()
+    tool.release.set()
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(0, "fast-1", tool.name, "{}"),
+                LLMToolCallDelta(1, "fast-2", tool.name, "{}"),
+                LLMTurnDone(stop_reason="tool_use"),
+            ]
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        tool_registry=ToolRegistry([tool]),
+    )
+
+    def cancel_after_first_result() -> None:
+        if any(event.type == "tool_call_result" for event in conv.session.events):
+            raise RuntimeError("interrupt-after-first-result")
+
+    with pytest.raises(RuntimeError, match="interrupt-after-first-result"):
+        list(
+            conv.stream(
+                "start",
+                run_id="postprocess-interruption",
+                cancel_check=cancel_after_first_result,
+            )
+        )
+
+    results = [event for event in conv.session.events if event.type == "tool_call_result"]
+    assert len(results) == 2
+    assert results[0].payload.get("transaction_status") is None
+    assert results[1].payload["transaction_status"] == "interrupted"
+    assert results[1].payload["executed"] == "unknown"
+    assert tool.invocations == 2
+
+
+@pytest.mark.parametrize("preexisting_result", [False, True])
+def test_provider_preflight_repairs_terminal_orphan_before_request(
+    tmp_path: Path, *, preexisting_result: bool
+) -> None:
+    fake = _ScriptedLLMClient(
+        script=[[LLMTextDelta(text="continued"), LLMTurnDone(stop_reason="end_turn")]]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake)
+    run_id = "orphaned-run"
+    call_id = "orphaned-call"
+    event_call_id = "orphaned-event-call"
+    assistant = Message(
+        role="assistant",
+        content="",
+        meta={
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "name": "missing_tool",
+                    "args": {},
+                    "arguments_json": "{}",
+                }
+            ]
+        },
+    )
+    request = Event(
+        type="tool_call_request",
+        uuid="orphaned-request",
+        ts=datetime.now(UTC),
+        payload={
+            "tool_call_id": call_id,
+            "event_tool_call_id": event_call_id,
+            "tool_name": "missing_tool",
+            "args": {},
+            "execution_disposition": "execute",
+        },
+        meta={"run_id": run_id, "owner_runtime_instance_id": "old-runtime"},
+    )
+    terminal = Event(
+        type="run_terminal",
+        uuid="orphaned-terminal",
+        ts=datetime.now(UTC),
+        payload={
+            "run_id": run_id,
+            "status": "interrupted",
+            "reason_code": "explicit_request",
+            "source": "runtime",
+            "recovered": False,
+        },
+        meta={"run_id": run_id, "owner_runtime_instance_id": "old-runtime"},
+    )
+    conv._store.append_event(conv.session.session_id, request)
+    conv.session.append(request)
+    if preexisting_result:
+        recovered_result = Event(
+            type="tool_call_result",
+            uuid="orphaned-recovered-result",
+            ts=datetime.now(UTC),
+            payload={
+                "tool_call_id": call_id,
+                "event_tool_call_id": event_call_id,
+                "tool_name": "missing_tool",
+                "content": "宿主恢复了中断结果。",
+                "is_error": True,
+                "executed": "unknown",
+                "result_origin": "host_reconciliation",
+            },
+            meta={"run_id": run_id, "owner_runtime_instance_id": "new-runtime"},
+        )
+        conv._store.append_event(conv.session.session_id, recovered_result)
+        conv.session.append(recovered_result)
+    conv._store.append_event(conv.session.session_id, terminal)
+    conv.session.append(terminal)
+    conv._session_model_history.append([assistant])
+    conv._session_model_history.note_active_events(conv.session)
+
+    list(conv.stream("follow up", run_id="follow-up"))
+
+    results = [event for event in conv.session.events if event.type == "tool_call_result"]
+    assert len(results) == 1
+    assert results[0].payload["result_origin"] == (
+        "host_reconciliation" if preexisting_result else "history_preflight_repair"
+    )
+    assert results[0].payload["executed"] == "unknown"
+    provider_messages = fake.received[0]
+    assistant_index = next(
+        index for index, item in enumerate(provider_messages) if item.get("tool_calls")
+    )
+    assert provider_messages[assistant_index + 1]["role"] == "tool"
+    assert provider_messages[assistant_index + 1]["tool_call_id"] == call_id
+
+
+def test_provider_preflight_blocks_unrepairable_tool_history_locally(tmp_path: Path) -> None:
+    fake = _ScriptedLLMClient()
+    conv = _make_conversation(tmp_path, fake_llm=fake)
+    conv._session_model_history.append(
+        [
+            Message(
+                role="assistant",
+                content="",
+                meta={
+                    "tool_calls": [
+                        {
+                            "id": "unrepairable-call",
+                            "name": "missing_tool",
+                            "args": {},
+                            "arguments_json": "{}",
+                        }
+                    ]
+                },
+            )
+        ]
+    )
+
+    with pytest.raises(ValueError, match="model_history_tool_transaction_invalid"):
+        list(conv.stream("follow up", run_id="follow-up"))
+
+    assert fake.received == []
 
 
 def test_submit_failure_runs_post_turn_once_with_failed_outcome(tmp_path: Path) -> None:

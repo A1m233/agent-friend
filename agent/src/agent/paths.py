@@ -61,6 +61,11 @@ def command_workspaces_dir() -> Path:
     return user_data_dir() / "command-workspaces"
 
 
+def tool_execution_evidence_dir(data_root: Path | None = None) -> Path:
+    """会话级工具执行证据根：``<user_data_dir>/tool-execution-evidence``。"""
+    return (data_root or user_data_dir()) / "tool-execution-evidence"
+
+
 def execution_environments_dir() -> Path:
     """受管执行环境根：``<user_data_dir>/execution-environments``。"""
     return user_data_dir() / "execution-environments"
@@ -141,5 +146,6 @@ __all__ = [
     "sessions_dir",
     "skills_dir",
     "todos_db_path",
+    "tool_execution_evidence_dir",
     "user_data_dir",
 ]

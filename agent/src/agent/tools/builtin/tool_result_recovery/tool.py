@@ -6,6 +6,11 @@ from typing import Any, ClassVar
 
 from ....sessions.errors import SessionNotFoundError
 from ....sessions.store import SessionStore
+from ....sessions.tool_execution_evidence import (
+    ToolExecutionEvidenceError,
+    ToolExecutionEvidenceStore,
+    render_recoverable_evidence,
+)
 from ...protocol import ToolResult
 
 _CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
@@ -15,12 +20,13 @@ _MAX_MAX_CHARS = 12_000
 
 
 class ToolResultRecoveryTool:
-    """只允许按 result_ref 读取当前会话的 active tool result。"""
+    """只允许按已暴露引用读取当前会话的 active tool result。"""
 
     name: ClassVar[str] = "recover_tool_result"
     execution_kind: ClassVar[str] = "parallel_read"
     description: ClassVar[str] = (
-        "仅当上下文占位符给出了 result_ref、且回答确实需要被清理结果里的精确细节时使用。"
+        "仅当上下文原样给出了 result_ref 或中断命令结果原样给出了 "
+        "evidence_ref、且回答确实需要其中的精确细节时使用。"
         "它只读当前会话，按 query 或 offset 分页返回有限片段；不要为了概览恢复整份结果，"
         "也不要猜测或传入其他会话标识。优先给 query 缩小范围；需要下一页时使用返回的 "
         "next_offset。"
@@ -31,6 +37,10 @@ class ToolResultRecoveryTool:
             "result_ref": {
                 "type": "string",
                 "description": "清理占位符中原样给出的 result_ref。",
+            },
+            "evidence_ref": {
+                "type": "string",
+                "description": "中断命令结果中原样给出的 evidence_ref。",
             },
             "query": {
                 "type": "string",
@@ -50,18 +60,32 @@ class ToolResultRecoveryTool:
                 "description": "本次最多返回的原文字符数。",
             },
         },
-        "required": ["result_ref"],
+        "oneOf": [
+            {"required": ["result_ref"], "not": {"required": ["evidence_ref"]}},
+            {"required": ["evidence_ref"], "not": {"required": ["result_ref"]}},
+        ],
         "additionalProperties": False,
     }
 
-    def __init__(self, session_store: SessionStore) -> None:
+    def __init__(
+        self,
+        session_store: SessionStore,
+        tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
+    ) -> None:
         self._session_store = session_store
+        self._tool_execution_evidence_store = tool_execution_evidence_store
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
         result_ref = args.get("result_ref")
+        evidence_ref = args.get("evidence_ref")
         session_id = args.get(_CURRENT_SESSION_ID_ARG)
-        if not isinstance(result_ref, str) or not result_ref.strip():
-            return ToolResult("result_ref 必须是非空字符串。", is_error=True)
+        has_result_ref = isinstance(result_ref, str) and bool(result_ref.strip())
+        has_evidence_ref = isinstance(evidence_ref, str) and bool(evidence_ref.strip())
+        if has_result_ref == has_evidence_ref:
+            return ToolResult(
+                "result_ref 和 evidence_ref 必须且只能提供一个非空字符串。",
+                is_error=True,
+            )
         if not isinstance(session_id, str) or not session_id:
             return ToolResult("当前会话上下文不可用，无法恢复工具结果。", is_error=True)
 
@@ -84,21 +108,75 @@ class ToolResultRecoveryTool:
         except SessionNotFoundError:
             return ToolResult("当前会话不存在，无法恢复工具结果。", is_error=True)
 
-        event = next(
-            (
-                item
-                for item in session.active_events
-                if item.type == "tool_call_result" and item.uuid == result_ref
-            ),
-            None,
-        )
+        if has_result_ref:
+            assert isinstance(result_ref, str)
+            event = next(
+                (
+                    item
+                    for item in session.active_events
+                    if item.type == "tool_call_result" and item.uuid == result_ref
+                ),
+                None,
+            )
+        else:
+            assert isinstance(evidence_ref, str)
+            event = next(
+                (
+                    item
+                    for item in session.active_events
+                    if item.type == "tool_call_result"
+                    and item.payload.get("evidence_ref") == evidence_ref
+                ),
+                None,
+            )
         if event is None:
             return ToolResult(
-                "当前会话的有效历史中没有这个 result_ref。",
+                "当前会话的有效历史中没有这个引用。",
                 is_error=True,
             )
 
-        content = str(event.payload.get("content", ""))
+        reference_label: str
+        recovered_meta: dict[str, object]
+        if has_result_ref:
+            assert isinstance(result_ref, str)
+            content = str(event.payload.get("content", ""))
+            reference_label = f"result_ref={result_ref}"
+            recovered_meta = {
+                "context_retention": "recoverable",
+                "recovered_result_ref": result_ref,
+            }
+        else:
+            assert isinstance(evidence_ref, str)
+            evidence_store = self._tool_execution_evidence_store
+            if evidence_store is None:
+                return ToolResult("当前运行实例不支持恢复命令证据。", is_error=True)
+            try:
+                evidence = evidence_store.load(session_id, evidence_ref)
+            except ToolExecutionEvidenceError:
+                return ToolResult("命令证据已损坏或无法读取。", is_error=True)
+            if evidence is None:
+                return ToolResult("当前会话中没有这个命令证据。", is_error=True)
+            event_run_id = event.meta.get("run_id")
+            event_tool_call_ids = {
+                value
+                for value in (
+                    event.payload.get("event_tool_call_id"),
+                    event.payload.get("tool_call_id"),
+                )
+                if isinstance(value, str) and value
+            }
+            if (
+                evidence.run_id != (event_run_id if isinstance(event_run_id, str) else "")
+                or evidence.tool_call_id not in event_tool_call_ids
+                or evidence.tool_name != event.payload.get("tool_name")
+            ):
+                return ToolResult("命令证据与当前会话结果不匹配。", is_error=True)
+            content = render_recoverable_evidence(evidence)
+            reference_label = f"evidence_ref={evidence_ref}"
+            recovered_meta = {
+                "context_retention": "recoverable",
+                "recovered_evidence_ref": evidence_ref,
+            }
         query = args.get("query")
         if query is not None and (not isinstance(query, str) or not query.strip()):
             return ToolResult("query 若提供，必须是非空字符串。", is_error=True)
@@ -109,8 +187,8 @@ class ToolResultRecoveryTool:
             matched_at = content.lower().find(query.lower(), start)
             if matched_at < 0:
                 return ToolResult(
-                    f"result_ref={result_ref} 中从 offset={offset} 起未找到 query={query!r}。",
-                    meta={"context_retention": "recoverable", "recovered_result_ref": result_ref},
+                    f"{reference_label} 中从 offset={offset} 起未找到 query={query!r}。",
+                    meta=recovered_meta,
                 )
             start = max(0, matched_at - min(500, max_chars // 5))
 
@@ -118,12 +196,12 @@ class ToolResultRecoveryTool:
         next_offset = end if end < len(content) else None
         tool_name = str(event.payload.get("tool_name", "unknown"))
         header = (
-            f"tool={tool_name}; result_ref={result_ref}; original_chars={len(content)}; "
+            f"tool={tool_name}; {reference_label}; original_chars={len(content)}; "
             f"returned_range={start}:{end}; next_offset={next_offset}"
         )
         if matched_at is not None:
             header += f"; query_match_at={matched_at}"
         return ToolResult(
             f"{header}\n\n{content[start:end]}",
-            meta={"context_retention": "recoverable", "recovered_result_ref": result_ref},
+            meta=recovered_meta,
         )

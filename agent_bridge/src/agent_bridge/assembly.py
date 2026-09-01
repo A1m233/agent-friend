@@ -35,7 +35,7 @@ from agent.execution_environment import (
 from agent.filesystem import ProtectedPathPolicy
 from agent.filesystem.policy import canonical_path
 from agent.memory_search import SessionHistorySource, SessionStoreSourceOrderProvider
-from agent.paths import command_workspaces_dir, log_dir
+from agent.paths import command_workspaces_dir, log_dir, tool_execution_evidence_dir
 from agent.runtime import (
     PRE_TURN_PROCEED,
     AgentEvent,
@@ -51,7 +51,7 @@ from agent.scheduled_tasks import (
     ScheduledTaskStore,
 )
 from agent.scheduling import ScheduleCoordinator
-from agent.sessions import ToolTransactionReconciler
+from agent.sessions import ToolExecutionEvidenceStore, ToolTransactionReconciler
 from agent.time_provider import SystemTimeProvider, TimeProvider
 from agent.todos import ReminderDriver, TodoService, TodoStore
 from agent.tools import ToolRegistry
@@ -329,6 +329,7 @@ def _make_persistent_session_manager(
     skill_service: SkillCatalogService | None = None,
     time_provider: TimeProvider | None = None,
     transaction_reconciler: ToolTransactionReconciler | None = None,
+    tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
     runtime_identity: RuntimeInstanceIdentity | None = None,
 ) -> SessionManager:
     from agent.paths import command_workspaces_dir
@@ -347,6 +348,7 @@ def _make_persistent_session_manager(
         command_workspaces_root=command_workspaces_dir(),
         time_provider=time_provider,
         transaction_reconciler=transaction_reconciler,
+        tool_execution_evidence_store=tool_execution_evidence_store,
         runtime_instance_id=(runtime_identity.bridge_instance_id if runtime_identity else ""),
         runtime_start_reason=(
             runtime_identity.start_reason.value if runtime_identity else "direct_start"
@@ -480,6 +482,10 @@ def build_runtime(
         execution_root=Path(tempfile.gettempdir()) / "agent-friend-command-execution",
         runtime_instance_id=runtime_identity.bridge_instance_id,
     )
+    tool_evidence_store = ToolExecutionEvidenceStore(
+        tool_execution_evidence_dir(settings.sessions_dir.parent)
+    )
+    command_runtime.add_evidence_listener(tool_evidence_store.observe_process_snapshot)
     execution_environment_root = settings.sessions_dir.parent / "execution-environments"
     try:
         python_environment_provider = PythonEnvironmentProvider.from_runtime(
@@ -517,6 +523,7 @@ def build_runtime(
         or settings.sessions_dir.parent / "scheduled-tasks" / "scheduled-tasks.db",
         log_dir(),
         default_settings_path(),
+        tool_execution_evidence_dir(settings.sessions_dir.parent),
     ]
     if getattr(sys, "frozen", False):
         product_paths.append(Path(sys.executable).resolve().parent)
@@ -617,6 +624,7 @@ def build_runtime(
         filesystem_policy=filesystem_policy,
         command_runtime=command_runtime,
         execution_environment_manager=execution_environment_manager,
+        tool_execution_evidence_store=tool_evidence_store,
     )
 
     llm_client_factory = runtime_config.llm_client_factory
@@ -633,6 +641,7 @@ def build_runtime(
     transaction_reconciler = ToolTransactionReconciler(
         persistent_store,
         runtime_instance_id=runtime_identity.bridge_instance_id,
+        tool_execution_evidence_store=tool_evidence_store,
     )
     persistent_session_manager = _make_persistent_session_manager(
         persistent_store,
@@ -646,6 +655,7 @@ def build_runtime(
         skill_service,
         time_provider,
         transaction_reconciler,
+        tool_evidence_store,
         runtime_identity,
     )
 

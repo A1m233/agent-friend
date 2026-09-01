@@ -383,6 +383,7 @@ class CommandRuntime:
         self._client: ExecServerClient | None = None
         self._processes: dict[str, _ProcessState] = {}
         self._listeners: list[Callable[[dict[str, object]], None]] = []
+        self._evidence_listeners: list[Callable[[CommandProcessSnapshot], None]] = []
         self._capability_listeners: list[Callable[[dict[str, object]], None]] = []
         self._setup_active = False
         self._setup_error: dict[str, str] | None = None
@@ -654,6 +655,12 @@ class CommandRuntime:
         with self._lock:
             self._listeners.append(listener)
 
+    def add_evidence_listener(self, listener: Callable[[CommandProcessSnapshot], None]) -> None:
+        """Observe bounded typed snapshots without exposing internal refs to the UI payload."""
+
+        with self._lock:
+            self._evidence_listeners.append(listener)
+
     def add_sandbox_capability_listener(
         self, listener: Callable[[dict[str, object]], None]
     ) -> None:
@@ -672,6 +679,8 @@ class CommandRuntime:
         run_id: str,
         tool_call_id: str,
         sandbox: dict[str, Any] | None,
+        tool_name: str = "exec_command",
+        evidence_ref: str | None = None,
     ) -> CommandProcessSnapshot:
         if sandbox is not None and not self.windows_sandbox_ready:
             raise CommandRuntimeError(
@@ -693,6 +702,8 @@ class CommandRuntime:
             run_id=run_id,
             tool_call_id=tool_call_id,
             mode=mode,
+            tool_name=tool_name,
+            evidence_ref=evidence_ref,
             runtime_instance_id=self._runtime_instance_id,
         )
         state = _ProcessState(snapshot)
@@ -1100,10 +1111,15 @@ class CommandRuntime:
             state.snapshot.finished_at = datetime.now(UTC).isoformat()
             state.snapshot.duration_seconds = max(0.0, time.monotonic() - state.started_monotonic)
             state.snapshot.version += 1
-            state.condition.notify_all()
         if timer is not None:
             timer.cancel()
-        self._publish_state(state)
+        # A terminal waiter may immediately commit the formal tool result and
+        # clean up its transient checkpoint. Make the final evidence snapshot
+        # durable before exposing the terminal state to that waiter.
+        self._publish_evidence_state(state)
+        with state.condition:
+            state.condition.notify_all()
+        self._publish_state(state, include_evidence=False)
         self._prune_terminal_processes()
 
     def _owned_state(self, process_id: str, *, session_id: str, run_id: str) -> _ProcessState:
@@ -1125,11 +1141,27 @@ class CommandRuntime:
             except Exception:
                 logger.warning("command runtime listener failed", exc_info=True)
 
-    def _publish_state(self, state: _ProcessState) -> None:
+    def _publish_state(self, state: _ProcessState, *, include_evidence: bool = True) -> None:
         with state.condition:
             state.last_published_monotonic = time.monotonic()
             snapshot = self._copy_snapshot(state.snapshot)
         self._publish(snapshot)
+        if include_evidence:
+            self._publish_evidence(snapshot)
+
+    def _publish_evidence_state(self, state: _ProcessState) -> None:
+        with state.condition:
+            snapshot = self._copy_snapshot(state.snapshot)
+        self._publish_evidence(snapshot)
+
+    def _publish_evidence(self, snapshot: CommandProcessSnapshot) -> None:
+        with self._lock:
+            evidence_listeners = tuple(self._evidence_listeners)
+        for listener in evidence_listeners:
+            try:
+                listener(snapshot)
+            except Exception:
+                logger.warning("command evidence listener failed", exc_info=True)
 
     def _schedule_publish(self, state: _ProcessState, byte_count: int) -> None:
         publish_now = False

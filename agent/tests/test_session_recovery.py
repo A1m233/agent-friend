@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,7 +10,10 @@ from agent.sessions import (
     RecoveryProbe,
     RecoveryProbeOutcome,
     SessionModelHistory,
+    ToolExecutionEvidence,
+    ToolExecutionEvidenceStore,
     ToolTransactionReconciler,
+    render_interrupted_evidence,
 )
 
 from agent import Event, JsonlSessionStore, Session
@@ -36,6 +40,7 @@ def _store_with_request(
     tmp_path: Path,
     *,
     checkpoint_mode: str | None = None,
+    evidence_ref: str | None = None,
 ) -> tuple[JsonlSessionStore, str]:
     store = JsonlSessionStore(tmp_path / "sessions")
     session = Session.new(title="t", persona="default", model="m")
@@ -52,18 +57,21 @@ def _store_with_request(
     )
     store.append_event(session.session_id, request)
     if checkpoint_mode is not None:
+        checkpoint_payload: dict[str, object] = {
+            "tool_call_id": "call-1",
+            "tool_name": "exec_command",
+            "recovery_mode": checkpoint_mode,
+            "operation_id": "proc_1",
+            "execution_state": "launch_committed",
+        }
+        if evidence_ref is not None:
+            checkpoint_payload["evidence_ref"] = evidence_ref
         store.append_event(
             session.session_id,
             _event(
                 "tool_execution_checkpoint",
                 "checkpoint-1",
-                {
-                    "tool_call_id": "call-1",
-                    "tool_name": "exec_command",
-                    "recovery_mode": checkpoint_mode,
-                    "operation_id": "proc_1",
-                    "execution_state": "launch_committed",
-                },
+                checkpoint_payload,
             ),
         )
     return store, session.session_id
@@ -88,6 +96,123 @@ def test_reconciler_appends_interrupted_result_and_run_terminal(tmp_path: Path) 
     assert results[0].payload["process_status"] == "runtime_lost"
     assert results[0].payload["semantic_status"] == "unknown"
     assert results[0].payload["executed"] == "unknown"
+
+
+def test_reconciler_restores_persisted_partial_command_output_without_reexecution(
+    tmp_path: Path,
+) -> None:
+    evidence_store = ToolExecutionEvidenceStore(tmp_path / "evidence")
+    evidence_ref = evidence_store.new_reference()
+    store, session_id = _store_with_request(
+        tmp_path,
+        checkpoint_mode="resident_only",
+        evidence_ref=evidence_ref,
+    )
+    evidence = ToolExecutionEvidence(
+        evidence_ref=evidence_ref,
+        session_id=session_id,
+        run_id="run-1",
+        tool_call_id="call-1",
+        operation_id="proc_1",
+        tool_name="exec_command",
+        process_status="running",
+        output_seq=5,
+        dropped_bytes=11,
+        stdout="before bridge restart",
+        stderr="partial stderr",
+        captured_at=datetime.now(UTC).isoformat(),
+    )
+    evidence_store.write(evidence)
+    reconciler = ToolTransactionReconciler(
+        store,
+        runtime_instance_id="runtime-new",
+        tool_execution_evidence_store=evidence_store,
+    )
+
+    first = reconciler.reconcile_session(session_id)
+    second = reconciler.reconcile_session(session_id)
+
+    assert first.interrupted_tool_calls == 1
+    assert second.interrupted_tool_calls == 0
+    results = [event for event in second.session.events if event.type == "tool_call_result"]
+    assert len(results) == 1
+    result = results[0]
+    assert result.payload["content"] == render_interrupted_evidence(evidence)
+    content = json.loads(str(result.payload["content"]))
+    assert result.payload["evidence_ref"] == evidence_ref
+    assert result.payload["semantic_status"] == "unknown"
+    assert result.payload["process_status"] == "runtime_lost"
+    assert content["stdout"] == "before bridge restart"
+    assert content["stderr"] == "partial stderr"
+    assert content["partial"] is True
+    assert content["complete"] is False
+    assert content["evidence_ref"] == evidence_ref
+
+
+def test_reconciler_rejects_corrupt_evidence_and_falls_back_to_unknown(
+    tmp_path: Path,
+) -> None:
+    evidence_store = ToolExecutionEvidenceStore(tmp_path / "evidence")
+    evidence_ref = evidence_store.new_reference()
+    store, session_id = _store_with_request(
+        tmp_path,
+        checkpoint_mode="resident_only",
+        evidence_ref=evidence_ref,
+    )
+    evidence_store.write(
+        ToolExecutionEvidence(
+            evidence_ref=evidence_ref,
+            session_id=session_id,
+            run_id="run-1",
+            tool_call_id="call-1",
+            operation_id="proc_1",
+            tool_name="exec_command",
+            process_status="running",
+            output_seq=1,
+            dropped_bytes=0,
+            stdout="partial",
+            captured_at=datetime.now(UTC).isoformat(),
+        )
+    )
+    evidence_file = next((tmp_path / "evidence").rglob("*.json"))
+    evidence_file.write_text("{broken", encoding="utf-8")
+    reconciler = ToolTransactionReconciler(
+        store,
+        runtime_instance_id="runtime-new",
+        tool_execution_evidence_store=evidence_store,
+    )
+
+    report = reconciler.reconcile_session(session_id)
+
+    result = next(event for event in report.session.events if event.type == "tool_call_result")
+    assert result.payload.get("evidence_ref") is None
+    assert "领域结果均未知" in str(result.payload["content"])
+
+
+def test_reconciler_closes_orphan_even_when_run_terminal_already_exists(tmp_path: Path) -> None:
+    store, session_id = _store_with_request(tmp_path, checkpoint_mode="resident_only")
+    store.append_event(
+        session_id,
+        _event(
+            "run_terminal",
+            "terminal-1",
+            {
+                "run_id": "run-1",
+                "status": "interrupted",
+                "reason_code": "explicit_request",
+                "source": "runtime",
+                "recovered": False,
+            },
+        ),
+    )
+    reconciler = ToolTransactionReconciler(store, runtime_instance_id="runtime-new")
+
+    report = reconciler.reconcile_session(session_id)
+
+    assert report.interrupted_tool_calls == 1
+    assert report.appended_run_terminals == 0
+    assert sum(event.type == "tool_call_result" for event in report.session.events) == 1
+    assert sum(event.type == "run_terminal" for event in report.session.events) == 1
 
 
 def test_reconciler_preserves_unknown_queryable_transaction(tmp_path: Path) -> None:

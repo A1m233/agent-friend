@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shlex
@@ -23,6 +24,7 @@ from ..execution_environment import (
 )
 from ..filesystem.policy import resolve_locator
 from ..paths import command_workspaces_dir, skills_dir
+from ..sessions.tool_execution_evidence import ToolExecutionEvidenceStore
 from ..skills.models import SkillTurnSnapshot
 from ..tool_runtime.context import ToolRunContext
 from ..tool_runtime.control import TOOL_INVOCATION_CONTROL_ARG, ToolInvocationControl
@@ -45,6 +47,8 @@ from .runtime import (
 )
 from .skill_snapshot import SkillExecutionSnapshot, prepare_skill_snapshot
 from .workspace import session_workspace_path
+
+logger = logging.getLogger(__name__)
 
 COMMAND_SESSION_ID_ARG = "__agent_friend_current_session_id"
 COMMAND_RUN_ID_ARG = "__agent_friend_current_run_id"
@@ -292,12 +296,13 @@ def _bounded_process_result(snapshot: CommandProcessSnapshot) -> dict[str, objec
 def _process_diagnostic_meta(snapshot: CommandProcessSnapshot) -> dict[str, object]:
     """Return the full process audit snapshot without exposing it to the model."""
 
-    return {
+    value: dict[str, object] = {
         "command_process": {
             "process_id": snapshot.process_id,
             "session_id": snapshot.session_id,
             "run_id": snapshot.run_id,
             "tool_call_id": snapshot.tool_call_id,
+            "tool_name": snapshot.tool_name,
             "mode": snapshot.mode,
             "recovery_mode": snapshot.recovery_mode,
             "status": snapshot.status,
@@ -313,6 +318,9 @@ def _process_diagnostic_meta(snapshot: CommandProcessSnapshot) -> dict[str, obje
             "version": snapshot.version,
         }
     }
+    if snapshot.evidence_ref:
+        value["_execution_evidence_ref"] = snapshot.evidence_ref
+    return value
 
 
 class ExecCommandTool:
@@ -567,6 +575,7 @@ class ExecCommandTool:
         personal_skills_root: Path | None = None,
         session_workspaces_root: Path | None = None,
         execution_environment_manager: ExecutionEnvironmentManager | None = None,
+        tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
     ) -> None:
         self._runtime = runtime
         self._broker = broker
@@ -576,6 +585,7 @@ class ExecCommandTool:
             session_workspaces_root or command_workspaces_dir()
         ).resolve()
         self._execution_environment_manager = execution_environment_manager
+        self._tool_execution_evidence_store = tool_execution_evidence_store
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
         if "execution" in args:
@@ -746,9 +756,18 @@ class ExecCommandTool:
             ):
                 self._runtime.prepare_owned_read_only_workdir(workdir, sandbox)
             process_id = f"proc_{uuid4().hex}"
+            evidence_ref = (
+                self._tool_execution_evidence_store.new_reference()
+                if self._tool_execution_evidence_store is not None and details.mode == "buffered"
+                else None
+            )
             checkpoint = args.get(COMMAND_EXECUTION_CHECKPOINT_ARG)
             if callable(checkpoint):
-                cast(Callable[[str, str], None], checkpoint)(process_id, "resident_only")
+                cast(Callable[[str, str, str | None], None], checkpoint)(
+                    process_id,
+                    "resident_only",
+                    evidence_ref,
+                )
             snapshot = self._runtime.start_process(
                 process_id=process_id,
                 argv=details.launch_argv or details.argv,
@@ -767,12 +786,30 @@ class ExecCommandTool:
                 run_id=run_id,
                 tool_call_id=tool_call_id,
                 sandbox=sandbox,
+                tool_name=self.name,
+                evidence_ref=evidence_ref,
             )
         except CommandRuntimeError as exc:
             return _command_runtime_error_result(exc, fallback_status="failed")
 
         def terminate(reason: str) -> None:
-            self._terminate_for_context(snapshot.process_id, session_id, run_id, reason)
+            current = self._terminate_for_context(snapshot.process_id, session_id, run_id, reason)
+            if current is not None and self._tool_execution_evidence_store is not None:
+                try:
+                    self._tool_execution_evidence_store.persist_process_snapshot(
+                        current,
+                        force=True,
+                    )
+                except Exception:
+                    logger.warning(
+                        "final command evidence checkpoint failed session_id=%s run_id=%s "
+                        "tool_call_id=%s output_seq=%s",
+                        session_id,
+                        run_id,
+                        tool_call_id,
+                        current.output_seq,
+                        exc_info=True,
+                    )
 
         context.register_command_handle(snapshot.process_id, terminate)
         control = args.get(TOOL_INVOCATION_CONTROL_ARG)
@@ -1809,14 +1846,24 @@ class ExecCommandTool:
 
     def _terminate_for_context(
         self, process_id: str, session_id: str, run_id: str, reason: str
-    ) -> None:
-        self._runtime.terminate(
-            process_id,
-            session_id=session_id,
-            run_id=run_id,
-            reason=reason,
-            wait_for_terminal_seconds=0,
-        )
+    ) -> CommandProcessSnapshot | None:
+        try:
+            return self._runtime.terminate(
+                process_id,
+                session_id=session_id,
+                run_id=run_id,
+                reason=reason,
+                wait_for_terminal_seconds=TERMINATION_CONFIRMATION_TIMEOUT_SECONDS,
+            )
+        except CommandRuntimeError:
+            with suppress(CommandRuntimeError):
+                return self._runtime.wait(
+                    process_id,
+                    session_id=session_id,
+                    run_id=run_id,
+                    timeout_seconds=0,
+                )
+        return None
 
 
 class HostProcessStartTool(ExecCommandTool):
@@ -2123,17 +2170,20 @@ def make_command_tools(
     runtime: CommandRuntime,
     broker: ApprovalBroker | None,
     execution_environment_manager: ExecutionEnvironmentManager | None = None,
+    tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
 ) -> list[Tool]:
     return [
         ExecCommandTool(
             runtime,
             broker,
             execution_environment_manager=execution_environment_manager,
+            tool_execution_evidence_store=tool_execution_evidence_store,
         ),
         HostProcessStartTool(
             runtime,
             broker,
             execution_environment_manager=execution_environment_manager,
+            tool_execution_evidence_store=tool_execution_evidence_store,
         ),
         WriteStdinTool(runtime),
         TerminateCommandTool(runtime),
