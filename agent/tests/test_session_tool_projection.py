@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from agent import Event, Session
+from agent.sessions.model_history import SessionModelHistory
+
+from agent import Event, Message, Session
 
 
 def _event(
@@ -139,6 +141,325 @@ def test_closed_tool_request_projects_protocol_assistant_without_persisted_empty
         {"id": "call-1", "name": "search", "args": {"q": "a"}},
     ]
     assert not any(event.type == "assistant_message" for event in session.events)
+
+
+def test_llm_messages_relocates_late_recovered_result_next_to_original_call() -> None:
+    session = Session.new(title="t", persona="default", model="m")
+    session.events.extend(
+        [
+            _event("user_message", "old-user", {"content": "old"}, run_id="old-run"),
+            _event(
+                "assistant_message",
+                "old-assistant",
+                {"content": "", "partial": False},
+                run_id="old-run",
+            ),
+            _event(
+                "tool_call_request",
+                "old-request",
+                {
+                    "tool_call_id": "provider-call",
+                    "event_tool_call_id": "event-call",
+                    "tool_name": "exec_command",
+                    "args": {},
+                },
+                run_id="old-run",
+            ),
+            _event("user_message", "later-user", {"content": "later"}, run_id="later-run"),
+            _event(
+                "assistant_message",
+                "later-assistant",
+                {"content": "later answer", "partial": False},
+                run_id="later-run",
+            ),
+            _event(
+                "tool_call_result",
+                "late-result",
+                {
+                    "tool_call_id": "provider-call",
+                    "event_tool_call_id": "event-call",
+                    "tool_name": "exec_command",
+                    "content": "interrupted",
+                    "is_error": True,
+                    "result_origin": "host_reconciliation",
+                },
+                run_id="old-run",
+            ),
+        ]
+    )
+
+    projected = session.llm_messages
+    SessionModelHistory.validate_provider_tool_history(
+        [message.to_openai() for message in projected]
+    )
+
+    assert [message.uuid for message in projected] == [
+        "old-user",
+        "old-assistant",
+        "late-result",
+        "later-user",
+        "later-assistant",
+    ]
+
+
+def test_llm_messages_keeps_first_result_for_one_event_transaction() -> None:
+    session = Session.new(title="t", persona="default", model="m")
+    session.events.extend(
+        [
+            _event("user_message", "user", {"content": "run"}),
+            _event("assistant_message", "assistant", {"content": "", "partial": False}),
+            _event(
+                "tool_call_request",
+                "request",
+                {
+                    "tool_call_id": "provider-call",
+                    "event_tool_call_id": "event-call",
+                    "tool_name": "exec_command",
+                    "args": {},
+                },
+            ),
+            _event(
+                "tool_call_result",
+                "first-result",
+                {
+                    "tool_call_id": "provider-call",
+                    "event_tool_call_id": "event-call",
+                    "tool_name": "exec_command",
+                    "content": "first",
+                    "is_error": True,
+                },
+            ),
+            _event(
+                "tool_call_result",
+                "duplicate-result",
+                {
+                    "tool_call_id": "provider-call",
+                    "event_tool_call_id": "event-call",
+                    "tool_name": "exec_command",
+                    "content": "duplicate",
+                    "is_error": True,
+                },
+            ),
+        ]
+    )
+
+    projected = session.llm_messages
+    SessionModelHistory.validate_provider_tool_history(
+        [message.to_openai() for message in projected]
+    )
+
+    assert [message.uuid for message in projected if message.role == "tool"] == ["first-result"]
+
+
+def test_llm_messages_orders_late_results_by_their_original_request_group() -> None:
+    session = Session.new(title="t", persona="default", model="m")
+    session.events.extend(
+        [
+            _event("user_message", "user", {"content": "run"}, run_id="run"),
+            _event(
+                "assistant_message",
+                "assistant",
+                {"content": "", "partial": False},
+                run_id="run",
+            ),
+            _event(
+                "tool_call_request",
+                "request-1",
+                {
+                    "tool_call_id": "provider-call-1",
+                    "event_tool_call_id": "event-call-1",
+                    "tool_name": "exec_command",
+                    "args": {},
+                },
+                run_id="run",
+            ),
+            _event(
+                "tool_call_request",
+                "request-2",
+                {
+                    "tool_call_id": "provider-call-2",
+                    "event_tool_call_id": "event-call-2",
+                    "tool_name": "exec_command",
+                    "args": {},
+                },
+                run_id="run",
+            ),
+            _event("user_message", "later-user", {"content": "later"}, run_id="later"),
+            _event(
+                "tool_call_result",
+                "result-2",
+                {
+                    "tool_call_id": "provider-call-2",
+                    "event_tool_call_id": "event-call-2",
+                    "tool_name": "exec_command",
+                    "content": "second",
+                    "is_error": True,
+                },
+                run_id="run",
+            ),
+            _event(
+                "tool_call_result",
+                "result-1",
+                {
+                    "tool_call_id": "provider-call-1",
+                    "event_tool_call_id": "event-call-1",
+                    "tool_name": "exec_command",
+                    "content": "first",
+                    "is_error": True,
+                },
+                run_id="run",
+            ),
+        ]
+    )
+
+    projected = session.llm_messages
+    SessionModelHistory.validate_provider_tool_history(
+        [message.to_openai() for message in projected]
+    )
+
+    assert [message.uuid for message in projected] == [
+        "user",
+        "assistant",
+        "result-1",
+        "result-2",
+        "later-user",
+    ]
+
+
+def test_llm_messages_disambiguates_reused_provider_ids_across_runs() -> None:
+    session = Session.new(title="t", persona="default", model="m")
+    session.events.extend(
+        [
+            _event("user_message", "user-1", {"content": "first"}, run_id="run-1"),
+            _event(
+                "assistant_message",
+                "assistant-1",
+                {"content": "", "partial": False},
+                run_id="run-1",
+            ),
+            _event(
+                "tool_call_request",
+                "request-1",
+                {
+                    "tool_call_id": "reused-provider-call",
+                    "event_tool_call_id": "event-call-1",
+                    "tool_name": "exec_command",
+                    "args": {},
+                },
+                run_id="run-1",
+            ),
+            _event("user_message", "user-2", {"content": "second"}, run_id="run-2"),
+            _event(
+                "assistant_message",
+                "assistant-2",
+                {"content": "", "partial": False},
+                run_id="run-2",
+            ),
+            _event(
+                "tool_call_request",
+                "request-2",
+                {
+                    "tool_call_id": "reused-provider-call",
+                    "event_tool_call_id": "event-call-2",
+                    "tool_name": "exec_command",
+                    "args": {},
+                },
+                run_id="run-2",
+            ),
+            _event(
+                "tool_call_result",
+                "result-2",
+                {
+                    "tool_call_id": "reused-provider-call",
+                    "event_tool_call_id": "event-call-2",
+                    "tool_name": "exec_command",
+                    "content": "second result",
+                    "is_error": False,
+                },
+                run_id="run-2",
+            ),
+            _event(
+                "tool_call_result",
+                "late-result-1",
+                {
+                    "tool_call_id": "reused-provider-call",
+                    "event_tool_call_id": "event-call-1",
+                    "tool_name": "exec_command",
+                    "content": "first interrupted",
+                    "is_error": True,
+                },
+                run_id="run-1",
+            ),
+        ]
+    )
+
+    projected = session.llm_messages
+    SessionModelHistory.validate_provider_tool_history(
+        [message.to_openai() for message in projected]
+    )
+
+    assert [message.uuid for message in projected] == [
+        "user-1",
+        "assistant-1",
+        "late-result-1",
+        "user-2",
+        "assistant-2",
+        "result-2",
+    ]
+
+
+def test_insert_tool_result_moves_existing_message_idempotently() -> None:
+    history = SessionModelHistory(
+        items=[
+            Message(
+                role="assistant",
+                content="",
+                uuid="assistant",
+                meta={
+                    "provider_run_id": "run",
+                    "tool_calls": [{"id": "call", "name": "exec_command", "args": {}}],
+                },
+            ),
+            Message(role="user", content="later", uuid="later-user"),
+            Message(
+                role="tool",
+                content="interrupted",
+                uuid="result",
+                meta={
+                    "provider_run_id": "run",
+                    "tool_call_id": "call",
+                    "tool_name": "exec_command",
+                    "is_error": True,
+                },
+            ),
+        ]
+    )
+
+    history.insert_tool_result_after_call(
+        content="interrupted",
+        tool_call_id="call",
+        tool_name="exec_command",
+        timestamp=history.items[-1].timestamp,
+        event_uuid="result",
+        is_error=True,
+        run_id="run",
+    )
+    first_generation = history.generation
+    history.insert_tool_result_after_call(
+        content="interrupted",
+        tool_call_id="call",
+        tool_name="exec_command",
+        timestamp=history.items[1].timestamp,
+        event_uuid="result",
+        is_error=True,
+        run_id="run",
+    )
+
+    assert [message.uuid for message in history.items] == ["assistant", "result", "later-user"]
+    assert history.generation == first_generation
+    SessionModelHistory.validate_provider_tool_history(
+        [message.to_openai() for message in history.items]
+    )
 
 
 def test_provider_reasoning_state_only_enters_model_projection() -> None:

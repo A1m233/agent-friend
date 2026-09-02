@@ -324,11 +324,19 @@ class SessionModelHistory:
             uuid=event_uuid,
             meta=meta,
         )
+        original_items = self.items
+        existing = [item for item in original_items if item.uuid == event_uuid]
+        self.items = [item for item in original_items if item.uuid != event_uuid]
         insertion_index = self._tool_result_insertion_index(tool_call_id, run_id=run_id)
-        if insertion_index is None or insertion_index == len(self.items):
-            self.append([message])
-            return message
+        if insertion_index is None:
+            insertion_index = len(self.items)
         self.items.insert(insertion_index, message)
+        if self.items == original_items:
+            return existing[0] if existing else message
+        if not existing and insertion_index == len(original_items):
+            self.last_relation = "append"
+            self.last_reason = None
+            return message
         self.generation += 1
         self.last_relation = "rewrite"
         self.last_reason = "tool_result_history_repair"

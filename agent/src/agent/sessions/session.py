@@ -795,66 +795,145 @@ class Session:
 
     @staticmethod
     def _normalize_tool_transactions(events: list[Event]) -> tuple[list[Event], bool]:
-        """Remove incomplete tool transactions from the LLM-only projection.
+        """Canonicalize tool transactions for the model-only projection.
 
-        Raw session events remain untouched for UI, audit, and diagnostics. A
-        request/result pair is keyed by run id when available so provider-local
-        tool ids reused by old sessions do not accidentally match across runs.
+        Startup reconciliation is append-only, so a recovered result can be persisted
+        long after its original request. Provider protocols still require that result
+        immediately after the assistant tool-call container. Pair by the stable event
+        transaction id when present, fall back to the provider id for legacy events,
+        move the first matching result beside its request group, and discard unmatched
+        requests plus orphan/duplicate results. Raw session events remain untouched.
         """
 
-        def tool_key(event: Event) -> tuple[str | None, str] | None:
+        def run_id(event: Event) -> str | None:
+            value = event.meta.get("run_id")
+            return value if isinstance(value, str) and value else None
+
+        def event_key(event: Event) -> tuple[str | None, str] | None:
+            transaction_id = event.payload.get("event_tool_call_id")
+            if not isinstance(transaction_id, str) or not transaction_id:
+                return None
+            return (run_id(event), transaction_id)
+
+        def provider_key(event: Event) -> tuple[str | None, str] | None:
             tool_call_id = event.payload.get("tool_call_id")
             if not isinstance(tool_call_id, str) or not tool_call_id:
                 return None
-            run_id = event.meta.get("run_id")
-            return (run_id if isinstance(run_id, str) and run_id else None, tool_call_id)
+            return (run_id(event), tool_call_id)
 
-        request_keys = {
-            key
-            for event in events
-            if event.type == "tool_call_request" and (key := tool_key(event)) is not None
-        }
-        result_keys = {
-            key
-            for event in events
-            if event.type == "tool_call_result" and (key := tool_key(event)) is not None
-        }
-        unmatched_request_keys = request_keys - result_keys
-        orphan_result_keys = result_keys - request_keys
-        if not unmatched_request_keys and not orphan_result_keys:
-            return events, False
-
-        assistant_for_request: dict[str, str] = {}
-        remaining_requests_by_assistant: dict[str, int] = {}
-        current_assistant_uuid: str | None = None
-        for event in events:
-            if event.type == "user_message":
-                current_assistant_uuid = None
-            elif event.type == "assistant_message":
-                current_assistant_uuid = event.uuid
-            elif event.type == "tool_call_request" and current_assistant_uuid is not None:
-                assistant_for_request[event.uuid] = current_assistant_uuid
-                key = tool_key(event)
-                if key is not None and key not in unmatched_request_keys:
-                    remaining_requests_by_assistant[current_assistant_uuid] = (
-                        remaining_requests_by_assistant.get(current_assistant_uuid, 0) + 1
-                    )
-
-        placeholder_assistants: set[str] = set()
-        normalized: list[Event] = []
-        for event in events:
-            key = tool_key(event)
-            if event.type == "tool_call_request" and key in unmatched_request_keys:
-                assistant_uuid = assistant_for_request.get(event.uuid)
-                if assistant_uuid is not None:
-                    placeholder_assistants.add(assistant_uuid)
+        request_by_event_key: dict[tuple[str | None, str], int] = {}
+        requests_by_provider_key: dict[tuple[str | None, str], list[int]] = {}
+        request_indexes: list[int] = []
+        for index, event in enumerate(events):
+            if event.type != "tool_call_request":
                 continue
-            if event.type == "tool_call_result" and key in orphan_result_keys:
+            request_indexes.append(index)
+            if (key := event_key(event)) is not None:
+                request_by_event_key.setdefault(key, index)
+            if (key := provider_key(event)) is not None:
+                requests_by_provider_key.setdefault(key, []).append(index)
+
+        result_for_request: dict[int, int] = {}
+        for result_index, event in enumerate(events):
+            if event.type != "tool_call_result":
+                continue
+            request_index: int | None = None
+            exact_key = event_key(event)
+            exact_request = request_by_event_key.get(exact_key) if exact_key is not None else None
+            if exact_request is not None:
+                if exact_request < result_index and exact_request not in result_for_request:
+                    request_index = exact_request
+            else:
+                alias_key = provider_key(event)
+                candidates = (
+                    requests_by_provider_key.get(alias_key, []) if alias_key is not None else []
+                )
+                for candidate in candidates:
+                    if candidate >= result_index:
+                        break
+                    if candidate not in result_for_request:
+                        request_index = candidate
+                        break
+            if request_index is None:
+                continue
+            result_for_request[request_index] = result_index
+
+        matched_request_indexes = set(result_for_request)
+        unmatched_request_indexes = set(request_indexes) - matched_request_indexes
+
+        request_group: dict[int, str] = {}
+        assistant_for_request: dict[int, str] = {}
+        current_group: str | None = None
+        current_assistant_uuid: str | None = None
+        reset_types = {
+            "model_context",
+            "skill_catalog_state",
+            "skill_context",
+            "user_message",
+            "model_output_rejection",
+            "todo_reminder",
+        }
+        for index, event in enumerate(events):
+            if event.type == "assistant_message":
+                current_group = f"assistant:{event.uuid}"
+                current_assistant_uuid = event.uuid
+            elif event.type == "provider_reasoning_state":
+                if current_group is None:
+                    current_group = f"synthetic:{event.uuid}"
+            elif event.type == "tool_call_request":
+                if current_group is None:
+                    current_group = f"synthetic:{event.uuid}"
+                request_group[index] = current_group
+                if current_assistant_uuid is not None:
+                    assistant_for_request[index] = current_assistant_uuid
+            elif (
+                event.type == "tool_call_result"
+                or event.type in reset_types
+                or (
+                    event.type == "system_trigger"
+                    and event.payload.get("source_kind") == "todo_reminder"
+                )
+            ):
+                current_group = None
+                current_assistant_uuid = None
+
+        requests_by_group: dict[str, list[int]] = {}
+        for request_index in sorted(matched_request_indexes):
+            group = request_group.get(request_index, f"synthetic:{events[request_index].uuid}")
+            requests_by_group.setdefault(group, []).append(request_index)
+
+        results_after_request: dict[int, list[Event]] = {}
+        for group_requests in requests_by_group.values():
+            insertion_index = group_requests[-1]
+            results_after_request[insertion_index] = [
+                events[result_for_request[request_index]] for request_index in group_requests
+            ]
+
+        remaining_requests_by_assistant: dict[str, int] = {}
+        placeholder_assistants: set[str] = set()
+        for request_index in matched_request_indexes:
+            assistant_uuid = assistant_for_request.get(request_index)
+            if assistant_uuid is not None:
+                remaining_requests_by_assistant[assistant_uuid] = (
+                    remaining_requests_by_assistant.get(assistant_uuid, 0) + 1
+                )
+        for request_index in unmatched_request_indexes:
+            assistant_uuid = assistant_for_request.get(request_index)
+            if assistant_uuid is not None:
+                placeholder_assistants.add(assistant_uuid)
+
+        normalized: list[Event] = []
+        for index, event in enumerate(events):
+            if event.type == "tool_call_result":
+                continue
+            if event.type == "tool_call_request" and index in unmatched_request_indexes:
                 continue
             normalized.append(event)
+            normalized.extend(results_after_request.get(index, []))
 
+        changed = [event.uuid for event in normalized] != [event.uuid for event in events]
         if not placeholder_assistants:
-            return normalized, True
+            return normalized, changed
 
         final_events: list[Event] = []
         for event in normalized:
