@@ -534,6 +534,73 @@ def test_edit_resend_latest_uses_prefix_context_and_appends_rewrite(tmp_path: Pa
     assert "old answer" not in second_prompt
 
 
+def test_edit_resend_relocates_late_recovered_result_in_prefix(tmp_path: Path) -> None:
+    store = JsonlSessionStore(base_dir=tmp_path / "sessions")
+    session = Session.new(
+        title="t",
+        persona="default",
+        model="deepseek/deepseek-chat",
+        persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+    )
+    store.create(session)
+    old_run = "old-run"
+    for event in [
+        _event("user_message", {"content": "old tool turn"}, meta={"run_id": old_run}),
+        _event(
+            "assistant_message",
+            {"content": "", "partial": False},
+            meta={"run_id": old_run},
+        ),
+        _event(
+            "tool_call_request",
+            {
+                "tool_call_id": "provider-call",
+                "event_tool_call_id": "event-call",
+                "tool_name": "exec_command",
+                "args": {},
+            },
+            meta={"run_id": old_run},
+        ),
+        _event("user_message", {"content": "later turn"}, meta={"run_id": "later-run"}),
+        _event(
+            "assistant_message",
+            {"content": "later answer", "partial": False},
+            meta={"run_id": "later-run"},
+        ),
+        _event(
+            "tool_call_result",
+            {
+                "tool_call_id": "provider-call",
+                "event_tool_call_id": "event-call",
+                "tool_name": "exec_command",
+                "content": "interrupted",
+                "is_error": True,
+                "result_origin": "host_reconciliation",
+            },
+            meta={"run_id": old_run},
+        ),
+        _event("user_message", {"content": "edit me"}, meta={"run_id": "target-run"}),
+        _event(
+            "assistant_message",
+            {"content": "old target answer", "partial": False},
+            meta={"run_id": "target-run"},
+        ),
+    ]:
+        _append(store, session, event)
+    fake = _ScriptedLLMClient(
+        script=[[LLMTextDelta(text="replacement"), LLMTurnDone(stop_reason="end_turn")]]
+    )
+    conv = _conversation(tmp_path, session=session, store=store, llm=fake)
+
+    list(conv.edit_resend_latest("edited", expected_user_content="edit me"))
+
+    sent = fake.received[0]
+    assistant_index = next(index for index, item in enumerate(sent) if item.get("tool_calls"))
+    assert sent[assistant_index + 1]["role"] == "tool"
+    assert sent[assistant_index + 1]["tool_call_id"] == "provider-call"
+    assert sum(item.get("tool_call_id") == "provider-call" for item in sent) == 1
+
+
 def test_edit_resend_uses_the_same_tool_budget_stop_semantics(tmp_path: Path) -> None:
     tool_use: list[LLMStreamEvent] = [
         LLMToolCallDelta(
