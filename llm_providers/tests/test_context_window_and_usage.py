@@ -615,11 +615,13 @@ def test_kimi_cancellable_stream_interrupts_response_header_wait(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request_started = threading.Event()
+    request_started_at: list[float] = []
     request_cancelled = threading.Event()
     clients: list[Any] = []
 
     class FakeRawCompletions:
         async def create(self, **_kwargs: Any) -> Any:
+            request_started_at.append(time.monotonic())
             request_started.set()
             try:
                 await asyncio.Event().wait()
@@ -656,7 +658,6 @@ def test_kimi_cancellable_stream_interrupts_response_header_wait(
         )
     )
 
-    started = time.monotonic()
     with pytest.raises(StopRequested, match="stop requested"):
         list(
             client.stream(
@@ -665,7 +666,8 @@ def test_kimi_cancellable_stream_interrupts_response_header_wait(
             )
         )
 
-    assert time.monotonic() - started < 1.5
+    assert request_started_at
+    assert time.monotonic() - request_started_at[0] < 1.5
     assert request_cancelled.wait(1)
     assert len(clients) == 1
     assert clients[0].closed is True
