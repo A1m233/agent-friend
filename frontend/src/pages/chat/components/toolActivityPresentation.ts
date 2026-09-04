@@ -281,7 +281,7 @@ export function toolActivityStatus(blocks: ToolBlock[]): ToolActivityStatus {
   return "done";
 }
 
-export function toolActivitySummary(blocks: ToolBlock[]): string {
+export function toolActivitySummary(blocks: ToolBlock[], live = true): string {
   if (blocks.length === 0) return "工具活动";
   if (blocks.length === 1) return toolPresentation(blocks[0]).summary;
   const status = toolActivityStatus(blocks);
@@ -289,7 +289,11 @@ export function toolActivitySummary(blocks: ToolBlock[]): string {
   const visible = categories.slice(0, 3).map((category) => CATEGORY_LABELS[category]);
   const suffix = categories.length > visible.length ? " 等" : "";
   const actions = `${visible.join("、")}${suffix}`;
-  if (status === "running") return `正在执行 ${blocks.length} 个步骤：${actions}`;
+  if (status === "running") {
+    return live
+      ? `正在执行 ${blocks.length} 个步骤：${actions}`
+      : `执行 ${blocks.length} 个步骤：${actions}`;
+  }
   return `执行了 ${blocks.length} 个步骤：${actions}`;
 }
 

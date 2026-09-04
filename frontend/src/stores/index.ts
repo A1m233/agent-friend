@@ -35,3 +35,11 @@ export { useVoiceInputStore } from "./voiceInput";
 export { applyAguiEvent } from "./conversationReducer";
 export { projectSessionEvents } from "./sessionProjection";
 export { startSessionSyncSubscriber } from "./sessionSync";
+export {
+  isActiveSocialAuthStatus,
+  useSocialAuthRequestsStore,
+} from "./socialAuthRequests";
+export type {
+  SocialAuthAction,
+  SocialAuthRequestEntry,
+} from "./socialAuthRequests";

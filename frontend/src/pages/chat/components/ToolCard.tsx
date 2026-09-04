@@ -130,7 +130,7 @@ function skillCardDetails(block: ToolBlock): SkillCardDetails {
   return { name: name || id || "未知 Skill", source, reason };
 }
 
-function SkillStatusCard({ block, embedded = false }: { block: ToolBlock; embedded?: boolean }) {
+function SkillStatusCard({ block, embedded = false, isPrimaryActivity = true }: { block: ToolBlock; embedded?: boolean; isPrimaryActivity?: boolean }) {
   const baseMeta = STATUS_META[block.status];
   const meta = block.status === "running"
     ? { ...baseMeta, label: "加载中" }
@@ -145,7 +145,7 @@ function SkillStatusCard({ block, embedded = false }: { block: ToolBlock; embedd
       "rounded-lg border border-border bg-surface/60 px-3 py-2 text-xs",
     )}>
       <div className="flex items-center gap-2">
-        <StatusDot tone={meta.tone} pulse={meta.pulse} />
+        <StatusDot tone={meta.tone} pulse={isPrimaryActivity && meta.pulse} />
         <span className="font-medium text-fg">Skill · {details.name}</span>
         <span className={cn("ml-auto", meta.text)}>{meta.label}</span>
       </div>
@@ -213,9 +213,11 @@ function locatorLabel(locator?: { path?: string; name?: string }): string {
 function FilesystemApprovalCard({
   block,
   embedded = false,
+  isPrimaryActivity = true,
 }: {
   block: ToolBlock;
   embedded?: boolean;
+  isPrimaryActivity?: boolean;
 }) {
   const entry = useFilesystemApprovalsStore((state) =>
     Object.values(state.entries).find((value) => value.request.tool_call_id === block.toolCallId),
@@ -299,7 +301,7 @@ function FilesystemApprovalCard({
       "rounded-lg border border-border bg-surface/60 px-3 py-2 text-xs",
     )}>
       <div className="flex items-center gap-2">
-        <StatusDot tone={tone} pulse={pulse} />
+        <StatusDot tone={tone} pulse={isPrimaryActivity && pulse} />
         <span className="font-medium text-fg">本地文件访问</span>
         <span className="ml-auto text-muted">{label}</span>
       </div>
@@ -361,9 +363,11 @@ interface CommandArgs {
 function CommandRuntimeCard({
   block,
   embedded = false,
+  isPrimaryActivity = true,
 }: {
   block: ToolBlock;
   embedded?: boolean;
+  isPrimaryActivity?: boolean;
 }) {
   const approval = useCommandRuntimeStore((state) =>
     Object.values(state.approvals).find((item) => item.tool_call_id === block.toolCallId),
@@ -479,7 +483,7 @@ function CommandRuntimeCard({
       "rounded-lg border border-border bg-surface/60 px-3 py-2 text-xs",
     )}>
       <div className="flex items-center gap-2">
-        <StatusDot tone={tone} pulse={pulse} />
+        <StatusDot tone={tone} pulse={isPrimaryActivity && pulse} />
         <span className="font-medium text-fg">本地命令</span>
         <span className="ml-auto text-muted">{label}</span>
       </div>
@@ -586,24 +590,26 @@ function CommandRuntimeCard({
 export function ToolCard({
   block,
   embedded = false,
+  isPrimaryActivity,
   onDisclosureChange,
 }: {
   block: ToolBlock;
   embedded?: boolean;
+  isPrimaryActivity?: boolean;
   onDisclosureChange?: () => void;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   if (block.name === "request_filesystem_access") {
-    return <FilesystemApprovalCard block={block} embedded={embedded} />;
+    return <FilesystemApprovalCard block={block} embedded={embedded} isPrimaryActivity={isPrimaryActivity} />;
   }
   if (block.name === "request_social_auth" && block.status === "done") {
-    return <SocialAuthCard block={block} />;
+    return <SocialAuthCard block={block} isPrimaryActivity={isPrimaryActivity} />;
   }
   if (block.name === "exec_command" || block.name === "host_process_start") {
-    return <CommandRuntimeCard block={block} embedded={embedded} />;
+    return <CommandRuntimeCard block={block} embedded={embedded} isPrimaryActivity={isPrimaryActivity} />;
   }
   if (block.name === "skill_read") {
-    return <SkillStatusCard block={block} embedded={embedded} />;
+    return <SkillStatusCard block={block} embedded={embedded} isPrimaryActivity={isPrimaryActivity} />;
   }
   const meta = STATUS_META[block.status];
   const args = presentToolPayload(block.args).text;
@@ -613,9 +619,9 @@ export function ToolCard({
     <div className={cn(
       cardWidthClass(embedded),
       "rounded-lg border border-border bg-surface/60 px-3 py-2 text-xs",
-    )}>
+    )} data-primary-activity={!embedded && isPrimaryActivity && block.status === "running" ? "tool" : undefined}>
       <div className="flex items-center gap-2">
-        <StatusDot tone={meta.tone} pulse={meta.pulse} />
+        <StatusDot tone={meta.tone} pulse={isPrimaryActivity !== false && meta.pulse} />
         <span className="font-medium text-fg">{block.name}</span>
         <span className={cn("ml-auto", meta.text)}>{meta.label}</span>
       </div>
