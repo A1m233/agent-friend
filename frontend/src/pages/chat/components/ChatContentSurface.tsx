@@ -14,6 +14,7 @@ import { focusVoiceCallWindow, useVoiceStore } from "@/stores/voice";
 import { isVoiceCallBlockingText } from "@/stores/voiceStateMachine";
 import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX, CHAT_CONTENT_CONTAINER_CLASS } from "../layout";
 import { ApprovalDock } from "./ApprovalDock";
+import { usePrimaryActivity } from "./activity/usePrimaryActivity";
 import { Composer, type ComposerHandle } from "./Composer";
 import { MessageList } from "./MessageList";
 import { SessionApprovalModeController } from "./SessionApprovalModeController";
@@ -34,6 +35,7 @@ export function ChatContentSurface() {
   const runtimeCredentialGroups = useRuntimeCredentialStore((state) => state.groups);
   const [composerHeight, setComposerHeight] = useState(CHAT_COMPOSER_FALLBACK_HEIGHT_PX);
   const composerRef = useRef<ComposerHandle>(null);
+  const primaryActivity = usePrimaryActivity();
   const voiceBlocksText =
     Boolean(currentSessionId && voiceSessionId === currentSessionId) &&
     isVoiceCallBlockingText(voicePhase);
@@ -82,13 +84,17 @@ export function ChatContentSurface() {
         <HomeStart disabled={composerDisabled} disabledReason={composerDisabledReason} />
       ) : (
         <>
-          <MessageList composerHeight={composerHeight} onFocusComposer={focusComposer} />
+          <MessageList
+            composerHeight={composerHeight}
+            onFocusComposer={focusComposer}
+            primaryActivity={primaryActivity}
+          />
           <Composer
             ref={composerRef}
             disabled={composerDisabled}
             disabledReason={composerDisabledReason}
             onHeightChange={setComposerHeight}
-            topSlot={<ApprovalDock />}
+            topSlot={<ApprovalDock activity={primaryActivity} />}
           />
         </>
       )}

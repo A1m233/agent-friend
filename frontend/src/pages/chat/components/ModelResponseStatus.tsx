@@ -41,9 +41,11 @@ export function modelResponseStatusLabel(
 export function ModelResponseStatus({
   status,
   label,
+  primaryActivityKind,
 }: {
   status?: ModelResponseProgress;
   label?: string;
+  primaryActivityKind?: "model" | "run";
 }) {
   const [slow, setSlow] = useState(false);
   const [staleActivity, setStaleActivity] = useState(false);
@@ -63,7 +65,11 @@ export function ModelResponseStatus({
   }, [status?.phase, status?.activityVersion]);
 
   return (
-    <p className="flex items-center gap-2 px-1 text-xs text-muted" role="status">
+    <p
+      className="flex items-center gap-2 px-1 text-xs text-muted"
+      role="status"
+      data-primary-activity={primaryActivityKind}
+    >
       <StatusDot tone="muted" pulse />
       {modelResponseStatusLabel(status, { slow, staleActivity, override: label })}
     </p>
