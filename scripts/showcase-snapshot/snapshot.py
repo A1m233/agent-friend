@@ -707,15 +707,13 @@ def scan_text_file(path: Path, rel_path: str) -> list[Finding]:
     return findings
 
 
-def scan_snapshot(output: Path) -> list[Finding]:
+def scan_snapshot(output: Path, paths: list[Path] | None = None) -> list[Finding]:
     findings: list[Finding] = []
-    for path in sorted(output.rglob("*")):
-        if path.is_symlink():
-            continue
-        if path.is_dir():
+    for path in sorted(output.rglob("*") if paths is None else paths):
+        if path.is_symlink() or not path.is_file():
             continue
         rel_path = path.relative_to(output).as_posix()
-        if rel_path == ".showcase-scan/report.json":
+        if rel_path in {".showcase-scan/report.json", "SHOWCASE-SCAN-REPORT.md"}:
             continue
         if rel_path == "scripts/showcase-snapshot/snapshot.py":
             continue
@@ -869,14 +867,73 @@ def remove_checkout_extras(checkout: Path, source_dirs: set[str], source_files: 
     return removed
 
 
-def sync_snapshot_to_checkout(snapshot: Path, checkout: Path) -> tuple[int, int, int]:
+def checkout_git(checkout: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=checkout,
+        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if result.returncode:
+        raise SystemExit(f"cannot inspect showcase checkout {checkout}: {result.stderr.strip()}")
+    return result.stdout
+
+
+def validate_checkout(checkout: Path, *, require_clean: bool = False) -> Path:
     checkout = checkout.expanduser().resolve()
-    if not checkout.exists():
-        raise SystemExit(f"sync checkout does not exist: {checkout}")
+    if not checkout.is_dir():
+        raise SystemExit(f"showcase checkout does not exist: {checkout}")
     if not (checkout / ".git").exists():
-        raise SystemExit(f"refusing to sync checkout without .git: {checkout}")
-    if not (checkout / SENTINEL).exists():
-        raise SystemExit(f"refusing to sync checkout without {SENTINEL}: {checkout}")
+        raise SystemExit(f"refusing showcase checkout without .git: {checkout}")
+    if not (checkout / SENTINEL).is_file():
+        raise SystemExit(f"refusing showcase checkout without {SENTINEL}: {checkout}")
+    git_root = Path(checkout_git(checkout, "rev-parse", "--show-toplevel").strip()).resolve()
+    if git_root != checkout:
+        raise SystemExit(f"showcase path is not the Git root: {checkout}")
+    if require_clean:
+        status = checkout_git(checkout, "status", "--porcelain=v1", "--untracked-files=all")
+        if status.strip():
+            raise SystemExit(
+                f"refusing to sync dirty showcase checkout: {checkout}\n{status.rstrip()}\n"
+                "Preserve or commit these changes before retrying; sync does not discard them."
+            )
+    return checkout
+
+
+def verify_checkout(checkout: Path) -> int:
+    checkout = validate_checkout(checkout)
+    names = checkout_git(checkout, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+    paths = [checkout / name for name in sorted(set(names.split("\0")) - {""})]
+    for path in paths:
+        if not path.is_symlink() and checkout not in path.resolve().parents:
+            raise SystemExit(f"refusing to scan a path outside showcase checkout: {path}")
+    findings = scan_snapshot(checkout, paths)
+    errors = sum(f.severity == "error" for f in findings)
+    warnings = sum(f.severity == "warning" for f in findings)
+    print(f"verified checkout: {checkout}")
+    print(f"scan errors: {errors}")
+    print(f"scan warnings: {warnings}")
+    for finding in findings:
+        print(
+            f"{finding.severity}: {finding.path}:{finding.line} "
+            f"[{finding.category}] {finding.snippet}"
+        )
+    return 1 if errors else 0
+
+
+def validate_sync_paths(snapshot: Path, checkout: Path) -> None:
+    snapshot = snapshot.expanduser().resolve()
+    checkout = checkout.expanduser().resolve()
+    if snapshot == checkout or snapshot in checkout.parents or checkout in snapshot.parents:
+        raise SystemExit("snapshot output and sync checkout must not overlap")
+
+
+def sync_snapshot_to_checkout(snapshot: Path, checkout: Path) -> tuple[int, int, int]:
+    validate_sync_paths(snapshot, checkout)
+    checkout = validate_checkout(checkout, require_clean=True)
 
     source_dirs, source_files, file_paths = source_inventory(snapshot)
     removed = remove_checkout_extras(checkout, source_dirs, source_files)
@@ -918,18 +975,32 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--init-git", action="store_true", help="run git init in the generated snapshot"
     )
     parser.add_argument(
+        "--verify-checkout",
+        type=Path,
+        help="scan an existing showcase checkout without generating or writing files",
+    )
+    parser.add_argument(
         "--sync-checkout",
         type=Path,
         help=(
             "after a clean scan, mirror the generated snapshot into an existing showcase "
-            "git checkout while preserving local runtime artifacts"
+            "clean git checkout while preserving ignored local runtime artifacts"
         ),
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.verify_checkout is not None and (
+        args.output is not None or args.replace or args.init_git or args.sync_checkout is not None
+    ):
+        parser.error(
+            "--verify-checkout cannot be combined with snapshot generation or sync options"
+        )
+    return args
 
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    if args.verify_checkout is not None:
+        return verify_checkout(args.verify_checkout)
     if args.sync_checkout and args.init_git:
         raise SystemExit("--sync-checkout cannot be combined with --init-git")
 
@@ -937,6 +1008,9 @@ def main(argv: list[str]) -> int:
     if output_arg is None:
         output_arg = DEFAULT_SYNC_BUILD if args.sync_checkout else DEFAULT_OUTPUT
     output = output_arg.expanduser().resolve()
+    if args.sync_checkout:
+        validate_sync_paths(output, args.sync_checkout)
+        validate_checkout(args.sync_checkout, require_clean=True)
     prepare_output(output, args.replace or bool(args.sync_checkout))
     copied = build_snapshot(output)
     findings = scan_snapshot(output)
