@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@/utils/tauri";
 import { slotBoundsHit } from "./slotBoundsHit";
+import { petInputEvidence, type InputCursor } from "./inputEvidence";
+import type { HitObservation } from "./inputEvidence/types";
 
 type PassthroughReason =
   | "disabled"
@@ -124,6 +126,7 @@ export function usePetPassthrough({
       shouldIgnore: boolean,
       reason: PassthroughReason,
       details: Record<string, unknown> = {},
+      observation: Partial<HitObservation> = {},
     ) => {
       if (shouldLogPassthroughDiagnostic()) {
         const diagnosticKey = `${shouldIgnore}:${reason}`;
@@ -136,11 +139,25 @@ export function usePetPassthrough({
           });
         }
       }
+      petInputEvidence.hit({
+        reason,
+        ignore: shouldIgnore,
+        commandSent: shouldIgnore !== ignored,
+        dragging: latestRef.current.isDragging,
+        cursor: observation.cursor,
+        spriteBounds: latestRef.current.spriteScreen,
+        alphaTested: observation.alphaTested,
+        alphaHit: observation.alphaHit,
+      });
       if (shouldIgnore === ignored) return;
       ignored = shouldIgnore;
-      void invoke("set_pet_cursor_passthrough", { ignore: shouldIgnore }).catch((error) => {
-        console.warn("[pet][passthrough] native toggle failed:", error);
-      });
+      const diagnostic = petInputEvidence.passthroughRequest(shouldIgnore, reason, observation.cursor?.diagnostic?.sampleId);
+      void invoke("set_pet_cursor_passthrough", { ignore: shouldIgnore, diagnostic })
+        .then(() => petInputEvidence.acknowledge("passthrough-ack", diagnostic, true))
+        .catch((error) => {
+          petInputEvidence.acknowledge("passthrough-ack", diagnostic, false);
+          console.warn("[pet][passthrough] native toggle failed:", error);
+        });
     };
 
     // dev-only · 禁穿透分支：让 inspector / dev tools 鼠标事件正常
@@ -151,22 +168,27 @@ export function usePetPassthrough({
         disposed = true;
         // Fail open: pet 是整屏透明 overlay，异常卸载/HMR 后必须恢复点击穿透，
         // 否则透明窗口会变成吃掉全桌面点击的实窗。
-        void invoke("set_pet_cursor_passthrough", { ignore: true })
-          .catch((error) => console.warn("[pet][passthrough] cleanup fail-open failed:", error));
+        const diagnostic = petInputEvidence.passthroughRequest(true);
+        void invoke("set_pet_cursor_passthrough", { ignore: true, diagnostic })
+          .then(() => petInputEvidence.acknowledge("passthrough-ack", diagnostic, true))
+          .catch((error) => {
+            petInputEvidence.acknowledge("passthrough-ack", diagnostic, false);
+            console.warn("[pet][passthrough] cleanup fail-open failed:", error);
+          });
         latestRef.current.setCursorOnSprite(false);
       };
     }
 
     apply(true, "initial"); // 初始默认穿透：空白处不挡桌面
 
-    const unlisten = listen<{ x: number; y: number }>("pet://cursor", (e) => {
+    const unlisten = listen<InputCursor>("pet://cursor", (e) => {
       if (disposed) return;
       const latest = latestRef.current;
       // (1) drag 期间锁定 false；hover 状态从 cursorOnSprite 维度看是 "不算 hover"
       //     （但 ActionBar 显隐由 App.tsx 综合 isDragging || cursorOnSprite || hoverActionBarDom 决定）
       if (latest.isDragging) {
         latest.setCursorOnSprite(false);
-        return apply(false, "dragging", { cursor: e.payload });
+        return apply(false, "dragging", { cursor: e.payload }, { cursor: e.payload });
       }
       // (2) DOM data-hit 优先（操作栏 DOM 在 canvas 之上）
       const el = document.elementFromPoint(e.payload.x, e.payload.y);
@@ -176,7 +198,7 @@ export function usePetPassthrough({
         return apply(false, "dom-hit", {
           cursor: e.payload,
           target: describeHitTarget(hitTarget),
-        });
+        }, { cursor: e.payload });
       }
       // (3) sprite alpha hit-test 主路径（18 升级；spriteScreen 矩形作 fast reject）
       //     各 backend/runtime 自己处理 Pixi7/Pixi8 framebuffer 细节，null 时退化到矩形。
@@ -191,13 +213,17 @@ export function usePetPassthrough({
           : true; // runtime 未就绪时退化到矩形（17a 兜底，加载早期）
         if (hit) {
           setCursorOnSprite(true);
-          return apply(false, "sprite-hit", spriteDetails);
+          return apply(false, "sprite-hit", spriteDetails, {
+            cursor: e.payload, alphaTested: Boolean(latest.alphaHitTest), alphaHit: hit,
+          });
         }
         setCursorOnSprite(false);
-        return apply(true, "sprite-transparent", spriteDetails);
+        return apply(true, "sprite-transparent", spriteDetails, {
+          cursor: e.payload, alphaTested: Boolean(latest.alphaHitTest), alphaHit: hit,
+        });
       }
       setCursorOnSprite(false);
-      apply(true, "outside", { cursor: e.payload });
+      apply(true, "outside", { cursor: e.payload }, { cursor: e.payload });
     });
 
     return () => {
@@ -205,8 +231,13 @@ export function usePetPassthrough({
       void unlisten.then((f) => f());
       // Fail open: cleanup 可能来自 React error boundary / HMR，而 pet 窗是整屏透明 overlay。
       // `true` = 忽略鼠标事件，让点击穿透到桌面，避免异常退出后锁住其它应用窗口。
-      void invoke("set_pet_cursor_passthrough", { ignore: true })
-        .catch((error) => console.warn("[pet][passthrough] cleanup fail-open failed:", error));
+      const diagnostic = petInputEvidence.passthroughRequest(true);
+      void invoke("set_pet_cursor_passthrough", { ignore: true, diagnostic })
+        .then(() => petInputEvidence.acknowledge("passthrough-ack", diagnostic, true))
+        .catch((error) => {
+          petInputEvidence.acknowledge("passthrough-ack", diagnostic, false);
+          console.warn("[pet][passthrough] cleanup fail-open failed:", error);
+        });
       latestRef.current.setCursorOnSprite(false);
     };
   }, [disabled, setCursorOnSprite]);

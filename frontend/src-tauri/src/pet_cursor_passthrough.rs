@@ -1,4 +1,12 @@
-use tauri::{Runtime, WebviewWindow};
+use crate::pet_input_evidence::{
+    integration::{metadata, record_native},
+    PetInputEvidence,
+};
+use serde_json::{json, Value};
+use tauri::{Manager, Runtime, WebviewWindow};
+
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const PET_WINDOW_LABEL: &str = "pet";
 
@@ -12,7 +20,11 @@ const PET_WINDOW_LABEL: &str = "pet";
 // WS_EX_TOOLWINDOW；Chromium 明确把 tool window 排除在 native occlusion 计算之外。
 
 #[tauri::command]
-pub async fn set_pet_cursor_passthrough(window: WebviewWindow, ignore: bool) -> Result<(), String> {
+pub async fn set_pet_cursor_passthrough(
+    window: WebviewWindow,
+    ignore: bool,
+    diagnostic: Option<Value>,
+) -> Result<(), String> {
     if window.label() != PET_WINDOW_LABEL {
         return Err(format!(
             "pet cursor passthrough: window {} is not allowed",
@@ -20,38 +32,99 @@ pub async fn set_pet_cursor_passthrough(window: WebviewWindow, ignore: bool) -> 
         ));
     }
 
-    set_ignore_cursor_events(&window, ignore).await
+    let manager = window
+        .try_state::<PetInputEvidence>()
+        .map(|state| state.inner().clone());
+    // Bound optional diagnostics before cloning them into the main-thread closure.
+    // Invalid metadata degrades observation only; the business ignore request still runs.
+    let diagnostic = match metadata(diagnostic.as_ref()) {
+        Ok(fields) if !fields.is_empty() => Some(Value::Object(fields)),
+        Ok(_) => None,
+        Err(()) => {
+            if let Some(manager) = manager.as_ref() {
+                manager.note_invalid();
+            }
+            None
+        }
+    };
+    record_native(
+        manager.as_ref(),
+        json!({"kind":"passthrough-request","stage":"request","ignore":ignore}),
+        diagnostic.as_ref(),
+    );
+    set_ignore_cursor_events(&window, ignore, manager, diagnostic).await
 }
 
 #[cfg(target_os = "windows")]
 async fn set_ignore_cursor_events<R: Runtime>(
     window: &WebviewWindow<R>,
     ignore: bool,
+    manager: Option<PetInputEvidence>,
+    diagnostic: Option<Value>,
 ) -> Result<(), String> {
-    let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    let hwnd = window.hwnd().map_err(|e| {
+        record_native(
+            manager.as_ref(),
+            json!({"kind":"passthrough-applied","ignore":ignore,
+            "outcome":"not-applied","stage":"request","errorKind":"window-missing"}),
+            diagnostic.as_ref(),
+        );
+        e.to_string()
+    })?;
     let hwnd_value = hwnd.0 as isize;
     let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+    let apply_manager = manager.clone();
+    let apply_diagnostic = diagnostic.clone();
 
     window
         .run_on_main_thread(move || {
             let hwnd = windows::Win32::Foundation::HWND(hwnd_value as *mut std::ffi::c_void);
-            let _ = result_tx.send(apply_windows_cursor_passthrough(hwnd, ignore));
+            let _ = result_tx.send(apply_windows_cursor_passthrough(
+                hwnd,
+                ignore,
+                apply_manager.as_ref(),
+                apply_diagnostic.as_ref(),
+            ));
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            record_native(
+                manager.as_ref(),
+                json!({"kind":"passthrough-applied","ignore":ignore,
+                "outcome":"not-applied","stage":"request","errorKind":"invoke-failed"}),
+                diagnostic.as_ref(),
+            );
+            e.to_string()
+        })?;
 
-    result_rx
-        .await
-        .map_err(|_| "pet cursor passthrough: main-thread task was cancelled".to_string())?
+    result_rx.await.map_err(|_| {
+        // Cancellation says nothing about whether the closure has already applied styles.
+        record_native(
+            manager.as_ref(),
+            json!({"kind":"passthrough-ack","ignore":ignore,
+                "outcome":"unknown","stage":"ack","errorKind":"invoke-failed"}),
+            diagnostic.as_ref(),
+        );
+        "pet cursor passthrough: main-thread task was cancelled".to_string()
+    })?
 }
 
 #[cfg(not(target_os = "windows"))]
 async fn set_ignore_cursor_events<R: Runtime>(
     window: &WebviewWindow<R>,
     ignore: bool,
+    manager: Option<PetInputEvidence>,
+    diagnostic: Option<Value>,
 ) -> Result<(), String> {
-    window
+    let result = window
         .set_ignore_cursor_events(ignore)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+    record_native(
+        manager.as_ref(),
+        json!({"kind":"passthrough-applied","ignore":ignore,
+        "outcome":if result.is_ok() {"ok"} else {"error"},"stage":"apply","verified":null}),
+        diagnostic.as_ref(),
+    );
+    result
 }
 
 fn windows_cursor_passthrough_style(
@@ -73,6 +146,8 @@ fn windows_cursor_passthrough_style(
 fn apply_windows_cursor_passthrough(
     hwnd: windows::Win32::Foundation::HWND,
     ignore: bool,
+    manager: Option<&PetInputEvidence>,
+    diagnostic: Option<&Value>,
 ) -> Result<(), String> {
     use windows::Win32::UI::WindowsAndMessaging::{
         GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, SWP_FRAMECHANGED,
@@ -80,6 +155,9 @@ fn apply_windows_cursor_passthrough(
         WS_EX_TRANSPARENT,
     };
 
+    static APPLY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    // Allocated inside the actual main-thread operation, not at command receipt or ack.
+    let apply_seq = APPLY_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
     let layered = WS_EX_LAYERED.0 as isize;
     let transparent = WS_EX_TRANSPARENT.0 as isize;
     let tool_window = WS_EX_TOOLWINDOW.0 as isize;
@@ -99,7 +177,13 @@ fn apply_windows_cursor_passthrough(
                 0,
                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
             )
-            .map_err(|e| format!("pet cursor passthrough: refresh window style failed: {e}"))?;
+            .map_err(|e| {
+                record_native(manager, json!({"kind":"passthrough-applied","ignore":ignore,
+                    "applySeq":apply_seq,"styleBefore":current as u32,"styleExpected":expected as u32,
+                    "styleActual":null,"verified":null,"outcome":"partial","stage":"refresh",
+                    "errorKind":"style-refresh-failed","errorCode":e.code().0}), diagnostic);
+                format!("pet cursor passthrough: refresh window style failed: {e}")
+            })?;
         }
     }
 
@@ -108,11 +192,27 @@ fn apply_windows_cursor_passthrough(
     let layered_matches = (actual & layered != 0) == ignore;
     let transparent_matches = (actual & transparent != 0) == ignore;
     if !tool_window_preserved || !layered_matches || !transparent_matches {
+        record_native(
+            manager,
+            json!({"kind":"passthrough-applied","ignore":ignore,
+            "applySeq":apply_seq,"styleBefore":current as u32,"styleExpected":expected as u32,
+            "styleActual":actual as u32,"verified":false,"outcome":"error","stage":"verify",
+            "errorKind":"style-verification-failed"}),
+            diagnostic,
+        );
         return Err(format!(
             "pet cursor passthrough: style verification failed (ignore={ignore}, ex_style=0x{actual:x})"
         ));
     }
 
+    record_native(
+        manager,
+        json!({"kind":"passthrough-applied","ignore":ignore,
+        "applySeq":apply_seq,"styleBefore":current as u32,"styleExpected":expected as u32,
+        "styleActual":actual as u32,"verified":true,"outcome":if expected == current {"unchanged"} else {"applied"},
+        "stage":"verify"}),
+        diagnostic,
+    );
     Ok(())
 }
 

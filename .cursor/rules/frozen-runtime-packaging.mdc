@@ -40,7 +40,7 @@ codexLoad: preflight
 打包敏感的代码或配置发生实质变化时：
 
 1. 运行 `scripts/check/run.* --stage backend`。
-2. 在 Windows x64 环境运行 `scripts/package/run.ps1 runtime --local-test --verification-level package-sensitive`，以 staging 后 doctor 和 frozen capability smoke 的结果为准。该验证只构建 runtime，不要求构建完整 installer。
+2. 在 Windows x64 环境显式调用 `package-release` Skill 的 `runtime-only` 路径，由它准备共同的 Guide baseline 并运行 local-test frozen runtime 验证；命令与必需参数只在该 Skill 维护。以 staging 后 doctor 和 frozen capability smoke 的结果为准。本入口只验证 runtime，不自动构建 installer、安装到本机或发布。
 3. 只有用户明确要求安装包、发布、版本操作或 trusted-beta 时，才进入 `package-release` Skill 的完整 installer 工作流。
 
 非 Windows 环境无法执行冻结 runtime 验证时，应明确记录 `verification gap`，不得把 source-env 单测、import smoke 或未 staging 的裸 PyInstaller 目录表述为冻结验证通过。打包或 doctor 失败时保留 fail-closed 原因并修正实际收集/能力覆盖，不得绕过门禁。

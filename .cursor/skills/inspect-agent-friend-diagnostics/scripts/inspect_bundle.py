@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import zipfile
 from collections import Counter
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -34,7 +36,56 @@ CAPABILITY_HANDLERS = {
     "install-integrity-v1": "installIntegrity",
     "desktop-instance-governance-v1": "desktopInstance",
     "managed-execution-environment-v1": "executionEnvironments",
+    "pet-input-evidence-v1": "petInputEvidence",
 }
+
+PET_INPUT_PREFIX = "diagnostics/pet-input/"
+PET_INPUT_COVERAGE = PET_INPUT_PREFIX + "coverage.json"
+PET_INPUT_LIMITS = {
+    "historyBytes": 16 * 1024 * 1024,
+    "historyAgeDays": 7,
+    "segmentBytes": 2 * 1024 * 1024,
+    "incidentBytes": 8 * 1024 * 1024,
+    "incidentAgeDays": 30,
+    "incidentCount": 32,
+    "incidentFileBytes": 256 * 1024,
+    "eventBytes": 4096,
+    "queueEntries": 256,
+    "queueBytes": 1024 * 1024,
+    "totalBytes": 25 * 1024 * 1024,
+}
+PET_INPUT_GAPS = {
+    "not-collected",
+    "unsupported",
+    "not-covered",
+    "expired",
+    "evicted",
+    "truncated",
+    "write-failed",
+    "read-failed",
+    "corrupt-tail",
+    "unknown",
+    "dropped",
+    "invalid",
+    "rate-limited",
+    "metadata-folded",
+    "clock-uncertain",
+    "unclosed-process",
+}
+PET_INPUT_COUNTERS = (
+    "dropped",
+    "frontendDropped",
+    "invalid",
+    "rateLimited",
+    "writeFailed",
+    "evicted",
+    "expired",
+    "metadataFolded",
+    "aggregated",
+    "truncated",
+    "corruptTail",
+    "readFailed",
+)
 
 
 class BundleError(Exception):
@@ -350,6 +401,602 @@ def summarize_execution_environments(value: Any, *, collected: bool) -> dict[str
         "declaredPayloadCount": declared_payloads,
         "validatedPayloadCount": validated_payloads,
         "providers": provider_summaries,
+    }
+
+
+def _pet_integer(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _pet_number(value: Any, low: float, high: float) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and low <= value <= high
+
+
+def _pet_timestamp(value: Any) -> bool:
+    if not isinstance(value, str) or len(value) > 48:
+        return False
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is not None
+    except ValueError:
+        return False
+
+
+def _pet_id(value: Any, *, process: bool = False) -> bool:
+    pattern = r"[0-9-]{1,96}" if process else r"[a-fA-F0-9-]{1,96}"
+    return isinstance(value, str) and re.fullmatch(pattern, value) is not None
+
+
+def _pet_identity(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or not isinstance(value.get("identityComplete"), bool):
+        raise BundleError("pet input identity is not an object")
+    result: dict[str, Any] = {}
+    choices = {
+        "platform": {"windows", "macos", "linux", "unknown"},
+        "buildMode": {"debug", "release", "dev", "installed", "unknown"},
+    }
+    patterns = {
+        "sourceCommit": r"[a-fA-F0-9]{7,64}",
+        "buildId": r"[a-fA-F0-9TZ-]{1,96}",
+        "appVersion": r"[0-9.-]{1,48}",
+        "webviewVersion": r"[0-9.-]{1,48}",
+    }
+    for key in ("sourceDirty", "identityComplete", *choices, *patterns):
+        if key not in value:
+            continue
+        item = value[key]
+        valid = (
+            isinstance(item, bool)
+            if key in {"sourceDirty", "identityComplete"}
+            else isinstance(item, str)
+            and (item in choices[key] if key in choices else re.fullmatch(patterns[key], item))
+        )
+        if not valid:
+            raise BundleError("pet input identity has an invalid field")
+        result[key] = item
+    return result
+
+
+def _pet_incident_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or "pageInstanceId" not in value:
+        raise BundleError("pet input incident summary is not an object")
+    for key in ("incidentId", "pageInstanceId"):
+        item = value.get(key)
+        if not _pet_id(item) and not (
+            key == "pageInstanceId" and (item is None or _pet_integer(item))
+        ):
+            raise BundleError("pet input incident has an invalid correlation identity")
+    if not _pet_id(value.get("processSessionId"), process=True):
+        raise BundleError("pet input incident has an invalid process identity")
+    if not all(_pet_timestamp(value.get(key)) for key in ("firstRecordedAt", "lastRecordedAt")):
+        raise BundleError("pet input incident has an invalid time range")
+    if (
+        not _pet_integer(value.get("count"))
+        or value.get("recovery") not in ("observed", "unknown")
+        or not isinstance(value.get("truncated"), bool)
+        or not isinstance(value.get("closed"), bool)
+        or value.get("signal")
+        not in (
+            "dpr-mismatch",
+            "dpr-command-failed",
+            "passthrough-command-failed",
+            "passthrough-verification-failed",
+        )
+    ):
+        raise BundleError("pet input incident has invalid signal metadata")
+    return {
+        key: value[key]
+        for key in (
+            "incidentId",
+            "processSessionId",
+            "pageInstanceId",
+            "signal",
+            "firstRecordedAt",
+            "lastRecordedAt",
+            "count",
+            "recovery",
+            "closed",
+            "truncated",
+        )
+    }
+
+
+def _pet_envelope(value: Any, process_session: str) -> None:
+    if (
+        not isinstance(value, dict)
+        or not _pet_integer(value.get("schemaVersion"))
+        or value["schemaVersion"] != 1
+    ):
+        raise BundleError("pet input record has an invalid envelope")
+    if value.get("processSessionId") != process_session:
+        raise BundleError("pet input record process identity differs from its artifact")
+    if value.get("kind") == "segment-header":
+        _pet_identity(value.get("identity"))
+        if (
+            not _pet_integer(value.get("recordSeq"))
+            or not _pet_timestamp(value.get("recordedAt"))
+            or value.get("source") != "collector"
+        ):
+            raise BundleError("pet input history header has invalid sequence or time metadata")
+        return
+    if (
+        not _pet_integer(value.get("recordSeq"))
+        or not _pet_timestamp(value.get("recordedAt"))
+        or not _pet_number(value.get("processMonotonicMs"), 0, 1e15)
+        or value.get("source") not in ("frontend", "native", "collector")
+        or not isinstance(value.get("kind"), str)
+        or not re.fullmatch(r"[a-z-]{1,48}", value["kind"])
+    ):
+        raise BundleError("pet input record has invalid sequence, time, source or kind")
+    for key in (
+        "actualDpr",
+        "displayDpr",
+        "reportedDpr",
+        "oldDpr",
+        "newDpr",
+        "scale",
+        "windowScaleFactor",
+    ):
+        if key in value and not _pet_number(value[key], 0, 64):
+            raise BundleError("pet input record has invalid scale metadata")
+    for key in ("pageInstanceId", "requestId"):
+        if key in value and not (_pet_id(value[key]) or _pet_integer(value[key])):
+            raise BundleError("pet input record has an invalid correlation identity")
+    for key in (
+        "ingressSeq",
+        "frontendSeq",
+        "displayRevision",
+        "sampleId",
+        "dprRevision",
+        "applySeq",
+        "count",
+        "firstSeq",
+        "lastSeq",
+        "droppedCount",
+    ):
+        if key in value and not _pet_integer(value[key]):
+            raise BundleError("pet input record has an invalid sequence or counter")
+    for key, expected in (
+        ("physical", {"x", "y"}),
+        ("css", {"x", "y"}),
+        ("windowOrigin", {"x", "y"}),
+        ("viewport", {"width", "height"}),
+        ("windowSize", {"width", "height"}),
+        ("spriteBounds", {"x", "y", "width", "height"}),
+    ):
+        if key in value:
+            item = value[key]
+            if (
+                not isinstance(item, dict)
+                or set(item) != expected
+                or not all(
+                    _pet_number(number, 0 if field in ("width", "height") else -1e6, 1e6)
+                    for field, number in item.items()
+                )
+            ):
+                raise BundleError("pet input record has invalid geometry metadata")
+
+
+def _pet_read_json(archive: zipfile.ZipFile, entry: str, limit: int) -> Any:
+    if archive.getinfo(entry).file_size > limit:
+        raise BundleError("pet input JSON artifact exceeds its byte limit")
+    try:
+        return read_json(archive, entry)
+    except RecursionError as error:
+        raise BundleError("pet input JSON artifact exceeds nesting limits") from error
+
+
+def _pet_durability(value: dict[str, Any]) -> dict[str, Any]:
+    if (
+        value.get("scope") != "persisted-only"
+        or value.get("tailCompleteness") not in ("unknown", "complete")
+        or not _pet_integer(value.get("normalFlushMs"))
+        or not _pet_integer(value.get("syncRequestMs"))
+    ):
+        raise BundleError("pet input coverage has invalid durability metadata")
+    result = {
+        key: value[key] for key in ("scope", "tailCompleteness", "normalFlushMs", "syncRequestMs")
+    }
+    if "normalEnd" in value:
+        if value["normalEnd"] is not None and not isinstance(value["normalEnd"], bool):
+            raise BundleError("pet input coverage has an invalid normal-end marker")
+        result["normalEnd"] = value["normalEnd"]
+    for key in ("lastWritten", "lastSyncRequested"):
+        if key not in value:
+            continue
+        position = value[key]
+        if position is None:
+            result[key] = None
+            continue
+        if not isinstance(position, dict):
+            raise BundleError("pet input coverage has an invalid durability position")
+        summary = {}
+        for field, validator in (
+            ("processSessionId", lambda item: _pet_id(item, process=True)),
+            ("recordSeq", _pet_integer),
+            ("recordedAt", _pet_timestamp),
+        ):
+            if field in position:
+                if not validator(position[field]):
+                    raise BundleError("pet input coverage has an invalid durability position")
+                summary[field] = position[field]
+        result[key] = summary
+    if "lastDroppedRange" in value:
+        dropped = value["lastDroppedRange"]
+        if dropped is None:
+            result["lastDroppedRange"] = None
+        else:
+            if (
+                not isinstance(dropped, dict)
+                or not _pet_id(dropped.get("processSessionId"), process=True)
+                or not _pet_integer(dropped.get("firstIngressSeq"))
+                or not _pet_integer(dropped.get("lastIngressSeq"))
+                or dropped["lastIngressSeq"] < dropped["firstIngressSeq"]
+                or dropped.get("interior") != "not-necessarily-contiguous"
+            ):
+                raise BundleError("pet input coverage has an invalid dropped-ingress range")
+            result["lastDroppedRange"] = {
+                key: dropped[key]
+                for key in ("processSessionId", "firstIngressSeq", "lastIngressSeq", "interior")
+            }
+    return result
+
+
+def _pet_evictions(value: Any) -> list[dict[str, Any]] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) > 256:
+        raise BundleError("pet input coverage has an invalid eviction collection")
+    result = []
+    for item in value:
+        if (
+            not isinstance(item, dict)
+            or item.get("kind") not in ("expired", "evicted")
+            or item.get("scope") not in ("history", "incident")
+            or not _pet_integer(item.get("bytes"))
+            or not isinstance(item.get("createdAtMs"), int)
+            or isinstance(item["createdAtMs"], bool)
+        ):
+            raise BundleError("pet input coverage has invalid eviction metadata")
+        summary = {key: item[key] for key in ("kind", "scope", "bytes", "createdAtMs")}
+        for key, valid in (
+            ("processSessionId", lambda item: _pet_id(item, process=True)),
+            ("firstRecordSeq", _pet_integer),
+        ):
+            if key in item:
+                if item[key] is not None and not valid(item[key]):
+                    raise BundleError("pet input coverage has an invalid eviction position")
+                summary[key] = item[key]
+        result.append(summary)
+    return result
+
+
+def _pet_artifact_records(
+    archive: zipfile.ZipFile, artifact: dict[str, Any], identity: dict[str, Any] | None
+) -> tuple[int, dict[str, Any] | None]:
+    entry = artifact["entry"]
+    process_session = artifact["processSessionId"]
+    if artifact["kind"] == "incident":
+        value = _pet_read_json(archive, entry, PET_INPUT_LIMITS["incidentFileBytes"])
+        if (
+            not isinstance(value, dict)
+            or not _pet_integer(value.get("schemaVersion"))
+            or value["schemaVersion"] != 1
+        ):
+            raise BundleError("pet input incident has an invalid root")
+        summary = _pet_incident_summary(value)
+        if summary["processSessionId"] != process_session:
+            raise BundleError("pet input incident process identity differs from coverage")
+        if _pet_identity(value.get("identity")) != identity:
+            raise BundleError("pet input incident identity differs from coverage")
+        if not isinstance(value.get("closed"), bool):
+            raise BundleError("pet input incident has an invalid closure state")
+        _pet_envelope(value.get("firstSignal"), process_session)
+        context = value.get("context")
+        if not isinstance(context, list):
+            raise BundleError("pet input incident context is not an array")
+        for record in context:
+            _pet_envelope(record, process_session)
+            if (
+                len(json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+                > 4096
+            ):
+                raise BundleError("pet input context record exceeds its byte limit")
+        return len(context), summary
+
+    count = 0
+    first_record = last_record = None
+    with archive.open(entry) as stream:
+        while True:
+            raw = stream.readline(PET_INPUT_LIMITS["eventBytes"] + 2)
+            if not raw:
+                break
+            if len(raw) > PET_INPUT_LIMITS["eventBytes"] + 1 or not raw.endswith(b"\n"):
+                raise BundleError("pet input history has an oversized or incomplete line")
+            try:
+                record = json.loads(raw)
+            except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
+                raise BundleError("pet input history has invalid JSON") from error
+            _pet_envelope(record, process_session)
+            if count == 0:
+                if record.get("kind") != "segment-header":
+                    raise BundleError("pet input history is missing its identity header")
+                if _pet_identity(record.get("identity")) != identity:
+                    raise BundleError("pet input history identity differs from coverage")
+            else:
+                if record.get("kind") == "segment-header":
+                    raise BundleError("pet input history has more than one identity header")
+                if first_record is None:
+                    first_record = record
+                last_record = record
+            count += 1
+    if not count:
+        raise BundleError("pet input history is empty")
+    for prefix, record in (("first", first_record), ("last", last_record)):
+        if artifact[prefix + "RecordSeq"] != (
+            record.get("recordSeq") if record else None
+        ) or artifact[prefix + "RecordedAt"] != (record.get("recordedAt") if record else None):
+            raise BundleError("pet input history range differs from coverage")
+    return count - 1, None
+
+
+def summarize_pet_input(
+    archive: zipfile.ZipFile, manifest: dict[str, Any], warnings: list[str]
+) -> dict[str, Any]:
+    """Validate retained evidence without copying event bodies or unknown metadata to output."""
+    names = set(archive.namelist())
+    entries = sorted(name for name in names if name.startswith(PET_INPUT_PREFIX))
+    capabilities = manifest.get("capabilities")
+    declared = isinstance(capabilities, list) and "pet-input-evidence-v1" in capabilities
+    if not declared and not entries and "petInputEvidence" not in manifest:
+        return {"evidence": "not-collected"}
+    if PET_INPUT_COVERAGE not in names:
+        warnings.append("pet input evidence is missing required coverage metadata")
+        return {"evidence": "missing", "entryCount": len(entries)}
+    total_bytes = sum(archive.getinfo(entry).file_size for entry in entries)
+    if len(entries) > 515 or total_bytes > PET_INPUT_LIMITS["totalBytes"]:
+        warnings.append("pet input evidence exceeds its file-count or total-byte limit")
+        return {"evidence": "invalid", "entryCount": len(entries)}
+    try:
+        coverage = _pet_read_json(archive, PET_INPUT_COVERAGE, 1024 * 1024)
+        if (
+            not isinstance(coverage, dict)
+            or not _pet_integer(coverage.get("schemaVersion"))
+            or coverage["schemaVersion"] != 1
+        ):
+            raise BundleError("pet input coverage has an invalid or unsupported schema")
+        if coverage.get("status") not in (
+            "available",
+            "not-collected",
+            "not-covered",
+            "read-failed",
+            "unsupported",
+        ):
+            raise BundleError("pet input coverage has an invalid status")
+        for key in ("artifacts", "identities", "gaps", "retainedIncidents"):
+            if not isinstance(coverage.get(key), list) or len(coverage[key]) > 512:
+                raise BundleError("pet input coverage has an invalid collection")
+        for key in ("counters", "limits", "durability"):
+            if not isinstance(coverage.get(key), dict):
+                raise BundleError("pet input coverage has an invalid metadata object")
+        for key in ("exportBytes", "failureCount"):
+            if not _pet_integer(coverage.get(key)):
+                raise BundleError("pet input coverage has an invalid byte or failure count")
+        limits = coverage["limits"]
+        if any(
+            not _pet_integer(limits.get(key)) or limits[key] > maximum
+            for key, maximum in PET_INPUT_LIMITS.items()
+        ):
+            raise BundleError("pet input coverage has invalid resource limits")
+        counters = {
+            key: coverage["counters"][key]
+            for key in PET_INPUT_COUNTERS
+            if key in coverage["counters"]
+        }
+        if not all(_pet_integer(item) for item in counters.values()):
+            raise BundleError("pet input coverage has an invalid counter")
+        durability = _pet_durability(coverage["durability"])
+        evictions = _pet_evictions(coverage.get("evictions"))
+        identities = {}
+        for item in coverage["identities"]:
+            if not isinstance(item, dict) or not _pet_id(
+                item.get("processSessionId"), process=True
+            ):
+                raise BundleError("pet input coverage has an invalid process identity")
+            process = item["processSessionId"]
+            if process in identities:
+                raise BundleError("pet input coverage has duplicate process identities")
+            identities[process] = _pet_identity(item.get("identity"))
+        gaps = []
+        for item in coverage["gaps"]:
+            if (
+                not isinstance(item, dict)
+                or not isinstance(item.get("kind"), str)
+                or item["kind"] not in PET_INPUT_GAPS
+            ):
+                raise BundleError("pet input coverage has an invalid gap kind")
+            if "count" in item and not _pet_integer(item["count"]):
+                raise BundleError("pet input coverage has an invalid gap count")
+            if "scope" in item and item["scope"] not in (
+                "history",
+                "incident",
+                "collector",
+                "metadata",
+                "scan",
+            ):
+                raise BundleError("pet input coverage has an invalid gap scope")
+            gaps.append({key: item[key] for key in ("kind", "count", "scope") if key in item})
+        incidents = [_pet_incident_summary(item) for item in coverage["retainedIncidents"]]
+        if len(incidents) > PET_INPUT_LIMITS["incidentCount"]:
+            raise BundleError("pet input coverage exceeds its incident-count limit")
+        artifacts = []
+        for item in coverage["artifacts"]:
+            if not isinstance(item, dict) or item.get("kind") not in ("history", "incident"):
+                raise BundleError("pet input coverage has an invalid artifact")
+            pattern = (
+                r"diagnostics/pet-input/history-[0-9]+\.jsonl"
+                if item["kind"] == "history"
+                else r"diagnostics/pet-input/incident-[0-9]+\.json"
+            )
+            if not isinstance(item.get("entry"), str) or not re.fullmatch(pattern, item["entry"]):
+                raise BundleError("pet input coverage references an invalid artifact name")
+            if not _pet_id(item.get("processSessionId"), process=True):
+                raise BundleError("pet input artifact has an invalid process identity")
+            if item["processSessionId"] not in identities:
+                raise BundleError("pet input artifact occurrence identity is missing")
+            if not _pet_integer(item.get("bytes")) or item.get("status") not in (
+                "available",
+                "corrupt-tail",
+                "truncated",
+            ):
+                raise BundleError("pet input artifact has invalid size or status")
+            if "frozenBytes" in item and (
+                not _pet_integer(item["frozenBytes"]) or item["frozenBytes"] < item["bytes"]
+            ):
+                raise BundleError("pet input artifact has an invalid frozen read boundary")
+            for key in ("firstRecordSeq", "lastRecordSeq"):
+                if item.get(key) is not None and not _pet_integer(item[key]):
+                    raise BundleError("pet input artifact has an invalid sequence range")
+            for key in ("firstRecordedAt", "lastRecordedAt"):
+                if item.get(key) is not None and not _pet_timestamp(item[key]):
+                    raise BundleError("pet input artifact has an invalid time range")
+            artifacts.append(
+                {
+                    key: item.get(key)
+                    for key in (
+                        "entry",
+                        "kind",
+                        "bytes",
+                        "processSessionId",
+                        "firstRecordSeq",
+                        "lastRecordSeq",
+                        "firstRecordedAt",
+                        "lastRecordedAt",
+                        "status",
+                    )
+                }
+            )
+            if "frozenBytes" in item:
+                artifacts[-1]["frozenBytes"] = item["frozenBytes"]
+    except (BundleError, KeyError) as error:
+        warnings.append(str(error))
+        return {"evidence": "invalid", "entryCount": len(entries)}
+
+    referenced = [item["entry"] for item in artifacts]
+    missing = sorted(set(referenced).difference(names))
+    unlisted = sorted(
+        set(entries).difference(
+            [PET_INPUT_COVERAGE, PET_INPUT_PREFIX + "current.json", *referenced]
+        )
+    )
+    problems = []
+    if coverage["exportBytes"] != total_bytes:
+        problems.append("export byte count differs from archive")
+    if coverage["failureCount"] > 0 and manifest.get("outcome") != "partial":
+        problems.append("collection failures are not reflected in the bundle outcome")
+    if len(referenced) != len(set(referenced)):
+        problems.append("duplicate artifact references")
+    if missing:
+        problems.append("missing referenced artifacts")
+    if unlisted:
+        problems.append("unlisted artifacts")
+    for kind, limit in (("history", "historyBytes"), ("incident", "incidentBytes")):
+        if sum(item["bytes"] for item in artifacts if item["kind"] == kind) > limits[limit]:
+            problems.append("artifact family exceeds its byte limit")
+    manifest_summary = manifest.get("petInputEvidence")
+    if not isinstance(manifest_summary, dict):
+        problems.append("missing manifest summary")
+    else:
+        for key in ("status", "failureCount", "exportBytes", "artifacts"):
+            if manifest_summary.get(key) != coverage[key]:
+                problems.append("manifest and coverage summary differ")
+                break
+    record_counts = Counter()
+    invalid_artifacts = 0
+    for artifact in artifacts:
+        entry = artifact["entry"]
+        if entry not in names:
+            continue
+        try:
+            info = archive.getinfo(entry)
+            maximum = PET_INPUT_LIMITS[
+                "segmentBytes" if artifact["kind"] == "history" else "incidentFileBytes"
+            ]
+            if info.file_size != artifact["bytes"] or info.file_size > maximum:
+                raise BundleError("pet input artifact byte count is invalid")
+            count, incident = _pet_artifact_records(
+                archive, artifact, identities.get(artifact["processSessionId"])
+            )
+            if incident is not None and incident not in incidents:
+                raise BundleError("pet input incident differs from retained summary")
+            record_counts[artifact["kind"]] += count
+        except (BundleError, OSError, RuntimeError, zipfile.BadZipFile) as error:
+            invalid_artifacts += 1
+            warnings.append(f"{entry}: {error}")
+    current = None
+    current_entry = PET_INPUT_PREFIX + "current.json"
+    if current_entry in names:
+        try:
+            value = _pet_read_json(archive, current_entry, 1024 * 1024)
+            if not isinstance(value, dict) or value.get("scope") != "export-time":
+                raise BundleError("pet input current snapshot is not explicitly export-time")
+            if (
+                not _pet_id(value.get("processSessionId"), process=True)
+                or not isinstance(value.get("workerStopped"), bool)
+                or not all(
+                    _pet_integer(value.get(key))
+                    for key in ("queuedBytes", "dropped", "invalid", "writeFailed")
+                )
+            ):
+                raise BundleError("pet input current snapshot has invalid identity or counters")
+            current = {
+                "present": True,
+                **{
+                    key: value[key]
+                    for key in (
+                        "scope",
+                        "processSessionId",
+                        "queuedBytes",
+                        "dropped",
+                        "invalid",
+                        "writeFailed",
+                        "workerStopped",
+                    )
+                },
+            }
+            if current["writeFailed"] > 0 and (
+                coverage["failureCount"] == 0
+                or not any(gap["kind"] == "write-failed" for gap in gaps)
+            ):
+                problems.append("current write failure is missing from coverage")
+        except BundleError as error:
+            warnings.append(str(error))
+            current = {"evidence": "invalid"}
+            invalid_artifacts += 1
+    for problem in problems:
+        warnings.append("pet input evidence: " + problem)
+    return {
+        "evidence": "invalid" if problems or invalid_artifacts else "collected",
+        "schemaVersion": coverage["schemaVersion"],
+        "status": coverage["status"],
+        "entryCount": len(entries),
+        "exportBytes": coverage["exportBytes"],
+        "failureCount": coverage["failureCount"],
+        "artifacts": artifacts,
+        "identities": [
+            {"processSessionId": key, "identity": value} for key, value in identities.items()
+        ],
+        "counters": counters,
+        "gaps": gaps,
+        "evictions": evictions,
+        "limits": {key: limits[key] for key in PET_INPUT_LIMITS},
+        "durability": durability,
+        "retainedIncidents": incidents,
+        "historyRecordCount": record_counts["history"],
+        "incidentContextRecordCount": record_counts["incident"],
+        "invalidArtifactCount": invalid_artifacts,
+        "missingReferencedEntries": missing,
+        "unlistedEntryCount": len(unlisted),
+        "current": current,
     }
 
 
@@ -906,6 +1553,7 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 execution_environments,
                 collected=execution_environments_collected,
             ),
+            "petInputEvidence": summarize_pet_input(archive, manifest, warnings),
             "warnings": warnings,
         }
 
@@ -1023,6 +1671,15 @@ def print_human(summary: dict[str, Any]) -> None:
         f"activeOverlays={execution_environments.get('activeOverlayCount')} "
         f"inactiveOverlays={execution_environments.get('inactiveOverlayCount')} "
         f"payloadValidated={execution_environments.get('validatedPayloadCount')}"
+    )
+    pet_input = summary["petInputEvidence"]
+    print(
+        "Pet input evidence: "
+        f"evidence={pet_input.get('evidence')} status={pet_input.get('status')} "
+        f"historyRecords={pet_input.get('historyRecordCount')} "
+        f"incidents={len(pet_input.get('retainedIncidents', []))} "
+        f"failures={pet_input.get('failureCount')} "
+        f"gaps={len(pet_input.get('gaps', []))}"
     )
     print(
         f"Problem text: {'present' if summary['problem']['present'] else 'absent'} "

@@ -1,0 +1,12 @@
+{
+  "processSessionId": "18208-1788587634704",
+  "reason": "Recover the animation loop stopped after the validation harness disabled page scripts",
+  "before": {
+    "label": "pet",
+    "timeOrigin": 1788587635284.3,
+    "now": 454776.19999999925,
+    "dpr": 1.25
+  },
+  "reloadRequestedAt": "2026-09-05T06:01:30.062Z",
+  "reloadAcknowledgedAt": "2026-09-05T06:01:30.065Z"
+}

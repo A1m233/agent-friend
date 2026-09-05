@@ -30,9 +30,10 @@
 
 当前常用输入：
 
-- `query`：实际被测轮的用户文本；纯图片轮仍需满足当前 schema 的非空约束时，先判断是否应扩展 schema，而不是伪造会改变语义的用户文字。
+- `query`：实际被测轮的用户文本；当前 loader 允许有 `query_attachments` 的纯附件轮使用空文本，不伪造会改变语义的用户文字。
 - `query_attachments`：本轮附件。
 - `current_session_messages`：当前会话的前置 user/assistant 消息，可带附件。
+- `current_session_events`：当前会话的最小已完成消息 / 工具历史；需要保留历史 tool request/result 时使用，与 `current_session_messages` 互斥。
 - `fixture_session`：另一条过去会话，不是当前会话历史。
 - `fake_tools`：被测轮可调用的固定结果工具；不能冒充已经发生过的历史工具事件。
 - `runtime_now`：带时区的 ISO 8601 时间。
@@ -41,13 +42,12 @@
 
 附件路径必须位于 `agent_eval/` 内并使用相对路径。fixture 放在能表达行为主题的稳定目录；保留原始格式和足以回归的分辨率。复制原件前确认用户授权与隐私边界，记录显示名但不保留无必要的本机绝对路径。
 
-当前 `current_session_messages` 只接受 user/assistant；当前 runner 不直接导入生产 JSONL，也不能表达历史 tool request/result。若历史工具结果对因果链必要：
+历史输入的能力与约束以 `agent_eval/README.md`、`schema.py`、`loader.py` 和 `runner.py` 为准。若历史工具结果对因果链必要：
 
 1. 不要把它改写成 assistant 自述或本轮 `fake_tools` 来假装等价。
-2. 先证明该事件对 anchor 的必要性，并检查事件模型与 SessionManager 的现行约束。
-3. 在 `agent_eval` 内添加最小、通用、向后兼容的历史事件表示与注入支持。
-4. 为合法顺序、解析错误、注入结果和既有 `current_session_messages` 兼容性补测试。
-5. 如果这会演变成任意生产 JSONL 导入器或完整 replay 平台，暂停并拆成单独需求。
+2. 先证明该事件对 anchor 的必要性，使用已有 `current_session_events` 表达最小历史；按 loader 保留合法顺序、匹配的 request/result 和完整事务，不与 `current_session_messages` 同时配置。
+3. runner 已支持无 LLM 调用地注入这些前置事件；优先参考现有 case 和 loader/runner 测试。只有当前代码确实无法表达必要输入时，才在 `agent_eval` 内扩展最小、通用、向后兼容的支持，并补合法顺序、解析错误、注入结果和旧输入兼容性测试。
+4. 当前能力不直接导入生产 JSONL；若需要任意生产 JSONL 导入器或完整 replay 平台，暂停并拆成单独需求。
 
 ## 4. YAML 设计
 

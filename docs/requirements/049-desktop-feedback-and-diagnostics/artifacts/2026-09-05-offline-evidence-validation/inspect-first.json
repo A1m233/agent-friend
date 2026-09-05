@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "command": "inspect",
+  "startedAt": "2026-09-05T05:52:27.081Z",
+  "status": "complete",
+  "actions": [],
+  "evidenceLevel": "desktop DOM via CDP",
+  "runtimeIdentityCaveat": "Caller must separately verify the dev lease, worktree and loaded source freshness.",
+  "capturesScreenshot": false,
+  "readsConversationContent": false,
+  "target": {
+    "label": "pet",
+    "targetUrl": "http://localhost:1420/pet.html",
+    "documentVisibility": "visible"
+  },
+  "facts": {
+    "actualDpr": 1.25,
+    "viewport": {
+      "width": 4096,
+      "height": 1280
+    },
+    "displayDpr": 1.25,
+    "spriteBounds": {
+      "x": 3933.066666666667,
+      "y": 749.2,
+      "width": 74.66666666666697,
+      "height": 96
+    },
+    "overlayViewport": {
+      "x": 0,
+      "y": 0,
+      "width": 4096,
+      "height": 1280
+    },
+    "actionBarBounds": null,
+    "canvas": [
+      {
+        "width": 5120,
+        "height": 1600,
+        "bounds": {
+          "x": 0,
+          "y": 0,
+          "width": 4096,
+          "height": 1280
+        }
+      }
+    ],
+    "bodyPointerEvents": "auto",
+    "spriteCenterDomHit": {
+      "x": 3970.4000000000005,
+      "y": 797.2,
+      "elementPresent": true,
+      "dataHit": false,
+      "pointerEvents": "auto"
+    }
+  },
+  "completedAt": "2026-09-05T05:52:27.130Z"
+}
