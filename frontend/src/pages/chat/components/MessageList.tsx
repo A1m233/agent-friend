@@ -21,13 +21,10 @@ import { toast } from "sonner";
 import { Button, ScrollArea, Skeleton, StatusDot } from "@/components/ui";
 import {
   draftKey,
-  useCommandRuntimeStore,
   useConversationStore,
-  useFilesystemApprovalsStore,
 } from "@/stores";
 import { runtimeCredentialGroupForModel } from "@/stores/conversation";
 import {
-  activeRunActivityMessageId,
   sessionRunPresentation,
   shouldShowMessageActionBar,
 } from "@/stores/runPresentation";
@@ -37,7 +34,6 @@ import type {
   ChatAttachment,
   ChatMessage,
   ChatTextReference,
-  CompactionBlock,
 } from "@/types/chat";
 import type { SearchNavigationTarget } from "@/types/search";
 import { cn } from "@/utils/cn";
@@ -49,6 +45,10 @@ import {
 import { toMarkdownContent } from "../projection";
 import { openSettings } from "@/lib/settings/navigation";
 import { EditMessageHint } from "./EditMessageHint";
+import type {
+  MessagePrimaryActivity,
+  PrimaryActivityPresentation,
+} from "./activity/primaryActivity";
 import { MessageAttachments } from "./MessageAttachments";
 import { MessageActionBar } from "./MessageActionBar";
 import { MessageQuoteSelectionAction } from "./MessageQuoteSelectionAction";
@@ -62,6 +62,10 @@ import {
   MESSAGE_VIRTUALIZER_PADDING_START_PX,
   shouldAdjustMessageScrollPositionOnItemSizeChange,
 } from "./messageVirtualization";
+import {
+  CompactionActivity,
+  MessagePrimaryActivityStatus,
+} from "./activity/MessagePrimaryActivity";
 import {
   getMessageScrollDirection,
   isMessageScrollAtBottom,
@@ -155,16 +159,6 @@ function ScrollActivityRing({ running }: { running: boolean }) {
         transform={`rotate(${SCROLL_ACTIVITY_ARC_START_DEGREES} ${SCROLL_ACTIVITY_RING_CENTER} ${SCROLL_ACTIVITY_RING_CENTER})`}
       />
     </svg>
-  );
-}
-
-function CompactionStatus({ block }: { block: CompactionBlock }) {
-  const running = block.status === "running";
-  return (
-    <p className="flex items-center gap-2 px-1 text-xs text-muted" role="status">
-      <StatusDot tone="muted" pulse={running} />
-      {running ? "正在整理较长对话…" : "已整理较长对话"}
-    </p>
   );
 }
 
@@ -338,9 +332,7 @@ function lastRenderableBlockIndex(message: ChatMessage): number {
 function MessageContent({
   message,
   actionBar,
-  showRunActivity,
-  activeRunActivityLabel,
-  suppressRunActivity,
+  primaryActivity,
   editing,
   onFocusComposer,
   onContinueToolResult,
@@ -350,9 +342,7 @@ function MessageContent({
 }: {
   message: ChatMessage;
   actionBar: ReactNode;
-  showRunActivity: boolean;
-  activeRunActivityLabel?: string;
-  suppressRunActivity?: boolean;
+  primaryActivity?: MessagePrimaryActivity | null;
   editing?: boolean;
   onFocusComposer?: () => void;
   onContinueToolResult?: () => void;
@@ -416,10 +406,16 @@ function MessageContent({
     .map((segment) => {
       if (segment.kind === "toolActivity") {
         if (segment.endIndex === actionBarBlockIndex) shouldRenderExternalActionBar = true;
+        const primaryToolCallId = primaryActivity?.kind === "tool"
+          && segment.blocks.some((block) => block.toolCallId === primaryActivity.toolCallId)
+          ? primaryActivity.toolCallId
+          : undefined;
         return (
           <ToolActivity
             key={segment.id}
             blocks={segment.blocks}
+            activityManaged={primaryActivity !== undefined}
+            primaryToolCallId={primaryToolCallId}
             onDisclosureChange={onToolDisclosureChange}
           />
         );
@@ -430,6 +426,10 @@ function MessageContent({
           <ToolCard
             key={`c:${segment.block.toolCallId}`}
             block={segment.block}
+            isPrimaryActivity={primaryActivity === undefined
+              ? undefined
+              : (primaryActivity?.kind === "socialAuth" || primaryActivity?.kind === "tool")
+                && primaryActivity.toolCallId === segment.block.toolCallId}
             onDisclosureChange={onToolDisclosureChange}
           />
         );
@@ -462,7 +462,15 @@ function MessageContent({
         return <ReminderCard key={`r:${b.occurrenceId || i}`} block={b} />;
       }
       if (b.kind === "compaction") {
-        return <CompactionStatus key={`x:${b.activityId || i}`} block={b} />;
+        return (
+          <CompactionActivity
+            key={`x:${b.activityId || i}`}
+            block={b}
+            isPrimaryActivity={primaryActivity?.kind === "compaction"
+              && primaryActivity.activityId === b.activityId}
+            legacyActivity={primaryActivity === undefined}
+          />
+        );
       }
       return null;
     })
@@ -512,15 +520,11 @@ function MessageContent({
                 : "已停止回答"}</span>
         </div>
       )}
-      {!suppressRunActivity
-        && showRunActivity
-        && message.runStatus && (
-        <ModelResponseStatus status={message.runStatus} label={activeRunActivityLabel} />
+      {primaryActivity !== undefined && (
+        <MessagePrimaryActivityStatus activity={primaryActivity} />
       )}
-      {!suppressRunActivity
-        && showRunActivity
-        && !message.runStatus && (
-        <ModelResponseStatus label={activeRunActivityLabel} />
+      {primaryActivity === undefined && message.status === "streaming" && (
+        <ModelResponseStatus status={message.runStatus} />
       )}
       {((message.status === "streaming" && !hasContent) || shouldRenderExternalActionBar) &&
         actionBar}
@@ -531,9 +535,7 @@ function MessageContent({
 const MessageItem = memo(function MessageItem({
   message,
   activeRunId,
-  activeRunActivityMessageId,
-  activeRunActivityLabel,
-  suppressRunActivity,
+  primaryActivity,
   canEdit,
   editing,
   onEdit,
@@ -545,9 +547,7 @@ const MessageItem = memo(function MessageItem({
 }: {
   message: ChatMessage;
   activeRunId?: string;
-  activeRunActivityMessageId?: string | null;
-  activeRunActivityLabel?: string;
-  suppressRunActivity?: boolean;
+  primaryActivity?: MessagePrimaryActivity | null;
   canEdit: boolean;
   editing: boolean;
   onEdit: () => void;
@@ -557,9 +557,6 @@ const MessageItem = memo(function MessageItem({
   onReferenceSelect?: (reference: ChatTextReference) => void;
   onToolDisclosureChange: (messageId: string) => void;
 }) {
-  const showRunActivity = activeRunActivityMessageId === undefined
-    ? message.status === "streaming"
-    : message.id === activeRunActivityMessageId;
   const actionBar =
     !shouldShowMessageActionBar(message, activeRunId, editing) ? null : (
       <MessageActionBar
@@ -582,9 +579,7 @@ const MessageItem = memo(function MessageItem({
       <MessageContent
         message={message}
         actionBar={actionBar}
-        showRunActivity={showRunActivity}
-        activeRunActivityLabel={activeRunActivityLabel}
-        suppressRunActivity={suppressRunActivity}
+        primaryActivity={primaryActivity}
         editing={editing}
         onFocusComposer={onFocusComposer}
         onContinueToolResult={onContinueToolResult}
@@ -600,9 +595,7 @@ function areMessageItemsEqual(prev: MessageItemProps, next: MessageItemProps): b
   return (
     prev.message === next.message &&
     prev.activeRunId === next.activeRunId &&
-    prev.activeRunActivityMessageId === next.activeRunActivityMessageId &&
-    prev.activeRunActivityLabel === next.activeRunActivityLabel &&
-    prev.suppressRunActivity === next.suppressRunActivity &&
+    prev.primaryActivity === next.primaryActivity &&
     prev.canEdit === next.canEdit &&
     prev.editing === next.editing &&
     prev.onContinueToolResult === next.onContinueToolResult &&
@@ -615,9 +608,7 @@ function areMessageItemsEqual(prev: MessageItemProps, next: MessageItemProps): b
 interface MessageItemProps {
   message: ChatMessage;
   activeRunId?: string;
-  activeRunActivityMessageId?: string | null;
-  activeRunActivityLabel?: string;
-  suppressRunActivity?: boolean;
+  primaryActivity?: MessagePrimaryActivity | null;
   canEdit: boolean;
   editing: boolean;
   onEdit: () => void;
@@ -665,9 +656,7 @@ function HistoryLoadingState() {
 interface MessageTimelineProps {
   messages: ChatMessage[];
   activeRunId?: string;
-  activeRunActivityMessageId?: string | null;
-  activeRunActivityLabel?: string;
-  suppressRunActivity?: boolean;
+  primaryActivity?: PrimaryActivityPresentation;
   streaming?: boolean;
   historyLoading?: boolean;
   historyLoadSeq?: number;
@@ -690,9 +679,7 @@ interface MessageTimelineProps {
 export function MessageTimeline({
   messages,
   activeRunId,
-  activeRunActivityMessageId,
-  activeRunActivityLabel,
-  suppressRunActivity,
+  primaryActivity,
   streaming = false,
   historyLoading = false,
   historyLoadSeq = 0,
@@ -1272,9 +1259,12 @@ export function MessageTimeline({
                   <MessageItem
                     message={m}
                     activeRunId={activeRunId}
-                    activeRunActivityMessageId={activeRunActivityMessageId}
-                    activeRunActivityLabel={activeRunActivityLabel}
-                    suppressRunActivity={suppressRunActivity}
+                    primaryActivity={primaryActivity === undefined
+                      ? undefined
+                      : primaryActivity.surface === "message"
+                          && primaryActivity.messageId === m.id
+                        ? primaryActivity
+                        : null}
                     canEdit={canEdit}
                     editing={editing}
                     onEdit={() => onBeginEditLatestUserMessage?.(m.id)}
@@ -1337,12 +1327,14 @@ export function MessageTimeline({
 interface MessageListProps {
   composerHeight?: number;
   onFocusComposer?: () => void;
+  primaryActivity: PrimaryActivityPresentation;
 }
 
 /** 正式会话 adapter：只负责把 conversation store 接到共享时间线。 */
 export function MessageList({
   composerHeight = CHAT_COMPOSER_FALLBACK_HEIGHT_PX,
   onFocusComposer,
+  primaryActivity,
 }: MessageListProps) {
   const messages = useConversationStore((s) => s.messages);
   const runPresentation = useConversationStore(useShallow((s) => (
@@ -1350,28 +1342,6 @@ export function MessageList({
   )));
   const streaming = runPresentation.busy;
   const activeRunId = runPresentation.run?.run_id;
-  const activityMessageId = activeRunActivityMessageId(messages, activeRunId);
-  const activeRunActivityLabel = runPresentation.phase === "stopping"
-    ? "正在取消当前任务，任务尚未结束…"
-    : undefined;
-  const approvalMode = useConversationStore((s) => s.approvalMode);
-  const hasFilesystemApproval = useFilesystemApprovalsStore((state) => (
-    Boolean(activeRunId && Object.values(state.entries).some((entry) => (
-      entry.request.run_id === activeRunId
-      && (entry.status === "pending" || entry.status === "submitting")
-    )))
-  ));
-  const hasCommandApproval = useCommandRuntimeStore((state) => (
-    Boolean(activeRunId && approvalMode === "per_request" && Object.values(state.approvals)
-      .some((request) => request.run_id === activeRunId && request.status === "pending"))
-  ));
-  const hasRunningCommand = useCommandRuntimeStore((state) => (
-    Boolean(activeRunId && Object.values(state.processes)
-      .some((process) => process.run_id === activeRunId && process.status === "running"))
-  ));
-  const suppressRunActivity = (
-    approvalMode === "per_request" && (hasFilesystemApproval || hasCommandApproval)
-  ) || hasRunningCommand;
   const historyLoading = useConversationStore((s) => s.historyLoading);
   const historyLoadSeq = useConversationStore((s) => s.historyLoadSeq);
   const syncRefreshSeq = useConversationStore((s) => s.syncRefreshSeq);
@@ -1424,9 +1394,7 @@ export function MessageList({
       <MessageTimeline
         messages={messages}
         activeRunId={activeRunId}
-        activeRunActivityMessageId={activityMessageId}
-        activeRunActivityLabel={activeRunActivityLabel}
-        suppressRunActivity={suppressRunActivity}
+        primaryActivity={primaryActivity}
         streaming={streaming}
         historyLoading={historyLoading}
         historyLoadSeq={historyLoadSeq}

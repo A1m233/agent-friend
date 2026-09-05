@@ -23,6 +23,8 @@ Runtime 已通过 `RunSnapshot` 提供按 `run_id` 版本递增、唯一 termina
 - command / approval store 对 REST 响应只做 merge，长期保留响应中已缺失的 pending / running 项；ToolCard 又允许 stale live process 覆盖持久化 terminal 结果。
 - 后台 terminal 直接按 outcome 产生未读，无法区分真正的新对话内容与 hidden、memory-only 或外部出口。
 
+首轮实现已经关闭上述 run ownership 与终态分叉，但主要活动选择仍分散在渲染组件中：`MessageList` 根据 active message 自行挂载 `ModelResponseStatus`，再用本地布尔值抑制授权和命令；`ApprovalDock` 独立构造授权、命令与无消息 run 的 generic；运行中的 `CompactionBlock`、普通工具活动和 `SocialAuthCard` 又各自呈现实时状态。`ModelResponseStatus` 的 10 秒慢响应计时只改变自身文案，不知道同一消息已经存在更精确的压缩活动，因此会在压缩持续时重新出现。这说明首轮只统一了“哪个消息承载 run 活动”，没有统一“哪个活动拥有本次前端投影”。
+
 本方案不改变 Runtime 调度、Bridge run schema 或持久化 session 格式；使用现有 `RunSnapshot.version`、session revision、事件 `meta.run_id` 和 presentation 过滤完成收敛。
 
 ## 方案设计
@@ -46,6 +48,15 @@ Runtime 已通过 `RunSnapshot` 提供按 `run_id` 版本递增、唯一 termina
 | `frontend/src/pages/chat/components/ApprovalDock.tsx` | 修改 | 按 canonical active run 过滤授权与命令，并参与唯一主要活动选择 |
 | `frontend/src/pages/chat/components/ToolCard.tsx` | 修改 | terminal 持久结果优先于 stale live process，操作能力绑定 active run |
 | 对应 `*.test.ts(x)` | 修改/新增 | 覆盖状态矩阵、乱序、恢复、消息/action bar、未读和 item 对账 |
+| `frontend/src/pages/chat/components/activity/primaryActivity.ts` | 新增 | 纯函数把规范化候选解析为唯一 `PrimaryActivityPresentation`，定义活动 kind、承载 surface 与稳定实体身份 |
+| `frontend/src/pages/chat/components/activity/usePrimaryActivity.ts` | 新增 | 聊天 surface 唯一的 store adapter；读取 run、消息、授权、命令和登录事实并调用纯 resolver |
+| `frontend/src/pages/chat/components/activity/approvalCandidates.ts` | 新增 | 从 `ApprovalDock` 提取授权与运行中命令的纯候选构造，避免 UI 组件反向参与选择 |
+| `frontend/src/stores/socialAuthRequests.ts` | 新增 | 统一社交登录请求快照、当前会话可见请求的有界轮询和动作后的权威快照更新 |
+| `frontend/src/pages/chat/components/ChatContentSurface.tsx` | 修改 | 只计算一次主要活动，并把同一个判别联合结果传给消息区与 Dock |
+| `frontend/src/pages/chat/components/ModelResponseStatus.tsx` | 修改 | 只格式化已经选中的 model/generic 活动；计时器只能更新该活动文案，不能决定是否挂载 |
+| `frontend/src/pages/chat/components/ToolActivity.tsx` | 修改 | 接收选中活动身份；运行中普通工具可承载主要活动，高优先级表面存在时只保留审计呈现 |
+| `frontend/src/pages/chat/components/SocialAuthCard.tsx` | 修改 | 使用共享登录快照并按选中请求区分主要活动与排队/历史呈现，不再自行维护第二份轮询状态 |
+| `frontend/src/pages/chat/components/activity/*.test.ts(x)`、`frontend/src/stores/socialAuthRequests.test.ts` | 新增 | 覆盖组合矩阵、跨表面联合渲染、延时兜底和登录轮询收口 |
 
 ### 数据流与事实所有权
 
@@ -60,7 +71,7 @@ flowchart TD
     S --> H[侧栏 queued / running]
     S --> I[输入与停止能力]
     S --> A[action bar active-run 判断]
-    S --> D[主要活动 resolver]
+    S --> D[PrimaryActivityPresentation resolver]
 
     E[实时 ConversationEvent] --> Q[ChatMessage projection]
     J[持久 SessionEvent meta.run_id] --> Q
@@ -70,6 +81,11 @@ flowchart TD
     U --> N[后台新回复 / 失败提示]
 
     T[approval / command snapshot] --> D
+    Q --> D
+    G[social auth request snapshots] --> D
+    D --> O[ChatContentSurface<br/>single owner]
+    O --> ML[MessageList message surface]
+    O --> DK[ApprovalDock dock surface]
     T --> K[工具与 Dock 终态]
 ```
 
@@ -78,6 +94,7 @@ flowchart TD
 - `RunSnapshot` 决定整轮 queued、running、terminal 和控制范围。
 - `ChatMessage.status` 只描述消息 item 是否仍在接收内容，不再决定 session busy。
 - approval、command process、tool block 与 compaction 各自描述局部 item；它们只能提高主要活动的精确度，不能结束整轮。
+- 社交登录 request snapshot 描述独立于单个 run 的用户交互事实；`pending`、`login_in_progress`、`authenticated` 和 `continuing` 参与当前 session 的主要活动选择，terminal request 只保留历史结果。
 - session detail 决定最终显示内容；terminal 先结束 busy，detail 刷新只负责补齐持久内容。
 
 ### Canonical run 选择与派生状态
@@ -141,20 +158,48 @@ runOutcome?: RunOutcome;
 
 ### 唯一主要活动
 
-主要活动按以下顺序解析：
+新增聊天展示层的判别联合，resolver 每次只返回其中一个成员：
 
-1. 当前 active run 的 pending approval / user input。
+```ts
+type PrimaryActivityPresentation =
+  | { surface: "dock"; kind: "approval"; request: PendingApproval; queuedCount: number }
+  | { surface: "dock"; kind: "command"; command: RunningCommand }
+  | { surface: "message"; kind: "socialAuth"; messageId: string; requestId: string }
+  | { surface: "message"; kind: "compaction"; messageId: string; activityId: string }
+  | { surface: "message"; kind: "tool"; messageId: string; toolCallId: string }
+  | { surface: "message"; kind: "model"; messageId: string; status: ModelResponseProgress }
+  | { surface: "message"; kind: "run"; messageId: string; phase: RunPhase }
+  | { surface: "dock"; kind: "run"; phase: RunPhase }
+  | { surface: "none"; kind: "none" };
+```
+
+`runPresentation.ts` 继续只负责 canonical run、busy 与控制能力；它不感知组件和 activity surface。`activity/primaryActivity.ts` 接收已经规范化的候选并按以下顺序选择：
+
+1. 当前 session 仍需用户处理的社交登录或当前 active run 的可见 pending approval；同类多个请求按创建顺序和稳定 id 选择一个，其余只保留排队/历史信息。
 2. 当前 active run 的 running command。
-3. active message 上的 compaction 或明确模型 `runStatus`。
-4. canonical run 的 queued、stopping、running generic 状态。
-5. calibration 的 recovering 状态。
+3. active message 上仍 running 的 compaction。
+4. active message 上仍 running 的普通工具活动；命令工具由上一步的 Dock 接管，不在此重复成为主要活动。
+5. active message 上明确的模型 `runStatus`，包括 waiting、reasoning、processing 和 retrying。
+6. canonical run 的 queued、stopping 或 running generic；有 active message 时跟随消息尾部，没有 conversation message 时由 Dock 承载。
+7. calibration 的 recovering；没有可关联消息时由 Dock 承载。
+8. 无候选时返回 `none`。
 
-表现规则：
+表现和所有权规则：
 
-- approval / running command 继续由 Dock 承载；出现时抑制消息尾部的 generic 状态。
-- active run 有 conversation message 时，generic / model 状态跟随该消息尾部。
-- active run 没有 conversation message 时，在 composer 上方显示 session 级简洁状态，不创建伪消息，也不修改最近历史消息。
-- 工具历史活动继续展示，但 terminal tool 不参与当前主要活动竞争。
+- `ChatContentSurface` 调用 `usePrimaryActivity()` 一次，并把同一个不可变结果传给 `MessageList` 与 `ApprovalDock`。两个子树只比较 `surface`、`kind` 和稳定实体 id，不得根据 store 状态自行选择 fallback。
+- `MessageList` 移除 `suppressRunActivity`、本地授权/命令订阅与“只要 active message 就挂载 generic”的分支。只有选中的 `model` 或 `run` 成员可以挂载 `ModelResponseStatus`。
+- 运行中 compaction、普通工具和社交登录卡继续留在原消息顺序中；只有与判别联合 id 匹配的实例带实时强调与 `data-primary-activity`。更高优先级活动存在时，其余实例保留可发现的审计或排队呈现，但不再作为第二个实时状态。
+- `ApprovalDock` 只渲染 resolver 已经选择的 approval、command 或 dock-level run，不再计算 `hasActiveRunMessage`、generic label 或优先级。
+- `ModelResponseStatus` 的 slow/stale timer 只允许改变已经选中活动的 label。高优先级活动出现后组件会被卸载，计时器清理；高优先级活动持续期间即使越过 10 秒也不能重新挂载 generic。
+- 所有主要活动根节点带统一的 `data-primary-activity` 与 kind，作为 DOM 诊断和联合渲染不变量；每个 chat surface 的计数只能是 0 或 1。
+- completed compaction、terminal tool、terminal social auth 和更早 run 的活动继续作为历史显示，不携带主要活动标记，不影响 action bar 或 generic 回退。
+
+社交登录状态当前由 `SocialAuthCard` 局部轮询，无法被兄弟组件安全消费。本轮把请求快照提升到 `socialAuthRequests` store：
+
+- `ChatContentSurface` 从当前消息中的 `request_social_auth` 结果提取 request id，并同步当前可见请求集合；store 对每个 request 只保留一个轮询链。
+- active 状态继续按既有 1 秒节奏刷新，terminal 或请求不再属于当前可见 session 时停止；切回会话时重新读取权威快照。
+- approve、decline 和 cancel 动作由 store 调用现有 API，并把响应原子写回同一 entry；`SocialAuthCard` 只消费 snapshot 和 action，不保留平行本地状态。
+- 不新增 Bridge endpoint、push 事件或持久化字段；轮询失败只影响登录卡自身的可恢复错误，不伪造 run terminal，也不让 generic 越过仍已知的 active 登录事实。
 
 ### 后台结果与用户可见内容
 
@@ -194,6 +239,10 @@ runOutcome?: RunOutcome;
 - `MessageList` / presentation 测试：active message 整个 action bar 隐藏、历史消息保留、无正文 run 的 session 级状态、Dock 优先级。
 - `sessionSync.test.ts`：初次 readiness、重连、busy→idle detail flush、旧 response 不覆盖新 push。
 - command / filesystem / ToolCard tests：缺失 pending/process 清理、terminal result precedence、run terminal 后无操作入口。
+- `activity/primaryActivity.test.ts`：表驱动覆盖 approval、social auth、command、compaction、普通工具、model、generic 与 recovering 的单项和两两组合；每组只返回一个判别联合成员。
+- `activity/primaryActivityProjection.test.ts`：在同一 React root 中同时挂载消息活动出口和 Dock，断言 `data-primary-activity` 数量始终为 0 或 1，并覆盖 activity 在两个 surface 间切换。项目 Vitest 只收集 `*.test.ts`，因此 JSX-free 的 React 测试继续使用 `.ts`。
+- `ModelResponseStatus` fake timer：compaction 或其它高优先级活动持续超过 10 秒时 generic 不出现；活动结束后只出现一个正确 fallback，旧 timer 不泄漏。
+- `socialAuthRequests.test.ts`：同 request 单轮询、切换 session 清理、active 续轮询、terminal 停止、动作响应覆盖与失败恢复。
 
 ### 真实 Tauri 验收
 
@@ -202,6 +251,8 @@ runOutcome?: RunOutcome;
 - active assistant 已有正文但 run 继续时，action bar 完整隐藏且保留唯一继续中反馈。
 - A 会话运行中切到 B 再切回 A，侧栏、消息、composer 与 Dock 一致。
 - queued、正在取消、等待授权、运行中命令和 terminal 的主要活动切换。
+- 复现“正在整理较长对话”持续超过 10 秒，确认慢响应 generic 不再同时出现；压缩结束后只回退到一个正确状态。
+- 运行中普通工具、社交登录和 continuation run 的组合只保留一个实时主要活动，历史行仍可查看。
 - 不可由桌面控制的外部 run 无停止入口。
 - terminal 后 action bar 恢复，失败/取消文案正确，无残留授权或运行中命令。
 
@@ -215,6 +266,8 @@ runOutcome?: RunOutcome;
 - conversation store 的 public state 会删除 `streaming` 与 `activeRunIdBySession`；所有前端消费者和测试 fixture 必须同步迁移到 selector。
 - `ChatMessage` 新字段为可选，旧持久事件与 Persona 编辑器消息不需要迁移。
 - command / approval store 的 terminal history仍可保留用于详情，但 active UI 只认 canonical run ownership。
+- 新增的 social auth store 只保存 Bridge request snapshot 与短生命周期轮询控制，不写入持久设置、session 历史或模型上下文。
+- Persona 编辑器复用的 `MessageTimeline` 不接入正式会话 activity owner；未传 `PrimaryActivityPresentation` 时保持现有静态/本地消息行为。
 - session list `updated_at` 不承担 unread 判定，避免改变现有列表排序契约。
 
 ### 风险点
@@ -225,9 +278,13 @@ runOutcome?: RunOutcome;
 - background detail fetch 可能与用户打开 session 竞态；写未读前再次检查 current session，并按 open token/revision 拒绝旧结果。
 - request fence 依赖 REST 列表是单次一致读取；如果后续 broker 引入跨进程多写者，应升级为服务端 collection revision，而不是继续叠本地例外。
 - 主要活动去重会触达 MessageList 与 Dock；需要真实桌面验收确认状态没有消失、重复或遮挡 composer。
+- active message 和 Dock 位于不同组件子树，若任一子树重新读取 store 并自行降级，会再次形成双 owner；通过只从 `ChatContentSurface` 传入判别联合、移除旧 suppression 分支和联合 DOM 测试防止回归。
+- 社交登录卡进入虚拟列表后可能反复挂载；轮询生命周期必须由 store 的可见请求集合管理，不能重新退回组件 mount 次数，否则会产生重复请求或失去主要活动事实。
+- 运行中工具在高优先级 Dock 存在时仍需保留审计价值；被动呈现不能继续携带 pulse、`role=status` 或 `data-primary-activity`，否则视觉或无障碍层仍会把它解释成第二个当前状态。
 
 ## 变更记录
 
 | 日期 | 变更内容 | 是否需要重新实现 |
 | --- | --- | --- |
 | 2026-08-28 | 首次确认：canonical run selector、消息 run identity、请求围栏、terminal 收口、可见未读与分层 Tauri 验收 | 是 |
+| 2026-09-05 | 补充确认：聊天 surface 只在 `ChatContentSurface` 解析一次判别联合；MessageList、Dock、压缩、工具与社交登录均消费同一结果；新增组合、联合渲染、计时与登录轮询回归 | 是 |

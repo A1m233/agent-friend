@@ -212,4 +212,36 @@ describe("ToolActivity", () => {
     expect(trigger?.getAttribute("aria-expanded")).toBe("true");
     expect(container.textContent).toContain("执行了 2 个步骤");
   });
+
+  it("marks only the selected managed tool group as the primary activity", async () => {
+    const first = { ...tool("search", "web_search"), status: "running" as const, result: undefined };
+    const second = { ...tool("fetch", "web_fetch"), status: "running" as const, result: undefined };
+
+    await act(async () => root.render(createElement(ToolActivity, {
+      blocks: [first, second],
+      activityManaged: true,
+    })));
+    expect(container.textContent).toContain("执行 2 个步骤");
+    expect(container.textContent).not.toContain("正在执行 2 个步骤");
+    expect(container.querySelector("[data-primary-activity]")).toBeNull();
+
+    await act(async () => root.render(createElement(ToolActivity, {
+      blocks: [first, second],
+      activityManaged: true,
+      primaryToolCallId: "fetch",
+    })));
+    expect(container.textContent).toContain("正在执行 2 个步骤");
+    expect(container.querySelector("[data-primary-activity='tool']")).not.toBeNull();
+  });
+
+  it("does not revive live emphasis when unselected tool details are expanded", async () => {
+    const block = { ...tool("search", "web_search"), status: "running" as const };
+    await act(async () => root.render(createElement(ToolActivity, {
+      blocks: [block], activityManaged: true,
+    })));
+    await click(container.querySelector("button") as HTMLButtonElement);
+    expect(container.textContent).toContain("参数");
+    expect(container.querySelector(".animate-pulse")).toBeNull();
+    expect(container.querySelector("[data-primary-activity]")).toBeNull();
+  });
 });

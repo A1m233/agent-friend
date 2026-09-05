@@ -94,10 +94,12 @@ function ToolActivityItem({
   block,
   open,
   onOpenChange,
+  isPrimaryActivity,
 }: {
   block: ToolBlock;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  isPrimaryActivity?: boolean;
 }) {
   const presentation = toolPresentation(block);
   return (
@@ -108,21 +110,29 @@ function ToolActivityItem({
       category={presentation.category}
       contentClassName="ml-5 pt-1 pb-1"
     >
-      <ToolCard block={block} embedded />
+      <ToolCard block={block} embedded isPrimaryActivity={isPrimaryActivity} />
     </ToolDisclosureRow>
   );
 }
 
 export function ToolActivity({
   blocks,
+  activityManaged = false,
+  primaryToolCallId,
   onDisclosureChange,
 }: {
   blocks: ToolBlock[];
+  activityManaged?: boolean;
+  primaryToolCallId?: string;
   onDisclosureChange?: () => void;
 }) {
   const [groupOpen, setGroupOpen] = useState(false);
   const [itemOpenById, setItemOpenById] = useState<Record<string, boolean>>({});
   if (blocks.length === 0) return null;
+  const isPrimaryActivity = Boolean(
+    primaryToolCallId && blocks.some((block) => block.toolCallId === primaryToolCallId),
+  );
+  const liveSummary = !activityManaged || isPrimaryActivity;
 
   const setItemOpen = (toolCallId: string, open: boolean) => {
     setItemOpenById((current) => ({ ...current, [toolCallId]: open }));
@@ -132,9 +142,13 @@ export function ToolActivity({
     const block = blocks[0];
     const open = itemOpenById[block.toolCallId] ?? groupOpen;
     return (
-      <div className="w-full">
+      <div
+        className="w-full"
+        data-primary-activity={isPrimaryActivity ? "tool" : undefined}
+      >
         <ToolActivityItem
           block={block}
+          isPrimaryActivity={activityManaged ? primaryToolCallId === block.toolCallId : undefined}
           open={open}
           onOpenChange={(nextOpen) => {
             onDisclosureChange?.();
@@ -147,14 +161,17 @@ export function ToolActivity({
   }
 
   return (
-    <div className="w-full">
+    <div
+      className="w-full"
+      data-primary-activity={isPrimaryActivity ? "tool" : undefined}
+    >
       <ToolDisclosureRow
         open={groupOpen}
         onOpenChange={(open) => {
           onDisclosureChange?.();
           setGroupOpen(open);
         }}
-        summary={toolActivitySummary(blocks)}
+        summary={toolActivitySummary(blocks, liveSummary)}
         category={toolPresentation(blocks[0]).category}
         contentClassName="ml-2 mt-1 space-y-0.5 border-l border-border pl-2"
       >
@@ -162,6 +179,7 @@ export function ToolActivity({
           <ToolActivityItem
             key={block.toolCallId}
             block={block}
+            isPrimaryActivity={activityManaged ? primaryToolCallId === block.toolCallId : undefined}
             open={itemOpenById[block.toolCallId] ?? false}
             onOpenChange={(open) => {
               onDisclosureChange?.();

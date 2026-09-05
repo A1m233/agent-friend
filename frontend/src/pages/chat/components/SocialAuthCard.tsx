@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Button, Spinner, StatusDot, type StatusDotProps } from "@/components/ui";
 import {
   socialAuthApi,
-  type SocialAuthRequestSnapshot,
   type SocialAuthRequestStatus,
 } from "@/services";
+import { useSocialAuthRequestsStore } from "@/stores";
 import type { ToolBlock } from "@/types/chat";
 
 const ACTIVE = new Set<SocialAuthRequestStatus>([
@@ -73,53 +73,24 @@ const STATUS_META: Record<
   },
 };
 
-export function SocialAuthCard({ block }: { block: ToolBlock }) {
+export function SocialAuthCard({
+  block,
+  isPrimaryActivity = true,
+}: {
+  block: ToolBlock;
+  isPrimaryActivity?: boolean;
+}) {
   const initial = useMemo(() => parseToolBlock(block), [block]);
-  const [snapshot, setSnapshot] = useState<SocialAuthRequestSnapshot | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [actionError, setActionError] = useState("");
+  const entry = useSocialAuthRequestsStore((state) => (
+    initial.requestId ? state.entries[initial.requestId] : undefined
+  ));
+  const perform = useSocialAuthRequestsStore((state) => state.perform);
+  const snapshot = entry?.snapshot ?? null;
+  const busy = entry?.submitting ?? false;
+  const actionError = entry?.error ?? "";
   const status = snapshot?.status ?? "pending";
   const meta = STATUS_META[status];
-
-  useEffect(() => {
-    if (!initial.requestId) return;
-    let cancelled = false;
-    let timer: number | undefined;
-
-    const refresh = async () => {
-      try {
-        const next = await socialAuthApi.get(initial.requestId);
-        if (cancelled) return;
-        setSnapshot(next);
-        if (ACTIVE.has(next.status)) {
-          timer = window.setTimeout(refresh, 1000);
-        }
-      } catch {
-        if (!cancelled) setActionError("暂时无法读取登录状态，请稍后再试。");
-      }
-    };
-
-    void refresh();
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [initial.requestId]);
-
-  const perform = async (
-    action: (requestId: string) => Promise<SocialAuthRequestSnapshot>,
-  ) => {
-    if (!initial.requestId) return;
-    setBusy(true);
-    setActionError("");
-    try {
-      setSnapshot(await action(initial.requestId));
-    } catch {
-      setActionError("这次操作没有成功，请刷新状态后再试。");
-    } finally {
-      setBusy(false);
-    }
-  };
+  const passive = !isPrimaryActivity && ACTIVE.has(status);
 
   const platform = snapshot?.platform ?? initial.platform;
   const reason = snapshot?.reason ?? initial.reason;
@@ -134,16 +105,21 @@ export function SocialAuthCard({ block }: { block: ToolBlock }) {
   });
 
   return (
-    <div className="max-w-[85%] rounded-lg border border-border bg-surface/60 px-3 py-3 text-sm">
+    <div
+      className="max-w-[85%] rounded-lg border border-border bg-surface/60 px-3 py-3 text-sm"
+      data-primary-activity={isPrimaryActivity && ACTIVE.has(status) ? "socialAuth" : undefined}
+    >
       <div className="flex items-center gap-2">
-        <StatusDot tone={meta.tone} pulse={meta.pulse} />
+        <StatusDot tone={meta.tone} pulse={isPrimaryActivity && meta.pulse} />
         <span className="font-medium text-fg">
           {platform === "xiaohongshu" ? "小红书登录" : "Bilibili 登录"}
         </span>
-        <span className="ml-auto text-xs text-muted">{meta.label}</span>
+        <span className="ml-auto text-xs text-muted">{passive ? "登录请求" : meta.label}</span>
       </div>
       {reason && <p className="mt-2 text-fg">{reason}</p>}
-      <p className="mt-1 text-xs text-muted">{detail}</p>
+      <p className="mt-1 text-xs text-muted">
+        {passive ? "登录请求已记录，当前主要活动见高亮状态。" : detail}
+      </p>
       {fromIm && (
         <p className="mt-1 text-xs text-muted">
           这项任务来自 IM；电脑端完成授权后，结果会回到原 IM 会话。
@@ -156,7 +132,7 @@ export function SocialAuthCard({ block }: { block: ToolBlock }) {
             type="button"
             size="xs"
             loading={busy}
-            onClick={() => void perform(socialAuthApi.approve)}
+            onClick={() => void perform(initial.requestId, "approve")}
           >
             开始登录
           </Button>
@@ -165,7 +141,7 @@ export function SocialAuthCard({ block }: { block: ToolBlock }) {
             size="xs"
             variant="outline"
             disabled={busy}
-            onClick={() => void perform(socialAuthApi.decline)}
+            onClick={() => void perform(initial.requestId, "decline")}
           >
             暂不登录
           </Button>
@@ -183,8 +159,8 @@ export function SocialAuthCard({ block }: { block: ToolBlock }) {
             ) : (
               <div className="flex size-60 items-center justify-center rounded-md border border-border bg-surface text-muted">
                 <span className="flex items-center gap-2 text-xs">
-                  <Spinner data-icon="inline-start" />
-                  正在生成二维码
+                  {!passive && <Spinner data-icon="inline-start" />}
+                  {passive ? "登录二维码待就绪" : "正在生成二维码"}
                 </span>
               </div>
             ))}
@@ -193,7 +169,7 @@ export function SocialAuthCard({ block }: { block: ToolBlock }) {
             size="xs"
             variant="outline"
             loading={busy}
-            onClick={() => void perform(socialAuthApi.cancel)}
+            onClick={() => void perform(initial.requestId, "cancel")}
           >
             取消登录
           </Button>
