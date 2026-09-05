@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from .errors import LLMAuthError
 
@@ -53,6 +53,16 @@ class ProviderConfig:
 
 
 @dataclass(frozen=True)
+class ResponsesRoute:
+    """Explicit native streaming route; never inferred from an SDK model prefix."""
+
+    model: str
+    api_base: str
+    parameter_profile: Literal["openai", "deepseek", "kimi"] = "openai"
+    assistant_message_phase: Literal["native", "unavailable"] = "unavailable"
+
+
+@dataclass(frozen=True)
 class ProviderSpec:
     """单个 LLM Provider 的完整调用配置。
 
@@ -82,6 +92,7 @@ class ProviderSpec:
     product_model_id: str | None = None
     reasoning_preset: str | None = None
     reasoning_replay_scope: str = "none"
+    responses: ResponsesRoute | None = None
 
     @classmethod
     def from_config(

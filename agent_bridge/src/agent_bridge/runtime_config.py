@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from llm_providers import (
     LanguageModel,
+    LanguageModelCapabilities,
     LLMStreamEvent,
     ModelPurpose,
     ModelRequest,
@@ -14,6 +15,7 @@ from llm_providers import (
     ModelRuntimeConfig,
     create_language_model,
     default_model_for_provider,
+    get_model_capabilities,
     infer_provider_id_from_model,
     provider_definition,
 )
@@ -63,6 +65,10 @@ class DeferredLanguageModel:
         if self._model is None:
             self._model = self._factory()
         return self._model
+
+    @property
+    def capabilities(self) -> LanguageModelCapabilities:
+        return get_model_capabilities(self._get())
 
     @property
     def context_window(self) -> int:

@@ -78,7 +78,11 @@ def test_authorization_must_match_normalized_target() -> None:
     assert provider.calls == []
 
 
-def test_empty_provider_result_is_not_success() -> None:
+def test_empty_provider_result_is_not_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    def empty_pdf(*args: object, **kwargs: object) -> None:
+        raise WebContentEmptyError("fixture has no PDF content")
+
+    monkeypatch.setattr(web_fetch_tool_module, "download_and_extract_pdf", empty_pdf)
     result = WebFetchTool(_FakeProvider(fail=True)).invoke(
         {
             "url": "https://example.com/page",

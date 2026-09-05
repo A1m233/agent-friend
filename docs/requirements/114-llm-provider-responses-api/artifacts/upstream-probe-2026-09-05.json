@@ -1,0 +1,78 @@
+{
+  "kind": "sanitized_summary_from_terminal_not_raw_sse",
+  "product_base": "1c2decdaf62de477a66f0ab9ebf0114605e5bd59",
+  "product_code_modified": false,
+  "openai_version": "2.24.0",
+  "actual_requests": 4,
+  "automatic_retries": 0,
+  "successful_reported_tokens": 270,
+  "failed_request_usage": null,
+  "product_interface_smoke": false,
+  "runs": [
+    {
+      "time_utc": "2026-09-04T19:21:06.717733+00:00",
+      "scenario": "function_request_with_required_tool_choice_and_low_reasoning",
+      "observations": [
+        {
+          "model": "deepseek-v4-flash",
+          "endpoint": "https://api.deepseek.com/responses",
+          "request_body_sha256": "2986422cea6d3ae0f0f6000dda787b173d774517955300a37fcc48ea26f868ae",
+          "status_code": 400,
+          "error_class": "BadRequestError",
+          "provider_error_code": "invalid_request_error",
+          "error_message_retained": false,
+          "stream_events": 0,
+          "continuation_sent": false
+        },
+        {
+          "model": "kimi-k3",
+          "endpoint": "https://api.moonshot.cn/v1/responses",
+          "request_body_sha256": "e36c6e34285b8e3d4e07838dbbeef03d1374a72e30e3c03c70c97580f536af52",
+          "status_code": 400,
+          "error_class": "BadRequestError",
+          "provider_error_code": "invalid_request_error",
+          "error_message_retained": false,
+          "stream_events": 0,
+          "continuation_sent": false
+        }
+      ]
+    },
+    {
+      "time_utc": "2026-09-04T19:21:58.477407+00:00",
+      "scenario": "minimal_text_stream",
+      "request_fields": ["model", "input", "stream", "max_output_tokens"],
+      "max_output_tokens": 512,
+      "observations": [
+        {
+          "model": "deepseek-v4-flash",
+          "endpoint": "https://api.deepseek.com/responses",
+          "request_body_sha256": "d39127acb821c218f0a6818e22a0d7d3d8d263290780f2848587ca685843edd6",
+          "status": "completed",
+          "assistant_item_id": "55450fe0-f218-4578-b08d-e1f0f66ba168",
+          "phase_on_item_added": "final_answer",
+          "phase_on_item_done": "final_answer",
+          "output_text_delta_count": 1,
+          "text_chars": 2,
+          "contains_expected_result": true,
+          "tool_calls": 0,
+          "usage": {"input_tokens": 94, "output_tokens": 18, "total_tokens": 112, "cached_tokens": 0, "reasoning_tokens": 16}
+        },
+        {
+          "model": "kimi-k3",
+          "endpoint": "https://api.moonshot.cn/v1/responses",
+          "request_body_sha256": "7c99b6fb504a36c47eafcf528d56f8dc40e8ee9569ab46a2d1aeca0c5dc4d28e",
+          "status": "completed",
+          "assistant_item_id": "msg_5KCLAt59NXTaQUswwutHkTtb",
+          "phase_on_item_added": null,
+          "phase_on_item_done": null,
+          "output_text_delta_count": 1,
+          "text_chars": 2,
+          "contains_expected_result": true,
+          "tool_calls": 0,
+          "usage": {"input_tokens": 96, "output_tokens": 62, "total_tokens": 158, "cached_tokens": 0, "cache_write_tokens": 0, "reasoning_tokens": 46},
+          "limitation": "SDK-normalized null does not distinguish omitted field from explicit null; one sample cannot prove absence of model capability."
+        }
+      ]
+    }
+  ]
+}

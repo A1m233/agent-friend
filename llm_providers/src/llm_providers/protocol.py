@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from .request_witness import ProviderRequestWitness
 from .stream_events import (
@@ -79,6 +79,17 @@ class ModelResponse:
     diagnostics: LLMResponseDiagnostics | None = None
 
 
+@dataclass(frozen=True)
+class LanguageModelCapabilities:
+    """Bound model semantics, independent of vendor, endpoint and SDK.
+
+    Native means there is positive evidence for item phases, not that every
+    message has one. Unavailable is a conservative product capability claim.
+    """
+
+    assistant_message_phase: Literal["native", "unavailable"] = "unavailable"
+
+
 class LanguageModel(Protocol):
     """Small model port consumed by Agent, Context and Memory."""
 
@@ -96,11 +107,25 @@ class LanguageModel(Protocol):
 LanguageModelFactory = Callable[["ModelRuntimeConfig"], LanguageModel]
 
 
+def get_model_capabilities(model: LanguageModel) -> LanguageModelCapabilities:
+    """Query optional model semantics without expanding the existing model port.
+
+    Older implementations remain valid LanguageModels and conservatively expose
+    unavailable semantics. A declared capability must use the project-owned type.
+    """
+    capabilities = getattr(model, "capabilities", None)
+    if isinstance(capabilities, LanguageModelCapabilities):
+        return capabilities
+    return LanguageModelCapabilities()
+
+
 __all__ = [
     "LanguageModel",
+    "LanguageModelCapabilities",
     "LanguageModelFactory",
     "ModelCallControl",
     "ModelCallTraceContext",
     "ModelRequest",
     "ModelResponse",
+    "get_model_capabilities",
 ]

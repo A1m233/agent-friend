@@ -51,9 +51,10 @@ from .prompt_cache_observation import (
     build_prompt_cache_observation,
     emit_prompt_cache_observation,
 )
-from .protocol import ModelCallControl, ModelRequest, ModelResponse
+from .protocol import LanguageModelCapabilities, ModelCallControl, ModelRequest, ModelResponse
 from .reasoning import build_provider_reasoning_state, reasoning_detail_objects
 from .request_witness import ProviderRequestWitness
+from .responses import stream_responses
 from .spec import ProviderSpec
 from .stream_events import (
     LLMActivity,
@@ -265,6 +266,13 @@ class LLMClient:
         self._engine_overload_retry_jitter_ratio = engine_overload_retry_jitter_ratio
         self._engine_overload_max_retry_delay_seconds = engine_overload_max_retry_delay_seconds
         self._stream_timeout_seconds = stream_timeout_seconds
+
+    @property
+    def capabilities(self) -> LanguageModelCapabilities:
+        route = self.spec.responses
+        return LanguageModelCapabilities(
+            assistant_message_phase=route.assistant_message_phase if route else "unavailable"
+        )
 
     @property
     def context_window(self) -> int:
@@ -568,13 +576,19 @@ class LLMClient:
             if observation_emitted:
                 raise
             try:
+                failed_usage = getattr(exc, "usage", None)
+                failed_diagnostics = getattr(exc, "diagnostics", None)
                 observation = build_prompt_cache_observation(
                     requested_model=self.spec.model,
                     provider_id=_provider_id_for_spec(self.spec),
                     message_count=len(messages),
                     tool_count=len(tools or []),
-                    usage=None,
-                    diagnostics=None,
+                    usage=failed_usage if isinstance(failed_usage, LLMUsage) else None,
+                    diagnostics=(
+                        failed_diagnostics
+                        if isinstance(failed_diagnostics, LLMResponseDiagnostics)
+                        else None
+                    ),
                     control=control,
                     total_elapsed_ms=round((time.perf_counter() - started) * 1000),
                     status="failed",
@@ -894,6 +908,19 @@ class LLMClient:
             流末——累积 ``stop_reason`` + ``usage`` 后一次性 yield。Provider 不支持
             ``include_usage`` 时 usage 为 ``None``，上层退化到字符估算。
         """
+        if spec.responses is not None:
+            yield from stream_responses(
+                spec,
+                messages,
+                tools=tools,
+                overrides=overrides,
+                cancel_check=cancel_check,
+                diagnostic_callback=diagnostic_callback,
+                diagnostic_attempt=diagnostic_attempt,
+                timeout_seconds=self._stream_timeout_seconds,
+                previous_request_witness=previous_request_witness,
+            )
+            return
         kwargs: dict[str, Any] = {**spec.defaults, **overrides}
         kwargs.setdefault("max_retries", 0)
         configured_timeout = kwargs.get("timeout")

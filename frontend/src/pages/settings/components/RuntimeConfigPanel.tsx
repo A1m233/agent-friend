@@ -328,13 +328,7 @@ export function RuntimeConfigPanel({ focusGroup }: { focusGroup?: RuntimeConfigG
       <SettingsGroup id="runtime-credential-kimi" title="Kimi 凭据">
         <CredentialEditor group="kimi" snapshot={group("kimi")} {...editorProps} />
       </SettingsGroup>
-      <SettingsGroup id="runtime-credential-openrouter" title="OpenRouter 凭据">
-        <CredentialEditor
-          group="openrouter"
-          snapshot={group("openrouter")}
-          {...editorProps}
-        />
-      </SettingsGroup>
+      {/* OpenRouter 暂不维护：隐藏配置入口，保留存量设置、凭据与后端兼容。 */}
 
       {error ? <div className="text-sm text-danger">{error}</div> : null}
 

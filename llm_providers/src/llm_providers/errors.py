@@ -7,6 +7,13 @@
 详见 docs/requirements/001-foundation-chat-and-memory/design.md §4.1.3。
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .stream_events import LLMResponseDiagnostics, LLMUsage
+
 
 class LLMError(Exception):
     """所有 LLM 相关错误的基类。"""
@@ -108,6 +115,24 @@ class LLMEmptyResponseError(LLMProviderError):
     """Provider 正常结束了请求，但没有返回正文或工具调用。"""
 
     reason_code = "empty_model_response"
+
+
+class LLMIncompleteResponseError(LLMProviderError):
+    """Non-success terminal response; partial tool calls must not be executed."""
+
+    reason_code = "incomplete_model_response"
+
+    def __init__(
+        self,
+        stop_reason: str,
+        *,
+        usage: LLMUsage | None = None,
+        diagnostics: LLMResponseDiagnostics | None = None,
+    ) -> None:
+        super().__init__(f"模型响应未完整完成：{stop_reason}")
+        self.stop_reason = stop_reason
+        self.usage = usage
+        self.diagnostics = diagnostics
 
 
 class LLMOutputBudgetExhaustedError(LLMEmptyResponseError):
