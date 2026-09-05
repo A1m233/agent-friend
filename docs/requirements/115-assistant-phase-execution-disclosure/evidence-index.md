@@ -8,6 +8,7 @@ E-001 至 E-026 是 Phase 1/2 基线调查，不代表后续实现状态。115 �
 
 ## 当前综合判断
 
+- 最终E-047：115用户验收、最新main复验、公开Guide r30发布与main合入推送全部完成。合入锚点`80c183b38f47b647eef2fa1199755165d26cd908`，代码树与已验证1909c8b一致；progress为COMPLETED。历史条目的待确认/待合入仅代表当时状态，会话锁问题并未被本需求修复。
 - E-046：用户明确“先把手头需求合入主干推送远端，然后来看下这个问题”，确认115验收及本次Git交付；会话锁调查不混入115修复。进入最新main同步、项目复验与merge-main-and-push Guide门禁。最终commit/推送结果待实际产生，不预填。
 - 最新E-044/E-045：初始发送未知跳变已按用户确认修复，定向38测试、frontend794测试/构建与真实WebView合成probe15通过。queued时无计时头/分隔线，实际开始后79帧均为已进行0秒，排队2497ms不计入；历史/异常缺时仍未知，尾部可见。E-043未覆盖的发送过渡现已补齐，用户最终验收仍待确认。
 - E-042/E-043历史验证：frontend786测试/构建与desktop probe13通过，顶部运行/中性停止/完成文案、尾部停止去重及0.5px细线成立。无取消原因字段/归因或后台变更，仍待用户最终验收。
@@ -316,3 +317,13 @@ E-001 至 E-026 是 Phase 1/2 基线调查，不代表后续实现状态。115 �
 - 当前全部dirty/untracked已核对属于115实现、测试、文档和合成证据，以及用户明确要求同行合入的issue060文档。后者保持open，不顺带修蓝点。远端产品仓库确认为PRIVATE；公开Guide只发布用户使用说明，不带本机截图/会话/日志。
 - 最新origin/main为62db58fd5fb46cfea51c0737a4151d4a293f7d9f，包含049与工作流契约更新。公开Guide基线722ceb0在该main内，需先同步main再做祖先与diff复核。Guide受管checkout干净、origin正确，既有r29已immutable发布；当前dirty overlay仅是预览，不写入公开来源锚点。
 - 同步主干前查询/v1/runs?includeRecentTerminal=false为空，按桌面生命周期规则停止本任务dev；保留原会话/日志/证据，不将接下来测试写成新桌面E2E。JSON/PNG证据使用局部gitattributes保留原始字节，避免跨平台checkout改变完整性校验。
+
+## E-047 · 最新主干验证与交付完成
+
+- 版本：115实现提交`b9fd739`；无冲突同步main后为`1909c8beb7f57a5854a6a3584d4f8ddb9c0fce3d`，已推送feature分支。同期main为`62db58fd5fb46cfea51c0737a4151d4a293f7d9f`。在本worktree以该main为第一父提交形成非快进合并，合入提交`80c183b38f47b647eef2fa1199755165d26cd908`已推送，ls-remote确认origin/main精确指向它；不移动其他worktree占用的本地main引用。
+- 内容等价：提交前`git diff --cached --exit-code 1909c8b`为0，合并树与已验证候选完全一致。后续本次收口只更新115文档状态/证据，不变更生产代码；公开Guide追加复核无需新发布，来源P仍为1909c8b。
+- 项目门禁：backend ruff716文件、mypy616文件、2597 passed/4 skipped，退出0，总256.9秒；frontend127文件812测试、lint/类型/token/来源门禁与生产构建通过，退出0，总85.9秒；Rust cargo fmt、cargo test、cargo check --release通过，退出0，总127.8秒。使用既有no_external_http防意外HTTPX外发；未执行新真实模型调用、安装包或frozen runtime构建。Rust既有unused、CSS highlight/bundle体积、测试zip重复文件与bilibili atexit清理警告未使命令失败，保留退出码事实，不伪装成零warning。
+- Guide复核：公开基线722ceb0为1909c8b祖先，两者之间的用户变化归入using-agent-friend/troubleshooting。明确实时用时不同于完成时间戳、过程按轮独立、未知/旧数据可见、排队不计时、停止/尾部活动与搜索引用；不公开实现/本机截图/会话。内容以存在该界面入口为条件兼容旧版本，沿用既有0.3.0≤version<0.4.0的宿主/知识格式兼容区间，不更改产品版本。
+- Guide验证/发布：系统validator首次因默认GBK解码UTF-8失败，未进入发布；以`python -X utf8`执行同一validator通过，未修改个人校验器或文档编码。项目verify通过：content `75853f757aa65bf85786d0198ea1aa39ee643344917e13811acb86d0a6d275e7`、snapshot `65dfded3f54a48ecf1a5de3236a215693bafd265472ce4852f2ab4b2f1836081`。公开commit `dbe6ca6e4bb576d062a2e7f419653dbb1726f1a4`已推送且精确确认，随后按runner draft/upload/publish流程发布[agent-friend-guide-r30](https://github.com/A1m233/agent-friend-guide/releases/tag/agent-friend-guide-r30)，immutable=true，ZIP101251 bytes、SHA256 `c0200832481e316c9f53378c0a07d2bc46791753afc82fe8567fd3b4b0c1a6e2`，asset摘要复核由runner完成。未更新builtin或重新打包。
+- 证据完整性：104份JSON/PNG的工作区无过滤hash与Git索引对象hash逐个一致，mismatch=0。部分原始JSON为Windows CRLF，局部gitattributes关闭换行转换并声明cr-at-eol；不改写历史原始字节，也不以关闭全部whitespace检查绕过空格错误。暂存diff检查通过。
+- 生命周期与范围：确认无活跃run后停止本任务dev，status报告lease释放、端口空闲；没有停止未知实例、删除会话或日志。用户新报告的存储锁争用不混入115，issue060保持open；保留此前Vision和真实WebView证据范围，不宣称在新合入main上重跑了真实模型桌面E2E。
