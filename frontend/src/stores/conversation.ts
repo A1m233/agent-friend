@@ -55,6 +55,10 @@ import {
   useDraftStore,
 } from "./drafts";
 import { createStreamUpdateScheduler } from "./streamUpdateScheduler";
+import {
+  createApprovalModeRefresher,
+  type ApprovalModeRefreshOptions,
+} from "./approvalModeRefresh";
 import { useRuntimeCredentialStore } from "./runtimeCredentials";
 import {
   isSessionBusy,
@@ -118,7 +122,6 @@ let openSessionToken = 0;
 let detailRefreshSeq = 0;
 let modelMutationSeq = 0;
 let approvalModeMutationSeq = 0;
-let approvalModeRefreshSeq = 0;
 
 function findRunAssistantIndex(messages: readonly ChatMessage[], runId: string): number {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -199,7 +202,10 @@ export interface ConversationState {
     riskAcknowledged: boolean,
   ) => Promise<ApprovalModeSelectionOutcome>;
   applyApprovalModeState: (state: SessionApprovalModeState) => void;
-  refreshApprovalMode: (sessionId: string) => Promise<"applied" | "stale" | "failed">;
+  refreshApprovalMode: (
+    sessionId: string,
+    options?: ApprovalModeRefreshOptions,
+  ) => Promise<"applied" | "stale" | "failed">;
   beginEditingMessage: (messageId: string) => boolean;
   cancelEditing: () => void;
   /** 接纳一条消息并启动流式回复；接纳结果与整轮完成结果分开返回。 */
@@ -537,6 +543,38 @@ function viewFields(view: SessionConversationView) {
 
 const initialHomeView = newConversationDraftView();
 
+/** Approval versions are independent from session content revisions. */
+function approvalModeFields(
+  state: ConversationState,
+  sessionId: string,
+  incoming: Partial<SessionApprovalModeState>,
+): Pick<SessionConversationView, "approvalMode" | "approvalModeVersion"> {
+  let known = state.currentSessionId === sessionId
+    ? { approvalMode: state.approvalMode, approvalModeVersion: state.approvalModeVersion }
+    : undefined;
+  const cached = state.sessionViews[sessionId];
+  if (cached && (!known || cached.approvalModeVersion > known.approvalModeVersion)) {
+    known = { approvalMode: cached.approvalMode, approvalModeVersion: cached.approvalModeVersion };
+  }
+  if (
+    incoming.approval_mode !== undefined
+    && incoming.approval_mode_version !== undefined
+    && (!known || incoming.approval_mode_version > known.approvalModeVersion)
+  ) {
+    return {
+      approvalMode: incoming.approval_mode,
+      approvalModeVersion: incoming.approval_mode_version,
+    };
+  }
+  return known ?? { approvalMode: "per_request", approvalModeVersion: 0 };
+}
+
+const approvalModeRefresher = createApprovalModeRefresher({
+  current: () => ({ sessionId: useConversationStore.getState().currentSessionId, openToken: openSessionToken }),
+  load: (sessionId) => sessionsApi.getApprovalMode(sessionId),
+  apply: (state) => useConversationStore.getState().applyApprovalModeState(state),
+});
+
 export const useConversationStore = create<ConversationState>((set, get) => ({
   currentSessionId: null,
   currentModel: initialHomeView.currentModel,
@@ -568,7 +606,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     detailRefreshSeq += 1;
     modelMutationSeq += 1;
     approvalModeMutationSeq += 1;
-    approvalModeRefreshSeq += 1;
     searchNavigationToken += 1;
     rememberLastChatSession(null);
     set((state) => {
@@ -632,7 +669,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     detailRefreshSeq += 1;
     modelMutationSeq += 1;
     approvalModeMutationSeq += 1;
-    approvalModeRefreshSeq += 1;
     if (remember) rememberLastChatSession(sessionId);
     const cached = get().sessionViews[sessionId];
     const activeRun = sessionActiveRun(get(), sessionId);
@@ -656,6 +692,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       },
       viewAccessedAt: { ...state.viewAccessedAt, [sessionId]: Date.now() },
     }));
+    // Only explicitly opening an existing session triggers this read. Sending a
+    // first message selects an optimistic ID before the backend creates it.
+    void get().refreshApprovalMode(sessionId);
     if (cached && activeRun) {
       get().markSessionViewed(sessionId);
       get().pruneCaches();
@@ -670,8 +709,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           currentModel: detail.model,
           currentReasoningPreset: detail.reasoningPreset
             ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
-          approvalMode: detail.approval_mode ?? "per_request",
-          approvalModeVersion: detail.approval_mode_version ?? 0,
+          ...approvalModeFields(s, sessionId, detail),
           historyLoading: false,
           historyLoadSeq: s.historyLoadSeq + 1,
           syncRefreshSeq: s.syncRefreshSeq,
@@ -817,8 +855,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           currentModel: detail.model,
           currentReasoningPreset: detail.reasoningPreset
             ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
-          approvalMode: detail.approval_mode ?? "per_request",
-          approvalModeVersion: detail.approval_mode_version ?? 0,
+          ...approvalModeFields(state, sessionId, detail),
           historyLoading: false,
           historyLoadSeq: state.historyLoadSeq,
           syncRefreshSeq: state.syncRefreshSeq + 1,
@@ -837,19 +874,18 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   invalidateBackgroundRefreshes() {
     detailRefreshSeq += 1;
-    approvalModeRefreshSeq += 1;
+    approvalModeRefresher.invalidate();
   },
 
   applyApprovalModeState(state) {
     set((current) => {
       const sessionId = state.session_id;
       const existing = current.sessionViews[sessionId];
-      if (existing && existing.approvalModeVersion > state.approval_mode_version) return current;
+      const fields = approvalModeFields(current, sessionId, state);
       const nextView = existing
         ? {
             ...existing,
-            approvalMode: state.approval_mode,
-            approvalModeVersion: state.approval_mode_version,
+            ...fields,
           }
         : existing;
       return {
@@ -858,30 +894,15 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           : current.sessionViews,
         ...(current.currentSessionId === sessionId
           ? {
-              approvalMode: state.approval_mode,
-              approvalModeVersion: state.approval_mode_version,
+              ...fields,
             }
           : {}),
       };
     });
   },
 
-  async refreshApprovalMode(sessionId) {
-    const seq = approvalModeRefreshSeq + 1;
-    approvalModeRefreshSeq = seq;
-    const openToken = openSessionToken;
-    try {
-      const state = await sessionsApi.getApprovalMode(sessionId);
-      if (
-        seq !== approvalModeRefreshSeq
-        || openToken !== openSessionToken
-        || get().currentSessionId !== sessionId
-      ) return "stale";
-      get().applyApprovalModeState(state);
-      return "applied";
-    } catch {
-      return seq === approvalModeRefreshSeq ? "failed" : "stale";
-    }
+  refreshApprovalMode(sessionId, options) {
+    return approvalModeRefresher.refresh(sessionId, options);
   },
 
   applyRunEvents(sessionId, runId, events) {
@@ -1188,7 +1209,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         || openToken !== openSessionToken
         || get().currentSessionId !== sessionId
       ) return { status: "stale" };
-      await get().refreshApprovalMode(sessionId);
+      await get().refreshApprovalMode(sessionId, { invalidate: true });
       return { status: "failed", error: asApprovalModeFriendlyError(error) };
     } finally {
       if (seq === approvalModeMutationSeq) set({ approvalModeChanging: false });
@@ -1722,8 +1743,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
                 currentModel: detail.model,
                 currentReasoningPreset: detail.reasoningPreset
                   ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
-                approvalMode: detail.approval_mode ?? view.approvalMode,
-                approvalModeVersion: detail.approval_mode_version ?? view.approvalModeVersion,
+                ...approvalModeFields(s, sessionId, detail),
                 revision: detail.revision ?? view.revision,
                 historyLoadSeq: view.historyLoadSeq + 1,
               };

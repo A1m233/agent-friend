@@ -130,7 +130,7 @@ export function SessionApprovalModeController({ children }: { children: ReactNod
       });
     } catch (error) {
       if (currentSessionId) {
-        await useConversationStore.getState().refreshApprovalMode(currentSessionId);
+        await useConversationStore.getState().refreshApprovalMode(currentSessionId, { invalidate: true });
       }
       await Promise.allSettled([refreshCommands(), refreshFilesystem()]);
       toast.error("没有开启本会话免授权", {

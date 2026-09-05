@@ -6,6 +6,7 @@ vi.mock("@/services", () => ({
   sessionsApi: {
     list: vi.fn(),
     get: vi.fn(),
+    getApprovalMode: vi.fn(),
   },
   runAgentStream: vi.fn(),
   editResendLatestStream: vi.fn(),
@@ -36,6 +37,7 @@ import { useCommandRuntimeStore } from "./commandRuntime";
 import { useFilesystemApprovalsStore } from "./filesystemApprovals";
 import { emptySnapshotFence } from "./snapshotFence";
 import { isSessionBusy, sessionActiveRun } from "./runPresentation";
+import type { PushEnvelope } from "@/types/push";
 
 function activeRun(runId = "run-active", sessionId = "s1") {
   return {
@@ -54,7 +56,7 @@ function activeRun(runId = "run-active", sessionId = "s1") {
   };
 }
 
-function changed(sessionId: string, revision: number) {
+function changed(sessionId: string, revision: number, fields: Partial<PushEnvelope> = {}) {
   return {
     kind: "session_changed" as const,
     session_id: sessionId,
@@ -62,6 +64,7 @@ function changed(sessionId: string, revision: number) {
     source_kind: null,
     events: [],
     revision,
+    ...fields,
   };
 }
 
@@ -70,9 +73,12 @@ describe("sessionSync", () => {
     vi.useFakeTimers();
     vi.clearAllMocks();
     resetSessionSyncForTests();
+    useConversationStore.getState().invalidateBackgroundRefreshes();
     useSessionsStore.setState({ list: [], loading: false, loaded: true });
     useConversationStore.setState({
       currentSessionId: "s1",
+      approvalMode: "per_request",
+      approvalModeVersion: 0,
       messages: [],
       historyLoading: false,
       historyLoadSeq: 0,
@@ -84,6 +90,9 @@ describe("sessionSync", () => {
       unreadRunOutcomeBySession: {},
     });
     vi.mocked(sessionsApi.list).mockResolvedValue([]);
+    vi.mocked(sessionsApi.getApprovalMode).mockImplementation(async (sessionId) => ({
+      session_id: sessionId, approval_mode: "per_request", approval_mode_version: 0,
+    }));
     vi.mocked(sessionsApi.get).mockResolvedValue({
       session_id: "s1",
       title: "t",
@@ -100,6 +109,61 @@ describe("sessionSync", () => {
     await vi.runAllTimersAsync();
     expect(sessionsApi.list).toHaveBeenCalledTimes(1);
     expect(sessionsApi.get).toHaveBeenCalledTimes(1);
+    expect(sessionsApi.getApprovalMode).not.toHaveBeenCalled();
+  });
+
+  it("does not query approval mode for content or unrelated metadata bursts", async () => {
+    for (let revision = 1; revision <= 30; revision += 1) {
+      handleSessionChangedForSync(changed("s1", revision, {
+        change_kind: revision % 2 ? "content" : "metadata", origin: "ag_ui",
+      }));
+    }
+    await vi.runAllTimersAsync();
+    expect(sessionsApi.getApprovalMode).not.toHaveBeenCalled();
+    expect(sessionsApi.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes an active session for an older approval event after newer content", async () => {
+    const running = activeRun();
+    useConversationStore.setState({ runSnapshots: { [running.run_id]: running } });
+    vi.mocked(sessionsApi.getApprovalMode).mockResolvedValueOnce({
+      session_id: "s1", approval_mode: "session_auto", approval_mode_version: 4,
+    });
+    handleSessionChangedForSync(changed("s1", 12, { change_kind: "content" }));
+    const approval = changed("s1", 11, { change_kind: "metadata", origin: "approval_mode" });
+    handleSessionChangedForSync(approval);
+    handleSessionChangedForSync(approval);
+    expect(sessionsApi.getApprovalMode).toHaveBeenCalledExactlyOnceWith("s1");
+    await vi.runAllTimersAsync();
+    expect(useConversationStore.getState()).toMatchObject({
+      approvalMode: "session_auto", approvalModeVersion: 4,
+    });
+    expect(isSessionBusy(useConversationStore.getState(), "s1")).toBe(true);
+    expect(sessionsApi.get).not.toHaveBeenCalled();
+  });
+
+  it("does not query another session's approval mode", async () => {
+    handleSessionChangedForSync(changed("s2", 1, {
+      change_kind: "metadata", origin: "approval_mode",
+    }));
+    await vi.runAllTimersAsync();
+    expect(sessionsApi.getApprovalMode).not.toHaveBeenCalled();
+  });
+
+  it("starts a mode calibration immediately for an existing session", async () => {
+    const stop = startSessionSyncSubscriber();
+    expect(sessionsApi.getApprovalMode).toHaveBeenCalledExactlyOnceWith("s1");
+    await Promise.resolve();
+    stop();
+  });
+
+  it("does not treat selecting an optimistic new session as a mode-read trigger", async () => {
+    useConversationStore.setState({ currentSessionId: null });
+    const stop = startSessionSyncSubscriber();
+    useConversationStore.setState({ currentSessionId: "not-created-yet" });
+    await Promise.resolve();
+    expect(sessionsApi.getApprovalMode).not.toHaveBeenCalled();
+    stop();
   });
 
   it("refreshes only the list for a non-current session", async () => {
@@ -134,6 +198,7 @@ describe("sessionSync", () => {
     await vi.runAllTimersAsync();
     expect(sessionsApi.list).toHaveBeenCalledTimes(1);
     expect(sessionsApi.get).toHaveBeenCalledTimes(1);
+    expect(sessionsApi.getApprovalMode).toHaveBeenCalledExactlyOnceWith("s1");
   });
 
   it("calibrates active runs immediately after the subscriber starts", async () => {

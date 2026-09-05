@@ -31,6 +31,9 @@ class _CountingStore:
     def append_event(self, session_id: str, event: Event) -> None:
         self.inner.append_event(session_id, event)
 
+    def exists(self, session_id: str) -> bool:
+        return self.inner.exists(session_id)
+
     def load(self, session_id: str) -> Session:
         self.load_count += 1
         return self.inner.load(session_id)

@@ -57,6 +57,7 @@ import {
   StreamAdmissionError,
 } from "@/services";
 import type { SessionDetail } from "@/types/meta";
+import type { SessionApprovalModeState } from "@/services/api/sessions";
 import type { CancelRunResponse, RunSnapshot } from "@/types/run";
 import type { SessionMessageSearchResult } from "@/types/search";
 import {
@@ -208,6 +209,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   isTauriMock.mockReturnValue(false);
   mockGet.mockReset();
+  mockGetApprovalMode.mockReset();
+  mockUpdateApprovalMode.mockReset();
   mockRunCancel.mockReset();
   vi.stubGlobal("window", {
     __AGENT_FRIEND_SETTINGS__: {
@@ -292,6 +295,7 @@ describe("conversation store · session approval mode", () => {
       expect.objectContaining({ initialApprovalMode: "session_auto" }),
       expect.any(Object),
     );
+    expect(mockGetApprovalMode).not.toHaveBeenCalled();
     expect(useConversationStore.getState()).toMatchObject({
       approvalMode: "session_auto",
       approvalModeVersion: 1,
@@ -367,6 +371,123 @@ describe("conversation store · session approval mode", () => {
       approvalModeVersion: 3,
     });
     expect(isSessionBusy(useConversationStore.getState(), "sid-mode")).toBe(true);
+  });
+
+  it("refreshes a cached active session without loading its history again", async () => {
+    mockGet.mockResolvedValueOnce(sessionDetail("sid-mode", "history"));
+    await useConversationStore.getState().openSession("sid-mode");
+    useConversationStore.setState({
+      runSnapshots: { active: runSnapshot("active", "sid-mode", "running", 2) },
+    });
+    mockGet.mockClear();
+    mockGetApprovalMode.mockClear();
+    mockGetApprovalMode.mockResolvedValueOnce({
+      session_id: "sid-mode", approval_mode: "session_auto", approval_mode_version: 3,
+    });
+    await useConversationStore.getState().openSession("sid-mode");
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockGetApprovalMode).toHaveBeenCalledExactlyOnceWith("sid-mode");
+    expect(useConversationStore.getState().approvalModeVersion).toBe(3);
+  });
+
+  it("keeps a newer mode when the opening history response arrives later", async () => {
+    const history = deferred<SessionDetail>();
+    mockGet.mockReturnValueOnce(history.promise);
+    mockGetApprovalMode.mockResolvedValueOnce({
+      session_id: "sid-mode", approval_mode: "session_auto", approval_mode_version: 5,
+    });
+    const opening = useConversationStore.getState().openSession("sid-mode");
+    await Promise.resolve();
+    expect(useConversationStore.getState().approvalModeVersion).toBe(5);
+    history.resolve({
+      ...sessionDetail("sid-mode", "loaded history"),
+      approval_mode: "per_request", approval_mode_version: 4,
+    });
+    await opening;
+    expect(firstText()).toBe("loaded history");
+    expect(useConversationStore.getState()).toMatchObject({
+      approvalMode: "session_auto", approvalModeVersion: 5,
+    });
+    expect(useConversationStore.getState().sessionViews["sid-mode"]).toMatchObject({
+      approvalMode: "session_auto", approvalModeVersion: 5,
+    });
+  });
+
+  it.each([
+    { approval_mode: "per_request" as const, approval_mode_version: 4 },
+    { approval_mode: "per_request" as const, approval_mode_version: 5 },
+    { approval_mode: "per_request" as const },
+    { approval_mode_version: 6 },
+    {},
+  ])("keeps the mode/version pair during old or incomplete detail refresh: %j", async (fields) => {
+    mockGet.mockResolvedValueOnce(sessionDetail("sid-mode", "history"));
+    await useConversationStore.getState().openSession("sid-mode");
+    const history = deferred<SessionDetail>();
+    mockGet.mockReturnValueOnce(history.promise);
+    const refreshing = useConversationStore.getState().refreshCurrentSession("sid-mode");
+    useConversationStore.getState().applyApprovalModeState({
+      session_id: "sid-mode", approval_mode: "session_auto", approval_mode_version: 5,
+    });
+    history.resolve({ ...sessionDetail("sid-mode", "updated history"), revision: 10, ...fields });
+    expect(await refreshing).toBe("applied");
+    expect(firstText()).toBe("updated history");
+    expect(useConversationStore.getState()).toMatchObject({
+      approvalMode: "session_auto", approvalModeVersion: 5,
+    });
+  });
+
+  it("uses the highest same-session version even when only the current state knows it", () => {
+    useConversationStore.setState({
+      currentSessionId: "sid-mode", sessionViews: {},
+      approvalMode: "session_auto", approvalModeVersion: 5,
+    });
+    useConversationStore.getState().applyApprovalModeState({
+      session_id: "sid-mode", approval_mode: "per_request", approval_mode_version: 4,
+    });
+    expect(useConversationStore.getState()).toMatchObject({
+      approvalMode: "session_auto", approvalModeVersion: 5,
+    });
+  });
+
+  it("does not let an older GET overwrite a successful mode mutation", async () => {
+    mockGet.mockResolvedValueOnce(sessionDetail("sid-mode", "history"));
+    await useConversationStore.getState().openSession("sid-mode");
+    const oldRead = deferred<SessionApprovalModeState>();
+    mockGetApprovalMode.mockReturnValueOnce(oldRead.promise);
+    const reading = useConversationStore.getState().refreshApprovalMode("sid-mode");
+    mockUpdateApprovalMode.mockResolvedValueOnce({
+      session_id: "sid-mode", approval_mode: "session_auto", approval_mode_version: 5,
+    });
+    await useConversationStore.getState().setApprovalMode("session_auto", true);
+    oldRead.resolve({
+      session_id: "sid-mode", approval_mode: "per_request", approval_mode_version: 4,
+    });
+    await reading;
+    expect(useConversationStore.getState()).toMatchObject({
+      approvalMode: "session_auto", approvalModeVersion: 5,
+    });
+  });
+
+  it("invalidates a pending read when a mode mutation fails", async () => {
+    mockGet.mockResolvedValueOnce(sessionDetail("sid-mode", "history"));
+    await useConversationStore.getState().openSession("sid-mode");
+    const oldRead = deferred<SessionApprovalModeState>();
+    mockGetApprovalMode.mockClear();
+    mockGetApprovalMode.mockReturnValueOnce(oldRead.promise).mockResolvedValueOnce({
+      session_id: "sid-mode", approval_mode: "session_auto", approval_mode_version: 5,
+    });
+    const reading = useConversationStore.getState().refreshApprovalMode("sid-mode");
+    mockUpdateApprovalMode.mockRejectedValueOnce(new Error("conflict"));
+    const mutation = useConversationStore.getState().setApprovalMode("session_auto", true);
+    await Promise.resolve();
+    expect(mockGetApprovalMode).toHaveBeenCalledTimes(1);
+    oldRead.resolve({
+      session_id: "sid-mode", approval_mode: "per_request", approval_mode_version: 4,
+    });
+    expect((await mutation).status).toBe("failed");
+    await reading;
+    expect(mockGetApprovalMode).toHaveBeenCalledTimes(2);
+    expect(useConversationStore.getState().approvalModeVersion).toBe(5);
   });
 });
 
@@ -1089,7 +1210,7 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     expect(firstText()).toBe("只返回有效事件");
   });
 
-  it("编辑重发最后一条 user 后按 active projection rehydrate", async () => {
+  it.each([false, true])("编辑重发后恢复 active projection，保护较新授权=%s", async (newerMode) => {
     mockGet
       .mockResolvedValueOnce({
         session_id: "sid-1",
@@ -1117,6 +1238,7 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
         persona: "default",
         model: "test",
         events: [],
+        ...(newerMode ? { approval_mode: "per_request" as const, approval_mode_version: 4 } : {}),
         active_events: [
           {
             type: "user_message",
@@ -1134,6 +1256,11 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
       });
     mockEditStream.mockImplementation(async function* (_input, opts) {
       opts?.onAdmitted?.();
+      if (newerMode) {
+        useConversationStore.getState().applyApprovalModeState({
+          session_id: "sid-1", approval_mode: "session_auto", approval_mode_version: 5,
+        });
+      }
       yield ev({ type: EventType.RUN_FINISHED, threadId: "sid-1", runId: "r" });
     });
 
@@ -1159,6 +1286,14 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     );
     expect(mockGet).toHaveBeenCalledTimes(2);
     expect(messageTexts()).toEqual(["新问题", "新回答"]);
+    if (newerMode) {
+      expect(useConversationStore.getState()).toMatchObject({
+        approvalMode: "session_auto", approvalModeVersion: 5,
+      });
+      expect(useConversationStore.getState().sessionViews["sid-1"]).toMatchObject({
+        approvalMode: "session_auto", approvalModeVersion: 5,
+      });
+    }
   });
 
   it("desktop 编辑重发吸收 admission 前早到的 run_event，不生成第二条助手消息", async () => {

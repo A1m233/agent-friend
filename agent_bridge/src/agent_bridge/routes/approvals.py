@@ -110,8 +110,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             raise HTTPException(status_code=503, detail="approval unavailable")
         try:
             manager = getattr(runtime, "persistent_session_manager", None)
-            if manager is not None:
-                manager.open(session_id)
+            if manager is not None and not manager.exists(session_id):
+                raise SessionNotFoundError(f"会话不存在: {session_id}")
             state = broker.mode_state(session_id)
         except (KeyError, SessionNotFoundError) as exc:
             raise HTTPException(status_code=404, detail="session not found") from exc

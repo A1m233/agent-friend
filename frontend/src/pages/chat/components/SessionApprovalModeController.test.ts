@@ -149,19 +149,22 @@ describe("SessionApprovalModeController", () => {
     expect(document.querySelector('[data-slot="dropdown-menu-content"]')).toBeNull();
   });
 
-  it("submits the exact approval-card identity to the atomic endpoint", async () => {
+  it.each([false, true])("submits the exact approval-card identity and calibrates failure=%s", async (fails) => {
     const enable = vi.spyOn(sessionsApi, "enableSessionAutoForApproval").mockResolvedValue({
       accepted: true,
       session_id: "session-a",
       approval_mode: "session_auto",
       approval_mode_version: 8,
     });
+    if (fails) enable.mockRejectedValueOnce(new Error("approval conflict"));
     const applyApprovalModeState = vi.fn();
+    const refreshApprovalMode = vi.fn(async () => "applied" as const);
     const refreshCommands = vi.fn(async () => undefined);
     const refreshFilesystem = vi.fn(async () => undefined);
     useConversationStore.setState({
       approvalModeVersion: 7,
       applyApprovalModeState,
+      refreshApprovalMode,
     });
     useCommandRuntimeStore.setState({
       refresh: refreshCommands,
@@ -221,12 +224,18 @@ describe("SessionApprovalModeController", () => {
       requestVersion: 3,
       modeVersion: 7,
     });
-    expect(applyApprovalModeState).toHaveBeenCalledWith({
-      accepted: true,
-      session_id: "session-a",
-      approval_mode: "session_auto",
-      approval_mode_version: 8,
-    });
+    if (fails) {
+      expect(applyApprovalModeState).not.toHaveBeenCalled();
+      expect(refreshApprovalMode).toHaveBeenCalledExactlyOnceWith("session-a", { invalidate: true });
+    } else {
+      expect(applyApprovalModeState).toHaveBeenCalledWith({
+        accepted: true,
+        session_id: "session-a",
+        approval_mode: "session_auto",
+        approval_mode_version: 8,
+      });
+      expect(refreshApprovalMode).not.toHaveBeenCalled();
+    }
     expect(refreshCommands).toHaveBeenCalledTimes(1);
     expect(refreshFilesystem).toHaveBeenCalledTimes(1);
   });
