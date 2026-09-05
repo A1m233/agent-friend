@@ -70,6 +70,16 @@ function summary(sessionId: string): SessionSummary {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockListProviders.mockResolvedValue([]);
@@ -78,6 +88,7 @@ beforeEach(() => {
     imTypesBySession: {},
     loading: false,
     loaded: false,
+    error: false,
   });
   useArchivedSessionsStore.setState({
     list: [],
@@ -91,13 +102,51 @@ beforeEach(() => {
 
 describe("sessions store", () => {
   it("marks the list as loaded only after a successful refresh", async () => {
-    mockList.mockResolvedValue([summary("sid-1")]);
+    const request = deferred<SessionSummary[]>();
+    mockList.mockReturnValueOnce(request.promise);
+
+    const refresh = useSessionsStore.getState().refresh();
+    expect(useSessionsStore.getState()).toMatchObject({
+      list: [], loading: true, loaded: false, error: false,
+    });
+
+    request.resolve([summary("sid-1")]);
+    await refresh;
+    expect(useSessionsStore.getState()).toMatchObject({
+      list: [summary("sid-1")], loading: false, loaded: true, error: false,
+    });
+  });
+
+  it("recognizes a successfully loaded empty list", async () => {
+    mockList.mockResolvedValueOnce([]);
 
     await useSessionsStore.getState().refresh();
 
-    expect(useSessionsStore.getState().list.map((s) => s.session_id)).toEqual(["sid-1"]);
-    expect(useSessionsStore.getState().loaded).toBe(true);
-    expect(useSessionsStore.getState().loading).toBe(false);
+    expect(useSessionsStore.getState()).toMatchObject({
+      list: [], loading: false, loaded: true, error: false,
+    });
+  });
+
+  it("keeps an initial failure distinct from an empty list and clears it on retry", async () => {
+    mockList.mockRejectedValueOnce(new Error("offline"));
+
+    await useSessionsStore.getState().refresh();
+    expect(useSessionsStore.getState()).toMatchObject({
+      list: [], loading: false, loaded: false, error: true,
+    });
+
+    const retry = deferred<SessionSummary[]>();
+    mockList.mockReturnValueOnce(retry.promise);
+    const refresh = useSessionsStore.getState().refresh();
+    expect(useSessionsStore.getState()).toMatchObject({
+      list: [], loading: true, loaded: false, error: false,
+    });
+
+    retry.resolve([summary("sid-1")]);
+    await refresh;
+    expect(useSessionsStore.getState()).toMatchObject({
+      list: [summary("sid-1")], loading: false, loaded: true, error: false,
+    });
   });
 
   it("projects bound IM types into the session list cache", async () => {
@@ -153,15 +202,81 @@ describe("sessions store", () => {
     ).toEqual({ "sid-1": ["qq"] });
   });
 
-  it("keeps the previous loaded state when refresh fails", async () => {
-    useSessionsStore.setState({ list: [summary("sid-old")], loading: false, loaded: true });
-    mockList.mockRejectedValue(new Error("offline"));
+  it("keeps the loaded list and IM labels while refreshing and after failure", async () => {
+    const cached = {
+      list: [summary("sid-old")],
+      imTypesBySession: { "sid-old": ["qq" as const] },
+      loaded: true,
+    };
+    useSessionsStore.setState(cached);
+    const request = deferred<SessionSummary[]>();
+    mockList.mockReturnValueOnce(request.promise);
 
+    const refresh = useSessionsStore.getState().refresh();
+    expect(useSessionsStore.getState()).toMatchObject({
+      ...cached, loading: true, error: false,
+    });
+
+    request.reject(new Error("offline"));
+    await refresh;
+    expect(useSessionsStore.getState()).toMatchObject({
+      ...cached, loading: false, error: true,
+    });
+  });
+
+  it.each(["success", "failure"] as const)(
+    "ignores an obsolete %s while the latest request is still loading",
+    async (outcome) => {
+      const earlier = deferred<SessionSummary[]>();
+      const latest = deferred<SessionSummary[]>();
+      mockList.mockReturnValueOnce(earlier.promise).mockReturnValueOnce(latest.promise);
+
+      const earlierRefresh = useSessionsStore.getState().refresh();
+      const latestRefresh = useSessionsStore.getState().refresh();
+      if (outcome === "success") earlier.resolve([summary("obsolete")]);
+      else earlier.reject(new Error("obsolete failure"));
+      await earlierRefresh;
+      expect(useSessionsStore.getState()).toMatchObject({
+        list: [], loading: true, loaded: false, error: false,
+      });
+
+      latest.resolve([summary("latest")]);
+      await latestRefresh;
+      expect(useSessionsStore.getState()).toMatchObject({
+        list: [summary("latest")], loading: false, loaded: true, error: false,
+      });
+    },
+  );
+
+  it("does not let an obsolete success clear the latest failure", async () => {
+    const earlier = deferred<SessionSummary[]>();
+    mockList.mockReturnValueOnce(earlier.promise).mockRejectedValueOnce(new Error("latest failure"));
+
+    const earlierRefresh = useSessionsStore.getState().refresh();
     await useSessionsStore.getState().refresh();
+    expect(useSessionsStore.getState()).toMatchObject({
+      list: [], loading: false, loaded: false, error: true,
+    });
 
-    expect(useSessionsStore.getState().list.map((s) => s.session_id)).toEqual(["sid-old"]);
-    expect(useSessionsStore.getState().loaded).toBe(true);
-    expect(useSessionsStore.getState().loading).toBe(false);
+    earlier.resolve([summary("obsolete")]);
+    await earlierRefresh;
+    expect(useSessionsStore.getState()).toMatchObject({
+      list: [], loading: false, loaded: false, error: true,
+    });
+  });
+
+  it("does not let an obsolete failure replace the latest successful list", async () => {
+    const earlier = deferred<SessionSummary[]>();
+    mockList.mockReturnValueOnce(earlier.promise).mockResolvedValueOnce([summary("latest")]);
+
+    const earlierRefresh = useSessionsStore.getState().refresh();
+    await useSessionsStore.getState().refresh();
+    earlier.reject(new Error("obsolete failure"));
+    await earlierRefresh;
+
+    expect(useSessionsStore.getState()).toMatchObject({
+      list: [summary("latest")], loading: false, loaded: true, error: false,
+    });
   });
 
   it("refreshes loaded session caches when another window emits sessions changed", async () => {

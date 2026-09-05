@@ -24,6 +24,8 @@ interface SessionsState {
   loading: boolean;
   /** 至少成功拉取过一次列表；用于区分“空列表”和“还没拿到真相源”。 */
   loaded: boolean;
+  /** 最近一次列表请求失败；重试开始时清除，不影响已加载的缓存。 */
+  error: boolean;
   /** 从 bridge 重新拉取会话列表（新建/切换后调用刷新）。 */
   refresh: () => Promise<void>;
   rename: (sessionId: string, title: string) => Promise<boolean>;
@@ -54,10 +56,11 @@ export const useSessionsStore = create<SessionsState>((set) => ({
   imTypesBySession: {},
   loading: false,
   loaded: false,
+  error: false,
   async refresh() {
     const seq = refreshSeq + 1;
     refreshSeq = seq;
-    set({ loading: true });
+    set({ loading: true, error: false });
     try {
       const [list, providers] = await Promise.all([
         sessionsApi.list(),
@@ -72,12 +75,13 @@ export const useSessionsStore = create<SessionsState>((set) => ({
               : collectBoundIMTypesBySession(providers),
           loading: false,
           loaded: true,
+          error: false,
         }));
       }
     } catch {
-      // 列表拉取失败不弹技术错误，保留旧列表即可。
+      // 保留旧列表，首次加载失败由列表视图提供重试入口。
       if (seq === refreshSeq) {
-        set({ loading: false });
+        set({ loading: false, error: true });
       }
     }
   },
