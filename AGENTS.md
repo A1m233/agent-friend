@@ -31,7 +31,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: 19c38d3f49d8486dfaccd6f28c79a2b55dbe6d6cc17651ceb725a70fec1d204e -->
+<!-- codex-adapter-source-sha256: 7c50dbf2057e091fc445e02926576628ce335d6e002642370ab7c6de165ebd4a -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -524,6 +524,6 @@ Before starting work that matches a trigger below, read the rule file and apply 
 | `inspect-agent-friend-diagnostics` | Safely inspect and interpret agent-friend local diagnostic ZIP bundles. Use in the agent-friend… |
 | `maintain-agent-friend-guide` | 检查 agent-friend 产品变更是否需要更新公开用户知识，维护并发布 agent-friend-guide immutable release，或为新桌面安装包刷新离线 builti… |
 | `package-release` | 在 agent-friend 项目中查询或设置桌面产品版本、构建受治理的 Windows 安装包，并盘点或清理打包工作区。Use when 用户说“打安装包”“构建安装包”“本地测试包”“查… |
-| `showcase-update` | Update the public agent-friend showcase repository from the private source repo. Use when the u… |
+| `showcase-update` | 按用户意图检查、生成或同步、预览、提交或发布 agent-friend 的公开 showcase。当用户要求验证现有 showcase、更新 sanitized snapshot、运行或发布… |
 | `tdesign-chat-style` | 在 agent-friend 前端调整 TDesign Chat 对话组件具体视觉样式的标准流程。Use when 用户想修改对话页里的 TDesign Chat / ChatMessage… |
 | `volcengine-docs-fetch` | Fetch and summarize Volcengine documentation pages reliably. Use when the user gives a volcengi… |

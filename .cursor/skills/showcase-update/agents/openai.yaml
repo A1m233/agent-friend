@@ -1,4 +1,4 @@
 interface:
-  display_name: "Showcase Update"
-  short_description: "Update the sanitized public showcase checkout."
-  default_prompt: "Use $showcase-update to update the public showcase snapshot, verify the scan, and prepare the checkout for review."
+  display_name: "Showcase 维护"
+  short_description: "按当前请求检查、同步、预览或发布公开 Showcase，只执行对应路径。"
+  default_prompt: "使用 $showcase-update 识别本次 Showcase 请求，执行对应的检查、同步、预览或发布路径。"
