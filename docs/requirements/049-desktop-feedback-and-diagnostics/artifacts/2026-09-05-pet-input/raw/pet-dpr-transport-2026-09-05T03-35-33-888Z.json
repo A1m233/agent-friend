@@ -1,0 +1,1617 @@
+{
+  "mode": "transport",
+  "startedAt": "2026-09-05T03:35:33.888Z",
+  "targetUrl": "http://tauri.localhost/pet.html",
+  "network": [
+    {
+      "round": "sequential-1",
+      "id": "9792.459",
+      "method": "POST",
+      "sentAt": 1359.857207,
+      "dpr": 1.25,
+      "responseAt": 1359.8591,
+      "status": 200,
+      "finishedAt": 1359.858761
+    },
+    {
+      "round": "sequential-1",
+      "id": "AD46C7BBA2C938A734E382EB5B054F6B",
+      "method": "OPTIONS",
+      "sentAt": 1359.857592,
+      "dpr": "body-unavailable",
+      "responseAt": 1359.858221,
+      "status": 200,
+      "finishedAt": 1359.858178
+    },
+    {
+      "round": "sequential-1",
+      "id": "9792.460",
+      "method": "POST",
+      "sentAt": 1359.859555,
+      "dpr": 1.75,
+      "responseAt": 1359.860776,
+      "status": 200,
+      "finishedAt": 1359.860456
+    },
+    {
+      "round": "sequential-1",
+      "id": "9792.461",
+      "method": "POST",
+      "sentAt": 1359.861194,
+      "dpr": 1.25,
+      "responseAt": 1359.862373,
+      "status": 200,
+      "finishedAt": 1359.862056
+    },
+    {
+      "round": "sequential-2",
+      "id": "9792.469",
+      "method": "POST",
+      "sentAt": 1360.044186,
+      "dpr": 1.25,
+      "responseAt": 1360.045685,
+      "status": 200,
+      "finishedAt": 1360.045076
+    },
+    {
+      "round": "sequential-2",
+      "id": "9792.470",
+      "method": "POST",
+      "sentAt": 1360.046072,
+      "dpr": 1.75,
+      "responseAt": 1360.0474,
+      "status": 200,
+      "finishedAt": 1360.047094
+    },
+    {
+      "round": "sequential-2",
+      "id": "9792.471",
+      "method": "POST",
+      "sentAt": 1360.047727,
+      "dpr": 1.25,
+      "responseAt": 1360.049081,
+      "status": 200,
+      "finishedAt": 1360.048723
+    },
+    {
+      "round": "sequential-3",
+      "id": "9792.479",
+      "method": "POST",
+      "sentAt": 1360.230739,
+      "dpr": 1.25,
+      "responseAt": 1360.232225,
+      "status": 200,
+      "finishedAt": 1360.231762
+    },
+    {
+      "round": "sequential-3",
+      "id": "9792.480",
+      "method": "POST",
+      "sentAt": 1360.232605,
+      "dpr": 1.75,
+      "responseAt": 1360.233968,
+      "status": 200,
+      "finishedAt": 1360.233633
+    },
+    {
+      "round": "sequential-3",
+      "id": "9792.481",
+      "method": "POST",
+      "sentAt": 1360.234357,
+      "dpr": 1.25,
+      "responseAt": 1360.235707,
+      "status": 200,
+      "finishedAt": 1360.235381
+    },
+    {
+      "round": "sequential-4",
+      "id": "9792.489",
+      "method": "POST",
+      "sentAt": 1360.421165,
+      "dpr": 1.25,
+      "responseAt": 1360.42255,
+      "status": 200,
+      "finishedAt": 1360.42222
+    },
+    {
+      "round": "sequential-4",
+      "id": "9792.490",
+      "method": "POST",
+      "sentAt": 1360.42294,
+      "dpr": 1.75,
+      "responseAt": 1360.424222,
+      "status": 200,
+      "finishedAt": 1360.423923
+    },
+    {
+      "round": "sequential-4",
+      "id": "9792.491",
+      "method": "POST",
+      "sentAt": 1360.424587,
+      "dpr": 1.25,
+      "responseAt": 1360.425885,
+      "status": 200,
+      "finishedAt": 1360.425521
+    },
+    {
+      "round": "sequential-5",
+      "id": "9792.499",
+      "method": "POST",
+      "sentAt": 1360.607539,
+      "dpr": 1.25,
+      "responseAt": 1360.609038,
+      "status": 200,
+      "finishedAt": 1360.608663
+    },
+    {
+      "round": "sequential-5",
+      "id": "9792.500",
+      "method": "POST",
+      "sentAt": 1360.609445,
+      "dpr": 1.75,
+      "responseAt": 1360.61054,
+      "status": 200,
+      "finishedAt": 1360.610263
+    },
+    {
+      "round": "sequential-5",
+      "id": "9792.501",
+      "method": "POST",
+      "sentAt": 1360.610899,
+      "dpr": 1.25,
+      "responseAt": 1360.612283,
+      "status": 200,
+      "finishedAt": 1360.61177
+    },
+    {
+      "round": "sequential-6",
+      "id": "9792.507",
+      "method": "POST",
+      "sentAt": 1360.708259,
+      "dpr": 1.25,
+      "responseAt": 1360.709672,
+      "status": 200,
+      "finishedAt": 1360.70935
+    },
+    {
+      "round": "sequential-6",
+      "id": "9792.508",
+      "method": "POST",
+      "sentAt": 1360.710227,
+      "dpr": 1.75,
+      "responseAt": 1360.712362,
+      "status": 200,
+      "finishedAt": 1360.711484
+    },
+    {
+      "round": "sequential-6",
+      "id": "9792.509",
+      "method": "POST",
+      "sentAt": 1360.712809,
+      "dpr": 1.25,
+      "responseAt": 1360.714143,
+      "status": 200,
+      "finishedAt": 1360.713844
+    },
+    {
+      "round": "sequential-7",
+      "id": "9792.515",
+      "method": "POST",
+      "sentAt": 1360.809156,
+      "dpr": 1.25,
+      "responseAt": 1360.810593,
+      "status": 200,
+      "finishedAt": 1360.810246
+    },
+    {
+      "round": "sequential-7",
+      "id": "9792.516",
+      "method": "POST",
+      "sentAt": 1360.810989,
+      "dpr": 1.75,
+      "responseAt": 1360.812474,
+      "status": 200,
+      "finishedAt": 1360.81204
+    },
+    {
+      "round": "sequential-7",
+      "id": "9792.517",
+      "method": "POST",
+      "sentAt": 1360.812865,
+      "dpr": 1.25,
+      "responseAt": 1360.814026,
+      "status": 200,
+      "finishedAt": 1360.813706
+    },
+    {
+      "round": "sequential-8",
+      "id": "9792.523",
+      "method": "POST",
+      "sentAt": 1360.910818,
+      "dpr": 1.25,
+      "responseAt": 1360.912584,
+      "status": 200,
+      "finishedAt": 1360.912
+    },
+    {
+      "round": "sequential-8",
+      "id": "9792.524",
+      "method": "POST",
+      "sentAt": 1360.913229,
+      "dpr": 1.75,
+      "responseAt": 1360.914404,
+      "status": 200,
+      "finishedAt": 1360.914108
+    },
+    {
+      "round": "sequential-8",
+      "id": "9792.525",
+      "method": "POST",
+      "sentAt": 1360.9149,
+      "dpr": 1.25,
+      "responseAt": 1360.916201,
+      "status": 200,
+      "finishedAt": 1360.915848
+    },
+    {
+      "round": "sequential-9",
+      "id": "9792.539",
+      "method": "POST",
+      "sentAt": 1361.356784,
+      "dpr": 1.25,
+      "responseAt": 1361.358952,
+      "status": 200,
+      "finishedAt": 1361.35769
+    },
+    {
+      "round": "sequential-9",
+      "id": "9792.540",
+      "method": "POST",
+      "sentAt": 1361.359511,
+      "dpr": 1.75,
+      "responseAt": 1361.360755,
+      "status": 200,
+      "finishedAt": 1361.360467
+    },
+    {
+      "round": "sequential-9",
+      "id": "9792.541",
+      "method": "POST",
+      "sentAt": 1361.361109,
+      "dpr": 1.25,
+      "responseAt": 1361.362236,
+      "status": 200,
+      "finishedAt": 1361.361918
+    },
+    {
+      "round": "sequential-10",
+      "id": "9792.549",
+      "method": "POST",
+      "sentAt": 1361.56339,
+      "dpr": 1.25,
+      "responseAt": 1361.565525,
+      "status": 200,
+      "finishedAt": 1361.564615
+    },
+    {
+      "round": "sequential-10",
+      "id": "9792.550",
+      "method": "POST",
+      "sentAt": 1361.566015,
+      "dpr": 1.75,
+      "responseAt": 1361.567279,
+      "status": 200,
+      "finishedAt": 1361.566961
+    },
+    {
+      "round": "sequential-10",
+      "id": "9792.551",
+      "method": "POST",
+      "sentAt": 1361.567629,
+      "dpr": 1.25,
+      "responseAt": 1361.568983,
+      "status": 200,
+      "finishedAt": 1361.568438
+    },
+    {
+      "round": "concurrent-1",
+      "id": "9792.559",
+      "method": "POST",
+      "sentAt": 1361.75399,
+      "dpr": 1.25,
+      "responseAt": 1361.755515,
+      "status": 200,
+      "finishedAt": 1361.754906
+    },
+    {
+      "round": "concurrent-1",
+      "id": "9792.560",
+      "method": "POST",
+      "sentAt": 1361.756151,
+      "dpr": 1.75,
+      "responseAt": 1361.757802,
+      "status": 200,
+      "finishedAt": 1361.757293
+    },
+    {
+      "round": "concurrent-1",
+      "id": "9792.561",
+      "method": "POST",
+      "sentAt": 1361.756519,
+      "dpr": 1.25,
+      "responseAt": 1361.758021,
+      "status": 200,
+      "finishedAt": 1361.757524
+    },
+    {
+      "round": "concurrent-2",
+      "id": "9792.567",
+      "method": "POST",
+      "sentAt": 1361.853712,
+      "dpr": 1.25,
+      "responseAt": 1361.855425,
+      "status": 200,
+      "finishedAt": 1361.854592
+    },
+    {
+      "round": "concurrent-2",
+      "id": "9792.568",
+      "method": "POST",
+      "sentAt": 1361.855853,
+      "dpr": 1.75,
+      "responseAt": 1361.857778,
+      "status": 200,
+      "finishedAt": 1361.857329
+    },
+    {
+      "round": "concurrent-2",
+      "id": "9792.569",
+      "method": "POST",
+      "sentAt": 1361.856062,
+      "dpr": 1.25,
+      "responseAt": 1361.858063,
+      "status": 200,
+      "finishedAt": 1361.857644
+    },
+    {
+      "round": "concurrent-3",
+      "id": "9792.575",
+      "method": "POST",
+      "sentAt": 1361.956013,
+      "dpr": 1.25,
+      "responseAt": 1361.957355,
+      "status": 200,
+      "finishedAt": 1361.957046
+    },
+    {
+      "round": "concurrent-3",
+      "id": "9792.576",
+      "method": "POST",
+      "sentAt": 1361.957771,
+      "dpr": 1.75,
+      "responseAt": 1361.959643,
+      "status": 200,
+      "finishedAt": 1361.959213
+    },
+    {
+      "round": "concurrent-3",
+      "id": "9792.577",
+      "method": "POST",
+      "sentAt": 1361.957976,
+      "dpr": 1.25,
+      "responseAt": 1361.959815,
+      "status": 200,
+      "finishedAt": 1361.959394
+    },
+    {
+      "round": "concurrent-4",
+      "id": "9792.587",
+      "method": "POST",
+      "sentAt": 1362.231047,
+      "dpr": 1.25,
+      "responseAt": 1362.232246,
+      "status": 200,
+      "finishedAt": 1362.231895
+    },
+    {
+      "round": "concurrent-4",
+      "id": "9792.588",
+      "method": "POST",
+      "sentAt": 1362.232625,
+      "dpr": 1.75,
+      "responseAt": 1362.233825,
+      "status": 200,
+      "finishedAt": 1362.233542
+    },
+    {
+      "round": "concurrent-4",
+      "id": "9792.589",
+      "method": "POST",
+      "sentAt": 1362.232828,
+      "dpr": 1.25,
+      "responseAt": 1362.234042,
+      "status": 200,
+      "finishedAt": 1362.233781
+    },
+    {
+      "round": "concurrent-5",
+      "id": "9792.597",
+      "method": "POST",
+      "sentAt": 1362.420145,
+      "dpr": 1.25,
+      "responseAt": 1362.42205,
+      "status": 200,
+      "finishedAt": 1362.421103
+    },
+    {
+      "round": "concurrent-5",
+      "id": "9792.598",
+      "method": "POST",
+      "sentAt": 1362.422454,
+      "dpr": 1.75,
+      "responseAt": 1362.423939,
+      "status": 200,
+      "finishedAt": 1362.423545
+    },
+    {
+      "round": "concurrent-5",
+      "id": "9792.599",
+      "method": "POST",
+      "sentAt": 1362.42265,
+      "dpr": 1.25,
+      "responseAt": 1362.424142,
+      "status": 200,
+      "finishedAt": 1362.423708
+    },
+    {
+      "round": "concurrent-6",
+      "id": "9792.607",
+      "method": "POST",
+      "sentAt": 1362.613239,
+      "dpr": 1.25,
+      "responseAt": 1362.61473,
+      "status": 200,
+      "finishedAt": 1362.614336
+    },
+    {
+      "round": "concurrent-6",
+      "id": "9792.608",
+      "method": "POST",
+      "sentAt": 1362.616105,
+      "dpr": 1.75,
+      "responseAt": 1362.617945,
+      "status": 200,
+      "finishedAt": 1362.617459
+    },
+    {
+      "round": "concurrent-6",
+      "id": "9792.609",
+      "method": "POST",
+      "sentAt": 1362.616335,
+      "dpr": 1.25,
+      "responseAt": 1362.61941,
+      "status": 200,
+      "finishedAt": 1362.617882
+    },
+    {
+      "round": "concurrent-7",
+      "id": "9792.615",
+      "method": "POST",
+      "sentAt": 1362.71655,
+      "dpr": 1.25,
+      "responseAt": 1362.717916,
+      "status": 200,
+      "finishedAt": 1362.717554
+    },
+    {
+      "round": "concurrent-7",
+      "id": "9792.616",
+      "method": "POST",
+      "sentAt": 1362.719325,
+      "dpr": 1.75,
+      "responseAt": 1362.720788,
+      "status": 200,
+      "finishedAt": 1362.720436
+    },
+    {
+      "round": "concurrent-7",
+      "id": "9792.617",
+      "method": "POST",
+      "sentAt": 1362.719647,
+      "dpr": 1.25,
+      "responseAt": 1362.721025,
+      "status": 200,
+      "finishedAt": 1362.720714
+    },
+    {
+      "round": "concurrent-8",
+      "id": "9792.623",
+      "method": "POST",
+      "sentAt": 1362.81932,
+      "dpr": 1.25,
+      "responseAt": 1362.820948,
+      "status": 200,
+      "finishedAt": 1362.820551
+    },
+    {
+      "round": "concurrent-8",
+      "id": "9792.624",
+      "method": "POST",
+      "sentAt": 1362.821611,
+      "dpr": 1.75,
+      "responseAt": 1362.823378,
+      "status": 200,
+      "finishedAt": 1362.822995
+    },
+    {
+      "round": "concurrent-8",
+      "id": "9792.625",
+      "method": "POST",
+      "sentAt": 1362.821957,
+      "dpr": 1.25,
+      "responseAt": 1362.823615,
+      "status": 200,
+      "finishedAt": 1362.823285
+    },
+    {
+      "round": "concurrent-9",
+      "id": "9792.645",
+      "method": "POST",
+      "sentAt": 1363.550332,
+      "dpr": 1.25,
+      "responseAt": 1363.552349,
+      "status": 200,
+      "finishedAt": 1363.551573
+    },
+    {
+      "round": "concurrent-9",
+      "id": "9792.646",
+      "method": "POST",
+      "sentAt": 1363.552879,
+      "dpr": 1.75,
+      "responseAt": 1363.555526,
+      "status": 200,
+      "finishedAt": 1363.554558
+    },
+    {
+      "round": "concurrent-9",
+      "id": "9792.647",
+      "method": "POST",
+      "sentAt": 1363.55313,
+      "dpr": 1.25,
+      "responseAt": 1363.555714,
+      "status": 200,
+      "finishedAt": 1363.554916
+    },
+    {
+      "round": "concurrent-10",
+      "id": "9792.653",
+      "method": "POST",
+      "sentAt": 1363.654724,
+      "dpr": 1.25,
+      "responseAt": 1363.656189,
+      "status": 200,
+      "finishedAt": 1363.655801
+    },
+    {
+      "round": "concurrent-10",
+      "id": "9792.654",
+      "method": "POST",
+      "sentAt": 1363.656699,
+      "dpr": 1.75,
+      "responseAt": 1363.658912,
+      "status": 200,
+      "finishedAt": 1363.657788
+    },
+    {
+      "round": "concurrent-10",
+      "id": "9792.655",
+      "method": "POST",
+      "sentAt": 1363.656917,
+      "dpr": 1.25,
+      "responseAt": 1363.65915,
+      "status": 200,
+      "finishedAt": 1363.658123
+    },
+    {
+      "round": "restore",
+      "id": "9792.663",
+      "method": "POST",
+      "sentAt": 1363.844025,
+      "dpr": 1.25,
+      "responseAt": 1363.845803,
+      "status": 200,
+      "finishedAt": 1363.8452
+    }
+  ],
+  "results": [
+    {
+      "round": "baseline",
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1546,
+            "y": 1060
+          },
+          "payload": {
+            "x": 3284.8,
+            "y": 848
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "sequential-1",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 1.8000000000465661
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 3.300000000046566
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1544,
+            "y": 1058
+          },
+          "payload": {
+            "x": 3283.2,
+            "y": 846.4
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "sequential-2",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 1.7000000001862645
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 3.4000000001396984
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1541,
+            "y": 1055
+          },
+          "payload": {
+            "x": 3280.8,
+            "y": 844
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "sequential-3",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 1.8000000000465661
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 3.5
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1539,
+            "y": 1053
+          },
+          "payload": {
+            "x": 3279.2,
+            "y": 842.4
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "sequential-4",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 1.6999999999534339
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 3.3999999999068677
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1539,
+            "y": 1052
+          },
+          "payload": {
+            "x": 3279.2,
+            "y": 841.6
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "sequential-5",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 1.3999999999068677
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 3.300000000046566
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1539,
+            "y": 1052
+          },
+          "payload": {
+            "x": 3279.2,
+            "y": 841.6
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "sequential-6",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 2.5
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 4.199999999953434
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1539,
+            "y": 1052
+          },
+          "payload": {
+            "x": 3279.2,
+            "y": 841.6
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "sequential-7",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 1.8999999999068677
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 3.5
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1539,
+            "y": 1052
+          },
+          "payload": {
+            "x": 3279.2,
+            "y": 841.6
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "sequential-8",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 1.6999999999534339
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 3.5
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1533,
+            "y": 1046
+          },
+          "payload": {
+            "x": 3274.4,
+            "y": 836.8
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "sequential-9",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 1.6999999999534339
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 3.0999999998603016
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1532,
+            "y": 1045
+          },
+          "payload": {
+            "x": 3273.6,
+            "y": 836
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "sequential-10",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 1.6000000000931323
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 3.300000000046566
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1532,
+            "y": 1043
+          },
+          "payload": {
+            "x": 3273.6,
+            "y": 834.4
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "concurrent-1",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 3.2000000001862645
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 3.2000000001862645
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1532,
+            "y": 1043
+          },
+          "payload": {
+            "x": 3273.6,
+            "y": 834.4
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "concurrent-2",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 3.5
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 3.5
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1532,
+            "y": 1043
+          },
+          "payload": {
+            "x": 3273.6,
+            "y": 834.4
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "concurrent-3",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 2.5
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 2.5
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1530,
+            "y": 1041
+          },
+          "payload": {
+            "x": 3272,
+            "y": 832.8
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "concurrent-4",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 1.7000000001862645
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 1.8000000000465661
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1530,
+            "y": 1040
+          },
+          "payload": {
+            "x": 3272,
+            "y": 832
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "concurrent-5",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 2.1000000000931323
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 2.1000000000931323
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1529,
+            "y": 1039
+          },
+          "payload": {
+            "x": 3271.2,
+            "y": 831.2
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "concurrent-6",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 3.5
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 3.699999999953434
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1529,
+            "y": 1039
+          },
+          "payload": {
+            "x": 3271.2,
+            "y": 831.2
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "concurrent-7",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 2
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 2.0999999998603016
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1529,
+            "y": 1039
+          },
+          "payload": {
+            "x": 3271.2,
+            "y": 831.2
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "concurrent-8",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 2.699999999953434
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 2.699999999953434
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": null
+      }
+    },
+    {
+      "round": "concurrent-9",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 3.5999999998603016
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 3.5999999998603016
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1086,
+            "y": 787
+          },
+          "payload": {
+            "x": 2916.8,
+            "y": 629.6
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "concurrent-10",
+      "calls": {
+        "actual": 1.25,
+        "outcomes": [
+          {
+            "order": 1,
+            "dpr": 1.75,
+            "status": "fulfilled",
+            "elapsed": 3
+          },
+          {
+            "order": 2,
+            "dpr": 1.25,
+            "status": "fulfilled",
+            "elapsed": 3.1000000000931323
+          }
+        ]
+      },
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1086,
+            "y": 791
+          },
+          "payload": {
+            "x": 2916.8,
+            "y": 632.8
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    }
+  ],
+  "controlledInput": "Actual IPC: synthetic DPR reports 1.75 then actual DPR. No delay or transport interception.",
+  "restored": {
+    "devicePixelRatio": 1.25,
+    "viewport": {
+      "width": 4096,
+      "height": 1280
+    },
+    "canvas": {
+      "width": 5120,
+      "height": 1600
+    },
+    "position": {
+      "x": -2560,
+      "y": 0
+    },
+    "sample": {
+      "physicalCursor": {
+        "x": 1086,
+        "y": 791
+      },
+      "payload": {
+        "x": 2916.8,
+        "y": 632.8
+      },
+      "inferredX": 1.25,
+      "inferredY": 1.25
+    }
+  },
+  "finishedAt": "2026-09-05T03:35:38.165Z"
+}

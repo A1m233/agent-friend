@@ -1,0 +1,402 @@
+{
+  "schemaVersion": 1,
+  "archiveId": "2026-09-05-pet-input",
+  "createdAtUtc": "2026-09-05T05:09:46Z",
+  "requirement": "049-desktop-feedback-and-diagnostics",
+  "purpose": "Preserve existing investigation input for the approved offline-evidence requirement increment; not a product fix or a new experiment.",
+  "archiveCheckout": {
+    "branch": "feature/049-desktop-feedback-and-diagnostics",
+    "headAtArchival": "c863ac793717f3b2335993a17471b5531d1326e4",
+    "role": "Post-hoc archive location only; not the historical execution revision."
+  },
+  "sourceLocations": {
+    "mapping": "fd7c/agent-friend/<relative-path> denotes the original local worktree. Paths are provenance labels, not portable filesystem dependencies.",
+    "userNameOmitted": true
+  },
+  "integrity": {
+    "algorithm": "SHA-256",
+    "scope": "Every payload and derived note listed in files; MANIFEST.json excludes itself to avoid self-reference.",
+    "copiedOriginalFiles": 14,
+    "derivedFiles": 3,
+    "totalListedFiles": 17,
+    "totalListedBytes": 97114,
+    "originalJsonBytesPreserved": true,
+    "overwritePolicy": "All destination paths absent before copying; no file overwritten; copied source and destination hashes compared.",
+    "gitCheckoutBytePreservation": "Archive-local .gitattributes disables text conversion for all descendant files."
+  },
+  "privacyReview": {
+    "performedBeforeCopy": true,
+    "jsonFilesReviewed": 7,
+    "method": "Parse the seven selected JSON documents; inspect recursive keys and all distinct string values; manually inspect selected harness and probe/diff. Copy only the explicit allowlist.",
+    "sensitiveKeysFound": 0,
+    "credentialsOrHttpHeadersRetained": false,
+    "chatOrModelInputOutputRetained": false,
+    "retainedCategories": [
+      "bounded cursor/viewport coordinates",
+      "DPR values",
+      "selected IPC request ids/methods/times/statuses without headers",
+      "build/commit/process identifiers",
+      "local product and loopback URLs",
+      "measurement source snapshots"
+    ],
+    "excluded": [
+      "application log files",
+      "chat and model output",
+      "screenshots",
+      "prebuilt frontend assets",
+      "Rust binaries and installer",
+      "entire .tmp directory",
+      "user data and avatar models"
+    ],
+    "sharingBoundary": "Private project archive. Review source-location and runtime metadata before external sharing; this is not a public sanitized bundle."
+  },
+  "historicalRuntimeProvenance": {
+    "originalFailure": {
+      "artifact": "raw/pet-input-evidence.json",
+      "buildId": "20260902T153051Z-cb386a6a6e9e-278c9aef",
+      "sourceCommit": "cb386a6a6e9e3f60eb5e9c5d10b76550f95121d9",
+      "sourceDirty": true,
+      "executableAlias": "D:/agent-friend/agent-friend.exe",
+      "webview2Version": "152.0.4191.62",
+      "exactSourceGap": "Dirty package inputs were not archived; source commit alone does not prove byte-identical package contents.",
+      "processId": 42852,
+      "processSessionId": "42852-1788551269837",
+      "nativeLoggerAttachedLocal": "2026-09-05T03:47:52.391+08:00",
+      "exactCaptureTime": null,
+      "captureTimeNote": "The JSON is a main-agent structured excerpt, not an automatic frame stream; it has no exact capture timestamp. Source file modification time is not substituted for event time.",
+      "nativeWriteSummary": [
+        {
+          "localTime": "2026-09-05T03:47:52.611+08:00",
+          "dpr": 1.25
+        },
+        {
+          "localTime": "2026-09-05T03:47:52.613+08:00",
+          "dpr": 1.75
+        }
+      ],
+      "summarySource": "Previously inspected tauri.log and runtime journal correlated by PID/session; log files intentionally excluded.",
+      "conclusionBoundary": "Coordinate mismatch observed; original frontend send sequence and causal trigger remain unconfirmed."
+    },
+    "installedAfterReboot": {
+      "artifacts": [
+        "raw/pet-dpr-reload-2026-09-05T03-35-16-811Z.json",
+        "raw/pet-dpr-transport-2026-09-05T03-35-33-888Z.json"
+      ],
+      "buildId": "20260902T153051Z-cb386a6a6e9e-278c9aef",
+      "sourceCommit": "cb386a6a6e9e3f60eb5e9c5d10b76550f95121d9",
+      "sourceDirty": true,
+      "executableAlias": "D:/agent-friend/agent-friend.exe",
+      "webview2Version": "152.0.4191.62",
+      "exactSourceGap": "Dirty package inputs were not archived; source commit alone does not prove byte-identical package contents.",
+      "processId": 25704,
+      "processSessionId": "25704-1788579133244",
+      "outerIdentitySource": "Main agent's prior process/runtime identity check, provided at archival; not a field added to the original JSON.",
+      "comparisonBoundary": "Already normal after computer restart on WebView2 .62. Reload does not repeat native cold-start resizing; transport uses synthetic DPR reports and is not natural reproduction.",
+      "transportDenominators": {
+        "sequentialRuns": 10,
+        "sequentialUsable": 10,
+        "concurrentRuns": 10,
+        "concurrentUsable": 9,
+        "missingSample": "concurrent-8",
+        "usableFinalDpr": 1.25
+      }
+    },
+    "devRuns": [
+      {
+        "artifact": "raw/pet-dpr-dev-cold-1.json",
+        "baseCommit": "3d62404c2207c2d2307be262c7133c7c05b4d53b",
+        "branch": "fix/pet-input-dpr-desynchronization",
+        "worktreeAlias": "fd7c/agent-friend",
+        "sourceState": "historical base plus uncommitted diagnostic-only App.tsx and petDprDiagnostics.ts overlay",
+        "webview2Version": "152.0.4191.66",
+        "traceConfiguration": "VITE_PET_DPR_TRACE=1 and import.meta.env.DEV; React StrictMode retained",
+        "processId": 4744,
+        "processSessionId": "4744-1788580105645",
+        "mode": "ordinary Tauri dev with Vite",
+        "nativeSetupLocal": "2026-09-05T11:48:27.243+08:00",
+        "nativeFirstDprWriteLocal": "2026-09-05T11:48:33.930+08:00",
+        "setupToFirstWriteMs": 6687,
+        "outerVerification": "Previously checked runtime journal identity/path, process freshness and page target; native writer reported 1.25."
+      },
+      {
+        "artifact": "raw/pet-dpr-dev-cold-2.json",
+        "baseCommit": "3d62404c2207c2d2307be262c7133c7c05b4d53b",
+        "branch": "fix/pet-input-dpr-desynchronization",
+        "worktreeAlias": "fd7c/agent-friend",
+        "sourceState": "historical base plus uncommitted diagnostic-only App.tsx and petDprDiagnostics.ts overlay",
+        "webview2Version": "152.0.4191.66",
+        "traceConfiguration": "VITE_PET_DPR_TRACE=1 and import.meta.env.DEV; React StrictMode retained",
+        "processId": 22804,
+        "processSessionId": "22804-1788580314596",
+        "mode": "ordinary Tauri dev restarted with warm caches",
+        "nativeSetupLocal": "2026-09-05T11:51:55.625+08:00",
+        "nativeFirstDprWriteLocal": "2026-09-05T11:51:59.134+08:00",
+        "setupToFirstWriteMs": 3509,
+        "outerVerification": "Previously checked runtime journal identity/path, process freshness and page target; native writer reported 1.25."
+      },
+      {
+        "artifact": "raw/pet-dpr-dev-prebuilt-1.json",
+        "baseCommit": "3d62404c2207c2d2307be262c7133c7c05b4d53b",
+        "branch": "fix/pet-input-dpr-desynchronization",
+        "worktreeAlias": "fd7c/agent-friend",
+        "sourceState": "historical base plus uncommitted diagnostic-only App.tsx and petDprDiagnostics.ts overlay",
+        "webview2Version": "152.0.4191.66",
+        "traceConfiguration": "VITE_PET_DPR_TRACE=1 and import.meta.env.DEV; React StrictMode retained",
+        "processId": 15620,
+        "processSessionId": "15620-1788580483580",
+        "mode": "Tauri dev with temporary beforeDevCommand set to Vite preview of prebuilt development assets",
+        "prebuiltConfiguration": "NODE_ENV=development VITE_PET_DPR_TRACE=1; static assets originally under fd7c/agent-friend/.tmp/pet-dpr-prebuilt-20260905-1154; no installer generated",
+        "nativeSetupLocal": "2026-09-05T11:54:44.675+08:00",
+        "nativeFirstDprWriteLocal": "2026-09-05T11:54:44.919+08:00",
+        "setupToFirstWriteMs": 244,
+        "outerVerification": "Previously checked runtime journal identity/path, process freshness and page target; native writer reported 1.25.",
+        "notArchived": "Prebuilt assets and temporary Tauri configuration; complete binary/asset identity is not recoverable from this archive alone."
+      },
+      {
+        "artifact": "raw/pet-dpr-dev-retained.json",
+        "baseCommit": "3d62404c2207c2d2307be262c7133c7c05b4d53b",
+        "branch": "fix/pet-input-dpr-desynchronization",
+        "worktreeAlias": "fd7c/agent-friend",
+        "sourceState": "historical base plus uncommitted diagnostic-only App.tsx and petDprDiagnostics.ts overlay",
+        "webview2Version": "152.0.4191.66",
+        "traceConfiguration": "VITE_PET_DPR_TRACE=1 and import.meta.env.DEV; React StrictMode retained",
+        "processId": 10824,
+        "processSessionId": "10824-1788580618186",
+        "mode": "ordinary Vite HMR Tauri dev restored and retained for the user",
+        "processStartLocal": "2026-09-05T11:56:58.134+08:00",
+        "leaseOwnerPid": 4188,
+        "outerVerification": "Main agent supplied the already-performed runtime lease/path/start-time verification during archival; no new runtime query was executed by the archiver."
+      }
+    ]
+  },
+  "displayBoundary": {
+    "nativeUnionPhysical": {
+      "x": -2560,
+      "y": 0,
+      "width": 5120,
+      "height": 1600
+    },
+    "settledViewportCss": {
+      "width": 4096,
+      "height": 1280
+    },
+    "settledCanvasPixels": {
+      "width": 5120,
+      "height": 1600
+    },
+    "settledDevicePixelRatio": 1.25,
+    "originalFailureInferredCursorFeedDpr": 1.75,
+    "note": "Physical union and coordinates are observations, not evidence that a synthetic DPR change reproduces the original startup trigger. Per-run raw values remain authoritative."
+  },
+  "identityInterpretation": {
+    "originalJsonFlag": "runtimeIdentityVerified=false is preserved unchanged.",
+    "meaning": "The read-only collector itself only checks the dev target boundary and records checkout metadata; it does not authenticate the running build.",
+    "outerVerification": "Main-agent lease/process/path/start-time/runtime-journal checks are separately recorded above.",
+    "notClaimed": "A later clean archive commit, entire installation byte equivalence, or standalone end-to-end reproduction."
+  },
+  "harnessMapping": [
+    {
+      "artifacts": [
+        "raw/pet-input-evidence.json"
+      ],
+      "harness": [
+        "harness/pet-input-probe.mjs",
+        "harness/pet-cursor-sample.mjs"
+      ],
+      "status": "Supporting source snapshots for a manually structured excerpt; original tool responses/full cursor stream not separately archived."
+    },
+    {
+      "artifacts": [
+        "raw/pet-dpr-reload-2026-09-05T03-35-16-811Z.json",
+        "raw/pet-dpr-transport-2026-09-05T03-35-33-888Z.json"
+      ],
+      "harness": [
+        "harness/pet-dpr-experiment.mjs"
+      ],
+      "status": "Current historical file predates transport but postdates reload; method field was added between them. Reload's exact earlier generator is not preserved.",
+      "sideEffects": "Historical reload/transport harness mutates the running page or temporary DPR; archival grants no permission to execute it."
+    },
+    {
+      "artifacts": [
+        "raw/pet-dpr-dev-cold-1.json",
+        "raw/pet-dpr-dev-cold-2.json",
+        "raw/pet-dpr-dev-prebuilt-1.json",
+        "raw/pet-dpr-dev-retained.json"
+      ],
+      "harness": [
+        "harness/scripts/pet-input-diagnostics/run.mjs",
+        "harness/scripts/pet-input-diagnostics/run.ps1",
+        "harness/scripts/pet-input-diagnostics/run.sh"
+      ],
+      "overlay": [
+        "overlay/App.tsx.diff",
+        "overlay/frontend/src/pages/pet/petDprDiagnostics.ts"
+      ],
+      "status": "Exact current collector/probe source copies; no automatic rerun. Original relative path assumptions must be restored under separately authorized reproduction."
+    }
+  ],
+  "limitations": [
+    "No new experiment was executed during archival.",
+    "Seven selected JSON files retained verbatim; no newly invented event times or missing values.",
+    "Original failure send ordering is absent; native last-writer mechanism is code-supported but causal trigger not reproduced.",
+    "Two body-unavailable reload request records do not reveal request method/body in the original file.",
+    "All usable comparison samples were normal; concurrent-8 is excluded rather than counted as success.",
+    "WebView2 .62/.66, reboot and startup timing differ; .62 was already normal after reboot, so upgrade is not the sole recovery explanation.",
+    "Current shell journal may no longer cover the original fault; no application/shell logs were copied.",
+    "Only a minimal diagnostic overlay and harness were preserved, not a complete historical deployment bundle."
+  ],
+  "files": [
+    {
+      "path": "raw/pet-input-evidence.json",
+      "kind": "historical-structured-excerpt",
+      "source": "fd7c/agent-friend/.tmp/pet-input-evidence.json",
+      "sha256": "dd66fea0647f0d3f857ef7c2c8ee52d5f7917049259ae66384fea99df1455799",
+      "bytes": 1309,
+      "sourceLastWriteTimeUtc": "2026-09-04T19:51:19.5101493Z",
+      "copyVerified": true
+    },
+    {
+      "path": "raw/pet-dpr-reload-2026-09-05T03-35-16-811Z.json",
+      "kind": "original-observation-json",
+      "source": "fd7c/agent-friend/.tmp/pet-dpr-reload-2026-09-05T03-35-16-811Z.json",
+      "sha256": "47afe89856231da363414bdfa51e5b154aa1405f8239ef8591071cd1e99ed1b3",
+      "bytes": 3630,
+      "sourceLastWriteTimeUtc": "2026-09-05T03:35:25.1841360Z",
+      "copyVerified": true
+    },
+    {
+      "path": "raw/pet-dpr-transport-2026-09-05T03-35-33-888Z.json",
+      "kind": "original-observation-json",
+      "source": "fd7c/agent-friend/.tmp/pet-dpr-transport-2026-09-05T03-35-33-888Z.json",
+      "sha256": "f6c3d7dc46f82b9eccc0efe5a89168c7de57b750cad223224343cd924726fd35",
+      "bytes": 34581,
+      "sourceLastWriteTimeUtc": "2026-09-05T03:35:38.1908749Z",
+      "copyVerified": true
+    },
+    {
+      "path": "raw/pet-dpr-dev-cold-1.json",
+      "kind": "original-observation-json",
+      "source": "fd7c/agent-friend/.tmp/pet-dpr-dev-cold-1.json",
+      "sha256": "0f0ae103a52f344444774d0dec6ba2fd284e439562deb227c9480d27a4193ff0",
+      "bytes": 4824,
+      "sourceLastWriteTimeUtc": "2026-09-05T03:48:55.3576227Z",
+      "copyVerified": true
+    },
+    {
+      "path": "raw/pet-dpr-dev-cold-2.json",
+      "kind": "original-observation-json",
+      "source": "fd7c/agent-friend/.tmp/pet-dpr-dev-cold-2.json",
+      "sha256": "10a35b3577eb4d3cfa6bc83d20b928c23962cf6477ad4d39b8f13cb2cdffdf16",
+      "bytes": 4797,
+      "sourceLastWriteTimeUtc": "2026-09-05T03:52:09.4678633Z",
+      "copyVerified": true
+    },
+    {
+      "path": "raw/pet-dpr-dev-prebuilt-1.json",
+      "kind": "original-observation-json",
+      "source": "fd7c/agent-friend/.tmp/pet-dpr-dev-prebuilt-1.json",
+      "sha256": "083445d4b423b609881d250757b16baae0cc7a1836c077ba81e851d9d0dc5aea",
+      "bytes": 5131,
+      "sourceLastWriteTimeUtc": "2026-09-05T03:55:20.5660128Z",
+      "copyVerified": true
+    },
+    {
+      "path": "raw/pet-dpr-dev-retained.json",
+      "kind": "original-observation-json",
+      "source": "fd7c/agent-friend/.tmp/pet-dpr-dev-retained.json",
+      "sha256": "776d15ad074cf8fb6b09ed9ff6fa7c65e69d83459f41ba31239bf645ee4800c0",
+      "bytes": 4791,
+      "sourceLastWriteTimeUtc": "2026-09-05T03:57:33.7607658Z",
+      "copyVerified": true
+    },
+    {
+      "path": "harness/pet-dpr-experiment.mjs",
+      "kind": "historical-harness",
+      "source": "fd7c/agent-friend/.tmp/pet-dpr-experiment.mjs",
+      "sha256": "9b693d955a6b1a59eebed67aafc4a17c77907b99d71582a6d85e9d340520e5bd",
+      "bytes": 6147,
+      "sourceLastWriteTimeUtc": "2026-09-05T03:35:33.3183720Z",
+      "copyVerified": true
+    },
+    {
+      "path": "harness/pet-input-probe.mjs",
+      "kind": "historical-harness",
+      "source": "fd7c/agent-friend/.tmp/pet-input-probe.mjs",
+      "sha256": "00492c5022a2d1f47fcfe21b4b047dd0e513f01627f66f437209444ae400ed36",
+      "bytes": 2942,
+      "sourceLastWriteTimeUtc": "2026-09-04T19:49:58.2848428Z",
+      "copyVerified": true
+    },
+    {
+      "path": "harness/pet-cursor-sample.mjs",
+      "kind": "historical-harness",
+      "source": "fd7c/agent-friend/.tmp/pet-cursor-sample.mjs",
+      "sha256": "f78c7e6b68e35bc47f094c763a1d1e089b27e3c17c5b6c9890dfbdda993538fa",
+      "bytes": 2778,
+      "sourceLastWriteTimeUtc": "2026-09-04T19:50:54.4345886Z",
+      "copyVerified": true
+    },
+    {
+      "path": "harness/scripts/pet-input-diagnostics/run.mjs",
+      "kind": "dev-readonly-collector",
+      "source": "fd7c/agent-friend/scripts/pet-input-diagnostics/run.mjs",
+      "sha256": "d0eb4fa0e56d267086e9a4763126430be400b0ac61b835a979e3f6efb4f951d7",
+      "bytes": 14428,
+      "sourceLastWriteTimeUtc": "2026-09-05T03:45:17.7289311Z",
+      "copyVerified": true
+    },
+    {
+      "path": "harness/scripts/pet-input-diagnostics/run.ps1",
+      "kind": "dev-readonly-collector",
+      "source": "fd7c/agent-friend/scripts/pet-input-diagnostics/run.ps1",
+      "sha256": "4be64a85aac87077a029445bcaf29889f44ff6bde51f748dfe70e43ab13e8817",
+      "bytes": 400,
+      "sourceLastWriteTimeUtc": "2026-09-05T03:45:17.7289311Z",
+      "copyVerified": true
+    },
+    {
+      "path": "harness/scripts/pet-input-diagnostics/run.sh",
+      "kind": "dev-readonly-collector",
+      "source": "fd7c/agent-friend/scripts/pet-input-diagnostics/run.sh",
+      "sha256": "51f5e3674257da220e88fc388fe3f2459479108f392c9cddaad5b4590e275df5",
+      "bytes": 248,
+      "sourceLastWriteTimeUtc": "2026-09-05T03:45:17.7301849Z",
+      "copyVerified": true
+    },
+    {
+      "path": "overlay/frontend/src/pages/pet/petDprDiagnostics.ts",
+      "kind": "temporary-dev-probe",
+      "source": "fd7c/agent-friend/frontend/src/pages/pet/petDprDiagnostics.ts",
+      "sha256": "72618419d3bd8b6a409de2cf0cccec5a8a44b01718dd98385f68cf416497e38b",
+      "bytes": 1648,
+      "sourceLastWriteTimeUtc": "2026-09-05T03:41:24.9157792Z",
+      "copyVerified": true
+    },
+    {
+      "path": "overlay/App.tsx.diff",
+      "kind": "derived-exact-git-patch",
+      "source": "fd7c/agent-friend/frontend/src/pages/pet/App.tsx",
+      "sourceCommand": "git diff --no-ext-diff --full-index --binary 3d62404c2207c2d2307be262c7133c7c05b4d53b -- frontend/src/pages/pet/App.tsx",
+      "sourceRawFileSha256": "0b12c9b9e9404319d968eaa25623c6e01b7fc212765d83b976b463509b86242d",
+      "baseGitBlob": "c5ee51b8997e2adc9149d1e74bc8dc21138e5064",
+      "overlayGitBlob": "edaabbb8e54d7e2dc58b0c25da01b0587d7ca89e",
+      "sha256": "90df5d2460e7a3c8828e2c6ed296094c3e77275e69a9690b11f0e683849a9265",
+      "bytes": 3408,
+      "note": "Patch produced from the existing overlay; LF patch text. No product file was changed by archival."
+    },
+    {
+      "path": "README.md",
+      "kind": "derived-provenance-note",
+      "source": "Current task's already-recorded observations; not a new runtime collection",
+      "sha256": "fbe366104c71a8b1727369a699196599dd5c09439b7e7aa882ec07ca7a64f118",
+      "bytes": 5965
+    },
+    {
+      "path": ".gitattributes",
+      "sha256": "9a5aa9f274d2e2b961320e343248b4eeb89362f7e633e224040fc060933b5af7",
+      "bytes": 87,
+      "kind": "archive-byte-preservation-metadata",
+      "source": "Derived archive-local Git attributes; no product rules changed"
+    }
+  ]
+}

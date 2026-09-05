@@ -1,0 +1,173 @@
+{
+  "schemaVersion": 1,
+  "capturedAtUtc": "2026-09-05T05:56:24.0683471Z",
+  "baseCommit": "c863ac793717f3b2335993a17471b5531d1326e4",
+  "branch": "feature/049-desktop-feedback-and-diagnostics",
+  "sourceState": "uncommitted-overlay",
+  "scope": "Changed implementation, consumer and measurement harness inputs; not a packaged build identity or full source snapshot",
+  "files": [
+    {
+      "path": ".cursor/skills/inspect-agent-friend-diagnostics/references/bundle-format-v1.md",
+      "bytes": 28482,
+      "sha256": "312aedf3a3740d08091ddf51cbb5920041832bff7249bbcf0fd2c530db07f952",
+      "modifiedAtUtc": "2026-09-05T05:35:49.3743911Z"
+    },
+    {
+      "path": ".cursor/skills/inspect-agent-friend-diagnostics/scripts/inspect_bundle.py",
+      "bytes": 76057,
+      "sha256": "d1f726c6ab077a6e7e0b1383db22c18a750c376be7cfc7143fe31f372cda6d79",
+      "modifiedAtUtc": "2026-09-05T05:41:37.1258126Z"
+    },
+    {
+      "path": ".cursor/skills/inspect-agent-friend-diagnostics/SKILL.md",
+      "bytes": 7981,
+      "sha256": "9fffe0c67b609e561106b5dd1678a6ce8f2daa8324d650ad4aef19af84c73e44",
+      "modifiedAtUtc": "2026-09-05T05:26:30.3750448Z"
+    },
+    {
+      "path": "frontend/src-tauri/src/diagnostics/bundle-contract-v1.json",
+      "bytes": 3687,
+      "sha256": "b0ad77c464540557b7ac09925657f606b5c2c337a8cc98feb0d1c70fe9886f73",
+      "modifiedAtUtc": "2026-09-05T05:26:13.1367794Z"
+    },
+    {
+      "path": "frontend/src-tauri/src/diagnostics/contract.rs",
+      "bytes": 11225,
+      "sha256": "06a2b2bc8e3bc7639f44d80b3eef2ab70e1b33a5ff990af04e1aa34b55c2cdce",
+      "modifiedAtUtc": "2026-09-05T05:30:18.5336362Z"
+    },
+    {
+      "path": "frontend/src-tauri/src/diagnostics/mod.rs",
+      "bytes": 65175,
+      "sha256": "130e7a7f89305d0400ded8df4bae1e1cce375e96edada870c6c02a978d80a0d9",
+      "modifiedAtUtc": "2026-09-05T05:40:54.5949632Z"
+    },
+    {
+      "path": "frontend/src-tauri/src/lib.rs",
+      "bytes": 86251,
+      "sha256": "90c9c4ff63b431ea6be393c1cd576f6c682f8beaa76b8da71f4415cc443b4a55",
+      "modifiedAtUtc": "2026-09-05T05:46:38.5887046Z"
+    },
+    {
+      "path": "frontend/src-tauri/src/paths.rs",
+      "bytes": 12127,
+      "sha256": "0507d83c0aeb302d8e206bbbb11c91378ecca8b1fbf01d127ef4259ccb3ac4b0",
+      "modifiedAtUtc": "2026-09-05T05:28:00.2724801Z"
+    },
+    {
+      "path": "frontend/src-tauri/src/pet_cursor_passthrough.rs",
+      "bytes": 9258,
+      "sha256": "e2d4d6bdfdcdc240346dc7dac7687ea12bf96b9118662a31d1fd0e8bf647b379",
+      "modifiedAtUtc": "2026-09-05T05:49:58.2984287Z"
+    },
+    {
+      "path": "frontend/src-tauri/src/pet_input_evidence/export.rs",
+      "bytes": 27007,
+      "sha256": "6b1241dad8fcdeadf07f99c113421cccf81638bc00d873656d32b971ae27ea78",
+      "modifiedAtUtc": "2026-09-05T05:42:13.6058513Z"
+    },
+    {
+      "path": "frontend/src-tauri/src/pet_input_evidence/incidents.rs",
+      "bytes": 13915,
+      "sha256": "8950e05ff8aab9c80dafe49fed7707b26e5340da339b26ff8510c3a5d467b62e",
+      "modifiedAtUtc": "2026-09-05T05:49:58.3491921Z"
+    },
+    {
+      "path": "frontend/src-tauri/src/pet_input_evidence/integration.rs",
+      "bytes": 8659,
+      "sha256": "d4397c602b65e9e0fa941829438c65fcf71e26039cdd25a8e9c6c045689ec436",
+      "modifiedAtUtc": "2026-09-05T05:38:33.0756353Z"
+    },
+    {
+      "path": "frontend/src-tauri/src/pet_input_evidence/journal.rs",
+      "bytes": 21726,
+      "sha256": "eb243f13af342f1a94dc8b463d722eb9daba917fba0d5ae515437447f3005ee3",
+      "modifiedAtUtc": "2026-09-05T05:42:13.6160690Z"
+    },
+    {
+      "path": "frontend/src-tauri/src/pet_input_evidence/manager.rs",
+      "bytes": 25938,
+      "sha256": "decaaea85b2a919144d2d9fafdd8970130ac4a73e09ffce2a2e5db6e7e7ba822",
+      "modifiedAtUtc": "2026-09-05T05:49:58.3825232Z"
+    },
+    {
+      "path": "frontend/src-tauri/src/pet_input_evidence/mod.rs",
+      "bytes": 328,
+      "sha256": "44eebe20a58ce5fdd65efe830624166c24153615b2b71600ae7f68dbeeb778b5",
+      "modifiedAtUtc": "2026-09-05T05:41:20.6230917Z"
+    },
+    {
+      "path": "frontend/src-tauri/src/pet_input_evidence/model.rs",
+      "bytes": 9547,
+      "sha256": "3068cfe2ffb591645ddf18f7b9d26a1414162236b7cf7bcf463592799893325d",
+      "modifiedAtUtc": "2026-09-05T05:34:41.2563343Z"
+    },
+    {
+      "path": "frontend/src-tauri/src/pet_input_evidence/tests.rs",
+      "bytes": 22277,
+      "sha256": "3a81ab457d202b7c8c62f083b1741fabfcaaa4219e1a1dd8cd33721313feb8e8",
+      "modifiedAtUtc": "2026-09-05T05:49:58.4165831Z"
+    },
+    {
+      "path": "frontend/src/pages/pet/App.tsx",
+      "bytes": 39120,
+      "sha256": "c3c275ccd133284d2ed2a479b82f9936ac80fb0d8319fff330a785d6ac5c0085",
+      "modifiedAtUtc": "2026-09-05T05:29:09.0357493Z"
+    },
+    {
+      "path": "frontend/src/pages/pet/inputEvidence/collector.test.ts",
+      "bytes": 10069,
+      "sha256": "825055333bacf0ca52f560502b0cdb227265eae19a2866a8bcc6d55978adb37a",
+      "modifiedAtUtc": "2026-09-05T05:33:45.3427953Z"
+    },
+    {
+      "path": "frontend/src/pages/pet/inputEvidence/collector.ts",
+      "bytes": 10995,
+      "sha256": "30b1548b3873f9f6125ae2c719bde84e737c142ed929041e1642ccac4b53b300",
+      "modifiedAtUtc": "2026-09-05T05:33:45.3407946Z"
+    },
+    {
+      "path": "frontend/src/pages/pet/inputEvidence/index.ts",
+      "bytes": 2927,
+      "sha256": "3f8fb078fc25fd3fca356f61f6a6541fe0f34982da67b091d21b898f30a18ef5",
+      "modifiedAtUtc": "2026-09-05T05:29:09.0348500Z"
+    },
+    {
+      "path": "frontend/src/pages/pet/inputEvidence/types.ts",
+      "bytes": 2015,
+      "sha256": "2bb27a61b0a9c88608671302d68038f925296f0f8eed2f67affc76dc2a19a769",
+      "modifiedAtUtc": "2026-09-05T05:28:12.7417429Z"
+    },
+    {
+      "path": "frontend/src/pages/pet/usePetPassthrough.test.ts",
+      "bytes": 9850,
+      "sha256": "2ece34b2d7291fe1b3c5cd702f62369bbc49a7de8a4f83a6870f134e9f13d549",
+      "modifiedAtUtc": "2026-09-05T05:46:51.6609938Z"
+    },
+    {
+      "path": "frontend/src/pages/pet/usePetPassthrough.ts",
+      "bytes": 10471,
+      "sha256": "7a21ec9a68ddf96bcea29efb07ccc1971c0df15c00edf8585a627a9aac8283e9",
+      "modifiedAtUtc": "2026-09-05T05:29:09.0372731Z"
+    },
+    {
+      "path": "scripts/pet-input-evidence-smoke/run.mjs",
+      "bytes": 18379,
+      "sha256": "426e35ef8caeff026e37558568a43953209303444ab6d5875aecbf48366e41e3",
+      "modifiedAtUtc": "2026-09-05T05:54:23.4218932Z"
+    },
+    {
+      "path": "scripts/pet-input-evidence-smoke/run.ps1",
+      "bytes": 529,
+      "sha256": "8b3b723c1916bf50f6f8e916162295e5db210189226b0741b17191da5ded29b3",
+      "modifiedAtUtc": "2026-09-05T05:54:23.4233978Z"
+    },
+    {
+      "path": "scripts/pet-input-evidence-smoke/run.sh",
+      "bytes": 555,
+      "sha256": "97bf119b94e62a4a04d424226185cf0ede2cfbc118f00c1cb5c621b8465c5aaa",
+      "modifiedAtUtc": "2026-09-05T05:54:23.4233978Z"
+    }
+  ]
+}
+

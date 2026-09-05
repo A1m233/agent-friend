@@ -1,0 +1,223 @@
+{
+  "schemaVersion": 1,
+  "capturedAtUtc": "2026-09-05T03:57:33.754Z",
+  "sourceCheckout": {
+    "branch": "fix/pet-input-dpr-desynchronization",
+    "head": "3d62404c2207c2d2307be262c7133c7c05b4d53b"
+  },
+  "runtimeIdentityVerified": false,
+  "evidenceScope": "Read-only dev WebView DPR trace and stationary native cursor bracket; checkout metadata alone does not bind the running build.",
+  "targetUrl": "http://localhost:1420/pet.html",
+  "traceAvailable": true,
+  "trace": {
+    "version": 1,
+    "startedAt": 1788580622365,
+    "entries": [
+      {
+        "seq": 1,
+        "timestampMs": 1788580622716,
+        "elapsedMs": 351,
+        "phase": "initial-read",
+        "actualDpr": 1.25,
+        "width": 4096,
+        "height": 1280,
+        "details": {
+          "dpr": 1.25
+        }
+      },
+      {
+        "seq": 2,
+        "timestampMs": 1788580622716,
+        "elapsedMs": 351,
+        "phase": "initial-read",
+        "actualDpr": 1.25,
+        "width": 4096,
+        "height": 1280,
+        "details": {
+          "dpr": 1.25
+        }
+      },
+      {
+        "seq": 3,
+        "timestampMs": 1788580622731,
+        "elapsedMs": 366.20000000018626,
+        "phase": "observer-setup",
+        "actualDpr": 1.25,
+        "width": 4096,
+        "height": 1280,
+        "details": {}
+      },
+      {
+        "seq": 4,
+        "timestampMs": 1788580622731,
+        "elapsedMs": 366.40000000037253,
+        "phase": "viewport-read",
+        "actualDpr": 1.25,
+        "width": 4096,
+        "height": 1280,
+        "details": {
+          "dpr": 1.25,
+          "reason": "effect-init"
+        }
+      },
+      {
+        "seq": 5,
+        "timestampMs": 1788580622735,
+        "elapsedMs": 370,
+        "phase": "report-send",
+        "actualDpr": 1.25,
+        "width": 4096,
+        "height": 1280,
+        "details": {
+          "dpr": 1.25
+        }
+      },
+      {
+        "seq": 6,
+        "timestampMs": 1788580622737,
+        "elapsedMs": 372.60000000009313,
+        "phase": "observer-cleanup",
+        "actualDpr": 1.25,
+        "width": 4096,
+        "height": 1280,
+        "details": {}
+      },
+      {
+        "seq": 7,
+        "timestampMs": 1788580622742,
+        "elapsedMs": 377.20000000018626,
+        "phase": "observer-setup",
+        "actualDpr": 1.25,
+        "width": 4096,
+        "height": 1280,
+        "details": {}
+      },
+      {
+        "seq": 8,
+        "timestampMs": 1788580622742,
+        "elapsedMs": 377.20000000018626,
+        "phase": "viewport-read",
+        "actualDpr": 1.25,
+        "width": 4096,
+        "height": 1280,
+        "details": {
+          "dpr": 1.25,
+          "reason": "effect-init"
+        }
+      },
+      {
+        "seq": 9,
+        "timestampMs": 1788580622743,
+        "elapsedMs": 378.60000000009313,
+        "phase": "report-send",
+        "actualDpr": 1.25,
+        "width": 4096,
+        "height": 1280,
+        "details": {
+          "dpr": 1.25
+        }
+      },
+      {
+        "seq": 10,
+        "timestampMs": 1788580622865,
+        "elapsedMs": 500.5,
+        "phase": "report-ok",
+        "actualDpr": 1.25,
+        "width": 4096,
+        "height": 1280,
+        "details": {
+          "reportSeq": 5
+        }
+      },
+      {
+        "seq": 11,
+        "timestampMs": 1788580622866,
+        "elapsedMs": 500.90000000037253,
+        "phase": "report-ok",
+        "actualDpr": 1.25,
+        "width": 4096,
+        "height": 1280,
+        "details": {
+          "reportSeq": 9
+        }
+      }
+    ]
+  },
+  "devicePixelRatio": 1.25,
+  "viewport": {
+    "width": 4096,
+    "height": 1280
+  },
+  "canvas": {
+    "width": 5120,
+    "height": 1600
+  },
+  "samplingStatus": "stable",
+  "inferredFeedDpr": 1.25,
+  "stableSample": {
+    "index": 1,
+    "before": {
+      "position": {
+        "x": -2560,
+        "y": 0
+      },
+      "cursor": {
+        "x": 1401,
+        "y": 995
+      }
+    },
+    "after": {
+      "position": {
+        "x": -2560,
+        "y": 0
+      },
+      "cursor": {
+        "x": 1401,
+        "y": 995
+      }
+    },
+    "beforeDpr": 1.25,
+    "afterDpr": 1.25,
+    "feed": {
+      "x": 3168.8,
+      "y": 796
+    },
+    "eventCount": 5,
+    "inferredFeedDpr": 1.25,
+    "status": "stable"
+  },
+  "attempts": [
+    {
+      "index": 1,
+      "before": {
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "cursor": {
+          "x": 1401,
+          "y": 995
+        }
+      },
+      "after": {
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "cursor": {
+          "x": 1401,
+          "y": 995
+        }
+      },
+      "beforeDpr": 1.25,
+      "afterDpr": 1.25,
+      "feed": {
+        "x": 3168.8,
+        "y": 796
+      },
+      "eventCount": 5,
+      "inferredFeedDpr": 1.25,
+      "status": "stable"
+    }
+  ]
+}

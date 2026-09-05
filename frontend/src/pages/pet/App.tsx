@@ -23,6 +23,7 @@ import { ActionBar } from "./ActionBar";
 import { shouldRenderActionBar } from "./actionBarVisibility";
 import { runNativeContextMenuPopup } from "./nativeContextMenuLifecycle";
 import { usePetPassthrough } from "./usePetPassthrough";
+import { petInputEvidence } from "./inputEvidence";
 import {
   resolvePetDisplayProfile,
   type PetPoint,
@@ -318,6 +319,7 @@ export function PetApp() {
     let initialPlacementRequested = false;
     const syncWebviewDpr = () => {
       const nextDpr = readWebviewDevicePixelRatio();
+      petInputEvidence.display(window.devicePixelRatio, window.innerWidth, window.innerHeight);
       setWebviewDpr((prev) =>
         Math.abs(prev - nextDpr) < 0.001 ? prev : nextDpr,
       );
@@ -768,9 +770,13 @@ export function PetApp() {
   // DPR 由上面的 WebView display context 统一观测；这里仅把当前快照分发给 Rust。
   useEffect(() => {
     if (!isTauri()) return;
-    void invoke("set_pet_webview_dpr", { dpr: displayContext.dpr }).catch(
-      (e: unknown) => console.warn("[pet] set_pet_webview_dpr failed:", e),
-    );
+    const diagnostic = petInputEvidence.dprReport(displayContext.dpr);
+    void invoke("set_pet_webview_dpr", { dpr: displayContext.dpr, diagnostic })
+      .then(() => petInputEvidence.acknowledge("dpr-ack", diagnostic, true))
+      .catch((e: unknown) => {
+        petInputEvidence.acknowledge("dpr-ack", diagnostic, false);
+        console.warn("[pet] set_pet_webview_dpr failed:", e);
+      });
   }, [displayContext.dpr]);
 
   // 18 · 启动 push event 订阅 → petStateStore.ingest（与 015 startPetBubbleSubscriber 双独立 listen 对称）

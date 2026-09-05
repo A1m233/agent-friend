@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "derivedBy": "inspect_bundle.py --json, allowlisted summary selection",
+  "bundle": "agent-friend-diagnostics-20260905-135458.zip",
+  "archive": {
+    "compressedBytes": 1453849,
+    "crcOk": true,
+    "crcVerified": true,
+    "duplicateEntries": [],
+    "entryCount": 30,
+    "uncompressedBytes": 29223926,
+    "unsafeEntries": []
+  },
+  "formatVersion": 1,
+  "schemaRevision": 10,
+  "outcome": "partial",
+  "failures": [
+    {
+      "collection": "webview2-render-evidence",
+      "item": null,
+      "message": "Windows desktop capture failed: BitBlt virtual desktop failed: 拒绝访问。 (0x80070005)"
+    }
+  ],
+  "includedSessionCount": 0,
+  "unhandledCapabilities": [],
+  "warnings": [],
+  "petInputEvidence": {
+    "artifacts": [
+      {
+        "bytes": 149399,
+        "entry": "diagnostics/pet-input/history-001.jsonl",
+        "firstRecordSeq": 0,
+        "firstRecordedAt": "2026-09-05T05:52:01.42Z",
+        "frozenBytes": 149399,
+        "kind": "history",
+        "lastRecordSeq": 301,
+        "lastRecordedAt": "2026-09-05T05:53:11.725Z",
+        "processSessionId": "2940-1788587521402",
+        "status": "available"
+      },
+      {
+        "bytes": 139836,
+        "entry": "diagnostics/pet-input/history-002.jsonl",
+        "firstRecordSeq": 0,
+        "firstRecordedAt": "2026-09-05T05:53:54.723Z",
+        "frozenBytes": 139836,
+        "kind": "history",
+        "lastRecordSeq": 282,
+        "lastRecordedAt": "2026-09-05T05:54:55.549Z",
+        "processSessionId": "18208-1788587634704",
+        "status": "available"
+      }
+    ],
+    "counters": {
+      "aggregated": 6605,
+      "dropped": 18,
+      "evicted": 0,
+      "expired": 0,
+      "invalid": 0,
+      "metadataFolded": 0,
+      "rateLimited": 18,
+      "writeFailed": 0
+    },
+    "current": {
+      "dropped": 0,
+      "invalid": 0,
+      "present": true,
+      "processSessionId": "18208-1788587634704",
+      "queuedBytes": 0,
+      "scope": "export-time",
+      "workerStopped": false,
+      "writeFailed": 0
+    },
+    "durability": {
+      "lastDroppedRange": {
+        "firstIngressSeq": 267,
+        "interior": "not-necessarily-contiguous",
+        "lastIngressSeq": 267,
+        "processSessionId": "18208-1788587634704"
+      },
+      "lastSyncRequested": {
+        "processSessionId": "18208-1788587634704",
+        "recordSeq": 282,
+        "recordedAt": "2026-09-05T05:54:55.549Z"
+      },
+      "lastWritten": {
+        "processSessionId": "18208-1788587634704",
+        "recordSeq": 282,
+        "recordedAt": "2026-09-05T05:54:55.549Z"
+      },
+      "normalEnd": false,
+      "normalFlushMs": 1000,
+      "scope": "persisted-only",
+      "syncRequestMs": 5000,
+      "tailCompleteness": "unknown"
+    },
+    "entryCount": 4,
+    "evictions": [],
+    "evidence": "collected",
+    "exportBytes": 291586,
+    "failureCount": 0,
+    "gaps": [
+      {
+        "count": 18,
+        "kind": "dropped",
+        "scope": "collector"
+      },
+      {
+        "count": 18,
+        "kind": "rate-limited",
+        "scope": "collector"
+      },
+      {
+        "count": 6605,
+        "kind": "truncated",
+        "scope": "collector"
+      },
+      {
+        "kind": "unknown",
+        "scope": "collector"
+      }
+    ],
+    "historyRecordCount": 585,
+    "identities": [
+      {
+        "identity": {
+          "appVersion": "0.3.0",
+          "buildMode": "debug",
+          "identityComplete": false,
+          "platform": "windows",
+          "webviewVersion": "152.0.4191.66"
+        },
+        "processSessionId": "2940-1788587521402"
+      },
+      {
+        "identity": {
+          "appVersion": "0.3.0",
+          "buildMode": "debug",
+          "identityComplete": false,
+          "platform": "windows",
+          "webviewVersion": "152.0.4191.66"
+        },
+        "processSessionId": "18208-1788587634704"
+      }
+    ],
+    "incidentContextRecordCount": 0,
+    "invalidArtifactCount": 0,
+    "limits": {
+      "eventBytes": 4096,
+      "historyAgeDays": 7,
+      "historyBytes": 16777216,
+      "incidentAgeDays": 30,
+      "incidentBytes": 8388608,
+      "incidentCount": 32,
+      "incidentFileBytes": 262144,
+      "queueBytes": 524288,
+      "queueEntries": 256,
+      "segmentBytes": 2097152,
+      "totalBytes": 26214400
+    },
+    "missingReferencedEntries": [],
+    "retainedIncidents": [],
+    "schemaVersion": 1,
+    "status": "available",
+    "unlistedEntryCount": 0
+  }
+}
+

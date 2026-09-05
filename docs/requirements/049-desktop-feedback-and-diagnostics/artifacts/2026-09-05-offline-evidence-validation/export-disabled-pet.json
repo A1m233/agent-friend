@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "command": "export",
+  "startedAt": "2026-09-05T05:54:53.268Z",
+  "status": "complete",
+  "actions": [
+    {
+      "button": "settings",
+      "rect": {
+        "x": 8,
+        "y": 116,
+        "width": 223.1999969482422,
+        "height": 32
+      },
+      "point": {
+        "x": 119.5999984741211,
+        "y": 132
+      },
+      "clickedAt": "2026-09-05T05:54:53.360Z"
+    },
+    {
+      "button": "feedback",
+      "rect": {
+        "x": 248,
+        "y": 680,
+        "width": 183.1999969482422,
+        "height": 32
+      },
+      "point": {
+        "x": 339.5999984741211,
+        "y": 696
+      },
+      "clickedAt": "2026-09-05T05:54:53.833Z"
+    },
+    {
+      "button": "generate",
+      "rect": {
+        "x": 886,
+        "y": 647.0750122070312,
+        "width": 102,
+        "height": 36
+      },
+      "point": {
+        "x": 937,
+        "y": 665.0750122070312
+      },
+      "clickedAt": "2026-09-05T05:54:58.985Z"
+    }
+  ],
+  "evidenceLevel": "desktop interaction + generated ZIP existence",
+  "runtimeIdentityCaveat": "Caller must separately verify the dev lease, worktree and loaded source freshness.",
+  "capturesScreenshot": false,
+  "readsConversationContent": false,
+  "controlledFixture": {
+    "kind": "pet-script-execution-disabled",
+    "injectionLayer": "CDP Emulation",
+    "naturalFailureReproduced": false,
+    "protocol": "https://chromedevtools.github.io/devtools-protocol/tot/Emulation/#method-setScriptExecutionDisabled",
+    "limitation": "Controlled page-script unavailability, not a natural renderer failure or DPR-root-cause reproduction.",
+    "restoration": {
+      "attempted": true,
+      "commandAcknowledged": true,
+      "requestedAt": "2026-09-05T05:55:01.596Z",
+      "acknowledgedAt": "2026-09-05T05:55:01.596Z"
+    },
+    "target": {
+      "label": "pet",
+      "targetUrl": "http://localhost:1420/pet.html",
+      "documentVisibility": "visible"
+    },
+    "disableRequestedAt": "2026-09-05T05:54:53.317Z",
+    "disableCommandAcknowledged": true
+  },
+  "target": {
+    "label": "chat",
+    "targetUrl": "http://localhost:1420/chat.html",
+    "documentVisibility": "visible"
+  },
+  "lastButtonProbe": {
+    "button": "generate",
+    "count": 1,
+    "disabled": false,
+    "rect": {
+      "x": 886,
+      "y": 647.0750122070312,
+      "width": 102,
+      "height": 36
+    },
+    "point": {
+      "x": 937,
+      "y": 665.0750122070312
+    },
+    "hit": true,
+    "inViewport": true,
+    "scroll": {
+      "x": 740,
+      "y": 360,
+      "deltaY": 600
+    }
+  },
+  "consent": {
+    "selectedSessionCount": 0,
+    "includeAttachmentOriginals": false,
+    "manualRenderEvidence": false,
+    "automaticRenderEvidenceIncluded": true,
+    "renderControlPresent": true
+  },
+  "exportRequestedAt": "2026-09-05T05:54:58.749Z",
+  "generationClickAttempted": true,
+  "result": {
+    "outcome": "partial",
+    "path": "C:\\Users\\example-user\\Downloads\\agent-friend-diagnostics-20260905-135458.zip",
+    "bytes": 1457931,
+    "verifiedAt": "2026-09-05T05:55:01.596Z"
+  },
+  "completedAt": "2026-09-05T05:55:01.597Z"
+}

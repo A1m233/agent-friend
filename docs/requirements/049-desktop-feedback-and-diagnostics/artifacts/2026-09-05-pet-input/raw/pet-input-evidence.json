@@ -1,0 +1,24 @@
+{
+  "scope": "Installed pet WebView input diagnosis; no product code or persistent configuration changes",
+  "buildId": "20260902T153051Z-cb386a6a6e9e-278c9aef",
+  "processId": 42852,
+  "page": "http://tauri.localhost/pet.html",
+  "evidenceLevel": "desktop DOM via CDP and native read-only window APIs",
+  "actualDevicePixelRatio": 1.25,
+  "reactDisplayContextDpr": 1.25,
+  "inferredCursorFeedDpr": 1.75,
+  "nativeWindowPosition": { "x": -2560, "y": 0 },
+  "nativeWindowSize": { "width": 5120, "height": 1600 },
+  "webviewViewport": { "width": 4096, "height": 1280 },
+  "canvasSize": { "width": 5120, "height": 1600 },
+  "spriteBounds": { "x": 3932.6564102564107, "y": 749.2, "w": 75.48717948717967, "h": 96 },
+  "stationarySample": {
+    "physicalCursor": { "x": 2402, "y": 999 },
+    "observedCursorFeed": { "x": 2835.4285714285716, "y": 570.8571428571429 },
+    "observedInsideSprite": false,
+    "correctedCoordinates": { "x": 3969.6, "y": 799.2 },
+    "correctedAlphaHit": true
+  },
+  "observation": "1434 cursor events received in 25 seconds, none inside sprite bounds. Direct alpha probes inside sprite find opaque pixels.",
+  "conclusion": "Confirmed cursor feed and rendered avatar use different coordinate scales. Cause of stale native DPR remains unconfirmed; no runtime correction was applied."
+}
