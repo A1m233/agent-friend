@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from .stream_events import LLMUsage
@@ -192,4 +193,41 @@ def extract_stream_usage(chunk: Any) -> LLMUsage | None:
     return None
 
 
-__all__ = ["extract_stream_usage", "extract_usage", "usage_field"]
+def extract_responses_usage(response: Any) -> LLMUsage | None:
+    """Responses input_tokens is inclusive; never add cache buckets to it."""
+    usage = usage_field(response, "usage")
+    if usage is None:
+        return None
+    details = usage_field(usage, "input_tokens_details")
+    normalized = _normalize_usage(
+        {
+            "prompt_tokens": usage_field(usage, "input_tokens"),
+            "completion_tokens": usage_field(usage, "output_tokens"),
+            "total_tokens": usage_field(usage, "total_tokens"),
+            "prompt_tokens_details": {
+                "cached_tokens": usage_field(details, "cached_tokens"),
+                "cache_write_tokens": usage_field(details, "cache_write_tokens"),
+            },
+        },
+        usage_source="responses",
+    )
+    if normalized is None:
+        return None
+    return replace(
+        normalized,
+        input_total_prompt_tokens_source=(
+            "input_tokens" if normalized.input_total_prompt_tokens_source else None
+        ),
+        completion_tokens_source="output_tokens" if normalized.completion_tokens_source else None,
+        cached_prompt_tokens_source=(
+            "input_tokens_details.cached_tokens" if normalized.cached_prompt_tokens_source else None
+        ),
+        cache_write_prompt_tokens_source=(
+            "input_tokens_details.cache_write_tokens"
+            if normalized.cache_write_prompt_tokens_source
+            else None
+        ),
+    )
+
+
+__all__ = ["extract_responses_usage", "extract_stream_usage", "extract_usage", "usage_field"]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -43,6 +44,9 @@ def test_stream_collects_reasoning_content_without_emitting_it_as_text(monkeypat
         )
     )
 
+    # This regression specifically fixes the pre-existing Chat adapter contract.
+    # Native Responses reasoning/replay is covered in test_responses.py.
+    client.spec = replace(client.spec, responses=None)
     events = list(client.stream(ModelRequest(messages=[{"role": "user", "content": "hi"}])))
     done = next(item for item in events if isinstance(item, LLMTurnDone))
 

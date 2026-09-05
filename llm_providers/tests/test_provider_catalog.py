@@ -124,7 +124,7 @@ def test_public_model_catalog_is_the_capability_source_of_truth() -> None:
     providers = {provider["id"]: provider for provider in catalog["providers"]}
     deepseek = {model["id"]: model for model in providers["deepseek"]["models"]}
     kimi = {model["id"]: model for model in providers["kimi"]["models"]}
-    openrouter = {model["id"]: model for model in providers["openrouter"]["models"]}
+    assert "openrouter" not in providers  # 暂不维护，内部兼容由独立测试覆盖。
 
     assert catalog["schemaVersion"] == 2
     assert catalog["catalogRevision"]
@@ -178,22 +178,6 @@ def test_public_model_catalog_is_the_capability_source_of_truth() -> None:
         "contextWindow": 256 * 1024,
         "contextWindowSource": "catalog",
     }
-    assert providers["openrouter"]["credentialGroup"] == "openrouter"
-    assert tuple(openrouter) == (
-        "openrouter/google/gemini-3.7-flash",
-        "openrouter/openai/gpt-5.6-luna",
-    )
-    assert openrouter["openrouter/google/gemini-3.7-flash"]["label"] == (
-        "Google · Gemini 3.7 Flash"
-    )
-    assert openrouter["openrouter/google/gemini-3.7-flash"]["limits"]["contextWindow"] == 1_048_576
-    assert openrouter["openrouter/openai/gpt-5.6-luna"]["limits"]["contextWindow"] == 1_050_000
-    for model in openrouter.values():
-        assert model["processingProfile"] == "text-only-v1"
-        assert model["capabilities"]["inputModalities"] == ("text",)
-        assert model["capabilities"]["attachments"] is False
-        assert model["capabilities"]["toolCalling"] is True
-        assert model["capabilities"]["parallelToolCalls"] is True
     for provider in providers.values():
         for model in provider["models"]:
             assert model["limits"]["contextWindow"] > 0

@@ -350,7 +350,40 @@ async def test_menu_switches_reasoning_for_bound_session(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_reasoning_menu_paginates_catalog_presets(tmp_path: Path) -> None:
+async def test_reasoning_menu_paginates_catalog_presets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Pagination is independent of which providers are publicly maintained.
+    # Keep a six-preset catalog fixture; do not re-expose OpenRouter in production.
+    monkeypatch.setattr(
+        "agent_bridge.protocols.im.control.public_model_catalog",
+        lambda: {
+            "providers": [
+                {
+                    "models": [
+                        {
+                            "id": "openrouter/openai/gpt-5.6-luna",
+                            "reasoning": {
+                                "control": "effort",
+                                "presets": [
+                                    {"id": key, "label": label}
+                                    for key, label in (
+                                        ("none", "关闭"),
+                                        ("low", "低"),
+                                        ("medium", "中"),
+                                        ("high", "高"),
+                                        ("xhigh", "极高"),
+                                        ("max", "最高"),
+                                    )
+                                ],
+                            },
+                        }
+                    ]
+                }
+            ]
+        },
+    )
     service, provider, _state, _coordinator, _models = make_service(tmp_path)
     sessions = cast(Any, service._sessions)
     sessions.sessions["SESSION-A"].current_model = "openrouter/openai/gpt-5.6-luna"

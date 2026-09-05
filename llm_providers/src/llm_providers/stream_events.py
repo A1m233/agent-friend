@@ -78,6 +78,7 @@ class LLMTextDelta:
 
     text: str = ""
     type: Literal["text_delta"] = "text_delta"
+    phase: Literal["commentary", "final_answer"] | None = None
 
 
 @dataclass(frozen=True)

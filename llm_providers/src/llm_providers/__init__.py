@@ -76,11 +76,13 @@ from .prompt_cache_observation import (
 )
 from .protocol import (
     LanguageModel,
+    LanguageModelCapabilities,
     LanguageModelFactory,
     ModelCallControl,
     ModelCallTraceContext,
     ModelRequest,
     ModelResponse,
+    get_model_capabilities,
 )
 from .reasoning import (
     ProviderReasoningState,
@@ -148,6 +150,7 @@ __all__ = [
     "LLMTurnDone",
     "LLMUsage",
     "LanguageModel",
+    "LanguageModelCapabilities",
     "LanguageModelFactory",
     "ModelCallControl",
     "ModelCallTraceContext",
@@ -182,6 +185,7 @@ __all__ = [
     "create_language_model",
     "default_model_for_provider",
     "default_model_runtime_config",
+    "get_model_capabilities",
     "infer_provider_id_from_model",
     "model_belongs_to_provider",
     "model_capabilities",

@@ -22,6 +22,7 @@ def test_model_catalog_route_projects_provider_capabilities() -> None:
     body = response.json()
     assert body["schemaVersion"] == 2
     assert body["catalogRevision"]
+    assert {provider["id"] for provider in body["providers"]} == {"deepseek", "kimi"}
     kimi = next(provider for provider in body["providers"] if provider["id"] == "kimi")
     k26 = next(model for model in kimi["models"] if model["id"] == "kimi/kimi-k2.6")
     assert k26["capabilities"]["attachments"] is True

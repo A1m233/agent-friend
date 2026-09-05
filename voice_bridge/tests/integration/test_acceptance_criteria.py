@@ -562,8 +562,14 @@ class TestAC7ErrorFallback:
         assert "InvalidSecret" not in body["detail"]["message"]
         assert "AKLT" not in body["detail"]["message"]
 
-    def test_agent_bridge_unreachable_returns_502(self, client: TestClient) -> None:
-        # 不 mock agent_bridge → httpx 真去连 test-agent-bridge → 解析失败
+    @respx.mock
+    def test_agent_bridge_unreachable_returns_502(
+        self, client: TestClient, respx_mock: respx.MockRouter
+    ) -> None:
+        # 固定连接失败，不依赖测试机器的真实 DNS 或代理。
+        respx_mock.post("http://test-agent-bridge/v1/sessions").mock(
+            side_effect=httpx.ConnectError("fixture connection failure")
+        )
         resp = client.post("/voice/calls", json={})
         assert resp.status_code == 502
         body = resp.json()

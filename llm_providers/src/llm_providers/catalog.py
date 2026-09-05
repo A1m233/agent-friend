@@ -14,14 +14,14 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from .errors import LLMAuthError
-from .spec import DEFAULT_LLM_TIMEOUT_SECONDS, ProviderSpec
+from .spec import DEFAULT_LLM_TIMEOUT_SECONDS, ProviderSpec, ResponsesRoute
 
 ModelPurpose = Literal["chat", "memory"]
 InputModality = Literal["text", "image", "document"]
 ReasoningControl = Literal["unsupported", "toggle", "effort", "fixed"]
 ReasoningReplayScope = Literal["none", "tool_turn", "conversation"]
 
-CATALOG_REVISION = "2026-08-23.1"
+CATALOG_REVISION = "2026-09-05.1"
 
 DEEPSEEK_PROVIDER_ID = "deepseek"
 KIMI_PROVIDER_ID = "kimi"
@@ -136,6 +136,16 @@ KIMI_FIXED_REASONING = ModelReasoningDefinition(
     replay_scope="conversation",
 )
 
+KIMI_K3_REASONING = ModelReasoningDefinition(
+    control="effort",
+    presets=tuple(
+        ReasoningPresetDefinition(effort, label, {"reasoning_effort": effort})
+        for effort, label in (("low", "低"), ("high", "高"), ("max", "最高"))
+    ),
+    default_preset="max",
+    replay_scope="conversation",
+)
+
 OPENROUTER_GEMINI_REASONING = ModelReasoningDefinition(
     control="effort",
     presets=tuple(
@@ -225,6 +235,7 @@ class ProviderModel:
     api_base: str | None = None
     capabilities: ModelRouteCapabilities = TEXT_ONLY_CAPABILITIES
     reasoning: ModelReasoningDefinition = UNSUPPORTED_REASONING
+    responses: ResponsesRoute | None = None
 
 
 @dataclass(frozen=True)
@@ -240,6 +251,7 @@ class ProviderDefinition:
     default_memory_model: str
     api_base: str | None = None
     default_call_options: Mapping[str, Any] = field(default_factory=dict)
+    publicly_visible: bool = True
 
     def model(self, model_id: str) -> ProviderModel | None:
         for option in self.models:
@@ -261,6 +273,9 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 litellm_model="deepseek/deepseek-v4-flash",
                 context_window=1_000_000,
                 reasoning=DEEPSEEK_REASONING,
+                responses=ResponsesRoute(
+                    "deepseek-v4-flash", DEEPSEEK_API_BASE, "deepseek", "native"
+                ),
             ),
             ProviderModel(
                 id="deepseek/deepseek-v4-pro",
@@ -268,6 +283,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 litellm_model="deepseek/deepseek-v4-pro",
                 context_window=1_000_000,
                 reasoning=DEEPSEEK_REASONING,
+                responses=ResponsesRoute("deepseek-v4-pro", DEEPSEEK_API_BASE, "deepseek"),
             ),
             ProviderModel(
                 id=DEEPSEEK_VISION_MODEL_ID,
@@ -278,6 +294,9 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 api_base=DEEPSEEK_API_BASE,
                 capabilities=DEEPSEEK_VISION_CAPABILITIES,
                 reasoning=DEEPSEEK_REASONING,
+                responses=ResponsesRoute(
+                    "deepseek-v4-flash-vision-exp", DEEPSEEK_API_BASE, "deepseek"
+                ),
             ),
         ),
         default_model="deepseek/deepseek-v4-flash",
@@ -292,6 +311,14 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
         credential_name=KIMI_API_KEY,
         credential_group=KIMI_PROVIDER_ID,
         models=(
+            ProviderModel(
+                id="kimi/kimi-k3",
+                label="kimi-k3",
+                litellm_model="openai/kimi-k3",
+                context_window=1_048_576,
+                reasoning=KIMI_K3_REASONING,
+                responses=ResponsesRoute("kimi-k3", KIMI_API_BASE, "kimi"),
+            ),
             ProviderModel(
                 id="kimi/kimi-k2.6",
                 label="kimi-k2.6",
@@ -335,7 +362,10 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
         default_call_options={"timeout": DEFAULT_LLM_TIMEOUT_SECONDS},
     ),
     OPENROUTER_PROVIDER_ID: ProviderDefinition(
+        # Temporarily unmaintained: hide public entry points, retain legacy
+        # configuration and Chat transport compatibility. No Responses rollout.
         provider_id=OPENROUTER_PROVIDER_ID,
+        publicly_visible=False,
         display_name="OpenRouter",
         credential_name=OPENROUTER_API_KEY,
         credential_group=OPENROUTER_PROVIDER_ID,
@@ -546,6 +576,7 @@ def build_provider_spec(
         product_model_id=selected_model,
         reasoning_preset=effective_preset,
         reasoning_replay_scope=replay_scope,
+        responses=model.responses if model else None,
     )
 
 
@@ -555,6 +586,7 @@ def public_provider_models() -> dict[str, tuple[str, ...]]:
     return {
         provider_id: tuple(model.id for model in provider.models)
         for provider_id, provider in PROVIDER_DEFINITIONS.items()
+        if provider.publicly_visible
     }
 
 
@@ -563,6 +595,8 @@ def public_model_catalog() -> dict[str, Any]:
 
     providers: list[dict[str, Any]] = []
     for provider in PROVIDER_DEFINITIONS.values():
+        if not provider.publicly_visible:
+            continue
         models: list[dict[str, Any]] = []
         for model in provider.models:
             capabilities = dataclasses.asdict(model.capabilities)
