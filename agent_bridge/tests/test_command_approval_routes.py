@@ -2,19 +2,190 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
 from agent.approvals import ApprovalBroker
 from agent.command_runtime import (
     CommandApprovalDetails,
     PendingCommandApproval,
 )
+from agent.sessions.errors import SessionCorruptError, SessionPersistError
 from agent.sessions.metadata import SessionMetadataStore
 from agent_bridge.routes.approvals import register_routes
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+from agent import Event, JsonlSessionStore, Session, SessionManager, SessionNotFoundError
+
+
+@pytest.fixture
+def approval_sessions(
+    tmp_path: Path,
+) -> tuple[JsonlSessionStore, SessionMetadataStore, ApprovalBroker, TestClient]:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    metadata = SessionMetadataStore(tmp_path / "metadata.json")
+    manager = SessionManager(store, metadata_store=metadata)
+    manager.create("default", "deepseek/deepseek-chat", session_id="session-1")
+
+    def validate_session(session_id: str) -> bool:
+        # Preserve the production broker's full-history precondition for writes.
+        try:
+            store.load(session_id)
+            return True
+        except SessionNotFoundError:
+            return False
+
+    broker = ApprovalBroker(mode_store=metadata, session_exists=validate_session)
+    app = FastAPI()
+    register_routes(
+        app,
+        cast(
+            Any,
+            SimpleNamespace(
+                approval_broker=broker,
+                persistent_session_manager=manager,
+                command_runtime=None,
+            ),
+        ),
+    )
+    return store, metadata, broker, TestClient(app)
+
+
+@pytest.mark.parametrize("history_bytes", [0, 2 * 1024 * 1024])
+def test_approval_read_never_loads_short_or_long_history(
+    approval_sessions: tuple[JsonlSessionStore, SessionMetadataStore, ApprovalBroker, TestClient],
+    monkeypatch: pytest.MonkeyPatch,
+    history_bytes: int,
+) -> None:
+    store, metadata, _, client = approval_sessions
+    if history_bytes:
+        store.append_event(
+            "session-1",
+            Event(
+                type="user_message",
+                uuid="synthetic-message",
+                ts=datetime.now(UTC),
+                payload={"content": "x" * history_bytes},
+            ),
+        )
+    metadata.compare_and_set_approval_mode("session-1", expected_version=0, mode="session_auto")
+
+    def reject_load(_session_id: str) -> Session:
+        pytest.fail("read-only approval query loaded conversation history")
+
+    monkeypatch.setattr(store, "load", reject_load)
+    response = client.get("/v1/sessions/session-1/approval-mode")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "session_id": "session-1",
+        "approval_mode": "session_auto",
+        "approval_mode_version": 1,
+    }
+
+
+def test_approval_read_rejects_missing_file_despite_metadata(
+    approval_sessions: tuple[JsonlSessionStore, SessionMetadataStore, ApprovalBroker, TestClient],
+) -> None:
+    _, metadata, _, client = approval_sessions
+    metadata.compare_and_set_approval_mode("missing", expected_version=0, mode="session_auto")
+
+    response = client.get("/v1/sessions/missing/approval-mode")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "session not found"
+
+
+def test_corrupt_history_remains_readable_only_as_approval_metadata(
+    approval_sessions: tuple[JsonlSessionStore, SessionMetadataStore, ApprovalBroker, TestClient],
+) -> None:
+    store, metadata, _, client = approval_sessions
+    (store.base_dir / "session-1.jsonl").write_text("not valid json\n", encoding="utf-8")
+
+    response = client.get("/v1/sessions/session-1/approval-mode")
+
+    assert response.status_code == 200
+    assert response.json()["approval_mode"] == "per_request"
+    with pytest.raises(SessionCorruptError):
+        store.load("session-1")
+    with pytest.raises(SessionCorruptError):
+        client.put(
+            "/v1/sessions/session-1/approval-mode",
+            json={"mode": "session_auto", "expected_version": 0, "risk_acknowledged": True},
+        )
+    assert metadata.get("session-1").approval_mode_version == 0
+
+
+def test_approval_read_does_not_disguise_storage_failure_as_missing(
+    approval_sessions: tuple[JsonlSessionStore, SessionMetadataStore, ApprovalBroker, TestClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, _, _, client = approval_sessions
+
+    def fail_exists(_session_id: str) -> bool:
+        raise SessionPersistError("synthetic attribute access failure")
+
+    monkeypatch.setattr(store, "exists", fail_exists)
+    with pytest.raises(SessionPersistError, match="synthetic attribute access failure"):
+        client.get("/v1/sessions/session-1/approval-mode")
+
+
+def test_combined_approval_keeps_history_validation_before_granting(
+    approval_sessions: tuple[JsonlSessionStore, SessionMetadataStore, ApprovalBroker, TestClient],
+) -> None:
+    store, metadata, broker, client = approval_sessions
+    request = PendingCommandApproval.create(
+        session_id="session-1",
+        run_id="run-1",
+        tool_call_id="tool-1",
+        reason="synthetic approval",
+        details=CommandApprovalDetails(
+            cmd="synthetic.exe",
+            argv=("synthetic.exe",),
+            execution="host_user",
+            workdir="C:/synthetic",
+            cwd_source="explicit",
+            mode="buffered",
+            timeout_seconds=30,
+            filesystem_access="unrestricted",
+            additional_roots=(),
+            host_derived_roots=(),
+            network_access="unrestricted",
+            interactive=False,
+        ),
+    )
+    pending = threading.Event()
+    broker.add_listener(lambda _event: pending.set())
+    decisions: list[Any] = []
+    worker = threading.Thread(
+        target=lambda: decisions.append(broker.request(request, timeout_seconds=5))
+    )
+    worker.start()
+    try:
+        assert pending.wait(timeout=2)
+        (store.base_dir / "session-1.jsonl").write_text("not valid json\n", encoding="utf-8")
+        with pytest.raises(SessionCorruptError):
+            client.post(
+                f"/v1/approvals/{request.request_id}/enable-session-auto",
+                json={
+                    "session_id": "session-1",
+                    "run_id": "run-1",
+                    "expected_request_version": 1,
+                    "expected_mode_version": 0,
+                    "risk_acknowledged": True,
+                },
+            )
+        assert broker.pending() == (request,)
+        assert metadata.get("session-1").approval_mode_version == 0
+        assert decisions == []
+    finally:
+        broker.cancel_run("session-1", "run-1")
+        worker.join(timeout=2)
+    assert not worker.is_alive()
 
 
 def test_command_approval_is_listed_and_decided_on_common_control_plane() -> None:

@@ -29,6 +29,9 @@ class _Store:
             )
         ]
 
+    def exists(self, session_id: str) -> bool:
+        return session_id == self._session.session_id
+
     def load(self, session_id: str) -> Session:
         assert session_id == self._session.session_id
         return self._session

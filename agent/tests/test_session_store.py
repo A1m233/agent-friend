@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event as ThreadEvent
@@ -9,13 +10,20 @@ from threading import Thread
 from uuid import uuid4
 
 import portalocker
+import pytest
 from agent.command_runtime.workspace import session_workspace_path
 from agent.sessions import (
     Event,
     EventType,
     JsonlSessionStore,
+    NotifyingSessionStore,
+    NullSessionStore,
     Session,
+    SessionChange,
+    SessionChangeBroker,
     SessionManager,
+    SessionPersistError,
+    SessionRevisionStore,
     ToolExecutionEvidence,
     ToolExecutionEvidenceStore,
 )
@@ -57,6 +65,126 @@ def test_safe_session_id_keeps_legacy_raw_filename(tmp_path: Path) -> None:
 
     assert (tmp_path / "plain-session-1.jsonl").exists()
     assert store.load("plain-session-1").session_id == "plain-session-1"
+
+
+@pytest.mark.parametrize("size", [17, 2_000_000])
+def test_exists_does_not_read_history_or_take_a_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, size: int
+) -> None:
+    store = JsonlSessionStore(tmp_path)
+    # Presence is independent of content size, validity and readability.
+    (tmp_path / "session-a.jsonl").write_bytes(b"x" * size)
+
+    def unexpected(*args: object, **kwargs: object) -> None:
+        raise AssertionError("existence check must not load or read history")
+
+    monkeypatch.setattr(store, "load", unexpected)
+    monkeypatch.setattr(Path, "open", unexpected)
+    monkeypatch.setattr(portalocker, "Lock", unexpected)
+    monkeypatch.setattr(Event, "from_jsonl", unexpected)
+    assert store.exists("session-a") is True
+    assert store.exists("missing") is False
+
+
+@pytest.mark.parametrize(
+    "session_id", ["im:qq:OPENID-A", "../outside", "folder/nested", "C:\\outside"]
+)
+def test_exists_roundtrips_encoded_opaque_ids(tmp_path: Path, session_id: str) -> None:
+    store = JsonlSessionStore(tmp_path)
+    assert store.exists(session_id) is False
+    store.create(_session(session_id))
+    assert store.exists(session_id) is True
+    assert store.load(session_id).session_id == session_id
+
+
+@pytest.mark.parametrize(
+    "session_id",
+    ["../outside", "..\\outside", "/outside", "C:\\outside", "", ".", "..", "bad\x00id"],
+)
+def test_exists_never_checks_an_unsafe_raw_legacy_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, session_id: str
+) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    (tmp_path / "outside.jsonl").write_bytes(b"private")
+
+    def unexpected(_session_id: str) -> Path:
+        raise AssertionError("unsafe id must use portable encoding only")
+
+    monkeypatch.setattr(store, "_legacy_raw_path", unexpected)
+    assert store.exists(session_id) is False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Colon-containing raw legacy filenames are POSIX-only")
+def test_exists_accepts_safe_legacy_component(tmp_path: Path) -> None:
+    store = JsonlSessionStore(tmp_path)
+    (tmp_path / "im:qq:legacy.jsonl").write_bytes(b"corrupt legacy content")
+    assert store.exists("im:qq:legacy") is True
+
+
+def test_exists_rejects_non_file_and_preserves_attribute_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = JsonlSessionStore(tmp_path)
+    (tmp_path / "directory.jsonl").mkdir()
+    with pytest.raises(SessionPersistError, match="不是普通文件"):
+        store.exists("directory")
+
+    original_stat = Path.stat
+    denied = PermissionError("attribute access denied")
+
+    def stat_with_denial(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        if path.name == "denied.jsonl":
+            raise denied
+        return original_stat(path, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "stat", stat_with_denial)
+    with pytest.raises(SessionPersistError, match="属性") as caught:
+        store.exists("denied")
+    assert caught.value.__cause__ is denied
+
+
+def test_exists_rejects_resolved_path_outside_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    original_resolve = Path.resolve
+
+    def resolve_outside(path: Path, strict: bool = False) -> Path:
+        if path.name == "outside.jsonl":
+            return tmp_path / "outside.jsonl"
+        return original_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", resolve_outside)
+    with pytest.raises(SessionPersistError, match="受管目录"):
+        store.exists("outside")
+
+
+def test_exists_normalizes_path_resolution_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = JsonlSessionStore(tmp_path)
+    failure = RuntimeError("symlink loop")
+
+    def cannot_resolve(path: Path, strict: bool = False) -> Path:
+        raise failure
+
+    monkeypatch.setattr(Path, "resolve", cannot_resolve)
+    with pytest.raises(SessionPersistError) as caught:
+        store.exists("session-a")
+    assert caught.value.__cause__ is failure
+
+
+def test_exists_decorator_and_null_store_do_not_publish_changes(tmp_path: Path) -> None:
+    inner = JsonlSessionStore(tmp_path / "sessions")
+    inner.create(_session("session-a"))
+    changes: list[SessionChange] = []
+    broker = SessionChangeBroker(SessionRevisionStore(tmp_path / "revisions.json"), changes.append)
+    store = NotifyingSessionStore(inner, broker)
+    assert store.exists("session-a") is True
+    assert store.exists("missing") is False
+    assert NullSessionStore().exists("session-a") is False
+    assert changes == []
+    assert not (tmp_path / "revisions.json").exists()
 
 
 def test_unsafe_session_id_uses_portable_filename_and_roundtrips(tmp_path: Path) -> None:

@@ -284,7 +284,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             "model": session.current_model,
             "reasoningPreset": session.current_model_config.reasoning_preset,
             "revision": revision,
-            **mgr.approval_mode_state(session_id).to_dict(),
+            **mgr.approval_mode_state(session).to_dict(),
         }
         if view == "active":
             return {**detail, "active_events": active_events}

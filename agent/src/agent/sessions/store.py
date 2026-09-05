@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import os
+import stat
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -33,15 +34,12 @@ from .errors import (
     SessionWriterConflictError,
 )
 from .events import Event
+from .file_observation import observe_session_file
 from .session import Session
 from .store_types import SessionLoadDiagnostics
 
 _LOCK_TIMEOUT_SECONDS = 10.0
-"""``JsonlSessionStore`` 写操作等待 OS advisory 文件锁的最长秒数。
-
-单条 ``append_event`` 实际写盘开销 < 1ms；正常情况下不会逼近这个上限。撞到
-意味着有别的进程长时间持锁——按 SessionPersistError 抛出由上层决定如何
-重试或降级。"""
+"""Maximum wait for a session file lock; timeout alone does not identify its owner."""
 
 _REVERSE_READ_CHUNK_BYTES = 8192
 
@@ -175,6 +173,13 @@ class SessionStore(Protocol):
             SessionPersistError: IO 失败。
         """
 
+    def exists(self, session_id: str) -> bool:
+        """Check file/session presence without loading or validating its history.
+
+        Only absence returns false. Inability to inspect persistence raises
+        SessionPersistError. Success does not establish readable/recoverable history.
+        """
+
     def load(self, session_id: str) -> Session:
         """完整加载会话。
 
@@ -246,6 +251,16 @@ class JsonlSessionStore:
 
     def _candidate_paths(self, session_id: str) -> list[Path]:
         current = self._path(session_id)
+        # Only a single raw filename component can be a legacy candidate.
+        # Other opaque ids remain available through their portable encoding.
+        if (
+            not session_id
+            or session_id in {".", ".."}
+            or any(char in session_id for char in ("/", "\\", "\x00"))
+            or Path(session_id).is_absolute()
+            or (os.name == "nt" and not _is_portable_raw_filename_stem(session_id))
+        ):
+            return [current]
         legacy = self._legacy_raw_path(session_id)
         if legacy == current:
             return [current]
@@ -260,6 +275,23 @@ class JsonlSessionStore:
                 continue
         return None
 
+    def exists(self, session_id: str) -> bool:
+        try:
+            base = self._base_dir.resolve()
+            for path in self._candidate_paths(session_id):
+                if not path.resolve().is_relative_to(base):
+                    raise SessionPersistError("会话文件路径超出受管目录")
+                try:
+                    info = path.stat()
+                except FileNotFoundError:
+                    continue
+                if not stat.S_ISREG(info.st_mode):
+                    raise SessionPersistError("会话文件不是普通文件")
+                return True
+        except (OSError, RuntimeError) as exc:
+            raise SessionPersistError("检查会话文件属性失败") from exc
+        return False
+
     def create(self, session: Session) -> None:
         path = self._path(session.session_id)
         existing = self._existing_path(session.session_id)
@@ -270,11 +302,16 @@ class JsonlSessionStore:
                 "Session 必须以 session_meta 事件开头（请用 Session.new 构造）"
             )
         try:
-            with portalocker.Lock(path, "wb", timeout=_LOCK_TIMEOUT_SECONDS) as f:
+            with (
+                observe_session_file("create", session.session_id) as observation,
+                observation.locked(
+                    portalocker.Lock(path, "wb", timeout=_LOCK_TIMEOUT_SECONDS)
+                ) as f,
+            ):
                 binary = cast(BinaryIO, f)
                 for ev in session.events:
-                    binary.write(ev.to_jsonl().encode("utf-8"))
-                    binary.write(b"\n")
+                    observation.byte_count += binary.write(ev.to_jsonl().encode("utf-8"))
+                    observation.byte_count += binary.write(b"\n")
                 binary.flush()
                 os.fsync(binary.fileno())
         except LockException as e:
@@ -294,18 +331,23 @@ class JsonlSessionStore:
         if path is None:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
         try:
-            with portalocker.Lock(path, "a+b", timeout=_LOCK_TIMEOUT_SECONDS) as f:
+            with (
+                observe_session_file("append", session_id) as observation,
+                observation.locked(
+                    portalocker.Lock(path, "a+b", timeout=_LOCK_TIMEOUT_SECONDS)
+                ) as f,
+            ):
                 binary = cast(BinaryIO, f)
                 binary.seek(0, os.SEEK_END)
                 if binary.tell():
                     binary.seek(-1, os.SEEK_END)
                     if binary.read(1) != b"\n":
                         binary.seek(0, os.SEEK_END)
-                        binary.write(b"\n")
+                        observation.byte_count += binary.write(b"\n")
                 binary.seek(0, os.SEEK_END)
                 for item in events:
-                    binary.write(item.to_jsonl().encode("utf-8"))
-                    binary.write(b"\n")
+                    observation.byte_count += binary.write(item.to_jsonl().encode("utf-8"))
+                    observation.byte_count += binary.write(b"\n")
                 binary.flush()
                 os.fsync(binary.fileno())
         except LockException as e:
@@ -349,32 +391,39 @@ class JsonlSessionStore:
         parsed_records: list[tuple[int, Event]] = []
         parse_errors: list[tuple[int, int]] = []
         try:
-            with portalocker.Lock(
-                path,
-                "rb",
-                flags=portalocker.LOCK_SH | portalocker.LOCK_NB,
-                timeout=_LOCK_TIMEOUT_SECONDS,
-            ) as f:
-                raw = cast(BinaryIO, f).read()
-                for lineno, line in enumerate(raw.splitlines(keepends=True), start=1):
-                    if not line.strip():
-                        continue
-                    try:
-                        event = Event.from_jsonl(line.decode("utf-8"))
-                    except (UnicodeDecodeError, SessionCorruptError):
-                        parse_errors.append((lineno, len(line)))
-                        continue
-                    parsed_records.append((lineno, event))
-                    events.append(event)
+            with observe_session_file("load", session_id) as observation:
+                with observation.locked(
+                    portalocker.Lock(
+                        path,
+                        "rb",
+                        flags=portalocker.LOCK_SH | portalocker.LOCK_NB,
+                        timeout=_LOCK_TIMEOUT_SECONDS,
+                    )
+                ) as f:
+                    raw = cast(BinaryIO, f).read()
+                    observation.byte_count = len(raw)
+                with observation.parsing():
+                    for lineno, line in enumerate(raw.splitlines(keepends=True), start=1):
+                        if not line.strip():
+                            continue
+                        try:
+                            event = Event.from_jsonl(line.decode("utf-8"))
+                        except (UnicodeDecodeError, SessionCorruptError):
+                            parse_errors.append((lineno, len(line)))
+                            continue
+                        parsed_records.append((lineno, event))
+                        events.append(event)
+                    diagnostics = self._validate_recoverable_errors(
+                        path, parsed_records, parse_errors
+                    )
+                    session = Session.from_events(events)
+                    session.load_diagnostics = diagnostics
         except LockException as e:
             raise SessionPersistError(
                 f"获取会话文件读锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {path}: {e}"
             ) from e
         except OSError as e:
             raise SessionPersistError(f"读取会话文件失败: {path}: {e}") from e
-        diagnostics = self._validate_recoverable_errors(path, parsed_records, parse_errors)
-        session = Session.from_events(events)
-        session.load_diagnostics = diagnostics
         return session
 
     @staticmethod
@@ -607,6 +656,9 @@ class NullSessionStore:
     def delete_writer_lease(self, session_id: str) -> None:
         return None
 
+    def exists(self, session_id: str) -> bool:
+        return False
+
     def load(self, session_id: str) -> Session:
         raise SessionNotFoundError(f"NullSessionStore 不持有任何会话；无法加载 {session_id!r}")
 
@@ -649,6 +701,9 @@ class NotifyingSessionStore:
 
     def delete_writer_lease(self, session_id: str) -> None:
         delete_session_writer_lease(self._inner, session_id)
+
+    def exists(self, session_id: str) -> bool:
+        return self._inner.exists(session_id)
 
     def load(self, session_id: str) -> Session:
         return self._inner.load(session_id)

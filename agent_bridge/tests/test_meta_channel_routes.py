@@ -23,6 +23,7 @@ from agent import (
     MarkdownPromptBuilder,
     NaiveContextManager,
     PersonaCatalog,
+    Session,
     SessionManager,
     SessionMetadataStore,
     SessionNotFoundError,
@@ -144,6 +145,58 @@ class TestCreateSessionEndpoint:
 
 
 class TestGetSessionEndpoint:
+    @pytest.mark.parametrize("view", ["full", "active"])
+    @pytest.mark.parametrize("changed_during_read", [False, True])
+    def test_detail_reuses_loaded_session_and_rechecks_revision(
+        self,
+        client: TestClient,
+        runtime: BridgeRuntime,
+        monkeypatch: pytest.MonkeyPatch,
+        view: str,
+        changed_during_read: bool,
+    ) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        metadata = SessionMetadataStore(runtime.settings.sessions_dir / "metadata.json")
+        metadata.compare_and_set_approval_mode(sid, expected_version=0, mode="session_auto")
+        original_load = runtime.persistent_store.load
+        reads = 0
+        revision = 0
+
+        def load(session_id: str) -> Session:
+            nonlocal reads, revision
+            reads += 1
+            snapshot = original_load(session_id)
+            if changed_during_read and reads == 1:
+                runtime.persistent_store.append_event(
+                    session_id,
+                    Event(
+                        type="user_message",
+                        uuid="concurrent-message",
+                        ts=datetime.now(UTC),
+                        payload={"content": "synthetic concurrent append"},
+                    ),
+                )
+                revision += 1
+            return snapshot
+
+        monkeypatch.setattr(runtime.persistent_store, "load", load)
+        monkeypatch.setattr(
+            runtime.persistent_session_manager, "current_revision", lambda _id: revision
+        )
+
+        response = client.get(f"/v1/sessions/{sid}?view={view}")
+
+        assert response.status_code == 200
+        assert reads == (2 if changed_during_read else 1)
+        detail = response.json()
+        assert detail["revision"] == revision
+        assert detail["approval_mode"] == "session_auto"
+        assert detail["approval_mode_version"] == 1
+        assert any(ev["uuid"] == "concurrent-message" for ev in detail["active_events"]) == (
+            changed_during_read
+        )
+        assert ("events" in detail) == (view == "full")
+
     def test_full_view_remains_backward_compatible(self, client: TestClient) -> None:
         sid = client.post("/v1/sessions", json={}).json()["session_id"]
 

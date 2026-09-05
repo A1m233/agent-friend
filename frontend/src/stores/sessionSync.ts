@@ -14,6 +14,7 @@ const DETAIL_DEBOUNCE_MS = 80;
 
 let generation = 0;
 let highestRevision = new Map<string, number>();
+let highestApprovalModeRevision = new Map<string, number>();
 let pendingDetail = new Map<string, number>();
 let listTimer: ReturnType<typeof setTimeout> | null = null;
 let detailTimer: ReturnType<typeof setTimeout> | null = null;
@@ -293,9 +294,22 @@ function scheduleDetailRefresh(
 }
 
 export function handleSessionChangedForSync(env: PushEnvelope, activeGeneration = generation): void {
+  if (activeGeneration !== generation) return;
   if (env.kind !== "session_changed" || !env.session_id) return;
   const revision = env.revision;
   if (!Number.isSafeInteger(revision) || (revision ?? 0) <= 0) return;
+  if (
+    env.change_kind === "metadata"
+    && env.origin === "approval_mode"
+    && (revision as number) > (highestApprovalModeRevision.get(env.session_id) ?? 0)
+  ) {
+    // Revision allocation and publication are separate: newer content may
+    // arrive before an older, still relevant approval-mode invalidation.
+    highestApprovalModeRevision.set(env.session_id, revision as number);
+    if (useConversationStore.getState().currentSessionId === env.session_id) {
+      void useConversationStore.getState().refreshApprovalMode(env.session_id, { invalidate: true });
+    }
+  }
   const previous = highestRevision.get(env.session_id) ?? 0;
   if ((revision as number) <= previous) return;
   highestRevision.set(env.session_id, revision as number);
@@ -308,9 +322,6 @@ export function handleSessionChangedForSync(env: PushEnvelope, activeGeneration 
     });
   }
   scheduleListRefresh(activeGeneration);
-  if (useConversationStore.getState().currentSessionId === env.session_id) {
-    void useConversationStore.getState().refreshApprovalMode(env.session_id);
-  }
   scheduleDetailRefresh(env.session_id, revision as number, activeGeneration);
 }
 
@@ -341,6 +352,7 @@ export function handleRunEventForSync(env: PushEnvelope): void {
 }
 
 export function handlePushReconnectedForSync(activeGeneration = generation): void {
+  if (activeGeneration !== generation) return;
   disposeRunEventSchedulers();
   if (import.meta.env.DEV) {
     console.debug("[session-sync] push reconnected; scheduling calibration", {
@@ -353,7 +365,7 @@ export function handlePushReconnectedForSync(activeGeneration = generation): voi
   scheduleListRefresh(activeGeneration);
   const sessionId = useConversationStore.getState().currentSessionId;
   if (sessionId) {
-    void useConversationStore.getState().refreshApprovalMode(sessionId);
+    void useConversationStore.getState().refreshApprovalMode(sessionId, { invalidate: true });
     void reattachSessionRuntimeForSync(sessionId, activeGeneration).then(() => {
       if (activeGeneration === generation) {
         scheduleDetailRefresh(sessionId, undefined, activeGeneration);
@@ -419,6 +431,9 @@ export function startSessionSyncSubscriber(): () => void {
   // "waiting for approval" while ApprovalDock has no run id to match and hides
   // its buttons until another reconnect happens.
   const initialSessionId = useConversationStore.getState().currentSessionId;
+  if (initialSessionId) {
+    void useConversationStore.getState().refreshApprovalMode(initialSessionId);
+  }
   if (isTauri() && initialSessionId) {
     void reattachSessionRuntimeForSync(initialSessionId, activeGeneration);
   } else {
@@ -444,6 +459,7 @@ export function startSessionSyncSubscriber(): () => void {
 export function resetSessionSyncForTests(): void {
   generation += 1;
   highestRevision = new Map();
+  highestApprovalModeRevision = new Map();
   pendingDetail = new Map();
   if (listTimer !== null) clearTimeout(listTimer);
   if (detailTimer !== null) clearTimeout(detailTimer);

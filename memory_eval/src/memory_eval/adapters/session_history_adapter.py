@@ -35,6 +35,9 @@ class _EvalCaseSessionStore:
             reverse=True,
         )
 
+    def exists(self, session_id: str) -> bool:
+        return session_id in self._sessions
+
     def load(self, session_id: str) -> Session:
         return self._sessions[session_id].session
 

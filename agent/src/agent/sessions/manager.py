@@ -193,18 +193,12 @@ class SessionManager:
             return 0
         return self._session_change_broker.current_revision(session_id)
 
-    def approval_mode_state(self, session_id: str) -> SessionApprovalModeState:
-        """Return host security metadata without adding it to conversation events."""
-
-        self._store.load(session_id)
-        return self._approval_mode_state_without_load(session_id)
-
-    def _approval_mode_state_without_load(self, session_id: str) -> SessionApprovalModeState:
+    def approval_mode_state(self, session: Session) -> SessionApprovalModeState:
         """Read optional metadata for an already-bound persistent or transient session."""
 
         if self._metadata_store is None:
             return SessionApprovalModeState()
-        metadata = self._metadata_store.get(session_id)
+        metadata = self._metadata_store.get(session.session_id)
         return SessionApprovalModeState(
             metadata.approval_mode,
             metadata.approval_mode_version,
@@ -287,6 +281,10 @@ class SessionManager:
                 )
         self._store.create(session)
         return session
+
+    def exists(self, session_id: str) -> bool:
+        """Check persistence without loading or validating conversation history."""
+        return self._store.exists(session_id)
 
     def open(self, session_id: str) -> Session:
         """完整加载指定会话。
@@ -571,9 +569,7 @@ class SessionManager:
             cache_epoch=runtime_state.cache_epoch,
             rollout_recorder=runtime_state.rollout_recorder,
             time_provider=self._time_provider,
-            approval_mode_provider=lambda: self._approval_mode_state_without_load(
-                session.session_id
-            ),
+            approval_mode_provider=lambda: self.approval_mode_state(session),
             tool_execution_evidence_store=self._tool_execution_evidence_store,
         )
 

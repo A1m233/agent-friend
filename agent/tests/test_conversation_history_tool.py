@@ -86,6 +86,9 @@ class _StubStore:
         summaries.sort(key=lambda s: s.updated_at, reverse=True)
         return summaries
 
+    def exists(self, session_id: str) -> bool:
+        return session_id in self._sessions
+
     def load(self, session_id: str) -> Session:
         if session_id not in self._sessions:
             raise SessionNotFoundError(f"not found: {session_id}")
