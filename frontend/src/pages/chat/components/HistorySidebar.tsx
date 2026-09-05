@@ -66,6 +66,7 @@ import {
   SessionContextMenuItems,
   SessionDropdownMenuItems,
 } from "./SessionActionMenuItems";
+import { HistorySidebarStatus } from "./HistorySidebarStatus";
 
 const WINDOW_SHOWN_EVENT = "window://shown";
 const MINUTE_MS = 60 * 1000;
@@ -208,6 +209,8 @@ export function HistorySidebar({
   const renameSession = useSessionsStore((s) => s.rename);
   const archiveSession = useSessionsStore((s) => s.archive);
   const sessionsLoaded = useSessionsStore((s) => s.loaded);
+  const sessionsLoading = useSessionsStore((s) => s.loading);
+  const sessionsError = useSessionsStore((s) => s.error);
   const status = useConnectionStore((s) => s.status);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
   const streaming = useConversationStore((s) => isSessionBusy(s, s.currentSessionId));
@@ -525,7 +528,13 @@ export function HistorySidebar({
           </Tooltip>
           <SidebarGroupContent className="min-h-0 flex-1 overflow-y-auto">
             {list.length === 0 ? (
-              <p className="px-2 py-2 text-xs text-muted">还没有历史会话</p>
+              <HistorySidebarStatus
+                loaded={sessionsLoaded}
+                loading={sessionsLoading}
+                error={sessionsError}
+                status={status}
+                onRetry={() => void refresh()}
+              />
             ) : (
               <SidebarMenu className="gap-1">
                 {list.map((s) => {
