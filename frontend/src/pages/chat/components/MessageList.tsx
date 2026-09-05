@@ -747,7 +747,7 @@ export function MessageTimeline({
     paddingStart: MESSAGE_VIRTUALIZER_PADDING_START_PX,
     paddingEnd: composerInset,
     // End anchoring intentionally bypasses the item-size predicate while physically at the end.
-    // Switch it off for the single commit that mounts/unmounts user-requested disclosure content.
+    // While reading history, switch it off for the disclosure's layout commit.
     anchorTo: userLayoutMutationMessageId !== null ? "start" : "end",
     followOnAppend: false,
     scrollEndThreshold: MESSAGE_SCROLL_BOTTOM_EPSILON_PX,
@@ -789,6 +789,15 @@ export function MessageTimeline({
     }
   }, []);
 
+  const cancelUserLayoutMutation = useCallback(() => {
+    if (userLayoutMutationTimerRef.current) {
+      window.clearTimeout(userLayoutMutationTimerRef.current);
+      userLayoutMutationTimerRef.current = 0;
+    }
+    userLayoutMutationRef.current = null;
+    setUserLayoutMutationMessageId(null);
+  }, []);
+
   const handleReferenceSelect = useCallback((reference: ChatTextReference) => {
     if (reference.source.kind !== "session_message") {
       toast.error("这条引用来自 QQ 外部消息，当前无法回到原文");
@@ -804,10 +813,7 @@ export function MessageTimeline({
     // viewport hold. Neither may pull the freshly revealed source out of view.
     if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
     scrollRafRef.current = 0;
-    if (userLayoutMutationTimerRef.current) window.clearTimeout(userLayoutMutationTimerRef.current);
-    userLayoutMutationTimerRef.current = 0;
-    userLayoutMutationRef.current = null;
-    setUserLayoutMutationMessageId(null);
+    cancelUserLayoutMutation();
     applyFollowEvent({ type: "detach-requested" });
     const anchorMessage = messages[index];
     setActiveSearchAnchor(reference.source.textBlockId ?? anchorMessage.id);
@@ -840,7 +846,7 @@ export function MessageTimeline({
       );
     };
     searchScrollRafRef.current = window.requestAnimationFrame(locate);
-  }, [applyFollowEvent, clearSearchFeedback, composerInset, messages, virtualizer]);
+  }, [applyFollowEvent, cancelUserLayoutMutation, clearSearchFeedback, composerInset, messages, virtualizer]);
 
   const endUserScrollSession = useCallback(() => {
     userScrollSessionRef.current = false;
@@ -879,6 +885,13 @@ export function MessageTimeline({
   const beginUserLayoutMutation = useCallback((messageId: string) => {
     const viewport = scrollRef.current;
     if (!viewport) return;
+    // Decide before the disclosure changes the measured height. A temporary
+    // measurement gap is not a request to stop following the latest output.
+    if (followingRef.current) {
+      endUserScrollSession();
+      cancelUserLayoutMutation();
+      return;
+    }
     if (scrollRafRef.current) {
       window.cancelAnimationFrame(scrollRafRef.current);
       scrollRafRef.current = 0;
@@ -887,8 +900,8 @@ export function MessageTimeline({
       window.clearTimeout(userLayoutMutationTimerRef.current);
     }
     endUserScrollSession();
-    // Inspecting details is an explicit request to hold the current viewport, even if streaming
-    // output had previously kept the conversation attached to the end.
+    // While reading history, preserve the viewport instead of following the
+    // expanded row to the end. A new scroll gesture can cancel this hold.
     applyFollowEvent({ type: "detach-requested" });
     userLayoutMutationRef.current = { messageId, scrollTop: viewport.scrollTop };
     setUserLayoutMutationMessageId(messageId);
@@ -896,7 +909,7 @@ export function MessageTimeline({
       () => finishUserLayoutMutation(messageId),
       USER_LAYOUT_MUTATION_TIMEOUT_MS,
     );
-  }, [applyFollowEvent, endUserScrollSession, finishUserLayoutMutation]);
+  }, [applyFollowEvent, cancelUserLayoutMutation, endUserScrollSession, finishUserLayoutMutation]);
 
   const settleUserScrollSession = useCallback(() => {
     if (!userScrollSessionRef.current) return;
@@ -922,17 +935,19 @@ export function MessageTimeline({
   }, [settleUserScrollSession]);
 
   const beginUserScrollSession = useCallback(() => {
+    cancelUserLayoutMutation();
     userScrollSessionRef.current = true;
     userScrollTopRef.current = scrollRef.current?.scrollTop ?? null;
     if (userScrollIdleTimerRef.current) {
       window.clearTimeout(userScrollIdleTimerRef.current);
       userScrollIdleTimerRef.current = 0;
     }
-  }, []);
+  }, [cancelUserLayoutMutation]);
 
   const scheduleScrollToBottom = useCallback(
     (options: { force?: boolean; behavior?: ScrollBehavior } = {}) => {
       if (options.force) {
+        cancelUserLayoutMutation();
         endUserScrollSession();
         applyFollowEvent({ type: "follow-requested" });
       }
@@ -950,7 +965,7 @@ export function MessageTimeline({
         virtualizer.scrollToEnd({ behavior: options.behavior ?? "auto" });
       });
     },
-    [applyFollowEvent, endUserScrollSession, virtualizer],
+    [applyFollowEvent, cancelUserLayoutMutation, endUserScrollSession, virtualizer],
   );
 
   const handleViewportScroll = useCallback(
