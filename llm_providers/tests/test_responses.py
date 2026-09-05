@@ -207,6 +207,24 @@ def test_interleaved_items_do_not_share_phase() -> None:
         ("y", "final_answer"),
         ("b", "commentary"),
     ]
+    assert [
+        (event.item_id, event.output_index) for event in events if isinstance(event, LLMTextDelta)
+    ] == [
+        ("m2", 1),
+        ("m1", 0),
+        ("m2", 1),
+        ("m1", 0),
+    ]
+    done = state.finish(LLMResponseDiagnostics())
+    assert done.assistant_turn is not None
+    assert [
+        (item.item_id, item.content, item.phase) for item in done.assistant_turn.text_items
+    ] == [
+        ("m1", "ab", "commentary"),
+        ("m2", "xy", "final_answer"),
+    ]
+    assert [event.type for event in events].count("assistant_item_start") == 2
+    assert [event.type for event in events].count("assistant_item_done") == 2
 
 
 def test_parallel_functions_and_replay_request() -> None:
@@ -441,15 +459,64 @@ def test_http_auth_error_does_not_fallback(http_mock: Any) -> None:
     assert len(requests) == 1
 
 
-def test_unknown_item_and_phase_mutation_fail() -> None:
+def test_unknown_item_fails_but_completed_phase_can_change() -> None:
     state = ResponsesState(ProviderSpec("fixture", "fixture"))
     with pytest.raises(LLMProviderError, match="unknown"):
         state.feed(delta("unknown", 0, "text"))
     item = message("m1", "hi", "commentary")
     state.feed(added(item, 0))
     state.feed(delta("m1", 0, "hi"))
-    with pytest.raises(LLMProviderError, match="phase changed"):
-        state.feed(terminal([{**item, "phase": "final_answer"}]))
+    state.feed(terminal([{**item, "phase": "final_answer"}]))
+    done = state.finish(LLMResponseDiagnostics())
+    assert done.assistant_turn is not None
+    assert done.assistant_turn.text_items[0].phase == "final_answer"
+
+
+@pytest.mark.parametrize("complete_phase", ["commentary", "final_answer", None, "illegal"])
+@pytest.mark.parametrize("split", range(6))
+def test_phase_updates_at_item_and_response_completion(
+    complete_phase: str | None, split: int
+) -> None:
+    from llm_providers import LLMAssistantItemDone
+
+    state = ResponsesState(ProviderSpec("fixture", "fixture"))
+    start = message("m1", "hello", "final_answer")
+    item_done = message("m1", "hello", "commentary")
+    events = state.feed(added(start, 0))
+    events += state.feed(delta("m1", 0, "hello"[:split]))
+    events += state.feed(delta("m1", 0, "hello"[split:]))
+    events += state.feed(
+        {"type": "response.output_item.done", "output_index": 0, "item": item_done}
+    )
+    events += state.feed(terminal([message("m1", "hello", complete_phase)]))
+    assert "".join(event.text for event in events if isinstance(event, LLMTextDelta)) == "hello"
+    assert [event.phase for event in events if isinstance(event, LLMAssistantItemDone)] == [
+        "commentary"
+    ]
+    done = state.finish(LLMResponseDiagnostics())
+    assert done.assistant_turn is not None
+    assert done.assistant_turn.text_items[0].phase == (
+        complete_phase if complete_phase in {"commentary", "final_answer"} else None
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"id": "different"},
+        {"role": "user"},
+        {"content": [{"type": "output_text", "text": "different"}]},
+    ],
+)
+def test_phase_update_does_not_allow_other_completed_snapshot_changes(
+    change: dict[str, Any],
+) -> None:
+    state = ResponsesState(ProviderSpec("fixture", "fixture"))
+    item = message("m1", "hello", "final_answer")
+    state.feed(added(item, 0))
+    state.feed({"type": "response.output_item.done", "output_index": 0, "item": item})
+    with pytest.raises(LLMProviderError):
+        state.feed(terminal([{**item, "phase": "commentary", **change}]))
 
 
 def test_catalog_capabilities_and_hidden_legacy_provider() -> None:
@@ -461,9 +528,7 @@ def test_catalog_capabilities_and_hidden_legacy_provider() -> None:
             expected = provider.provider_id == "deepseek" or model.id == "kimi/kimi-k3"
             assert (spec.responses is not None) == expected
             capability = get_model_capabilities(LLMClient(spec)).assistant_message_phase
-            assert capability == (
-                "native" if model.id == "deepseek/deepseek-v4-flash" else "unavailable"
-            )
+            assert capability == ("native" if provider.provider_id == "deepseek" else "unavailable")
     assert {item["id"] for item in public_model_catalog()["providers"]} == {"deepseek", "kimi"}
     assert build_provider_spec(provider_id="openrouter", api_key="fixture").responses is None
 

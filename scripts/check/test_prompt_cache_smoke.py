@@ -139,20 +139,22 @@ def test_deepseek_tool_loop_ab_uses_real_replay_and_four_requests(monkeypatch: A
                 first_text_ms=None,
                 total_ms=1.0,
             ),
-            assistant_message={
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": call_id,
-                        "type": "function",
-                        "function": {
-                            "name": "cache_probe_tool_00",
-                            "arguments": '{"query":"cache-check"}',
-                        },
-                    }
-                ],
-            },
+            assistant_messages=[
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": "cache_probe_tool_00",
+                                "arguments": '{"query":"cache-check"}',
+                            },
+                        }
+                    ],
+                }
+            ],
             tool_message={
                 "role": "tool",
                 "tool_call_id": call_id,

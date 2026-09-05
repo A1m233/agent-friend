@@ -32,6 +32,7 @@ import type {
 } from "@/types/chat";
 import type { SessionEvent } from "@/types/meta";
 import { TOOL_ERROR_PREFIX } from "./conversationReducer";
+import { normalizeAssistantPhase, parseAssistantPhaseState } from "./assistantPhase";
 
 function textMessage(
   id: string,
@@ -182,6 +183,11 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
         (presentation !== "conversation" || (sourceKind === "todo_reminder" && !hasReminderCard))
       ) {
         pendingSkipAssistant = true;
+        if (runId) {
+          hiddenRunIds.add(runId);
+          pendingSkipAssistant = false;
+          currentAssistant = null;
+        }
       }
       continue;
     }
@@ -244,7 +250,8 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       // 一轮 assistant 可能包含多段文本和工具调用；左下角展示整轮最后回复的完成时间。
       message.createdAt = ev.ts;
       if (content) {
-        message.blocks.push({ kind: "text", mid: ev.uuid, text: content });
+        message.blocks.push({ kind: "text", mid: ev.uuid, text: content,
+          ...(p.phase === undefined ? {} : { phase: normalizeAssistantPhase(p.phase) }) });
       }
       if (p.partial === true) {
         const reason = asString(p.interruption_reason);
@@ -330,5 +337,44 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
     }
   }
 
+  // A started user run may have crashed before producing any body. Keep a
+  // header-only row after its user message; orphan/hidden metadata creates none.
+  for (const ev of events) {
+    const runId = asString(ev.meta?.run_id);
+    if (ev.type !== "run_started" || !runId || hiddenRunIds.has(runId)
+      || messages.some((message) => message.role === "assistant" && message.runId === runId)) continue;
+    const userEvent = events.find((candidate) => candidate.type === "user_message" && candidate.meta?.run_id === runId);
+    const userIndex = messages.findIndex((message) => message.id === userEvent?.uuid);
+    if (userIndex < 0) continue;
+    messages.splice(userIndex + 1, 0, { ...assistantMessage(`run:${runId}`, ev.ts, runId), status: "interrupted" });
+  }
+  // Apply durable facts to their own runs, never the currently selected model.
+  for (const ev of events) {
+    const runId = asString(ev.meta?.run_id);
+    if (!runId) continue;
+    for (const message of messages) {
+      if (message.role !== "assistant" || message.runId !== runId) continue;
+      if (ev.type === "assistant_phase") message.assistantPhase = parseAssistantPhaseState(ev.payload);
+      if (ev.type === "run_started") {
+        message.runStartedAt = asString(ev.payload?.started_at) || undefined;
+        if (message.status === "complete") message.status = "interrupted";
+      }
+      if (ev.type === "run_terminal") {
+        message.runStartedAt = asString(ev.payload?.started_at) || message.runStartedAt;
+        message.runFinishedAt = ev.payload?.recovered === true
+          ? undefined : asString(ev.payload?.finished_at) || undefined;
+        const status = ev.payload?.status;
+        const outcome = status === "interrupted" ? "cancelled" : status;
+        if (outcome === "completed") {
+          message.runOutcome = "completed";
+          message.status = "complete";
+        } else if (outcome === "cancelled" || outcome === "failed" || outcome === "skipped"
+          || outcome === "expired" || outcome === "rejected") {
+          message.runOutcome = outcome;
+          message.status = outcome === "failed" ? "error" : "interrupted";
+        }
+      }
+    }
+  }
   return messages;
 }

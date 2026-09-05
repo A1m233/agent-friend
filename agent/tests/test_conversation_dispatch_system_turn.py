@@ -165,8 +165,14 @@ def test_dispatch_system_turn_user_visibility_writes_assistant_message(tmp_path:
 
     types = [ev.type for ev in conv.session.events]
     # session_meta + system_trigger + assistant_message
-    assert types == ["session_meta", "system_trigger", "assistant_message"]
-    assert conv.session.events[2].payload["content"] == "hi"
+    assert types == [
+        "session_meta",
+        "system_trigger",
+        "assistant_phase",
+        "assistant_phase",
+        "assistant_message",
+    ]
+    assert conv.session.events[-1].payload["content"] == "hi"
 
 
 # ===== output_visibility="memory_only"（silent turn） =====

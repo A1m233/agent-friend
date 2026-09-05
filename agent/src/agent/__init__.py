@@ -20,6 +20,10 @@ from .context import (
 )
 from .conversation import MAX_TOOL_TURNS_DEFAULT, Conversation
 from .conversation_events import (
+    AssistantMessageEnd,
+    AssistantMessagePhase,
+    AssistantMessageStart,
+    AssistantPhaseStatus,
     ContextCompactionStatus,
     ConversationEvent,
     ModelResponseStatus,
@@ -153,6 +157,10 @@ __all__ = [
     "KEEP",
     "MAX_TOOL_TURNS_DEFAULT",
     "AgentError",
+    "AssistantMessageEnd",
+    "AssistantMessagePhase",
+    "AssistantMessageStart",
+    "AssistantPhaseStatus",
     "AttachmentError",
     "AttachmentKind",
     "AttachmentRef",

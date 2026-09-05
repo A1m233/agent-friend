@@ -1,0 +1,63 @@
+{
+  "synthetic": true,
+  "llmCalls": 0,
+  "checks": [
+    "native collapsed; unknown/final visible; persisted duration 112s",
+    "one real click expands both separated process sections",
+    "legacy has time and no toggle; interrupted remains visible with unknown duration",
+    "real WebView reload restores native disclosure under the persisted legacy current model",
+    "real global search query and Enter navigation expands hidden commentary",
+    "expanded commentary can be selected and quoted via real button click",
+    "synthetic UI-only live snapshot: legacy timer ticks through stopping and freezes at terminal",
+    "UI-only native run: independent timer, initial waiting, text/tool/tail visual order, no duplicate tool loading, tail survives manual collapse, terminal removes activity",
+    "synthetic quoted user message: real reference popover click reopens commentary and highlights original text"
+  ],
+  "passed": true,
+  "url": "http://localhost:1420/chat.html",
+  "viewport": {
+    "width": 1055,
+    "height": 758
+  },
+  "quote": {
+    "referenceId": "ee887cd1-a619-4f4c-a50d-970ed2a9c739",
+    "source": {
+      "kind": "session_message",
+      "messageEventUuid": "fbd83232-55ba-4131-8568-76870b018456",
+      "textBlockId": "fbd83232-55ba-4131-8568-76870b018456",
+      "externalSourceKey": null
+    },
+    "text": "合成过程A：检查现有业务。"
+  },
+  "activityBounds": {
+    "duration": {
+      "x": 289.6000061035156,
+      "y": 427.3999938964844,
+      "width": 45.662506103515625,
+      "height": 15.987518310546875
+    },
+    "text": {
+      "x": 281.20001220703125,
+      "y": 452.9875183105469,
+      "width": 732.7999877929688,
+      "height": 21
+    },
+    "tool": {
+      "x": 279.6000061035156,
+      "y": 483.5874938964844,
+      "width": 242.02499389648438,
+      "height": 23.987518310546875
+    },
+    "tail": {
+      "x": 279.6000061035156,
+      "y": 516.1749877929688,
+      "width": 736.0000305175781,
+      "height": 15.987548828125
+    }
+  },
+  "referenceBounds": {
+    "x": 281.20001220703125,
+    "y": 182.3874969482422,
+    "width": 732.7999877929688,
+    "height": 21
+  }
+}

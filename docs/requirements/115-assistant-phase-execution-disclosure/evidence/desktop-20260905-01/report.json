@@ -1,0 +1,38 @@
+{
+  "synthetic": true,
+  "llmCalls": 0,
+  "checks": [],
+  "passed": false,
+  "url": "http://localhost:1420/chat.html",
+  "viewport": {
+    "width": 1055,
+    "height": 758
+  },
+  "error": "AssertionError [ERR_ASSERTION]: false == true",
+  "messageRows": [
+    {
+      "id": "5c8f62bc-43da-4d13-92e6-de2d84d39998",
+      "text": "21:13"
+    },
+    {
+      "id": "fbd83232-55ba-4131-8568-76870b018456",
+      "text": "用时 1分 52秒\n21:13"
+    },
+    {
+      "id": "827c9f32-4c7e-4490-9f84-64a28f06fc58",
+      "text": "21:15"
+    },
+    {
+      "id": "465782b2-fa86-466f-888a-e0e869f360dd",
+      "text": "用时 8秒\n21:15"
+    },
+    {
+      "id": "c9399ad2-e055-446b-b91f-25aa5757624c",
+      "text": "21:17"
+    },
+    {
+      "id": "c14ee6e1-5473-4b36-8252-b29cfb747539",
+      "text": "已停止回答\n用时未知\n21:17"
+    }
+  ]
+}

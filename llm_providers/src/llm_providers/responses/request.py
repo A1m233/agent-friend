@@ -73,6 +73,7 @@ def convert_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "reasoning_content",
         "reasoning_details",
         "phase",
+        "_assistant_response_id",
     }
     for message in messages:
         if not isinstance(message, dict) or set(message) - allowed:

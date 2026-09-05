@@ -1,0 +1,16 @@
+{
+  "synthetic": true,
+  "llmCalls": 0,
+  "checks": [
+    "native collapsed; unknown/final visible; persisted duration 112s",
+    "one real click expands both separated process sections",
+    "legacy has time and no toggle; interrupted remains visible with unknown duration",
+    "real WebView reload restores native disclosure under the persisted legacy current model"
+  ],
+  "passed": true,
+  "url": "http://localhost:1420/chat.html",
+  "viewport": {
+    "width": 1055,
+    "height": 758
+  }
+}

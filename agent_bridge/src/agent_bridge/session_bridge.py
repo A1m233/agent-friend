@@ -114,23 +114,35 @@ class SessionBridge:
     def assistant_event_after(self, session_id: str, user_event_uuid: str) -> Event | None:
         """Return the last complete assistant event in the accepted user turn."""
 
+        events = self.assistant_events_after(session_id, user_event_uuid)
+        return events[-1] if events else None
+
+    def assistant_events_after(self, session_id: str, user_event_uuid: str) -> tuple[Event, ...]:
+        """All complete text sources of one outbound answer, in product order."""
+
         try:
             session = self._runtime.persistent_session_manager.open(session_id)
         except SessionNotFoundError:
-            return None
+            return ()
         started = False
-        candidate: Event | None = None
+        candidates: list[Event] = []
+        run_id: object = None
         for event in session.active_events:
             if event.uuid == user_event_uuid and event.type == "user_message":
                 started = True
+                run_id = event.meta.get("run_id")
                 continue
             if not started:
                 continue
-            if event.type == "user_message":
+            if event.type in {"user_message", "system_trigger"}:
                 break
-            if event.type == "assistant_message" and event.payload.get("partial") is not True:
-                candidate = event
-        return candidate
+            if (
+                event.type == "assistant_message"
+                and event.payload.get("partial") is not True
+                and (run_id is None or event.meta.get("run_id") == run_id)
+            ):
+                candidates.append(event)
+        return tuple(candidates)
 
     @contextmanager
     def session_turn(self, session_id: str) -> Iterator[None]:

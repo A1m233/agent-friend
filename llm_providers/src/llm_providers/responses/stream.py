@@ -23,12 +23,15 @@ from ..request_witness import ProviderRequestWitness
 from ..spec import ProviderSpec
 from ..stream_events import (
     LLMActivity,
+    LLMAssistantItemDone,
+    LLMAssistantItemStart,
     LLMResponseDiagnostics,
     LLMStreamEvent,
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTransportDiagnostic,
     LLMTurnDone,
+    ProviderAssistantItem,
     ProviderAssistantTurn,
     ProviderToolCall,
 )
@@ -79,6 +82,7 @@ class _ResponseFailure(Exception):
 class _Item:
     identity: str
     kind: str
+    output_index: int
     phase: Phase = None
     tool_index: int = -1
     call_id: str = ""
@@ -115,12 +119,13 @@ class ResponsesState:
             raise _protocol("duplicate item identity")
         if kind not in {"message", "function_call", "reasoning"}:
             raise _protocol("unsupported output item type")
-        item = _Item(identity=identity, kind=kind)
+        item = _Item(identity=identity, kind=kind, output_index=index)
         events: list[LLMStreamEvent] = []
         if kind == "message":
             if raw.get("role") != "assistant":
                 raise _protocol("output message must be assistant")
             item.phase = _phase(raw.get("phase"))
+            events.append(LLMAssistantItemStart(identity, index, item.phase))
         elif kind == "function_call":
             if (
                 not isinstance(raw.get("call_id"), str)
@@ -164,7 +169,9 @@ class ResponsesState:
         item.arguments = complete
         return [LLMToolCallDelta(index=item.tool_index, args_json_delta=suffix)] if suffix else []
 
-    def _finish(self, raw: dict[str, Any], index: Any) -> list[LLMStreamEvent]:
+    def _finish(
+        self, raw: dict[str, Any], index: Any, *, response_complete: bool = False
+    ) -> list[LLMStreamEvent]:
         if not isinstance(index, int) or isinstance(index, bool) or index < 0:
             raise _protocol("invalid output index")
         identity = raw.get("id")
@@ -178,12 +185,25 @@ class ResponsesState:
         if raw.get("status") not in {None, "completed"}:
             raise _protocol("item did not complete")
         if item.done:
+            if response_complete and item.kind == "message" and item.snapshot is not None:
+                # Phase is lifecycle metadata. Only the complete response may
+                # supersede the item-done phase; other snapshot fields stay strict.
+                previous_snapshot = {
+                    key: value for key, value in item.snapshot.items() if key != "phase"
+                }
+                current_snapshot = {key: value for key, value in raw.items() if key != "phase"}
+                if current_snapshot != previous_snapshot:
+                    raise _protocol("conflicting item completion")
+                item.phase = _phase(raw.get("phase"))
+                item.snapshot = raw
+                return []
             if raw != item.snapshot:
                 raise _protocol("conflicting item completion")
             return []
         if item.kind == "message":
-            if raw.get("role") != "assistant" or _phase(raw.get("phase")) != item.phase:
-                raise _protocol("assistant phase changed during output")
+            if raw.get("role") != "assistant":
+                raise _protocol("output message must be assistant")
+            item.phase = _phase(raw.get("phase"))
             content = raw.get("content")
             if not isinstance(content, list):
                 raise _protocol("message completion lacks content")
@@ -200,11 +220,19 @@ class ResponsesState:
                 if not text.startswith(previous):
                     raise _protocol("text snapshot conflicts with deltas")
                 if suffix := text[len(previous) :]:
-                    events.append(LLMTextDelta(text=suffix, phase=item.phase))
+                    events.append(
+                        LLMTextDelta(
+                            text=suffix,
+                            phase=item.phase,
+                            item_id=item.identity,
+                            output_index=item.output_index,
+                        )
+                    )
                 item.texts[content_index] = text
                 seen.add(content_index)
             if set(item.texts) - seen:
                 raise _protocol("text content missing from completion")
+            events.append(LLMAssistantItemDone(item.identity, item.output_index, item.phase))
         elif item.kind == "function_call":
             if raw.get("call_id") != item.call_id or raw.get("name") != item.name:
                 raise _protocol("function identity changed")
@@ -243,7 +271,18 @@ class ResponsesState:
             ):
                 raise _protocol("invalid text delta")
             item.texts[index] = item.texts.get(index, "") + delta
-            return [LLMTextDelta(text=delta, phase=item.phase)] if delta else []
+            return (
+                [
+                    LLMTextDelta(
+                        text=delta,
+                        phase=item.phase,
+                        item_id=item.identity,
+                        output_index=item.output_index,
+                    )
+                ]
+                if delta
+                else []
+            )
         elif kind == "response.function_call_arguments.delta":
             item = self._item(event, "function_call")
             delta = event.get("delta")
@@ -280,7 +319,7 @@ class ResponsesState:
                 if not isinstance(output, list):
                     raise _protocol("completed response lacks output")
                 for index, item in enumerate(output):
-                    events.extend(self._finish(_object(item), index))
+                    events.extend(self._finish(_object(item), index, response_complete=True))
                 if len(output) != len(self.items):
                     raise _protocol("completed response omits observed items")
             self.terminal = response
@@ -335,7 +374,9 @@ class ResponsesState:
         ordered = [self.items[self.indices[index]] for index in sorted(self.indices)]
         text = "".join(item.texts[index] for item in ordered for index in sorted(item.texts))
         calls = tuple(
-            ProviderToolCall(item.tool_index, item.call_id, item.name, item.arguments)
+            ProviderToolCall(
+                item.tool_index, item.call_id, item.name, item.arguments, item.output_index
+            )
             for item in ordered
             if item.kind == "function_call"
         )
@@ -354,7 +395,21 @@ class ResponsesState:
             usage=usage,
             diagnostics=diagnostics,
             reasoning_state=state,
-            assistant_turn=ProviderAssistantTurn(text or None, calls, state),
+            assistant_turn=ProviderAssistantTurn(
+                text or None,
+                calls,
+                state,
+                tuple(
+                    ProviderAssistantItem(
+                        item.identity,
+                        item.output_index,
+                        "".join(item.texts[index] for index in sorted(item.texts)),
+                        item.phase,
+                    )
+                    for item in ordered
+                    if item.kind == "message"
+                ),
+            ),
         )
 
 

@@ -18,7 +18,7 @@ import { ChatMessage as TdChatMessage } from "@tdesign-react/chat";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 import { toast } from "sonner";
-import { Button, ScrollArea, Skeleton, StatusDot } from "@/components/ui";
+import { Button, Collapsible, CollapsibleContent, ScrollArea, Skeleton } from "@/components/ui";
 import {
   draftKey,
   useConversationStore,
@@ -52,7 +52,7 @@ import type {
 import { MessageAttachments } from "./MessageAttachments";
 import { MessageActionBar } from "./MessageActionBar";
 import { MessageQuoteSelectionAction } from "./MessageQuoteSelectionAction";
-import { ModelResponseStatus } from "./ModelResponseStatus";
+import { RunExecutionDisclosure } from "./RunExecutionDisclosure";
 import {
   getMessageVirtualItemKey,
   getScrollToBottomBehavior,
@@ -64,7 +64,7 @@ import {
 } from "./messageVirtualization";
 import {
   CompactionActivity,
-  MessagePrimaryActivityStatus,
+  MessageActivityTail,
 } from "./activity/MessagePrimaryActivity";
 import {
   getMessageScrollDirection,
@@ -80,6 +80,9 @@ import { ReminderCard } from "./ReminderCard";
 import { ToolActivity } from "./ToolActivity";
 import { ToolCard } from "./ToolCard";
 import { buildMessagePresentationSegments } from "./toolActivityPresentation";
+import { executionSections } from "./executionDisclosurePolicy";
+import { ExecutionDisclosureStateProvider } from "./ExecutionDisclosure";
+import { shouldCollapseExecution } from "@/stores/assistantPhase";
 import { CHAT_MARKDOWN_CONTENT_PROPS } from "./chatMarkdownConfig";
 import { useExternalLinkOpener } from "./useExternalLinkOpener";
 import { ReferenceSummaryPopover } from "./ReferenceSummaryPopover";
@@ -92,6 +95,7 @@ import {
   findSearchAnchor,
   findSearchMessageIndex,
   installSearchTextHighlight,
+  scrollToRenderedAnchor,
 } from "./searchNavigation";
 
 type TdContentProp = ComponentProps<typeof TdChatMessage>["content"];
@@ -402,7 +406,8 @@ function MessageContent({
   const hasErrorBubble = message.status === "error" && !!message.error;
   const actionBarBlockIndex = hasErrorBubble ? -1 : lastRenderableBlockIndex(message);
   let shouldRenderExternalActionBar = false;
-  const rendered = buildMessagePresentationSegments(message.blocks)
+  const segments = buildMessagePresentationSegments(message.blocks);
+  const segmentNodes = segments
     .map((segment) => {
       if (segment.kind === "toolActivity") {
         if (segment.endIndex === actionBarBlockIndex) shouldRenderExternalActionBar = true;
@@ -438,6 +443,7 @@ function MessageContent({
       const b = segment.block;
       const i = segment.startIndex;
       if (b.kind === "text") {
+        if (!b.text) return null;
         return (
           message.status === "streaming" ? (
             <StreamingMarkdownBubble key={`t:${b.mid || i}`} text={b.text} />
@@ -473,14 +479,31 @@ function MessageContent({
         );
       }
       return null;
-    })
-    .filter(Boolean);
+    });
+  const sections = executionSections(message, segments);
+  const hasProcess = sections.some((section) => section.execution
+    && section.indexes.some((index) => Boolean(segmentNodes[index])));
+  const revealTarget = searchAnchorEventUuid && sections.some((section) => section.execution
+    && (section.textIds.includes(searchAnchorEventUuid) || searchAnchorEventUuid === message.id))
+    ? searchAnchorEventUuid : undefined;
+  const rendered = (open: boolean) => sections.map((section) => {
+    const children = section.indexes.map((index) => segmentNodes[index]).filter(Boolean);
+    if (!children.length) return null;
+    if (!section.execution) return children;
+    return <Collapsible key={section.id} open={open}>
+      <CollapsibleContent><div className="flex flex-col gap-2">{children}</div></CollapsibleContent>
+    </Collapsible>;
+  }).filter(Boolean);
 
-  const hasContent = rendered.length > 0;
+  const hasContent = segmentNodes.some(Boolean);
 
   return (
     <div className="flex flex-col gap-2">
-      {rendered}
+      <RunExecutionDisclosure key={message.runId ?? message.id} message={message} enabled={hasProcess}
+        collapse={shouldCollapseExecution(message)} disclosureId={message.runId ?? message.id}
+        revealTarget={revealTarget} onDisclosureChange={onToolDisclosureChange}>
+        {rendered}
+      </RunExecutionDisclosure>
       {message.status === "error" && message.error && (
         <div className="flex flex-col items-start gap-2">
           <TextBubble role="assistant" text={message.error} actionBar={actionBar} />
@@ -508,24 +531,7 @@ function MessageContent({
           )}
         </div>
       )}
-      {message.status === "interrupted" && (
-        <div className="flex items-center gap-1.5 px-1 text-xs text-muted" role="status">
-          <StatusDot tone="muted" />
-          <span>{message.runOutcome === "expired"
-            ? "任务等待时间过长，已过期"
-            : message.runOutcome === "skipped"
-              ? "本轮任务未执行"
-              : message.runOutcome === "rejected"
-                ? "本轮任务未被接纳"
-                : "已停止回答"}</span>
-        </div>
-      )}
-      {primaryActivity !== undefined && (
-        <MessagePrimaryActivityStatus activity={primaryActivity} />
-      )}
-      {primaryActivity === undefined && message.status === "streaming" && (
-        <ModelResponseStatus status={message.runStatus} />
-      )}
+      <MessageActivityTail message={message} activity={primaryActivity} />
       {((message.status === "streaming" && !hasContent) || shouldRenderExternalActionBar) &&
         actionBar}
     </div>
@@ -773,6 +779,16 @@ export function MessageTimeline({
     setActiveSearchAnchor(null);
   }, []);
 
+  const applyFollowEvent = useCallback((event: MessageScrollFollowEvent) => {
+    const next = reduceMessageScrollFollowing(followingRef.current, event);
+    if (next !== followingRef.current) followingRef.current = next;
+    const nextButtonVisible = reduceMessageScrollButtonVisible(scrollButtonVisibleRef.current, event);
+    if (nextButtonVisible !== scrollButtonVisibleRef.current) {
+      scrollButtonVisibleRef.current = nextButtonVisible;
+      setIsScrollButtonVisible(nextButtonVisible);
+    }
+  }, []);
+
   const handleReferenceSelect = useCallback((reference: ChatTextReference) => {
     if (reference.source.kind !== "session_message") {
       toast.error("这条引用来自 QQ 外部消息，当前无法回到原文");
@@ -784,8 +800,17 @@ export function MessageTimeline({
       return;
     }
     clearSearchFeedback();
+    // Navigation supersedes both auto-follow and a recent manual disclosure's
+    // viewport hold. Neither may pull the freshly revealed source out of view.
+    if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
+    scrollRafRef.current = 0;
+    if (userLayoutMutationTimerRef.current) window.clearTimeout(userLayoutMutationTimerRef.current);
+    userLayoutMutationTimerRef.current = 0;
+    userLayoutMutationRef.current = null;
+    setUserLayoutMutationMessageId(null);
+    applyFollowEvent({ type: "detach-requested" });
     const anchorMessage = messages[index];
-    setActiveSearchAnchor(anchorMessage.id);
+    setActiveSearchAnchor(reference.source.textBlockId ?? anchorMessage.id);
     virtualizer.scrollToIndex(index, { align: "center" });
     let attempts = 0;
     const locate = () => {
@@ -801,6 +826,7 @@ export function MessageTimeline({
       if (!host) {
         toast.error("已定位到来源消息，但引用片段暂时无法高亮");
       } else {
+        if (root) scrollToRenderedAnchor(root, host, composerInset);
         searchHighlightCleanupRef.current = installReferenceHighlight(host, reference);
         if (!searchHighlightCleanupRef.current) {
           toast("已定位到来源消息", {
@@ -814,23 +840,7 @@ export function MessageTimeline({
       );
     };
     searchScrollRafRef.current = window.requestAnimationFrame(locate);
-  }, [clearSearchFeedback, messages, virtualizer]);
-
-  const applyFollowEvent = useCallback((event: MessageScrollFollowEvent) => {
-    const next = reduceMessageScrollFollowing(followingRef.current, event);
-    if (next !== followingRef.current) {
-      followingRef.current = next;
-    }
-
-    const nextButtonVisible = reduceMessageScrollButtonVisible(
-      scrollButtonVisibleRef.current,
-      event,
-    );
-    if (nextButtonVisible !== scrollButtonVisibleRef.current) {
-      scrollButtonVisibleRef.current = nextButtonVisible;
-      setIsScrollButtonVisible(nextButtonVisible);
-    }
-  }, []);
+  }, [applyFollowEvent, clearSearchFeedback, composerInset, messages, virtualizer]);
 
   const endUserScrollSession = useCallback(() => {
     userScrollSessionRef.current = false;
@@ -1123,12 +1133,7 @@ export function MessageTimeline({
         return;
       }
 
-      const viewportRect = viewport.getBoundingClientRect();
-      const anchorRect = anchor.getBoundingClientRect();
-      const offset =
-        anchorRect.top + anchorRect.height / 2 -
-        (viewportRect.top + viewportRect.height / 2);
-      viewport.scrollBy({ top: offset, behavior: "auto" });
+      scrollToRenderedAnchor(viewport, anchor, composerInset);
       searchHighlightCleanupRef.current = installSearchTextHighlight(anchor, searchTarget.query);
       searchFeedbackTimerRef.current = window.setTimeout(() => {
         searchFeedbackTimerRef.current = 0;
@@ -1154,6 +1159,7 @@ export function MessageTimeline({
   }, [
     applyFollowEvent,
     clearSearchFeedback,
+    composerInset,
     historyLoading,
     messages,
     onSearchTargetHandled,
@@ -1390,7 +1396,7 @@ export function MessageList({
   ]);
 
   return (
-    <>
+    <ExecutionDisclosureStateProvider key={currentSessionId}>
       <MessageTimeline
         messages={messages}
         activeRunId={activeRunId}
@@ -1413,6 +1419,6 @@ export function MessageList({
         workspaceKey={quoteWorkspaceKey}
         disabled={streaming || historyLoading}
       />
-    </>
+    </ExecutionDisclosureStateProvider>
   );
 }

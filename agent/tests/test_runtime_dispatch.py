@@ -290,7 +290,16 @@ def test_dispatch_user_event_runs_stream_and_falls_to_listener(tmp_path: Path) -
         assert env.seq == 1
         # events 内含初始等待状态 + TextDelta * 2 + TurnDone
         types = [e["type"] for e in env.events]
-        assert types == ["model_response_status", "text_delta", "text_delta", "done"]
+        assert types == [
+            "model_response_status",
+            "assistant_phase",
+            "assistant_message_start",
+            "text_delta",
+            "text_delta",
+            "assistant_message_end",
+            "assistant_phase",
+            "done",
+        ]
         texts = [e["text"] for e in env.events if e["type"] == "text_delta"]
         assert texts == ["hi ", "there"]
 
@@ -306,9 +315,15 @@ def test_dispatch_user_event_session_records_messages(tmp_path: Path) -> None:
     runtime._dispatch(UserEvent(session_id=conv.session.session_id, user_input="hello"))
 
     types = [ev.type for ev in conv.session.events]
-    assert types == ["session_meta", "user_message", "assistant_message"]
+    assert types == [
+        "session_meta",
+        "user_message",
+        "assistant_phase",
+        "assistant_phase",
+        "assistant_message",
+    ]
     assert conv.session.events[1].payload["content"] == "hello"
-    assert conv.session.events[2].payload["content"] == "hi"
+    assert conv.session.events[-1].payload["content"] == "hi"
 
 
 # ===== SystemTriggerEvent user-visibility（AC-5 runtime 层） =====
@@ -341,7 +356,14 @@ def test_dispatch_system_trigger_user_visibility_falls_to_listener(tmp_path: Pat
         assert env.kind == "agent_turn"
         assert env.source_kind == "cron:bedtime"
         types = [e["type"] for e in env.events]
-        assert types == ["text_delta", "done"]
+        assert types == [
+            "assistant_phase",
+            "assistant_message_start",
+            "text_delta",
+            "assistant_message_end",
+            "assistant_phase",
+            "done",
+        ]
 
 
 def test_dispatch_system_trigger_writes_system_trigger_marker(tmp_path: Path) -> None:
@@ -362,7 +384,13 @@ def test_dispatch_system_trigger_writes_system_trigger_marker(tmp_path: Path) ->
     )
 
     types = [ev.type for ev in conv.session.events]
-    assert types == ["session_meta", "system_trigger", "assistant_message"]
+    assert types == [
+        "session_meta",
+        "system_trigger",
+        "assistant_phase",
+        "assistant_phase",
+        "assistant_message",
+    ]
 
 
 # ===== Subscriber 过滤 =====
@@ -521,7 +549,11 @@ def test_submit_runs_conversation_and_correlates_session_events(
         events = cast(list[ConversationEvent], list(handle.events()))
         assert [event.type for event in events] == [
             "model_response_status",
+            "assistant_phase",
+            "assistant_message_start",
             "text_delta",
+            "assistant_message_end",
+            "assistant_phase",
             "done",
         ]
         assert handle.terminal is not None
@@ -532,6 +564,14 @@ def test_submit_runs_conversation_and_correlates_session_events(
         )
         assert user.meta["run_id"] == "run-045"
         assert assistant.meta["run_id"] == "run-045"
+        started = next(event for event in conv.session.events if event.type == "run_started")
+        finished = next(event for event in conv.session.events if event.type == "run_terminal")
+        snapshot = handle.snapshot()
+        assert snapshot.started_at is not None and snapshot.finished_at is not None
+        assert started.payload["started_at"] == snapshot.started_at.isoformat()
+        assert finished.payload["started_at"] == snapshot.started_at.isoformat()
+        assert finished.payload["finished_at"] == snapshot.finished_at.isoformat()
+        assert all("started_at" not in str(msg) for msg in fake.received[0])
         latency_text = "\n".join(
             record.getMessage()
             for record in caplog.records
@@ -813,7 +853,7 @@ def test_conversation_cooperative_cancel_persists_seen_partial(tmp_path: Path) -
     )
     waiting = next(stream)
     assert waiting.type == "model_response_status"
-    first = next(stream)
+    first = next(event for event in stream if event.type == "text_delta")
     assert first.type == "text_delta"
     assert handle.cancel(CancelReason.CLIENT_DISCONNECTED)
     with pytest.raises(RunCancelled):
@@ -823,6 +863,7 @@ def test_conversation_cooperative_cancel_persists_seen_partial(tmp_path: Path) -
         "content": "partial",
         "partial": True,
         "interruption_reason": "client_disconnected",
+        "phase": "unknown",
     }
     assert assistant.meta["run_id"] == request.run_id
 
@@ -866,6 +907,7 @@ def test_conversation_forwards_cancel_check_while_waiting_for_model_stream(
         "content": "",
         "partial": True,
         "interruption_reason": "explicit_request",
+        "phase": "unknown",
     }
     assert assistant.meta["run_id"] == request.run_id
 

@@ -54,6 +54,9 @@
   --size-chat-composer-remove-icon: 0.9375rem;
   --size-chat-composer-remove-offset: 0.25rem;
 
+  /* 对话轮级摘要分隔线 */
+  --size-chat-run-divider: 0.5px;
+
   /* 对话滚动活动提示 */
   --stroke-width-chat-scroll-activity: var(--icon-stroke-width-strong);
   --motion-duration-chat-scroll-activity: 1.8s;

@@ -71,7 +71,7 @@ class _Observation:
 @dataclass(frozen=True)
 class _ToolTurnResult:
     observation: _Observation
-    assistant_message: dict[str, Any]
+    assistant_messages: list[dict[str, Any]]
     tool_message: dict[str, Any]
     request_witness: ProviderRequestWitness | None
 
@@ -293,7 +293,9 @@ def _tool_turn_request(
         raise AssertionError(
             f"{scenario}/{phase}: provider did not freeze completed assistant turn"
         )
-    assistant_message: dict[str, Any] = dict(assistant_turn.to_openai_message())
+    assistant_messages: list[dict[str, Any]] = [
+        dict(item) for item in assistant_turn.to_openai_messages()
+    ]
     tool_message = {
         "role": "tool",
         "tool_call_id": call["id"],
@@ -344,7 +346,7 @@ def _tool_turn_request(
                 else None
             ),
         ),
-        assistant_message=assistant_message,
+        assistant_messages=assistant_messages,
         tool_message=tool_message,
         request_witness=request_witness,
     )
@@ -662,7 +664,7 @@ def _run_deepseek_tool_loop_ab(
         if scenario == "current_tail_rebuild":
             second_messages = [
                 *base,
-                first.assistant_message,
+                *first.assistant_messages,
                 first.tool_message,
                 {
                     "role": "user",
@@ -676,7 +678,7 @@ def _run_deepseek_tool_loop_ab(
         else:
             second_messages = [
                 *first_messages,
-                first.assistant_message,
+                *first.assistant_messages,
                 first.tool_message,
                 {
                     "role": "user",

@@ -369,6 +369,9 @@ class IMRouter:
             user_event_id=user_event_id,
         )
         assistant_event = self._bridge.assistant_event_after(session_id, user_event_id)
+        assistant_sources = tuple(
+            item.uuid for item in self._bridge.assistant_events_after(session_id, user_event_id)
+        )
 
         # 跑通了但 agent 一字未输出(罕见):也回 fallback,避免发空消息给 IM
         if not agent_text:
@@ -401,6 +404,7 @@ class IMRouter:
                     event=event,
                     session_id=session_id,
                     event_uuid=assistant_event.uuid,
+                    event_uuids=assistant_sources,
                     provider_message_id=getattr(stream_session, "provider_message_id", None),
                 )
             logger.info(
@@ -469,6 +473,7 @@ class IMRouter:
                 event=event,
                 session_id=session_id,
                 event_uuid=assistant_event.uuid,
+                event_uuids=assistant_sources,
                 provider_message_id=send_result.provider_message_id,
             )
         log_run_latency(
@@ -642,6 +647,7 @@ class IMRouter:
         session_id: str,
         event_uuid: str,
         provider_message_id: str | None,
+        event_uuids: tuple[str, ...] = (),
     ) -> None:
         aliases = self._reference_aliases
         bind_id = str(getattr(provider_or_send, "bind_id", "") or "")
@@ -656,6 +662,7 @@ class IMRouter:
             session_id=session_id,
             event_uuid=event_uuid,
             source_role="assistant",
+            event_uuids=event_uuids,
         )
 
     @staticmethod

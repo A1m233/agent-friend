@@ -93,6 +93,8 @@ from .request_witness import ProviderRequestRelation, ProviderRequestWitness
 from .spec import ProviderConfig, ProviderSpec
 from .stream_events import (
     LLMActivity,
+    LLMAssistantItemDone,
+    LLMAssistantItemStart,
     LLMResponseDiagnostics,
     LLMRetryScheduled,
     LLMStreamEvent,
@@ -101,6 +103,7 @@ from .stream_events import (
     LLMTransportDiagnostic,
     LLMTurnDone,
     LLMUsage,
+    ProviderAssistantItem,
     ProviderAssistantTurn,
     ProviderToolCall,
 )
@@ -123,6 +126,8 @@ __all__ = [
     "PROMPT_CACHE_OPERATION_CONTRIBUTORS",
     "CredentialValidationResult",
     "LLMActivity",
+    "LLMAssistantItemDone",
+    "LLMAssistantItemStart",
     "LLMAuthError",
     "LLMBadRequestError",
     "LLMClient",
@@ -163,6 +168,7 @@ __all__ = [
     "MultimodalInputAdapter",
     "OperationLineageBinding",
     "OperationRequestLineageTracker",
+    "ProviderAssistantItem",
     "ProviderAssistantTurn",
     "ProviderConfig",
     "ProviderDefinition",

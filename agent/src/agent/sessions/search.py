@@ -293,6 +293,10 @@ def _project_search_messages(events: list[Event]) -> tuple[_SearchMessage, ...]:
                 or (source_kind == "todo_reminder" and not has_reminder_card)
             ):
                 pending_skip_assistant = True
+                if run_id:
+                    hidden_run_ids.add(run_id)
+                    pending_skip_assistant = False
+                    finish_assistant()
             continue
 
         if event.type == "todo_reminder":

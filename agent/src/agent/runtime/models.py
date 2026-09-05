@@ -6,7 +6,7 @@ import queue
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING, Any
@@ -16,6 +16,7 @@ from ..latency import monotonic_ms
 from ..system_prompt.sections import PromptChannel
 from ..system_prompt.surfaces import InteractionSurfaceId
 from .cancellation import CancellationToken, CancelReason
+from .errors import run_failure_reason_code
 from .inbox import AgentEvent
 
 if TYPE_CHECKING:
@@ -184,6 +185,15 @@ class RunHandle:
         self._primary_consumer = primary_consumer
         self._consumer_attached = primary_consumer
         self._on_change = on_change
+        self._before_finish: Callable[[RunTerminal], None] | None = None
+        self._finishing = False
+
+    def set_terminal_callback(self, callback: Callable[[RunTerminal], None]) -> None:
+        """Bind durable finalization before publishing the unique terminal snapshot."""
+        with self._lock:
+            if self._finishing or self._terminal is not None:
+                raise RuntimeError("run is already finishing")
+            self._before_finish = callback
 
     @property
     def run_id(self) -> str:
@@ -248,10 +258,10 @@ class RunHandle:
         budget_dimension: str | None = None,
     ) -> bool:
         with self._lock:
-            if self._status is RunStatus.TERMINAL:
+            if self._status is RunStatus.TERMINAL or self._finishing:
                 return False
-            self._status = RunStatus.TERMINAL
-            self._terminal = RunTerminal(
+            self._finishing = True
+            terminal = RunTerminal(
                 outcome=outcome,
                 turn_status=turn_status,
                 reason_code=reason_code,
@@ -262,6 +272,23 @@ class RunHandle:
                 budget_dimension=budget_dimension,
                 error=error,
             )
+            before_finish = self._before_finish
+        # Do not hold the handle lock during I/O or listener callbacks.
+        try:
+            if before_finish is not None:
+                before_finish(terminal)
+        except BaseException as exc:
+            terminal = replace(
+                terminal,
+                outcome=RunOutcome.FAILED,
+                turn_status=TurnStatus.FAILED,
+                reason_code=run_failure_reason_code(exc, default="run_terminal_persist_failed"),
+                error=exc,
+            )
+        with self._lock:
+            self._terminal = terminal
+            self._before_finish = None
+            self._status = RunStatus.TERMINAL
             self._version += 1
             self._terminal_event.set()
             snapshot = self._snapshot_locked()

@@ -14,6 +14,12 @@ export type MessageStatus = "streaming" | "complete" | "interrupted" | "error";
 /** 工具调用卡片状态机：进行中 → 完成 / 失败（对应 R-M3.2）。 */
 export type ToolStatus = "running" | "done" | "error";
 
+export type AssistantPhase = "commentary" | "final_answer" | "unknown";
+export interface AssistantPhaseState {
+  mode: "native" | "legacy";
+  validation: "pending" | "valid" | "missing_final" | "conflict";
+}
+
 export interface ModelResponseProgress {
   phase: "waiting" | "reasoning" | "processing" | "retrying";
   afterTool: boolean;
@@ -29,6 +35,8 @@ export interface TextBlock {
   /** AG-UI message_id；用于把后续 delta 归位到正确的文本块。 */
   mid: string;
   text: string;
+  phase?: AssistantPhase;
+  itemIndex?: number;
 }
 
 /** 工具调用块（卡片）。 */
@@ -114,8 +122,12 @@ export interface ChatMessage {
   role: ChatRole;
   /** 产生这条 assistant 消息的 Runtime run；旧历史和 user 消息可缺失。 */
   runId?: string;
+  assistantPhase?: AssistantPhaseState;
   /** Runtime terminal outcome；用于区分失败、取消、跳过、过期和拒绝。 */
   runOutcome?: import("./run").RunOutcome;
+  /** Actual execution anchors, never message write/reconciliation timestamps. */
+  runStartedAt?: string;
+  runFinishedAt?: string;
   /**
    * 消息展示时间，ISO 字符串：user 取发送时间，assistant 取本轮回答进入终态的时间。
    * 实时 assistant 占位消息会先持有临时时间，并在完成 / 中断 / 失败时更新。

@@ -34,7 +34,7 @@ import math
 import os
 import sys
 from collections.abc import Callable, Generator, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -45,6 +45,8 @@ from llm_providers import (
     LanguageModel,
     LanguageModelFactory,
     LLMActivity,
+    LLMAssistantItemDone,
+    LLMAssistantItemStart,
     LLMContextWindowError,
     LLMEmptyResponseError,
     LLMOutputBudgetExhaustedError,
@@ -62,6 +64,7 @@ from llm_providers import (
     ProviderRequestWitness,
     ProviderToolCall,
     default_model_runtime_config,
+    get_model_capabilities,
     render_provider_reasoning_state,
     validate_model_runtime_config,
 )
@@ -74,6 +77,7 @@ from memory import (
 )
 
 from .approvals.models import SessionApprovalModeState
+from .assistant_phase import PhaseRun, normalize_phase
 from .attachments import AttachmentRef
 from .command_runtime.tools import (
     COMMAND_EXECUTION_CHECKPOINT_ARG,
@@ -99,6 +103,10 @@ from .context import (
     stream_build_messages,
 )
 from .conversation_events import (
+    AssistantMessageEnd,
+    AssistantMessagePhase,
+    AssistantMessageStart,
+    AssistantPhaseStatus,
     ContextCompactionStatus,
     ConversationEvent,
     ModelResponseStatus,
@@ -164,6 +172,7 @@ from .skills import (
     render_activation_issue,
     render_runtime_capability_notice,
 )
+from .system_prompt.assistant_phase import phase_instruction
 from .system_prompt.defaults import load_default_channel_instruction
 from .system_prompt.sections import PromptChannel
 from .system_prompt.surfaces import (
@@ -302,6 +311,7 @@ class _RewritePlan:
 class _RunModelSnapshot:
     config: ModelRuntimeConfig
     llm_client: LanguageModel
+    phase: PhaseRun
 
 
 @dataclass
@@ -567,7 +577,14 @@ class Conversation:
         基础 system prompt，而是在 :meth:`_assemble` 中作为 turn context 注入。
         """
         builder = self._turn_prompt_builder or self._prompt_builder
-        return builder.build(channel_override=self._prompt_channel_override)
+        prompt = builder.build(channel_override=self._prompt_channel_override)
+        if (
+            self._run_model_snapshot is not None
+            and self._run_model_snapshot.phase.mode == "native"
+            and self._run_model_snapshot.phase.visible
+        ):
+            prompt += "\n\n" + phase_instruction()
+        return prompt
 
     def _snapshot_prompt_builder(self) -> PromptBuilder:
         snapshot = getattr(self._prompt_builder, "snapshot", None)
@@ -593,6 +610,12 @@ class Conversation:
         return _RunModelSnapshot(
             config=self._session.current_model_config,
             llm_client=self._llm_client,
+            phase=PhaseRun(
+                mode="native"
+                if get_model_capabilities(self._llm_client).assistant_message_phase == "native"
+                else "legacy",
+                run_id=self._run_id_override or str(uuid4()),
+            ),
         )
 
     def _active_llm_client(self) -> LanguageModel:
@@ -818,15 +841,23 @@ class Conversation:
                 raise ValueError("user_event_id_conflict: 相同消息标识不能对应不同 Skill 选择。")
         user_event_appended = existing_user_event is not None
         completed_replay_text: str | None = None
+        completed_replay_events: list[Event] = []
         if existing_user_event is not None:
-            replay_start_index = self._session.events.index(existing_user_event) + 1
+            replay_events = self._session.active_events
+            replay_start_index = replay_events.index(existing_user_event) + 1
             completed_parts: list[str] = []
-            for event in self._session.events[replay_start_index:]:
-                if event.type == "user_message":
+            replay_incomplete = False
+            for event in replay_events[replay_start_index:]:
+                if event.type in {"user_message", "system_trigger"}:
                     break
+                if (event.type == "assistant_message" and event.payload.get("partial") is True) or (
+                    event.type == "run_terminal" and event.payload.get("status") != "completed"
+                ):
+                    replay_incomplete = True
                 if event.type == "assistant_message" and not event.payload.get("partial", False):
+                    completed_replay_events.append(event)
                     completed_parts.append(str(event.payload.get("content", "")))
-            if completed_parts:
+            if completed_parts and not replay_incomplete:
                 completed_replay_text = "".join(completed_parts)
         self._active_skill_selections = effective_skill_selections
         self._active_skill_turn_snapshot = (
@@ -880,7 +911,29 @@ class Conversation:
             self._check_cancel(cancel_check)
             if completed_replay_text is not None:
                 if completed_replay_text:
-                    yield TextDelta(completed_replay_text)
+                    replay_run_id = completed_replay_events[0].meta.get("run_id")
+                    phase_facts = [
+                        ev
+                        for ev in self._session.active_events
+                        if ev.type == "assistant_phase" and ev.meta.get("run_id") == replay_run_id
+                    ]
+                    if phase_facts and isinstance(replay_run_id, str):
+                        fact = phase_facts[-1].payload
+                        yield AssistantPhaseStatus(
+                            self._run_id_override or replay_run_id,
+                            "native" if fact.get("mode") == "native" else "legacy",
+                            cast(Any, fact.get("validation", "pending")),
+                        )
+                    for index, replay in enumerate(completed_replay_events):
+                        phase = normalize_phase(replay.payload.get("phase"))
+                        yield AssistantMessageStart(replay.uuid, phase, index)
+                        yield TextDelta(
+                            str(replay.payload.get("content", "")),
+                            message_id=replay.uuid,
+                            phase=phase,
+                            item_index=index,
+                        )
+                        yield AssistantMessageEnd(replay.uuid)
                 yield TurnDone(stop_reason="idempotent_replay", total_tool_calls=0)
                 return
             yield from self._run_tool_loop(
@@ -1158,11 +1211,20 @@ class Conversation:
                 trace_call_kind="tool_error_continuation",
             ):
                 self._check_cancel(cancel_check)
-                if isinstance(ev, ContextCompactionStatus):
+                if isinstance(
+                    ev,
+                    (
+                        ContextCompactionStatus,
+                        AssistantMessageStart,
+                        AssistantMessageEnd,
+                        AssistantMessagePhase,
+                        AssistantPhaseStatus,
+                    ),
+                ):
                     yield ev
                 elif isinstance(ev, LLMTextDelta):
                     current_text_buf.append(ev.text)
-                    yield TextDelta(text=ev.text)
+                    yield self._phase_text_delta(ev)
                 elif isinstance(ev, LLMActivity):
                     yield ModelResponseStatus(
                         phase=ev.kind,
@@ -1447,6 +1509,8 @@ class Conversation:
         persona_id = self._session.current_persona_id
         model_snapshot = self._active_model_id()
 
+        if self._run_model_snapshot is not None:
+            self._run_model_snapshot.phase.visible = output_visibility == "user"
         # 1. 落 system_trigger marker。通常不参与 messages 派生；修复前缺少
         # todo_reminder 固定事件的 IM 历史会据此合成已投递状态裁决。
         self._append_system_trigger_event(
@@ -1479,19 +1543,29 @@ class Conversation:
             openai_messages,
             tools=None,
             trace_call_kind=f"system_turn:{source_kind}",
+            cancel_check=cancel_check,
             recovery_builder=lambda: self._assemble_stream(
                 trailing_user=system_prompt_addendum,
                 tool_specs=None,
             ),
         ):
             self._check_cancel(cancel_check)
-            if isinstance(ev, ContextCompactionStatus):
+            if isinstance(
+                ev,
+                (
+                    ContextCompactionStatus,
+                    AssistantMessageStart,
+                    AssistantMessageEnd,
+                    AssistantMessagePhase,
+                    AssistantPhaseStatus,
+                ),
+            ):
                 if output_visibility == "user":
                     yield ev
             elif isinstance(ev, LLMTextDelta):
                 text_buf.append(ev.text)
                 if output_visibility == "user":
-                    yield TextDelta(text=ev.text)
+                    yield self._phase_text_delta(ev)
             elif isinstance(ev, LLMTurnDone):
                 self._consume_usage(ev)
                 turn_done = ev
@@ -1711,6 +1785,8 @@ class Conversation:
         meta = dict(base or {})
         if self._run_id_override is not None:
             meta["run_id"] = self._run_id_override
+        elif self._run_model_snapshot is not None:
+            meta["run_id"] = self._run_model_snapshot.phase.run_id
         return meta
 
     @staticmethod
@@ -2256,6 +2332,51 @@ class Conversation:
         model: str,
         interruption_reason: str | None = None,
     ) -> Event:
+        state = self._run_model_snapshot.phase if self._run_model_snapshot else None
+        items = state.ordered_text() if state and content == state.arrival_text else []
+        if items:
+            first: Event | None = None
+            for item in items:
+                if item.persisted:
+                    continue
+                event = self._append_assistant_item_event(
+                    item.text,
+                    partial=partial,
+                    persona_name=persona_name,
+                    persona_id=persona_id,
+                    model=model,
+                    interruption_reason=interruption_reason,
+                    message_id=item.message_id,
+                    phase=item.phase,
+                )
+                item.persisted = True
+                if first is None:
+                    first = event
+            if first is not None:
+                return first
+            # A cancellation after commit must not append the same items twice.
+            return next(ev for ev in self._session.events if ev.uuid == items[0].message_id)
+        return self._append_assistant_item_event(
+            content,
+            partial=partial,
+            persona_name=persona_name,
+            persona_id=persona_id,
+            model=model,
+            interruption_reason=interruption_reason,
+        )
+
+    def _append_assistant_item_event(
+        self,
+        content: str,
+        *,
+        partial: bool,
+        persona_name: str,
+        persona_id: str | None,
+        model: str,
+        interruption_reason: str | None = None,
+        message_id: str | None = None,
+        phase: Literal["commentary", "final_answer", "unknown"] = "unknown",
+    ) -> Event:
         meta: dict[str, Any] = self._run_event_meta(
             {
                 "persona": persona_name,
@@ -2270,12 +2391,12 @@ class Conversation:
             self._pending_context_usage = None
         if self._active_tool_run_state is not None:
             meta["tool_run"] = self._active_tool_run_state.diagnostics()
-        payload: dict[str, Any] = {"content": content, "partial": partial}
+        payload: dict[str, Any] = {"content": content, "partial": partial, "phase": phase}
         if partial and interruption_reason:
             payload["interruption_reason"] = interruption_reason
         event = Event(
             type="assistant_message",
-            uuid=str(uuid4()),
+            uuid=message_id or str(uuid4()),
             ts=datetime.now(UTC),
             payload=payload,
             meta=meta,
@@ -2283,6 +2404,120 @@ class Conversation:
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
         return event
+
+    def _publish_assistant_phase(self, state: PhaseRun) -> AssistantPhaseStatus:
+        state.run_id = self._run_id_override or state.run_id
+        status = AssistantPhaseStatus(state.run_id, state.mode, state.validation)
+        event = Event(
+            type="assistant_phase",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload={"mode": state.mode, "validation": state.validation},
+            meta={"run_id": state.run_id},
+        )
+        if state.visible:
+            self._store.append_event(self._session.session_id, event)
+            self._session.append(event)
+        state.published = True
+        return status
+
+    @staticmethod
+    def _phase_text_delta(event: LLMTextDelta) -> TextDelta:
+        return TextDelta(
+            text=event.text,
+            message_id=event.item_id,
+            phase=normalize_phase(event.phase),
+            item_index=event.output_index,
+        )
+
+    def _assistant_event_ids(self) -> dict[str, str]:
+        return self._run_model_snapshot.phase.event_ids() if self._run_model_snapshot else {}
+
+    def _track_assistant_stream(
+        self,
+        stream: Iterator[Any],
+        cancel_check: Callable[[], None] | None = None,
+    ) -> Iterator[Any]:
+        """Keep all entrypoints on one identity/persistence/validation path."""
+        snapshot = self._run_model_snapshot
+        if snapshot is None:
+            yield from stream
+            return
+        state = snapshot.phase
+        state.begin_response()
+        if not state.published:
+            yield self._publish_assistant_phase(state)
+        try:
+            for event in stream:
+                self._check_cancel(cancel_check)
+                if isinstance(event, LLMAssistantItemStart):
+                    state.start(event)
+                elif isinstance(event, LLMAssistantItemDone):
+                    item = state.items[event.item_id]
+                    phase = normalize_phase(event.phase)
+                    if item.phase != phase:
+                        item.phase = phase
+                        if item.text:
+                            yield AssistantMessagePhase(item.message_id, phase)
+                    item.done = True
+                    if item.text:
+                        yield AssistantMessageEnd(item.message_id)
+                elif isinstance(event, LLMTextDelta):
+                    item, first = state.text(replace(event, text=""))
+                    if first and event.text:
+                        yield AssistantMessageStart(
+                            item.message_id, item.phase, state.response_offset + item.index
+                        )
+                    self._check_cancel(cancel_check)
+                    state.text(event)
+                    yield replace(
+                        event,
+                        item_id=item.message_id,
+                        output_index=state.response_offset + item.index,
+                        phase=None if item.phase == "unknown" else item.phase,
+                    )
+                elif isinstance(event, LLMRetryScheduled):
+                    state.begin_response()
+                    yield event
+                elif isinstance(event, LLMTurnDone):
+                    for item in state.reconcile_phases(event):
+                        if item.text:
+                            yield AssistantMessagePhase(item.message_id, item.phase)
+                    state.finish(event)
+                    for item in state.ordered_text():
+                        if not item.done:
+                            yield AssistantMessageEnd(item.message_id)
+                    yield (
+                        replace(
+                            event,
+                            assistant_turn=replace(
+                                event.assistant_turn,
+                                text_items=state.provider_items(),
+                            ),
+                        )
+                        if event.assistant_turn is not None
+                        else event
+                    )
+                    yield self._publish_assistant_phase(state)
+                else:
+                    if isinstance(event, LLMToolCallDelta):
+                        state.tool_seen = True
+                    yield event
+        except BaseException as exc:
+            if state.visible and any(not item.persisted for item in state.ordered_text()):
+                self._append_assistant_event(
+                    state.arrival_text,
+                    partial=True,
+                    persona_name=self._session.current_persona_name,
+                    persona_id=self._session.current_persona_id,
+                    model=self._active_model_id(),
+                    interruption_reason=_interruption_reason_code(exc),
+                )
+            raise
+        finally:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                close()
 
     def _append_provider_reasoning_event(self, state: ProviderReasoningState) -> None:
         event = Event(
@@ -2333,6 +2568,24 @@ class Conversation:
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
 
+    def append_run_started_event(
+        self, *, run_id: str, started_at: datetime, owner_runtime_instance_id: str
+    ) -> None:
+        if any(
+            event.type == "run_started" and event.payload.get("run_id") == run_id
+            for event in self._session.events
+        ):
+            return
+        event = Event(
+            type="run_started",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload={"run_id": run_id, "started_at": started_at.isoformat()},
+            meta={"run_id": run_id, "owner_runtime_instance_id": owner_runtime_instance_id},
+        )
+        self._store.append_event(self._session.session_id, event)
+        self._session.append(event)
+
     def append_run_terminal_event(
         self,
         *,
@@ -2342,6 +2595,8 @@ class Conversation:
         owner_runtime_instance_id: str,
         source: Literal["runtime", "startup_reconciliation"] = "runtime",
         recovered: bool = False,
+        started_at: datetime | None = None,
+        finished_at: datetime | None = None,
     ) -> bool:
         """Append the unique durable run terminal without changing model history."""
 
@@ -2360,6 +2615,8 @@ class Conversation:
                 "reason_code": reason_code,
                 "source": source,
                 "recovered": recovered,
+                "started_at": started_at.isoformat() if started_at is not None else None,
+                "finished_at": finished_at.isoformat() if finished_at is not None else None,
             },
             meta={
                 "run_id": run_id,
@@ -3250,7 +3507,7 @@ class Conversation:
                         ),
                     )
                 )
-                for event in stream:
+                for event in self._track_assistant_stream(stream, cancel_check):
                     if isinstance(event, (LLMTextDelta, LLMTurnDone)):
                         request_accepted = True
                         completed = self._commit_pending_context_checkpoints()
@@ -4696,7 +4953,16 @@ class Conversation:
                 cancel_check=cancel_check,
             ):
                 self._check_cancel(cancel_check)
-                if isinstance(event, ContextCompactionStatus):
+                if isinstance(
+                    event,
+                    (
+                        ContextCompactionStatus,
+                        AssistantMessageStart,
+                        AssistantMessageEnd,
+                        AssistantMessagePhase,
+                        AssistantPhaseStatus,
+                    ),
+                ):
                     yield event
                 elif isinstance(event, LLMTextDelta):
                     if not first_text_seen:
@@ -4711,7 +4977,7 @@ class Conversation:
                             chars=len(event.text),
                         )
                     frame.current_text_buf.append(event.text)
-                    yield TextDelta(text=event.text)
+                    yield self._phase_text_delta(event)
                 elif isinstance(event, LLMActivity):
                     yield ModelResponseStatus(
                         phase=event.kind,
@@ -4748,6 +5014,11 @@ class Conversation:
                         for item in tool_calls
                     ),
                     reasoning_state=(turn_done.reasoning_state if turn_done is not None else None),
+                    text_items=(
+                        self._run_model_snapshot.phase.provider_items()
+                        if self._run_model_snapshot
+                        else ()
+                    ),
                 )
             )
 
@@ -4772,6 +5043,7 @@ class Conversation:
                     assistant_event.ts if assistant_event is not None else datetime.now(UTC)
                 ),
                 event_uuid=(assistant_event.uuid if assistant_event is not None else None),
+                item_event_uuids=self._assistant_event_ids(),
                 run_id=self._run_id_override,
             )
             self._session_model_history.note_active_events(self._session)
@@ -5145,11 +5417,20 @@ class Conversation:
             cancel_check=cancel_check,
         ):
             self._check_cancel(cancel_check)
-            if isinstance(ev, ContextCompactionStatus):
+            if isinstance(
+                ev,
+                (
+                    ContextCompactionStatus,
+                    AssistantMessageStart,
+                    AssistantMessageEnd,
+                    AssistantMessagePhase,
+                    AssistantPhaseStatus,
+                ),
+            ):
                 yield ev
             elif isinstance(ev, LLMTextDelta):
                 text_buf.append(ev.text)
-                yield TextDelta(text=ev.text)
+                yield self._phase_text_delta(ev)
             elif isinstance(ev, LLMTurnDone):
                 self._consume_usage(ev)
                 turn_done = ev
@@ -5316,12 +5597,18 @@ class Conversation:
             else ProviderAssistantTurn(
                 content=text or None,
                 reasoning_state=(turn_done.reasoning_state if turn_done is not None else None),
+                text_items=(
+                    self._run_model_snapshot.phase.provider_items()
+                    if self._run_model_snapshot
+                    else ()
+                ),
             )
         )
         self._session_model_history.append_provider_assistant(
             assistant,
             timestamp=event.ts if event is not None else timestamp or datetime.now(UTC),
             event_uuid=event.uuid if event is not None else None,
+            item_event_uuids=self._assistant_event_ids(),
             run_id=self._run_id_override,
         )
         self._session_model_history.note_active_events(self._session)

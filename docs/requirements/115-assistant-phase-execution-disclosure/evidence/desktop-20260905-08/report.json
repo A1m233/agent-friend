@@ -1,0 +1,36 @@
+{
+  "synthetic": true,
+  "llmCalls": 0,
+  "checks": [
+    "native collapsed; unknown/final visible; persisted duration 112s",
+    "one real click expands both separated process sections",
+    "legacy has time and no toggle; interrupted remains visible with unknown duration",
+    "real WebView reload restores native disclosure under the persisted legacy current model",
+    "real global search query and Enter navigation expands hidden commentary",
+    "expanded commentary can be selected and quoted via real button click",
+    "synthetic UI-only live snapshot: legacy timer ticks through stopping and freezes at terminal",
+    "synthetic quoted user message: real reference popover click reopens commentary and highlights original text"
+  ],
+  "passed": true,
+  "url": "http://localhost:1420/chat.html",
+  "viewport": {
+    "width": 1055,
+    "height": 758
+  },
+  "quote": {
+    "referenceId": "7cb9d6bb-30aa-4ff9-ac49-0564e7093407",
+    "source": {
+      "kind": "session_message",
+      "messageEventUuid": "fbd83232-55ba-4131-8568-76870b018456",
+      "textBlockId": "fbd83232-55ba-4131-8568-76870b018456",
+      "externalSourceKey": null
+    },
+    "text": "合成过程A：检查现有业务。"
+  },
+  "referenceBounds": {
+    "x": 281.20001220703125,
+    "y": 182.3874969482422,
+    "width": 732.7999877929688,
+    "height": 21
+  }
+}

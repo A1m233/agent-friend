@@ -56,6 +56,9 @@ def prepare_litellm_request(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Add DeepSeek wire compatibility without mutating caller-owned inputs."""
 
+    # Phase is model-history metadata supported by Responses, not Chat
+    # Completions. Strip only at this transport boundary (including generate).
+    messages = chat_replay_messages(messages)
     if not is_deepseek_vision_spec(spec):
         return messages, options
 
@@ -88,3 +91,27 @@ def prepare_litellm_request(
             allowed.append("reasoning_effort")
         prepared_options["allowed_openai_params"] = allowed
     return messages, prepared_options
+
+
+def chat_replay_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse only explicit same-response items for Chat's tool transaction."""
+    if not any("phase" in message or "_assistant_response_id" in message for message in messages):
+        return messages
+    result: list[dict[str, Any]] = []
+    previous_group: object = None
+    for message in messages:
+        group = message.get("_assistant_response_id")
+        wire = {
+            key: value
+            for key, value in message.items()
+            if key not in {"phase", "_assistant_response_id"}
+        }
+        if group and group == previous_group and message.get("role") == "assistant":
+            previous = result[-1]
+            previous["content"] = (previous.get("content") or "") + (wire.get("content") or "")
+            if wire.get("tool_calls"):
+                previous["tool_calls"] = [*previous.get("tool_calls", []), *wire["tool_calls"]]
+        else:
+            result.append(wire)
+        previous_group = group if message.get("role") == "assistant" else None
+    return result

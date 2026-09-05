@@ -38,15 +38,7 @@ export function modelResponseStatusLabel(
   return status.afterTool ? "正在整理工具结果…" : "正在等待模型响应…";
 }
 
-export function ModelResponseStatus({
-  status,
-  label,
-  primaryActivityKind,
-}: {
-  status?: ModelResponseProgress;
-  label?: string;
-  primaryActivityKind?: "model" | "run";
-}) {
+export function useModelResponseStatusLabel(status?: ModelResponseProgress, label?: string) {
   const [slow, setSlow] = useState(false);
   const [staleActivity, setStaleActivity] = useState(false);
 
@@ -64,6 +56,15 @@ export function ModelResponseStatus({
     return () => window.clearTimeout(timer);
   }, [status?.phase, status?.activityVersion]);
 
+  return modelResponseStatusLabel(status, { slow, staleActivity, override: label });
+}
+
+export function ModelResponseStatus({ status, label, primaryActivityKind }: {
+  status?: ModelResponseProgress;
+  label?: string;
+  primaryActivityKind?: "model" | "run";
+}) {
+  const text = useModelResponseStatusLabel(status, label);
   return (
     <p
       className="flex items-center gap-2 px-1 text-xs text-muted"
@@ -71,7 +72,7 @@ export function ModelResponseStatus({
       data-primary-activity={primaryActivityKind}
     >
       <StatusDot tone="muted" pulse />
-      {modelResponseStatusLabel(status, { slow, staleActivity, override: label })}
+      {text}
     </p>
   );
 }
