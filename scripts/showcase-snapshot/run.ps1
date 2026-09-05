@@ -3,9 +3,11 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($f
 
 Set-Location (Join-Path $PSScriptRoot "..\..")
 
+# --verify-checkout scans without writes; --sync-checkout requires a clean checkout.
+
 $Uv = Get-Command uv -ErrorAction SilentlyContinue
 if ($Uv) {
-    & $Uv.Source run python "scripts/showcase-snapshot/snapshot.py" @args
+    & $Uv.Source run --no-project --offline --no-python-downloads python "scripts/showcase-snapshot/snapshot.py" @args
     exit $LASTEXITCODE
 }
 
