@@ -16,7 +16,7 @@ COMPLETED
 - [x] 完成采集、持久化、诊断包与消费者的实现及自动化验证
 - [x] 完成本轮 OFF-01～OFF-10 及用户验收；电脑重启实测按用户明确豁免处理
 
-证据入口：[evidence-index.md](./evidence-index.md)。需求交付工作区为 `049-offline-evidence/agent-friend`，续用 `feature/049-desktop-feedback-and-diagnostics`，从既有已合并 head 快进到 `c863ac793717f3b2335993a17471b5531d1326e4`；没有重写旧提交。原 `fd7c/agent-friend` 的 `fix/pet-input-dpr-desynchronization` 和未提交临时探针仍原样保留；其 dev 已按用户后续授权通过标准脚本停止。当前保留的是新049 Tauri dev（PID 18208，session `18208-1788587634704`），不是安装版。本轮未提交、合入或推送。
+证据入口：[evidence-index.md](./evidence-index.md)。需求交付工作区为 `049-offline-evidence/agent-friend`，续用 `feature/049-desktop-feedback-and-diagnostics`，从既有已合并 head 快进到 `c863ac793717f3b2335993a17471b5531d1326e4`；没有重写旧提交。原 `fd7c/agent-friend` 的 `fix/pet-input-dpr-desynchronization` 和未提交临时探针仍原样保留；其 dev 已按用户后续授权通过标准脚本停止。验收时使用的新049 Tauri dev（PID 18208，session `18208-1788587634704`）不是安装版；用户随后告知另一worktree正常接管dev，本交付流程不再操作runtime。实现与验收豁免已提交为 `e29cb93`，并在 `586806d` 无冲突同步最新主干 `5b3190d`；后续主干合入和推送结果以Git历史与远端引用为准。
 
 ## 增量实施任务与验证
 
@@ -89,3 +89,4 @@ COMPLETED
 | 2026-09-05 | 完成新鲜dev重启、受控pet不可响应导出与独立离线解析 | 2940→18208两进程共585条历史；旧149399 bytes字节和hash不变。实际点击原反馈入口，生成135458 ZIP；pet failure0、CRC正常、0解析告警。恢复pet脚本后确认新前端记录继续持久化。当前保留新dev；原故障未复现/未修复，等待剩余人工验收 |
 | 2026-09-05 | 用户发现测试后动画冻结，保留直接证据并纠正恢复标准 | ticker started=true但lastTime/requestId与canvas hash两秒不变，最后帧距disable约2ms；拖拽几何与画布渲染分离解释现象。移除危险测试选项，单次页面reload后ticker与像素变化，用户确认正常无卡顿。原导出字节/覆盖结论保留，撤销“enable ack等同完整恢复”的推断；只读复盘不修改规则/Skill/Lesson/Issue |
 | 2026-09-05 | 用户明确豁免电脑重启实测并授权合入主干推送 | requirement/design同步验收边界，电脑重启未测事实与历史artifact原样保留。用户告知其他worktree接管dev属于正常桌面验收，本合入流程不启动/停止/抢占runtime；开始Guide复核与Git交付 |
+| 2026-09-05 | 同步最新主干后的最终门禁通过 | 在 `586806dc45d5bc32040a5b2ca9c20dc43b70eb8b` 执行 `scripts/check/run.ps1 --stage backend`、`--stage frontend`、`--stage rust`，均 exit 0：backend lint/format/typecheck 与 2538 passed / 4 skipped；frontend lint/typecheck、122文件/765 tests、production build通过；Rust fmt、252 core + 6 helper passed / 1 ignored、release check通过；project adapter doctor通过。backend退出时另有第三方bilibili_api清理回调的event-loop-closed告警，不影响测试断言或门禁退出码。本轮只复跑离线门禁，未操作dev；公开Guide新增两处条件化用户知识并经validator/audit检查，无builtin更新或安装包构建 |
