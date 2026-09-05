@@ -1,6 +1,6 @@
 use crate::{
-    desktop_instance, install_contract, paths, runtime_config, runtime_services, shell_diagnostics,
-    webview_diagnostics,
+    desktop_instance, install_contract, paths, pet_input_evidence, runtime_config,
+    runtime_services, shell_diagnostics, webview_diagnostics,
 };
 use chrono::Local;
 use serde::{Deserialize, Serialize};
@@ -356,6 +356,19 @@ pub async fn generate_diagnostic_bundle(
         "failureCount": shell_failure_count,
     });
 
+    // The pet may be unresponsive or gone. This collector reads retained disk facts only,
+    // with its own budget, and never waits for a renderer response or a writer flush.
+    let mut pet_export = tauri::async_runtime::spawn_blocking(|| {
+        pet_input_evidence::export_for_bundle(&paths::pet_input_evidence_dir())
+    })
+    .await
+    .unwrap_or_else(|_| pet_input_evidence::export_failed("read-failed"));
+    if let Some(manager) = app.try_state::<pet_input_evidence::PetInputEvidence>() {
+        // Atomic-only export-time status exposes failures which never reached the disk.
+        pet_input_evidence::attach_current(&mut pet_export, manager.snapshot());
+    }
+    let pet_summary = append_pet_input_export(pet_export, &mut entries, &mut failures);
+
     let outcome = if failures.is_empty() {
         "complete"
     } else {
@@ -375,6 +388,7 @@ pub async fn generate_diagnostic_bundle(
             windows_shell: &shell_summary,
             attachments: &attachment_collection.summary,
             render_evidence: &render_evidence_export.summary,
+            pet_input_evidence: &pet_summary,
         },
     );
     entries.push(json_entry("manifest.json", &manifest)?);
@@ -400,6 +414,30 @@ pub async fn generate_diagnostic_bundle(
         included_session_ids,
         failures,
     })
+}
+
+fn append_pet_input_export(
+    export: pet_input_evidence::Export,
+    entries: &mut Vec<ArchiveEntry>,
+    failures: &mut Vec<CollectionFailure>,
+) -> Value {
+    for artifact in export.artifacts {
+        entries.push(ArchiveEntry {
+            name: artifact.name,
+            source: ArchiveEntrySource::Bytes(artifact.bytes),
+        });
+    }
+    failures.extend(
+        export
+            .failures
+            .into_iter()
+            .map(|message| CollectionFailure {
+                collection: "pet-input-evidence".into(),
+                item: None,
+                message,
+            }),
+    );
+    export.summary
 }
 
 fn load_package_build_metadata(resource_dir: Option<&Path>) -> Value {
@@ -855,6 +893,7 @@ struct BundleManifestInput<'a> {
     windows_shell: &'a Value,
     attachments: &'a Value,
     render_evidence: &'a Value,
+    pet_input_evidence: &'a Value,
 }
 
 fn build_bundle_manifest(
@@ -885,6 +924,7 @@ fn build_bundle_manifest(
         "windowsShell": input.windows_shell,
         "attachments": input.attachments,
         "renderEvidence": input.render_evidence,
+        "petInputEvidence": input.pet_input_evidence,
     })
 }
 
@@ -1258,6 +1298,7 @@ mod tests {
                 windows_shell: &windows_shell,
                 attachments: &attachments,
                 render_evidence: &render_evidence,
+                pet_input_evidence: &json!({"status":"not-collected","artifacts":["diagnostics/pet-input/coverage.json"]}),
             },
         );
 
@@ -1277,9 +1318,146 @@ mod tests {
                     "install/integrity.json",
                     "diagnostics/attachments.json",
                     "diagnostics/windows-shell/current.json",
+                    "diagnostics/pet-input/coverage.json",
                 ],
             )
             .expect("current manifest should satisfy bundle contract");
+    }
+
+    #[test]
+    fn actual_pet_input_producer_zip_is_readable_by_the_offline_consumer() {
+        let root =
+            std::env::temp_dir().join(format!("agent-friend-pet-bundle-{}", rand::random::<u64>()));
+        let disk = root.join("pet-input-evidence");
+        let manager = pet_input_evidence::PetInputEvidence::start(
+            disk.clone(),
+            format!("{}-{}", std::process::id(), rand::random::<u32>()),
+            json!({"buildMode":"debug","platform":"windows","webviewVersion":"152.0.1"}),
+        );
+        manager.record(json!({"source":"native","kind":"passthrough-applied",
+            "outcome":"error","verified":false,"ignore":false,"stage":"verify",
+            "errorKind":"style-verification-failed"}));
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let export = loop {
+            let export = pet_input_evidence::export_for_bundle(&disk);
+            if export
+                .artifacts
+                .iter()
+                .any(|a| a.name.starts_with("diagnostics/pet-input/incident-"))
+            {
+                break export;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "producer did not persist the fixture"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        manager.shutdown();
+        let mut entries = Vec::new();
+        let mut failures = Vec::new();
+        let pet_summary = append_pet_input_export(export, &mut entries, &mut failures);
+        assert!(
+            failures.is_empty(),
+            "pet input export must succeed: {failures:?}"
+        );
+        let contract = contract::BundleContract::load().unwrap();
+        // Other evidence families are unrelated fixtures; the pet files above come from the
+        // real queue/journal/export producer, not hand-built idealized JSON.
+        let definition: Value =
+            serde_json::from_str(include_str!("bundle-contract-v1.json")).unwrap();
+        let families = std::iter::once(&definition["core"])
+            .chain(definition["capabilities"].as_array().unwrap().iter());
+        for family in families {
+            for entry in family["requiredEntries"].as_array().unwrap() {
+                let name = entry.as_str().unwrap();
+                if name != "manifest.json" && !entries.iter().any(|e| e.name == name) {
+                    entries.push(json_entry(name, &json!({})).unwrap());
+                }
+            }
+        }
+        let manifest = build_bundle_manifest(
+            &contract,
+            BundleManifestInput {
+                generated_at: "2026-09-05T00:00:00Z",
+                outcome: "complete",
+                requested_session_ids: &[],
+                included_session_ids: &[],
+                failures: &failures,
+                logs: &[],
+                windows_shell: &json!({}),
+                attachments: &json!({}),
+                render_evidence: &json!({}),
+                pet_input_evidence: &pet_summary,
+            },
+        );
+        entries.push(json_entry("manifest.json", &manifest).unwrap());
+        contract
+            .validate_bundle(&manifest, entries.iter().map(|e| e.name.as_str()))
+            .unwrap();
+        let archive =
+            write_archive_atomically(&root, "agent-friend-diagnostics-pet-producer", entries)
+                .unwrap();
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let local_python = repo.join(if cfg!(windows) {
+            ".venv/Scripts/python.exe"
+        } else {
+            ".venv/bin/python"
+        });
+        let mut command = if local_python.is_file() {
+            std::process::Command::new(local_python)
+        } else if cfg!(windows) {
+            let mut command = std::process::Command::new("py");
+            command.arg("-3");
+            command
+        } else {
+            std::process::Command::new("python3")
+        };
+        let output =
+            command
+                .arg(repo.join(
+                    ".cursor/skills/inspect-agent-friend-diagnostics/scripts/inspect_bundle.py",
+                ))
+                .arg(&archive)
+                .arg("--json")
+                .output()
+                .expect("Python is required by the project checks");
+        assert!(
+            output.status.success(),
+            "consumer rejected producer ZIP: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let summary: Value = serde_json::from_slice(&output.stdout).expect("consumer JSON");
+        assert_eq!(summary["manifest"]["unhandledCapabilities"], json!([]));
+        assert!(!summary["petInputEvidence"]["retainedIncidents"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(
+            !summary["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|warning| warning.as_str().unwrap_or("").contains("pet input")),
+            "pet family warnings: {}",
+            summary["warnings"]
+        );
+        // Wait for the bounded background owner to close before removing the test's exact temp root.
+        drop(manager);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match fs::remove_dir_all(&root) {
+                Ok(()) => break,
+                Err(_) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                Err(error) => panic!("remove isolated producer fixture: {error}"),
+            }
+        }
     }
 
     #[test]

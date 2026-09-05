@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-09-05",
+  "evidenceLevel": "real Tauri dev interaction + persisted ZIP + independent offline consumer",
+  "source": {
+    "baseCommit": "c863ac793717f3b2335993a17471b5531d1326e4",
+    "branch": "feature/049-desktop-feedback-and-diagnostics",
+    "worktree": "049-offline-evidence/agent-friend",
+    "state": "uncommitted-overlay",
+    "changedInputs": "source-manifest.json",
+    "latestInScopeRustSourceModifiedAt": "2026-09-05T05:49:58.4165831Z",
+    "embeddedSourceIdentityAvailable": false,
+    "limitation": "Lease and process timestamps bind this validation externally; the debug ZIP does not carry a package build/source commit."
+  },
+  "runtime": {
+    "first": {
+      "processSessionId": "2940-1788587521402",
+      "appStartedAt": "2026-09-05T05:52:01.2785803Z",
+      "viteStartedAt": "2026-09-05T05:51:49.9612984Z",
+      "bridgeStartedAt": "2026-09-05T05:52:02.9869173Z",
+      "pageInstanceId": "a24ffc4a-7659-4290-9e8a-e31858a43b5c"
+    },
+    "second": {
+      "processSessionId": "18208-1788587634704",
+      "appStartedAt": "2026-09-05T05:53:54.6801069Z",
+      "viteStartedAt": "2026-09-05T05:53:49.5410120Z",
+      "pageInstanceId": "f9fbcd6e-ee3c-4e57-858e-485f3b78e703"
+    },
+    "mode": "tauri-dev",
+    "webviewVersion": "152.0.4191.66",
+    "restartMethod": "scripts/dev/run.ps1 stop, verify free ports, scripts/desktop-visual/run.ps1 start",
+    "shutdownCaveat": "The standard dev stop terminates the process tree; this proves persisted history survives process restart, not a graceful tray Quit or computer reboot.",
+    "leftRunning": true,
+    "installedAppStarted": false
+  },
+  "bundle": {
+    "file": "agent-friend-diagnostics-20260905-135458.zip",
+    "localLocation": "Downloads",
+    "bytes": 1457931,
+    "sha256": "db85be4c6e152c54cb6debf71686eb58a741bbd72247bd4e19506c93f9650ddf",
+    "copiedIntoRepository": false,
+    "summary": "bundle-summary.json",
+    "uiResult": "partial",
+    "petInputFailureCount": 0,
+    "partialReason": "Pre-existing 2026-08-21 automatic render incident retained a Windows BitBlt access-denied error; no new capture was requested or inspected.",
+    "selectedSessionCount": 0
+  },
+  "restartPreservation": {
+    "entry": "diagnostics/pet-input/history-001.jsonl",
+    "bytes": 149399,
+    "sha256BeforeRestart": "2b769da824380c634f3199bf6005e4dcbda19758f62e39e9a53629a50d526e00",
+    "sha256AfterRestartAndInZip": "2b769da824380c634f3199bf6005e4dcbda19758f62e39e9a53629a50d526e00",
+    "byteIdentical": true,
+    "totalHistoryRecords": 585
+  },
+  "correlation": {
+    "grouping": [
+      "processSessionId",
+      "pageInstanceId",
+      "requestId"
+    ],
+    "stages": [
+      "frontend-report",
+      "native-reception",
+      "native-application",
+      "frontend-ack"
+    ],
+    "groups": [
+      {
+        "process": "2940",
+        "family": "dpr",
+        "requests": 2,
+        "stageCounts": [
+          2,
+          1,
+          2,
+          2
+        ],
+        "completeFourStage": 1
+      },
+      {
+        "process": "2940",
+        "family": "passthrough",
+        "requests": 3,
+        "stageCounts": [
+          3,
+          3,
+          3,
+          3
+        ],
+        "completeFourStage": 3
+      },
+      {
+        "process": "18208",
+        "family": "dpr",
+        "requests": 2,
+        "stageCounts": [
+          2,
+          2,
+          2,
+          2
+        ],
+        "completeFourStage": 2
+      },
+      {
+        "process": "18208",
+        "family": "passthrough",
+        "requests": 3,
+        "stageCounts": [
+          3,
+          3,
+          3,
+          3
+        ],
+        "completeFourStage": 3
+      }
+    ],
+    "unassociatedChainEvents": 0,
+    "gap": "First process requestId=2 has no native dpr-report observation, but has frontend report, native application and frontend ack. Do not infer failed operation or assign this missing event to a specific aggregate drop."
+  },
+  "restoration": {
+    "cdpEnableAcknowledgedAt": "2026-09-05T05:55:01.596Z",
+    "laterPersistedFrontendReportAt": "2026-09-05T05:55:43.228Z",
+    "laterFrontendSeq": 6229,
+    "laterNativeRecordSeq": 476
+  },
+  "verification": {
+    "backend": "2510 passed / 4 skipped; lint and typecheck passed",
+    "frontend": "122 files / 765 passed; lint/typecheck/build passed",
+    "rust": "252 core + 6 helper passed / 1 ignored; fmt and release check passed",
+    "consumer": "38 passed; guidance audit 0 errors/warnings; quick_validate and adapter doctor passed",
+    "pressure": "Fake 24h x 60Hz admission, 10s x 1000/s control, non-consuming queue and scaled disk rotation; not real 24h or slow-disk measurements"
+  },
+  "remaining": [
+    "Computer reboot and subsequent same-branch dev export",
+    "User hover/click/drag responsiveness acceptance",
+    "Natural DPR trigger remains unconfirmed; this feature does not repair it",
+    "Other platforms not verified",
+    "No real slow-disk or power-loss benchmark; simulated boundaries only"
+  ]
+}
+

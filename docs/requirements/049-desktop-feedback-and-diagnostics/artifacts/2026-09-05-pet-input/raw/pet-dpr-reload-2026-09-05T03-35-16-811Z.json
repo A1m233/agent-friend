@@ -1,0 +1,175 @@
+{
+  "mode": "reload",
+  "startedAt": "2026-09-05T03:35:16.811Z",
+  "targetUrl": "http://tauri.localhost/pet.html",
+  "network": [
+    {
+      "round": "reload-1",
+      "id": "9792.200",
+      "sentAt": 1343.049677,
+      "dpr": 1.25,
+      "responseAt": 1343.095121,
+      "status": 200,
+      "finishedAt": 1343.093083
+    },
+    {
+      "round": "reload-1",
+      "id": "9F2D6DAE6A400977DF5ED3BAD9B48365",
+      "sentAt": 1343.054115,
+      "dpr": "body-unavailable",
+      "responseAt": 1343.066546,
+      "status": 200,
+      "finishedAt": 1343.063974
+    },
+    {
+      "round": "reload-2",
+      "id": "9792.314",
+      "sentAt": 1345.772271,
+      "dpr": 1.25,
+      "responseAt": 1345.8132,
+      "status": 200,
+      "finishedAt": 1345.809453
+    },
+    {
+      "round": "reload-3",
+      "id": "9792.418",
+      "sentAt": 1348.366381,
+      "dpr": 1.25,
+      "responseAt": 1348.409642,
+      "status": 200,
+      "finishedAt": 1348.407451
+    },
+    {
+      "round": "reload-3",
+      "id": "D19DB2AE876A0E73CC01BD1C11A2E60F",
+      "sentAt": 1348.368993,
+      "dpr": "body-unavailable",
+      "responseAt": 1348.404463,
+      "status": 200,
+      "finishedAt": 1348.402416
+    }
+  ],
+  "results": [
+    {
+      "round": "baseline",
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1431,
+            "y": 835
+          },
+          "payload": {
+            "x": 3192.8,
+            "y": 668
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "reload-1",
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1363,
+            "y": 898
+          },
+          "payload": {
+            "x": 3138.4,
+            "y": 718.4
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "reload-2",
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1363,
+            "y": 898
+          },
+          "payload": {
+            "x": 3138.4,
+            "y": 718.4
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    },
+    {
+      "round": "reload-3",
+      "value": {
+        "devicePixelRatio": 1.25,
+        "viewport": {
+          "width": 4096,
+          "height": 1280
+        },
+        "canvas": {
+          "width": 5120,
+          "height": 1600
+        },
+        "position": {
+          "x": -2560,
+          "y": 0
+        },
+        "sample": {
+          "physicalCursor": {
+            "x": 1361,
+            "y": 895
+          },
+          "payload": {
+            "x": 3136.8,
+            "y": 716
+          },
+          "inferredX": 1.25,
+          "inferredY": 1.25
+        }
+      }
+    }
+  ],
+  "finishedAt": "2026-09-05T03:35:25.182Z"
+}

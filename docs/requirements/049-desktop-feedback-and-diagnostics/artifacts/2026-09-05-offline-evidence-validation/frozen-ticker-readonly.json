@@ -1,0 +1,63 @@
+{
+  "observedAt": "2026-09-05T06:00:24.478Z",
+  "readOnly": true,
+  "first": {
+    "label": "pet",
+    "now": 387021,
+    "backend": "spine",
+    "anchor": {
+      "x": 3812.976271186441,
+      "y": 752.399951171875,
+      "w": 74.84745762711873,
+      "h": 96
+    },
+    "tickers": [
+      {
+        "component": "Spine38AvatarSurface",
+        "started": true,
+        "requestId": 32748,
+        "lastTime": 58031.1,
+        "deltaMS": 3.1999999999970896,
+        "listeners": 2,
+        "contextLost": false,
+        "slot": {
+          "x": 3849.586440677967,
+          "y": 848.8067308328921
+        }
+      }
+    ],
+    "canvasPngBytes": 186569,
+    "canvasSha256": "d94a91f7c4e37bf24d9dada619147e4585e90db97888a9bbd79d196bbee97103"
+  },
+  "second": {
+    "label": "pet",
+    "now": 389122.5,
+    "backend": "spine",
+    "anchor": {
+      "x": 3812.976271186441,
+      "y": 752.399951171875,
+      "w": 74.84745762711873,
+      "h": 96
+    },
+    "tickers": [
+      {
+        "component": "Spine38AvatarSurface",
+        "started": true,
+        "requestId": 32748,
+        "lastTime": 58031.1,
+        "deltaMS": 3.1999999999970896,
+        "listeners": 2,
+        "contextLost": false,
+        "slot": {
+          "x": 3849.586440677967,
+          "y": 848.8067308328921
+        }
+      }
+    ],
+    "canvasPngBytes": 186569,
+    "canvasSha256": "d94a91f7c4e37bf24d9dada619147e4585e90db97888a9bbd79d196bbee97103"
+  },
+  "newRafProbe": {
+    "rafAt": 389191.3
+  }
+}

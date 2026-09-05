@@ -49,6 +49,7 @@ Before diagnosing, establish:
 - attachment request, inclusion status, integrity flags, and byte limits;
 - selected-session provider reasoning state count, redaction count, and any v2 payload-leak contract violation; never print the payload;
 - Windows Shell current snapshot and journal coverage, including dropped/truncated event counts and referenced-artifact gaps;
+- pet input evidence coverage, retained occurrence identities, independent incident retention and durability gaps; never print coordinate samples or input-event bodies in an inventory;
 - WebView2 render-evidence consent, manual/display/GPU recovery trigger and timing, internal-versus-desktop black/white pixel metrics, included/missing screenshot artifacts, and capture/recovery errors;
 - explicit exclusions.
 - managed execution environment provider status, runtime/version identity, overlay/cache size buckets, payload validation and recent stable error codes; never expect session ids, paths, package names, scripts or command output in this evidence family.
@@ -62,6 +63,7 @@ Before diagnosing, establish:
 3. Start correlation with exact identifiers such as session id, event UUID, run id, tool call id, trace id, or attachment asset id. Then inspect a narrow surrounding time/event window.
 4. Route evidence to the correct log family using the v1 reference. Compare application-owned logs with packaged stdout/stderr capture when both exist.
 5. For Windows taskbar, fullscreen, focus, or overlay symptoms, start with the summarized Windows Shell journal. Correlate foreground/move-size/minimize/reorder events with snapshots, and treat nonzero dropped/truncated counts as explicit timeline gaps. Read individual journal records only within the smallest relevant time window.
+   For pet hover/click/drag passthrough symptoms, start with `petInputEvidence` and the v1 reference's Pet Input Evidence section. Bind historical records to their own process/page/build identities, not the export-time application snapshot. Correlate request, sample, DPR revision and actual apply identifiers before reading the smallest relevant event slice; a missing acknowledgement is not a failed native operation.
 6. Use the source tree at the recorded build commit to explain the first known-wrong boundary. Treat the current checkout as comparison evidence only.
 7. Stop expanding when the evidence distinguishes the live hypotheses. Preserve disconfirming evidence and coverage gaps.
 

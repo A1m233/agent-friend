@@ -1,0 +1,72 @@
+diff --git a/frontend/src/pages/pet/App.tsx b/frontend/src/pages/pet/App.tsx
+index c5ee51b8997e2adc9149d1e74bc8dc21138e5064..edaabbb8e54d7e2dc58b0c25da01b0587d7ca89e 100644
+--- a/frontend/src/pages/pet/App.tsx
++++ b/frontend/src/pages/pet/App.tsx
+@@ -33,6 +33,7 @@ import {
+   readWebviewDevicePixelRatio,
+   type PetWebviewDisplayContext,
+ } from "./petWebviewDisplayContext";
++import { recordPetDprDiagnostic } from "./petDprDiagnostics";
+ import {
+   getPetOverlayViewport,
+   loadPetDisplayPhysicalSnapshot,
+@@ -165,7 +166,11 @@ export function PetApp() {
+   const pendingTopologyAnchorRef = useRef<PendingTopologyAnchor | null>(null);
+   const lastTopologyGenerationRef = useRef(0);
+   const lastTopologySignatureRef = useRef<string | null>(null);
+-  const [webviewDpr, setWebviewDpr] = useState(readWebviewDevicePixelRatio);
++  const [webviewDpr, setWebviewDpr] = useState(() => {
++    const dpr = readWebviewDevicePixelRatio();
++    recordPetDprDiagnostic("initial-read", { dpr });
++    return dpr;
++  });
+   const [displayTopologyGeneration, setDisplayTopologyGeneration] = useState(0);
+   // AC-6 hover gate · 双源：cursorOnSprite（Rust 60Hz cursor channel 驱动）
+   //                + hoverActionBarDom（ActionBar 自身 onMouseEnter/Leave 驱动）
+@@ -316,8 +321,10 @@ export function PetApp() {
+     let deferredAnchorTimer: number | null = null;
+     let initialPlacementTimer: number | null = null;
+     let initialPlacementRequested = false;
+-    const syncWebviewDpr = () => {
++    recordPetDprDiagnostic("observer-setup");
++    const syncWebviewDpr = (reason: string) => {
+       const nextDpr = readWebviewDevicePixelRatio();
++      recordPetDprDiagnostic("viewport-read", { reason, dpr: nextDpr });
+       setWebviewDpr((prev) =>
+         Math.abs(prev - nextDpr) < 0.001 ? prev : nextDpr,
+       );
+@@ -409,7 +416,7 @@ export function PetApp() {
+     };
+     const updateViewport = (reason = "unknown") => {
+       const requestId = ++viewportRequestId;
+-      syncWebviewDpr();
++      syncWebviewDpr(reason);
+       const nextOverlayViewport = getPetOverlayViewport();
+       if (!isFiniteViewport(nextOverlayViewport)) return;
+       scheduleInitialPlacement(nextOverlayViewport, reason);
+@@ -534,6 +541,7 @@ export function PetApp() {
+       });
+     }
+     return () => {
++      recordPetDprDiagnostic("observer-cleanup");
+       cancelled = true;
+       window.removeEventListener("resize", onWindowResize);
+       dprQuery?.removeEventListener("change", onDprChange);
+@@ -768,7 +776,16 @@ export function PetApp() {
+   // DPR 由上面的 WebView display context 统一观测；这里仅把当前快照分发给 Rust。
+   useEffect(() => {
+     if (!isTauri()) return;
+-    void invoke("set_pet_webview_dpr", { dpr: displayContext.dpr }).catch(
++    const reportSeq = recordPetDprDiagnostic("report-send", { dpr: displayContext.dpr });
++    const pending = invoke("set_pet_webview_dpr", { dpr: displayContext.dpr });
++    if (reportSeq !== undefined) {
++      // Observe the existing promise; do not serialize, retry, or change its payload.
++      void pending.then(
++        () => { recordPetDprDiagnostic("report-ok", { reportSeq }); },
++        () => { recordPetDprDiagnostic("report-error", { reportSeq }); },
++      );
++    }
++    void pending.catch(
+       (e: unknown) => console.warn("[pet] set_pet_webview_dpr failed:", e),
+     );
+   }, [displayContext.dpr]);

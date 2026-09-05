@@ -7,6 +7,8 @@ import zipfile
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = ROOT / "frontend" / "src-tauri" / "src" / "diagnostics" / "bundle-contract-v1.json"
 INSPECTOR_PATH = (
@@ -58,6 +60,118 @@ def _contract_entry_patterns(contract: dict[str, object]) -> list[str]:
         assert isinstance(capability, dict)
         patterns.extend(capability["entryPatterns"])
     return patterns
+
+
+def _pet_input_fixture() -> tuple[dict[str, object], dict[str, str]]:
+    process = "123-456"
+    recorded_at = "2026-09-05T01:02:03Z"
+    identity = {
+        "buildId": "20260905T010000Z-abcdef1",
+        "sourceCommit": "a" * 40,
+        "sourceDirty": True,
+        "buildMode": "dev",
+        "platform": "windows",
+        "webviewVersion": "152.0.4191.66",
+        "appVersion": "0.0.1",
+        "identityComplete": True,
+    }
+    record = {
+        "schemaVersion": 1,
+        "processSessionId": process,
+        "recordSeq": 2,
+        "recordedAt": recorded_at,
+        "processMonotonicMs": 200,
+        "source": "frontend",
+        "kind": "hit-decision",
+        "pageInstanceId": "ab12-1234",
+        "frontendSeq": 1,
+        "monotonicMs": 200,
+        "reason": "outside",
+        "physical": {"x": 987654.321, "y": 123.456},
+        "css": {"x": 790123.4568, "y": 98.7648},
+    }
+    header = {
+        "schemaVersion": 1,
+        "kind": "segment-header",
+        "source": "collector",
+        "processSessionId": process,
+        "recordSeq": 2,
+        "recordedAt": recorded_at,
+        "createdAtMs": 1788570123000,
+        "identity": identity,
+    }
+    incident_summary = {
+        "incidentId": "123-456-1",
+        "processSessionId": process,
+        "pageInstanceId": "ab12-1234",
+        "signal": "dpr-mismatch",
+        "firstRecordedAt": recorded_at,
+        "lastRecordedAt": recorded_at,
+        "count": 3,
+        "recovery": "unknown",
+        "closed": True,
+        "truncated": False,
+    }
+    incident = {
+        "schemaVersion": 1,
+        "identity": identity,
+        **incident_summary,
+        "closed": True,
+        "firstSignal": record,
+        "context": [record],
+    }
+    entries = {
+        "diagnostics/pet-input/history-001.jsonl": "".join(
+            json.dumps(item) + "\n" for item in (header, record)
+        ),
+        "diagnostics/pet-input/incident-001.json": json.dumps(incident),
+    }
+    artifacts = [
+        {
+            "entry": entry,
+            "kind": "history" if entry.endswith(".jsonl") else "incident",
+            "bytes": len(body.encode("utf-8")),
+            "processSessionId": process,
+            "firstRecordSeq": 2,
+            "lastRecordSeq": 2,
+            "firstRecordedAt": recorded_at,
+            "lastRecordedAt": recorded_at,
+            "status": "available",
+        }
+        for entry, body in entries.items()
+    ]
+    coverage = {
+        "schemaVersion": 1,
+        "status": "available",
+        "artifacts": artifacts,
+        "identities": [{"processSessionId": process, "identity": identity}],
+        "counters": {
+            "dropped": 3,
+            "invalid": 0,
+            "rateLimited": 2,
+            "writeFailed": 0,
+            "evicted": 0,
+            "expired": 0,
+            "metadataFolded": 0,
+            "aggregated": 8,
+        },
+        "limits": dict(INSPECTOR.PET_INPUT_LIMITS),
+        "durability": {
+            "scope": "persisted-only",
+            "tailCompleteness": "unknown",
+            "normalFlushMs": 1000,
+            "syncRequestMs": 5000,
+        },
+        "gaps": [{"kind": "unknown", "scope": "collector"}],
+        "retainedIncidents": [incident_summary],
+        "exportBytes": sum(item["bytes"] for item in artifacts),
+        "failureCount": 0,
+    }
+    for _ in range(5):
+        coverage["exportBytes"] = sum(item["bytes"] for item in artifacts) + len(
+            json.dumps(coverage, ensure_ascii=False).encode("utf-8")
+        )
+    return coverage, entries
 
 
 def _build_bundle(
@@ -116,6 +230,7 @@ def _build_bundle(
         "failedBytes": 0,
         "maxOriginalBytes": 200 * 1024 * 1024,
     }
+    pet_coverage, pet_entries = _pet_input_fixture()
     manifest = {
         "formatVersion": contract["formatVersion"],
         "schemaRevision": contract["schemaRevision"],
@@ -153,6 +268,7 @@ def _build_bundle(
             "failureCount": 0,
         },
         "attachments": attachment_summary,
+        "petInputEvidence": pet_coverage,
         "renderEvidence": {
             "supported": True,
             "includeRequested": True,
@@ -178,6 +294,7 @@ def _build_bundle(
 
     json_entries = {
         "manifest.json": manifest,
+        "diagnostics/pet-input/coverage.json": pet_coverage,
         "diagnostics/application.json": {
             "product": "agent-friend",
             "version": "0.0.0-test",
@@ -461,6 +578,7 @@ def _build_bundle(
         },
     }
     text_entries = {
+        **pet_entries,
         "diagnostics/windows-shell/events-001.jsonl": json.dumps(shell_journal) + "\n",
         "logs/tauri.log": "safe",
     }
@@ -542,6 +660,12 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
     assert summary["sessions"][0]["providerReasoningStateCount"] == 1
     assert summary["sessions"][0]["providerReasoningRedactedCount"] == 1
     assert summary["sessions"][0]["providerReasoningPayloadLeakCount"] == 0
+    assert summary["petInputEvidence"]["evidence"] == "collected"
+    assert summary["petInputEvidence"]["historyRecordCount"] == 1
+    assert summary["petInputEvidence"]["incidentContextRecordCount"] == 1
+    assert summary["petInputEvidence"]["retainedIncidents"][0]["recovery"] == "unknown"
+    assert summary["petInputEvidence"]["counters"]["dropped"] == 3
+    assert summary["petInputEvidence"]["identities"][0]["identity"]["sourceDirty"] is True
 
 
 def test_inspector_warns_when_render_evidence_artifact_is_missing(tmp_path: Path) -> None:
@@ -692,3 +816,467 @@ def test_inspector_accepts_schema_v2_without_render_evidence(tmp_path: Path) -> 
         "evidence": "not-collected",
     }
     assert not any("render evidence" in warning.lower() for warning in summary["warnings"])
+
+
+def _rewrite_pet_bundle(
+    source_path: Path,
+    target_path: Path,
+    *,
+    coverage: object | None = None,
+    replacements: dict[str, bytes] | None = None,
+    omit: tuple[str, ...] = (),
+    old_version: bool = False,
+    synchronize_manifest: bool = True,
+    manifest_updates: dict[str, object] | None = None,
+) -> None:
+    with zipfile.ZipFile(source_path) as source, zipfile.ZipFile(target_path, "w") as target:
+        if isinstance(coverage, dict) and type(coverage.get("exportBytes")) is int:
+            data_bytes = sum(
+                len(replacements[info.filename])
+                if replacements and info.filename in replacements
+                else info.file_size
+                for info in source.infolist()
+                if info.filename.startswith("diagnostics/pet-input/")
+                and info.filename != "diagnostics/pet-input/coverage.json"
+                and info.filename not in omit
+            )
+            for _ in range(5):
+                coverage["exportBytes"] = data_bytes + len(json.dumps(coverage).encode())
+        for info in source.infolist():
+            name = info.filename
+            if name in omit or (old_version and name.startswith("diagnostics/pet-input/")):
+                continue
+            data = source.read(name)
+            if name == "manifest.json":
+                manifest = json.loads(data)
+                if old_version:
+                    manifest.pop("petInputEvidence")
+                    manifest.pop("schemaRevision")
+                    manifest.pop("capabilities")
+                elif coverage is not None and synchronize_manifest:
+                    manifest["petInputEvidence"] = coverage
+                if manifest_updates:
+                    manifest.update(manifest_updates)
+                data = json.dumps(manifest).encode()
+            elif name == "diagnostics/pet-input/coverage.json" and coverage is not None:
+                data = json.dumps(coverage).encode()
+            if replacements and name in replacements:
+                data = replacements[name]
+            target.writestr(name, data)
+
+
+def test_pet_input_old_v1_without_capabilities_is_not_corruption(tmp_path: Path) -> None:
+    current = tmp_path / "current.zip"
+    old = tmp_path / "old.zip"
+    _build_bundle(current, _load_contract())
+    _rewrite_pet_bundle(current, old, old_version=True)
+
+    summary = INSPECTOR.inspect_bundle(old, verify_crc=True)
+
+    assert summary["petInputEvidence"] == {"evidence": "not-collected"}
+    assert summary["manifest"]["schemaRevision"] is None
+    assert not any("pet input" in warning for warning in summary["warnings"])
+
+
+def test_pet_input_missing_declared_coverage_is_an_explicit_gap(tmp_path: Path) -> None:
+    current = tmp_path / "current.zip"
+    missing = tmp_path / "missing.zip"
+    _build_bundle(current, _load_contract())
+    _rewrite_pet_bundle(current, missing, omit=("diagnostics/pet-input/coverage.json",))
+
+    summary = INSPECTOR.inspect_bundle(missing, verify_crc=True)
+
+    assert summary["petInputEvidence"]["evidence"] == "missing"
+    assert any("required coverage" in warning for warning in summary["warnings"])
+    assert summary["modelCatalog"]["modelCount"] == 2
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("status", "healthy"),
+        ("artifacts", {}),
+        ("identities", "private text"),
+        ("counters", {"dropped": True}),
+        ("limits", {"totalBytes": 999999999}),
+        ("gaps", [{"kind": {"text": "secret"}}]),
+        ("failureCount", -1),
+        ("exportBytes", False),
+        ("retainedIncidents", [{}]),
+        ("durability", {"scope": "live-all-frames"}),
+    ],
+)
+def test_pet_input_malformed_metadata_is_not_silently_coerced(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    current = tmp_path / "current.zip"
+    malformed = tmp_path / "malformed.zip"
+    _build_bundle(current, _load_contract())
+    coverage, _ = _pet_input_fixture()
+    coverage[field] = value
+    _rewrite_pet_bundle(current, malformed, coverage=coverage)
+
+    summary = INSPECTOR.inspect_bundle(malformed, verify_crc=True)
+
+    assert summary["petInputEvidence"]["evidence"] == "invalid"
+    assert any("pet input" in warning for warning in summary["warnings"])
+    assert "private text" not in json.dumps(summary)
+    assert "secret" not in json.dumps(summary)
+
+
+def test_pet_input_missing_artifact_and_manifest_mismatch_are_visible(tmp_path: Path) -> None:
+    current = tmp_path / "current.zip"
+    mismatch = tmp_path / "mismatch.zip"
+    _build_bundle(current, _load_contract())
+    coverage, _ = _pet_input_fixture()
+    coverage["failureCount"] = 1
+    _rewrite_pet_bundle(
+        current,
+        mismatch,
+        coverage=coverage,
+        synchronize_manifest=False,
+        omit=("diagnostics/pet-input/incident-001.json",),
+    )
+
+    summary = INSPECTOR.inspect_bundle(mismatch, verify_crc=True)
+
+    assert summary["petInputEvidence"]["evidence"] == "invalid"
+    assert summary["petInputEvidence"]["missingReferencedEntries"] == [
+        "diagnostics/pet-input/incident-001.json"
+    ]
+    assert any("manifest and coverage" in warning for warning in summary["warnings"])
+
+
+def test_pet_input_inventory_does_not_dump_coordinates_or_additive_content(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    current = tmp_path / "current.zip"
+    future = tmp_path / "additive.zip"
+    _build_bundle(current, _load_contract())
+    coverage, _ = _pet_input_fixture()
+    coverage["futurePrivateBody"] = {"text": "NEVER_DUMP_PET_PAYLOAD"}
+    coverage["counters"]["NEVER_DUMP_PET_COUNTER"] = 7
+    coverage["identities"][0]["identity"]["path"] = "NEVER_DUMP_PET_PATH"
+    _rewrite_pet_bundle(current, future, coverage=coverage)
+
+    summary = INSPECTOR.inspect_bundle(future, verify_crc=True)
+    INSPECTOR.print_human(summary)
+    output = json.dumps(summary) + capsys.readouterr().out
+
+    assert summary["petInputEvidence"]["evidence"] == "collected"
+    assert "987654.321" not in output
+    assert "790123.4568" not in output
+    assert "NEVER_DUMP" not in output
+
+
+@pytest.mark.parametrize("damage", ["partial-line", "invalid-json", "wrong-process"])
+def test_pet_input_history_validation_preserves_other_evidence(tmp_path: Path, damage: str) -> None:
+    current = tmp_path / "current.zip"
+    broken = tmp_path / "broken.zip"
+    _build_bundle(current, _load_contract())
+    coverage, entries = _pet_input_fixture()
+    entry = "diagnostics/pet-input/history-001.jsonl"
+    data = entries[entry].encode()
+    if damage == "partial-line":
+        data = data[:-1]
+    elif damage == "invalid-json":
+        data += b"{invalid}\n"
+    else:
+        data = data.replace(b'"123-456"', b'"123-999"')
+    coverage["artifacts"][0]["bytes"] = len(data)
+    _rewrite_pet_bundle(current, broken, coverage=coverage, replacements={entry: data})
+
+    summary = INSPECTOR.inspect_bundle(broken, verify_crc=True)
+
+    assert summary["petInputEvidence"]["invalidArtifactCount"] == 1
+    assert summary["petInputEvidence"]["incidentContextRecordCount"] == 1
+    assert summary["petInputEvidence"]["evidence"] == "invalid"
+
+
+def test_pet_input_empty_directory_coverage_is_valid_without_history(tmp_path: Path) -> None:
+    current = tmp_path / "current.zip"
+    empty = tmp_path / "empty.zip"
+    _build_bundle(current, _load_contract())
+    coverage, entries = _pet_input_fixture()
+    coverage.update(
+        {
+            "status": "not-collected",
+            "artifacts": [],
+            "identities": [],
+            "retainedIncidents": [],
+            "exportBytes": 0,
+            "gaps": [{"kind": "not-collected", "scope": "collector"}],
+        }
+    )
+    _rewrite_pet_bundle(current, empty, coverage=coverage, omit=tuple(entries))
+
+    summary = INSPECTOR.inspect_bundle(empty, verify_crc=True)
+
+    assert summary["petInputEvidence"]["evidence"] == "collected"
+    assert summary["petInputEvidence"]["status"] == "not-collected"
+    assert summary["petInputEvidence"]["historyRecordCount"] == 0
+    assert summary["warnings"] == []
+
+
+def test_pet_input_rejects_excessive_artifact_count_before_parsing(tmp_path: Path) -> None:
+    bundle = tmp_path / "too-many.zip"
+    _build_bundle(bundle, _load_contract())
+    with zipfile.ZipFile(bundle, "a") as archive:
+        for index in range(513):
+            archive.writestr(f"diagnostics/pet-input/history-{index + 1000}.jsonl", b"{}\n")
+
+    summary = INSPECTOR.inspect_bundle(bundle, verify_crc=False)
+
+    assert summary["petInputEvidence"]["evidence"] == "invalid"
+    assert any("file-count or total-byte limit" in warning for warning in summary["warnings"])
+
+
+def test_pet_input_missing_durability_counter_stays_unknown(tmp_path: Path) -> None:
+    current = tmp_path / "current.zip"
+    unknown = tmp_path / "unknown.zip"
+    _build_bundle(current, _load_contract())
+    coverage, _ = _pet_input_fixture()
+    coverage["counters"] = {}
+    coverage["durability"].update(
+        {
+            "normalEnd": None,
+            "lastWritten": {
+                "processSessionId": "123-456",
+                "recordSeq": 2,
+                "recordedAt": "2026-09-05T01:02:03Z",
+            },
+            "lastSyncRequested": None,
+        }
+    )
+    _rewrite_pet_bundle(current, unknown, coverage=coverage)
+
+    summary = INSPECTOR.inspect_bundle(unknown, verify_crc=True)["petInputEvidence"]
+
+    assert summary["evidence"] == "collected"
+    assert "dropped" not in summary["counters"]
+    assert summary["durability"]["normalEnd"] is None
+    assert summary["durability"]["lastSyncRequested"] is None
+    assert summary["durability"]["lastWritten"]["recordSeq"] == 2
+
+
+def test_pet_input_native_incident_can_have_unknown_page_identity(tmp_path: Path) -> None:
+    current = tmp_path / "current.zip"
+    unknown = tmp_path / "native-incident.zip"
+    _build_bundle(current, _load_contract())
+    coverage, entries = _pet_input_fixture()
+    coverage["retainedIncidents"][0]["pageInstanceId"] = None
+    entry = "diagnostics/pet-input/incident-001.json"
+    incident = json.loads(entries[entry])
+    incident["pageInstanceId"] = None
+    incident["firstSignal"].pop("pageInstanceId")
+    incident["firstSignal"]["source"] = "native"
+    data = json.dumps(incident).encode()
+    coverage["artifacts"][1]["bytes"] = len(data)
+    _rewrite_pet_bundle(current, unknown, coverage=coverage, replacements={entry: data})
+
+    summary = INSPECTOR.inspect_bundle(unknown, verify_crc=True)["petInputEvidence"]
+
+    assert summary["evidence"] == "collected"
+    assert summary["retainedIncidents"][0]["pageInstanceId"] is None
+
+
+def test_pet_input_window_event_is_valid_without_dumping_geometry(tmp_path: Path) -> None:
+    current = tmp_path / "current.zip"
+    observed = tmp_path / "window-event.zip"
+    _build_bundle(current, _load_contract())
+    coverage, entries = _pet_input_fixture()
+    entry = "diagnostics/pet-input/history-001.jsonl"
+    records = [json.loads(line) for line in entries[entry].splitlines()]
+    event = {
+        "schemaVersion": 1,
+        "processSessionId": "123-456",
+        "recordSeq": 3,
+        "ingressSeq": 4,
+        "recordedAt": "2026-09-05T01:02:04Z",
+        "processMonotonicMs": 1000,
+        "source": "native",
+        "kind": "window-observed",
+        "windowScaleFactor": 1.25,
+        "windowSize": {"width": 5120, "height": 1600},
+        "windowOrigin": {"x": -2560, "y": 0},
+    }
+    data = "".join(json.dumps(record) + "\n" for record in [*records, event]).encode()
+    coverage["artifacts"][0].update(
+        {
+            "bytes": len(data),
+            "lastRecordSeq": 3,
+            "lastRecordedAt": event["recordedAt"],
+        }
+    )
+    _rewrite_pet_bundle(current, observed, coverage=coverage, replacements={entry: data})
+
+    summary = INSPECTOR.inspect_bundle(observed, verify_crc=True)["petInputEvidence"]
+
+    assert summary["evidence"] == "collected"
+    assert summary["historyRecordCount"] == 2
+    assert "windowOrigin" not in json.dumps(summary)
+
+
+def test_pet_input_retains_bounded_eviction_and_noncontiguous_drop_evidence(tmp_path: Path) -> None:
+    current = tmp_path / "current.zip"
+    retained = tmp_path / "retention.zip"
+    _build_bundle(current, _load_contract())
+    coverage, _ = _pet_input_fixture()
+    coverage["counters"]["frontendDropped"] = 3
+    coverage["evictions"] = [
+        {
+            "kind": "evicted",
+            "scope": "history",
+            "bytes": 1024,
+            "createdAtMs": 1788570123000,
+            "processSessionId": "123-400",
+            "firstRecordSeq": None,
+            "path": "NEVER_DUMP_EVICTED_PATH",
+        }
+    ]
+    coverage["durability"]["lastDroppedRange"] = {
+        "processSessionId": "123-456",
+        "firstIngressSeq": 5,
+        "lastIngressSeq": 20,
+        "interior": "not-necessarily-contiguous",
+        "body": "NEVER_DUMP_DROP_BODY",
+    }
+    _rewrite_pet_bundle(current, retained, coverage=coverage)
+
+    summary = INSPECTOR.inspect_bundle(retained, verify_crc=True)["petInputEvidence"]
+
+    assert summary["evidence"] == "collected"
+    assert summary["counters"]["frontendDropped"] == 3
+    assert summary["evictions"][0]["firstRecordSeq"] is None
+    assert summary["durability"]["lastDroppedRange"]["interior"] == "not-necessarily-contiguous"
+    assert "NEVER_DUMP" not in json.dumps(summary)
+
+
+@pytest.mark.parametrize("field", ["evictions", "lastDroppedRange"])
+def test_pet_input_rejects_malformed_retention_positions(tmp_path: Path, field: str) -> None:
+    current = tmp_path / "current.zip"
+    malformed = tmp_path / "retention-invalid.zip"
+    _build_bundle(current, _load_contract())
+    coverage, _ = _pet_input_fixture()
+    if field == "evictions":
+        coverage["evictions"] = [{"kind": "expired", "createdAtMs": False}]
+    else:
+        coverage["durability"]["lastDroppedRange"] = {
+            "processSessionId": "123-456",
+            "firstIngressSeq": 20,
+            "lastIngressSeq": 5,
+            "interior": "not-necessarily-contiguous",
+        }
+    _rewrite_pet_bundle(current, malformed, coverage=coverage)
+
+    summary = INSPECTOR.inspect_bundle(malformed, verify_crc=True)
+
+    assert summary["petInputEvidence"]["evidence"] == "invalid"
+    assert any("pet input coverage" in warning for warning in summary["warnings"])
+
+
+def test_pet_input_export_time_write_failure_does_not_replace_missing_history(
+    tmp_path: Path,
+) -> None:
+    current = tmp_path / "current.zip"
+    failed = tmp_path / "writer-failed.zip"
+    _build_bundle(current, _load_contract())
+    snapshot = {
+        "scope": "export-time",
+        "processSessionId": "456-789",
+        "queuedBytes": 0,
+        "dropped": 0,
+        "invalid": 0,
+        "writeFailed": 2,
+        "workerStopped": True,
+        "secret": "NEVER_DUMP_CURRENT_SECRET",
+        "geometry": {"x": 987654.321, "y": 123.456},
+    }
+    with zipfile.ZipFile(current, "a") as archive:
+        archive.writestr("diagnostics/pet-input/current.json", json.dumps(snapshot))
+    coverage, entries = _pet_input_fixture()
+    coverage.update(
+        {
+            "status": "not-collected",
+            "artifacts": [],
+            "identities": [],
+            "retainedIncidents": [],
+            "exportBytes": 0,
+            "failureCount": 1,
+            "gaps": [
+                {"kind": "not-collected", "scope": "collector"},
+                {"kind": "write-failed", "scope": "collector", "count": 2},
+            ],
+        }
+    )
+    _rewrite_pet_bundle(
+        current,
+        failed,
+        coverage=coverage,
+        omit=tuple(entries),
+        manifest_updates={
+            "outcome": "partial",
+            "failures": [
+                {
+                    "collection": "pet-input-evidence",
+                    "item": "current",
+                    "message": "write-failed",
+                }
+            ],
+        },
+    )
+
+    summary = INSPECTOR.inspect_bundle(failed, verify_crc=True)
+    evidence = summary["petInputEvidence"]
+
+    assert evidence["evidence"] == "collected"
+    assert evidence["status"] == "not-collected"
+    assert evidence["historyRecordCount"] == 0
+    assert evidence["identities"] == []
+    assert evidence["current"]["processSessionId"] == "456-789"
+    assert evidence["current"]["writeFailed"] == 2
+    assert evidence["current"]["workerStopped"] is True
+    assert summary["manifest"]["outcome"] == "partial"
+    assert summary["warnings"] == []
+    assert "NEVER_DUMP" not in json.dumps(summary)
+    assert "987654.321" not in json.dumps(summary)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("queuedBytes", -1),
+        ("dropped", False),
+        ("invalid", 1.5),
+        ("writeFailed", "secret"),
+        ("workerStopped", 0),
+        ("processSessionId", "private-path"),
+    ],
+)
+def test_pet_input_rejects_invalid_export_time_snapshot_fields(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    current = tmp_path / "current.zip"
+    malformed = tmp_path / "current-invalid.zip"
+    _build_bundle(current, _load_contract())
+    snapshot = {
+        "scope": "export-time",
+        "processSessionId": "456-789",
+        "queuedBytes": 0,
+        "dropped": 0,
+        "invalid": 0,
+        "writeFailed": 0,
+        "workerStopped": False,
+        field: value,
+    }
+    with zipfile.ZipFile(current, "a") as archive:
+        archive.writestr("diagnostics/pet-input/current.json", json.dumps(snapshot))
+    coverage, _ = _pet_input_fixture()
+    _rewrite_pet_bundle(current, malformed, coverage=coverage)
+
+    summary = INSPECTOR.inspect_bundle(malformed, verify_crc=True)
+
+    assert summary["petInputEvidence"]["evidence"] == "invalid"
+    assert summary["petInputEvidence"]["current"] == {"evidence": "invalid"}
+    assert summary["petInputEvidence"]["historyRecordCount"] == 1
+    assert "secret" not in json.dumps(summary)

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "verifiedAtUtc": "2026-09-05T06:06:46.9152335Z",
+  "comparedInputs": 27,
+  "productAndConsumerInputsUnchanged": true,
+  "measurementHarnessChanges": [
+    {
+      "path": "scripts/pet-input-evidence-smoke/run.mjs",
+      "before": "426e35ef8caeff026e37558568a43953209303444ab6d5875aecbf48366e41e3",
+      "after": "a34a706121d4771b2485f090c5fcb011f8269fcb3aceeef127aea99f90d46a54"
+    },
+    {
+      "path": "scripts/pet-input-evidence-smoke/run.ps1",
+      "before": "8b3b723c1916bf50f6f8e916162295e5db210189226b0741b17191da5ded29b3",
+      "after": "db8106c3a127dea98893ac323ba38807e911e891b92ed16012c83cf2309d5028"
+    },
+    {
+      "path": "scripts/pet-input-evidence-smoke/run.sh",
+      "before": "97bf119b94e62a4a04d424226185cf0ede2cfbc118f00c1cb5c621b8465c5aaa",
+      "after": "0570658851b3427826120cb1bf53e4a5f6ba8c6bff9cdbf2946ecb8cd870fb51"
+    }
+  ],
+  "scope": "Changes since first validation source-manifest; production code and its automated verification remain unchanged"
+}
+

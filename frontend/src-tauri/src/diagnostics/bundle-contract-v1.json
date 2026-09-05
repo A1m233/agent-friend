@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 9,
+  "schemaRevision": 10,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -133,6 +133,21 @@
       ],
       "entryPatterns": [
         "diagnostics/execution-environments.json"
+      ]
+    },
+    {
+      "id": "pet-input-evidence-v1",
+      "manifestFields": [
+        "petInputEvidence"
+      ],
+      "requiredEntries": [
+        "diagnostics/pet-input/coverage.json"
+      ],
+      "entryPatterns": [
+        "diagnostics/pet-input/coverage.json",
+        "diagnostics/pet-input/current.json",
+        "diagnostics/pet-input/history-*.jsonl",
+        "diagnostics/pet-input/incident-*.json"
       ]
     }
   ]

@@ -17,9 +17,10 @@ The settings feedback panel invokes the Tauri `generate_diagnostic_bundle` comma
 9. snapshots the current desktop instance domain and its safely attributable owner evidence;
 10. flushes the independent Windows Shell event journal and adds its bounded history plus a current snapshot;
 11. requests the Bridge's already-sanitized managed execution environment health and resource summary;
-12. redacts managed credentials and replaces the user home path;
-13. validates the manifest and every archive entry against the producer-owned bundle contract;
-14. writes a `.zip.part` file in Downloads and atomically renames it after closing and syncing the ZIP.
+12. reads bounded, persisted pet input history and independent incidents without waiting for the pet page or its writer; emits coverage even when this source is unavailable;
+13. redacts managed credentials and replaces the user home path;
+14. validates the manifest and every archive entry against the producer-owned bundle contract;
+15. writes a `.zip.part` file in Downloads and atomically renames it after closing and syncing the ZIP.
 
 The generator does not upload the bundle or intentionally call an external provider.
 
@@ -44,6 +45,10 @@ The generator does not upload the bundle or intentionally call an external provi
 | `diagnostics/attachments.json` | Attachment references, integrity checks, and original inclusion status | Candidates come only from included sessions |
 | `diagnostics/windows-shell/current.json` | Current Windows foreground, taskbar, selected window, geometry, style, and Z-order snapshot | `capability: unsupported` on non-Windows; may be absent after a collector failure |
 | `diagnostics/windows-shell/events-NNN.jsonl` | Oldest-first bounded Windows Shell event batches with a post-event snapshot | Independent journal budget; each line is one record |
+| `diagnostics/pet-input/coverage.json` | Persisted input evidence coverage, occurrence identities, retention/durability gaps and bounded incident summaries | Required only when `pet-input-evidence-v1` is declared; absence in older v1 is not corruption |
+| `diagnostics/pet-input/current.json` | Optional export-time native state | Never substitute it for an occurrence-time observation |
+| `diagnostics/pet-input/history-NNN.jsonl` | Bounded default input-chain state history with per-segment identity | No continuous mouse trajectory; an event is an observation, not a total cross-process order |
+| `diagnostics/pet-input/incident-NNN.json` | Independently retained input signal with bounded context and recovery evidence | Signals are not root-cause verdicts; healthy history does not replace retained incidents |
 | `sessions/session-NNN.json` | Selected session projection with ordered events | Complete private content may be present; `active_events` is removed; `selected-sessions-v2` replaces provider reasoning payloads with content-free summaries |
 | `logs/<allowlisted-name>` | Bounded log content after redaction | Per file 5 MiB tail; total 20 MiB |
 | `attachments/NNN-<name>` | Optional verified attachment original | Total originals capped at 200 MiB |
@@ -67,6 +72,7 @@ The generator does not upload the bundle or intentionally call an external provi
 - `install-integrity-v1` means `install/integrity.json` was collected. Older bundles without the capability remain valid; the inspector reports `evidence: not-collected` and must not infer either consistency or corruption.
 - `desktop-instance-governance-v1` means the bundle records the running shell's resolved domain and current owner. A missing owner is an evidence gap, not proof that no competing historical launch occurred; correlate `tauri.log.runtime*` instance-governance events for recent arbitration.
 - `managed-execution-environment-v1` means the bundle records a bounded, privacy-preserving execution environment summary. `runtimePayload.declared: true` with `validated: false` is strong current-payload failure evidence; `declared: false` is expected in source mode and does not itself mean Python is unavailable. Size and duration values are coarse buckets, not exact disk accounting. Older bundles without this capability remain valid and establish no managed-environment state.
+- `pet-input-evidence-v1` adds `petInputEvidence` and required coverage metadata. Inspect both coverage and collection failures: successful ZIP generation and current healthy input do not establish complete historical coverage. Missing declared artifacts, malformed records or invalid metadata are consumer evidence gaps; no capability in an old bundle means `not-collected`, not proof that no failure occurred.
 
 Format v1 permits additive fields. Ignore unknown fields safely and do not require newer optional fields when reading an older v1 bundle.
 
@@ -125,6 +131,24 @@ The current snapshot and each journal snapshot may contain:
 - probe failures.
 
 Use `recordedAt` and event `receivedAt` to narrow the incident window. Treat `droppedEventCount`, `truncatedEventCount`, malformed journal records, missing referenced artifacts, or snapshot `probeErrors` as explicit coverage gaps. A geometry candidate is evidence about window bounds, not proof that Windows internally classified the window as fullscreen.
+
+## Pet Input Evidence
+
+`pet-input-evidence-v1` is default, local, bounded observation of the pet input chain. It does not repair DPR, retry business commands, collect keyboard input, or require advance debug/CDP setup. The native writer owns persistence; the frontend contributes only the facts it observed. Export reads persisted files, so a silent or unavailable pet page does not prevent another existing feedback entrance from exporting history.
+
+Start with `coverage.json`: `artifacts` describes the actual included ranges, `identities` binds occurrence process sessions to their recorded builds, `counters` and `gaps` describe known loss, and `retainedIncidents` summarizes independently retained signals. Optional `evictions` describes bounded removal metadata; absent counters or positions stay unknown rather than becoming zero. `durability.lastDroppedRange` brackets known dropped ingress identifiers; `interior: not-necessarily-contiguous` explicitly does not establish that every identifier between its ends was lost. The inspector validates their types and referenced artifacts, streams bounded history lines, and summarizes counts without printing coordinates or event payloads. Newer additive fields are not copied into its output. It does not perform a root-cause classification or reconstruct unobserved stages.
+
+Each history segment begins with a `segment-header` carrying its own identity; each incident embeds its occurrence identity and bounded `context`. Do not bind older records to the current `diagnostics/application.json`, or assume that an available build commit with `dirty: true` proves exact source identity. Optional `current.json` is explicitly export-time evidence and cannot overwrite historical state.
+
+Correlation uses process session, page instance, frontend request/sequence, native record sequence, DPR write revision, cursor sample and actual apply sequence. The writer's `recordSeq` is the persisted order; optional `ingressSeq` identifies diagnostic queue ingress, and neither proves business application order. A frontend Promise acknowledgement, command reception and Windows main-thread application are separate facts. `window-observed` records existing native window geometry/scale events, not DOM content or an atomic whole-desktop snapshot. Wall clocks can jump and are not a unique order across processes/pages; unknown or missing stages must stay unknown. A normal miss or a missing acknowledgement is not itself a business failure. A sustained scale mismatch, explicit command failure or partial style application is a signal to inspect, not a diagnosis of the original trigger.
+
+Default history and recognized incidents have separate budgets. History has a maximum age of 7 days, a 16 MiB total and 2 MiB segments. Incidents have a maximum age of 30 days, 32 files and 8 MiB total, with 256 KiB per incident. Metadata and temporary files have another 1 MiB budget; this evidence family is bounded to 25 MiB for disk and export. Time, count or byte caps take effect at the first boundary reached: these windows are not minimum retention guarantees. Ordinary healthy history does not consume the independent incident budget.
+
+Interpret gaps individually: `not-collected`, `unsupported`, `not-covered`, `expired`, `evicted`, `truncated`, `write-failed`, `read-failed`, `corrupt-tail` and `unknown` are distinct states. Known drop, invalid-record and rate-limit counters describe observer coverage, not pet business failures. Absence of a file does not prove the reason for its absence. Normal finite retention or unsupported platform evidence does not make the whole bundle corrupt; collection/read failures make export partial while preserving other collectors.
+
+`durability.scope: persisted-only` means export does not force a writer flush or wait for frontend delivery. The normal flush interval is 1 second and file-sync request interval 5 seconds, but neither is a bound on crash-time loss under slow/full storage. No clean end marker means the unknown tail can be larger; the final write failure itself may be lost. A complete-line tail and an available latest heartbeat prove only the observations they contain, not continuous input capture or page health.
+
+The family deliberately excludes DOM content/ids, other application titles, arbitrary error strings, chat, credentials, screenshots and continuous cursor tracks. Windows may record the actual existing style application/verification; other platforms report their available API result without inventing Windows style facts. Inspect only the minimum relevant coordinate/event slice when a diagnosis requires it; inventory output must remain content-free.
 
 ## Install Integrity Evidence
 

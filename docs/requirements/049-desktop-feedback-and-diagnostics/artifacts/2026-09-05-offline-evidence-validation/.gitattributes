@@ -1,0 +1,3 @@
+* -text
+# Preserve original JSON evidence bytes, including its captured EOF whitespace.
+*.json whitespace=-blank-at-eof

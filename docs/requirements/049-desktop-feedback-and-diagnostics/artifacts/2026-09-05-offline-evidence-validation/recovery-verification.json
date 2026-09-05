@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "classification": "validation-harness side effect, not a demonstrated DPR/passthrough product regression",
+  "confidence": "strongly-supported by timestamp, runtime-to-code mechanism and recovery",
+  "supersedes": "Any interpretation that CDP script-enable acknowledgement and fresh input records alone proved full animation restoration in runtime-verification.json",
+  "userReported": "Canvas animation froze; after drag the image stayed behind while ActionBar and the hit area moved",
+  "frozen": {
+    "processSessionId": "18208-1788587634704",
+    "pageTimeOrigin": 1788587635284.3,
+    "tickerLastTime": 58031.1,
+    "tickerLastFrameAt": "2026-09-05T05:54:53.315Z",
+    "scriptDisableRequestedAt": "2026-09-05T05:54:53.317Z",
+    "gapApproxMs": 2,
+    "tickerStarted": true,
+    "requestId": 32748,
+    "tickerTimeAdvanced": false,
+    "canvasHashChanged": false,
+    "webglContextLost": false,
+    "evidence": "frozen-ticker-readonly.json",
+    "probeLimitation": "The first two samples only read existing state. A separate one-shot new rAF callback was requested after those samples to distinguish global rAF availability; it did not invoke or restart the application ticker."
+  },
+  "mechanism": {
+    "source": "Spine38AvatarSurface.tsx and installed PIXI ticker",
+    "explanation": "PIXI reschedules rAF from its prior callback; removing script disable does not recreate a dropped pending callback. Drag handlers can still update slot geometry/React anchors independently of rendering.",
+    "noProductStrategyChanged": true
+  },
+  "exportEvidenceStillValid": {
+    "oldHistoryByteIdentical": true,
+    "petInputFailureCount": 0,
+    "frontendEventsInsideDisabledWindow": 0,
+    "windowStartPageMonotonicMs": 58032.7,
+    "windowEndPageMonotonicMs": 66311.7,
+    "limitation": "The ZIP was generated before disable ended. No retained events in this window is not proof that every script was unavailable throughout the full interval."
+  },
+  "recovery": {
+    "method": "Reload pet page only; native process and historical files retained",
+    "requestedAt": "2026-09-05T06:01:30.062Z",
+    "applicationRestarted": false,
+    "animationEvidence": "animation-after-reload.json",
+    "tickerTimeAdvanced": true,
+    "canvasHashChanged": true,
+    "measuredIntervalMs": 2084,
+    "userAccepted": "恢复正常，没有明显卡顿"
+  },
+  "harnessCorrection": {
+    "oldHarness": "failed-harness.mjs",
+    "oldSha256": "426e35ef8caeff026e37558568a43953209303444ab6d5875aecbf48366e41e3",
+    "historicalHarnessMustNotBeExecuted": true,
+    "removed": "--disable-pet-scripts and all Emulation state changes",
+    "replacement": "inspect-animation reads two existing ticker/canvas digest samples; no new rAF, ticker API, reload or image persistence",
+    "syntaxAndArgumentChecksPassed": true
+  },
+  "remaining": [
+    "Computer reboot followed by same-branch dev startup and offline export",
+    "Final complete requirement acceptance after the remaining reboot check"
+  ],
+  "learning": {
+    "classification": "agent-caused-friction",
+    "recurrence": "single observed episode",
+    "persistentGuidanceDecision": "no-action; no Rule/Skill/Lesson/Issue changed by distill-learning",
+    "existingOwner": "desktop-visual-inspection final observable state verification"
+  }
+}
+

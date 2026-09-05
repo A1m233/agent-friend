@@ -23,6 +23,7 @@ mod permissions;
 mod pet_cursor_passthrough;
 mod pet_display_recovery;
 mod pet_display_topology;
+mod pet_input_evidence;
 mod power_policy;
 mod presence;
 mod push_subscriber;
@@ -36,6 +37,7 @@ mod startup_instance_gate;
 mod ui_state;
 mod webview_diagnostics;
 mod window_placement;
+use pet_input_evidence::integration::{record_pet_input_evidence, PetWebviewState};
 #[cfg(target_os = "windows")]
 mod windows_display_state;
 
@@ -573,6 +575,7 @@ fn bridge_base_url() -> String {
 struct CursorPos {
     x: f64,
     y: f64,
+    diagnostic: pet_input_evidence::integration::CursorDiagnostic,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -872,24 +875,38 @@ fn hide_pet(app: tauri::AppHandle) -> Result<(), String> {
 /// 跨屏 drag 不可能在这个窗口里发生。
 fn spawn_cursor_feed(app: &tauri::AppHandle) {
     let handle = app.clone();
-    std::thread::spawn(move || loop {
-        if let Some(pet) = handle.get_webview_window("pet") {
-            if let (Ok(cursor), Ok(pos), Ok(pet_scale)) = (
-                handle.cursor_position(),
-                pet.outer_position(),
-                pet.scale_factor(),
-            ) {
-                let scale = handle
-                    .try_state::<PetWebviewState>()
-                    .and_then(|s| s.dpr.lock().ok().map(|g| *g))
-                    .filter(|&v| v > 0.0)
-                    .unwrap_or(pet_scale);
-                let x = (cursor.x - pos.x as f64) / scale;
-                let y = (cursor.y - pos.y as f64) / scale;
-                let _ = handle.emit_to("pet", "pet://cursor", CursorPos { x, y });
+    std::thread::spawn(move || {
+        let mut sample_id = 0u64;
+        loop {
+            if let Some(pet) = handle.get_webview_window("pet") {
+                if let (Ok(cursor), Ok(pos), Ok(pet_scale)) = (
+                    handle.cursor_position(),
+                    pet.outer_position(),
+                    pet.scale_factor(),
+                ) {
+                    let snapshot = handle
+                        .try_state::<PetWebviewState>()
+                        .and_then(|s| s.snapshot());
+                    let (scale, dpr_revision, scale_source) =
+                        pet_input_evidence::integration::resolve_scale(snapshot, pet_scale);
+                    let x = (cursor.x - pos.x as f64) / scale;
+                    let y = (cursor.y - pos.y as f64) / scale;
+                    sample_id = sample_id.saturating_add(1);
+                    let diagnostic = pet_input_evidence::integration::CursorDiagnostic {
+                        sample_id,
+                        dpr_revision,
+                        scale,
+                        scale_source,
+                        physical_x: cursor.x,
+                        physical_y: cursor.y,
+                        origin_x: pos.x,
+                        origin_y: pos.y,
+                    };
+                    let _ = handle.emit_to("pet", "pet://cursor", CursorPos { x, y, diagnostic });
+                }
             }
+            std::thread::sleep(std::time::Duration::from_millis(16));
         }
-        std::thread::sleep(std::time::Duration::from_millis(16));
     });
 }
 
@@ -898,21 +915,21 @@ fn spawn_cursor_feed(app: &tauri::AppHandle) {
 /// 前端 mount 时 `invoke('set_pet_webview_dpr', { dpr: window.devicePixelRatio })` 写入，
 /// `spawn_cursor_feed` 60Hz 读用作 cursor scale。0.0 表示前端还没上报（默认 / 启动早期）→
 /// fallback `pet.scale_factor()`。
-#[derive(Default)]
-struct PetWebviewState {
-    dpr: Mutex<f64>,
-}
-
 /// 前端 mount 时调一次（matchMedia listener 在 DPR 变化时再调）。
 #[tauri::command]
-fn set_pet_webview_dpr(state: tauri::State<PetWebviewState>, dpr: f64) {
-    if let Ok(mut g) = state.dpr.lock() {
-        if (*g - dpr).abs() < f64::EPSILON {
-            return;
-        }
-        *g = dpr;
-        log::info!("set_pet_webview_dpr: {dpr}");
-    }
+fn set_pet_webview_dpr(
+    app: tauri::AppHandle,
+    state: tauri::State<PetWebviewState>,
+    dpr: f64,
+    diagnostic: Option<serde_json::Value>,
+) {
+    let manager = app.try_state::<pet_input_evidence::PetInputEvidence>();
+    pet_input_evidence::integration::record_dpr(
+        manager.as_deref(),
+        &state,
+        dpr,
+        diagnostic.as_ref(),
+    );
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1266,6 +1283,15 @@ pub fn run() {
     let bootstrap_settings = settings::load_from_disk_or_default();
     let init_script = settings::build_init_script(&bootstrap_settings);
     let settings_state = Arc::new(Mutex::new(bootstrap_settings));
+    let pet_evidence_identity = pet_input_evidence::integration::runtime_identity(
+        desktop_identity.build_identity.as_ref(),
+        &context.package_info().version.to_string(),
+    );
+    let pet_evidence = pet_input_evidence::PetInputEvidence::start(
+        paths::pet_input_evidence_dir(),
+        runtime_observer.process_session_id().to_string(),
+        pet_evidence_identity,
+    );
     let runtime_service_supervisor =
         Arc::new(runtime_services::RuntimeServiceSupervisor::from_environment(resource_dir));
     let runtime_credential_coordinator =
@@ -1338,6 +1364,7 @@ pub fn run() {
         .manage(bubble_window::BubbleState::default())
         .manage(PetOverlayState::default())
         .manage(PetWebviewState::default())
+        .manage(pet_evidence)
         .manage(VoiceLaunchState::default())
         .manage(WorkspaceNavigationState::default())
         .manage(window_placement::WindowPlacementState::default())
@@ -1404,6 +1431,7 @@ pub fn run() {
         hide_pet,
         pet_cursor_passthrough::set_pet_cursor_passthrough,
         set_pet_webview_dpr,
+        record_pet_input_evidence,
         settings::get_setting,
         settings::set_setting,
         runtime_config::get_runtime_config_status,
@@ -1484,6 +1512,7 @@ pub fn run() {
         hide_pet,
         pet_cursor_passthrough::set_pet_cursor_passthrough,
         set_pet_webview_dpr,
+        record_pet_input_evidence,
         settings::get_setting,
         settings::set_setting,
         runtime_config::get_runtime_config_status,
@@ -1533,6 +1562,7 @@ pub fn run() {
 
     builder
         .on_window_event(|window, event| {
+            pet_input_evidence::integration::record_window_event(window, event);
             if let Some(manager) = window
                 .app_handle()
                 .try_state::<Arc<shell_diagnostics::ShellDiagnosticsManager>>()
@@ -1860,6 +1890,11 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(manager) =
+                    app_handle.try_state::<pet_input_evidence::PetInputEvidence>()
+                {
+                    manager.shutdown();
+                }
                 exit_runtime_observer.record(
                     "lifecycle",
                     "process-exit-started",
@@ -1891,6 +1926,12 @@ pub fn run() {
                         .cleanup_owned_children()
                         .await;
                 });
+                if let Some(manager) =
+                    app_handle.try_state::<pet_input_evidence::PetInputEvidence>()
+                {
+                    // Only exit may wait briefly; input commands never wait for disk or this worker.
+                    let _ = manager.wait_for_shutdown(std::time::Duration::from_millis(150));
+                }
                 if let Some(owner) = exit_desktop_owner
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())

@@ -20,6 +20,7 @@ pub const PERSONA_EDITABLE_FILE: &str = "persona.md";
 pub const MIGRATION_DIR: &str = "migration";
 pub const MIGRATION_BACKUPS_DIR: &str = "migration-backups";
 pub const SHELL_DIAGNOSTICS_DIR: &str = "windows-shell";
+pub const PET_INPUT_EVIDENCE_DIR: &str = "pet-input-evidence";
 pub const WEBVIEW_RENDER_EVIDENCE_DIR: &str = "webview-render-evidence";
 pub const INSTANCE_COORDINATION_DIR: &str = "instance-governance";
 
@@ -227,6 +228,11 @@ pub fn shell_diagnostics_dir() -> PathBuf {
     log_dir().join(SHELL_DIAGNOSTICS_DIR)
 }
 
+/// Bounded input facts, separate from ordinary log rotation and user assets.
+pub fn pet_input_evidence_dir() -> PathBuf {
+    log_dir().join(PET_INPUT_EVIDENCE_DIR)
+}
+
 /// 用户显式授权后采集的最近一份 WebView2 / Windows 呈现对照证据。
 ///
 /// 原始截图属于诊断日志而不是用户资产；目录始终位于统一日志根下，且采集器只保留
@@ -309,6 +315,11 @@ mod tests {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let previous = std::env::var_os(LOG_DIR_ENV);
         std::env::set_var(LOG_DIR_ENV, "agent-friend-logs");
+
+        assert_eq!(
+            pet_input_evidence_dir(),
+            PathBuf::from("agent-friend-logs").join(PET_INPUT_EVIDENCE_DIR)
+        );
 
         assert_eq!(
             webview_render_evidence_dir(),
