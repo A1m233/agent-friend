@@ -1,5 +1,5 @@
 import { StatusDot } from "@/components/ui";
-import type { CompactionBlock } from "@/types/chat";
+import type { ChatMessage, CompactionBlock } from "@/types/chat";
 import { ModelResponseStatus } from "../ModelResponseStatus";
 import type { MessagePrimaryActivity } from "./primaryActivity";
 
@@ -50,4 +50,34 @@ export function MessagePrimaryActivityStatus({
     );
   }
   return null;
+}
+
+/** Current activity is transient, outside disclosure; terminal facts remove it. */
+export function MessageActivityTail({ message, activity }: {
+  message: ChatMessage;
+  activity?: MessagePrimaryActivity | null;
+}) {
+  if (message.runOutcome || message.status === "error" || message.status === "interrupted") {
+    const outcome = message.runOutcome;
+    const label = outcome === "failed" || message.status === "error"
+      ? message.error ? "" : "执行失败"
+      : outcome === "expired" ? "任务等待时间过长，已过期"
+      : outcome === "skipped" ? "本轮任务未执行"
+      : outcome === "rejected" ? "本轮任务未被接纳" : "";
+    return label ? (
+      <p className="flex items-center gap-2 px-1 text-xs text-muted" role="status" data-run-outcome>
+        <StatusDot tone="muted" />
+        <span>{label}</span>
+      </p>
+    ) : null;
+  }
+  if (activity === undefined) {
+    return message.status === "streaming" ? (
+      <div data-message-activity-tail><ModelResponseStatus status={message.runStatus} /></div>
+    ) : null;
+  }
+  if (activity?.kind !== "model" && activity?.kind !== "run") return null;
+  return (
+    <div data-message-activity-tail><MessagePrimaryActivityStatus activity={activity} /></div>
+  );
 }

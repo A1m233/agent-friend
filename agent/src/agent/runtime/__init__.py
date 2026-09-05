@@ -28,7 +28,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Collection
 from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime, timedelta
-from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from memory import Memory
 
@@ -75,6 +75,7 @@ from .models import (
     RunRequest,
     RunSnapshot,
     RunStatus,
+    RunTerminal,
     TurnStatus,
 )
 from .scheduler import RunScheduler, RuntimeActivitySnapshot, RuntimeDrainReport
@@ -591,11 +592,54 @@ class AgentRuntime:
             surface=request.surface or "none",
         )
         session = conv.session
+        started_at = handle.snapshot().started_at
+
+        def persist_terminal(terminal: RunTerminal) -> None:
+            final_outcome = terminal.outcome
+            final_reason = terminal.reason_code
+            try:
+                with self._session_turn_guard(request.session_id):
+                    conv.append_run_terminal_event(
+                        run_id=request.run_id,
+                        status=(
+                            "completed"
+                            if terminal.outcome is RunOutcome.COMPLETED
+                            else "failed"
+                            if terminal.outcome is RunOutcome.FAILED
+                            else "interrupted"
+                        ),
+                        reason_code=terminal.reason_code,
+                        owner_runtime_instance_id=request.runtime_instance_id,
+                        started_at=started_at,
+                        finished_at=terminal.finished_at,
+                    )
+            except BaseException as persist_error:
+                logger.exception("run terminal persistence failed: %s", request.run_id)
+                final_outcome = RunOutcome.FAILED
+                final_reason = run_failure_reason_code(
+                    persist_error, default="run_terminal_persist_failed"
+                )
+                raise
+            finally:
+                self._listeners.finish_run(
+                    request.event,
+                    run_id=request.run_id,
+                    outcome=final_outcome,
+                    reason_code=final_reason,
+                )
+
+        handle.set_terminal_callback(persist_terminal)
         turn_start_idx = len(session.events)
         outcome = RunOutcome.FAILED
         error: BaseException | None = None
         execution_result: RunExecutionResult | None = None
         try:
+            if started_at is not None:
+                conv.append_run_started_event(
+                    run_id=request.run_id,
+                    started_at=started_at,
+                    owner_runtime_instance_id=request.runtime_instance_id,
+                )
             if request.conversation_runner is not None:
                 events_iter = request.conversation_runner(conv, request, handle.token)
             elif isinstance(request.event, UserEvent):
@@ -677,7 +721,6 @@ class AgentRuntime:
                     logger.warning("run error callback 失败: %s", request.run_id, exc_info=True)
             raise
         finally:
-            terminal_persist_error: BaseException | None = None
             try:
                 self._last_dispatch_finished_at = datetime.now(UTC)
                 self._hooks.run_post_turn(
@@ -690,52 +733,6 @@ class AgentRuntime:
                         error=error,
                     )
                 )
-                terminal_status: TurnStatus = (
-                    TurnStatus.INTERRUPTED
-                    if outcome is RunOutcome.CANCELLED
-                    else TurnStatus.FAILED
-                    if outcome is RunOutcome.FAILED
-                    else TurnStatus.COMPLETED
-                )
-                terminal_status_value: Literal["completed", "interrupted", "failed"] = (
-                    "interrupted"
-                    if terminal_status is TurnStatus.INTERRUPTED
-                    else "failed"
-                    if terminal_status is TurnStatus.FAILED
-                    else "completed"
-                )
-                terminal_reason = (
-                    run_failure_reason_code(error, default=type(error).__name__)
-                    if error is not None
-                    else execution_result.reason_code
-                    if execution_result is not None
-                    else "end_turn"
-                )
-                try:
-                    conv.append_run_terminal_event(
-                        run_id=request.run_id,
-                        status=terminal_status_value,
-                        reason_code=terminal_reason,
-                        owner_runtime_instance_id=request.runtime_instance_id,
-                    )
-                except BaseException as persist_error:
-                    logger.exception("run terminal persistence failed: %s", request.run_id)
-                    if error is None:
-                        terminal_persist_error = persist_error
-                        error = persist_error
-                        outcome = RunOutcome.FAILED
-                        terminal_reason = run_failure_reason_code(
-                            persist_error,
-                            default="run_terminal_persist_failed",
-                        )
-                self._listeners.finish_run(
-                    request.event,
-                    run_id=request.run_id,
-                    outcome=outcome,
-                    reason_code=terminal_reason,
-                )
-                if terminal_persist_error is not None:
-                    raise terminal_persist_error
             finally:
                 log_run_latency(
                     logger,

@@ -170,10 +170,12 @@ def test_skill_context_order_persistence_and_general_projection(tmp_path: Path) 
     )
     assert catalog_index < user_index < skill_index
     assert skill_index < existing_context_index
-    assert [event.type for event in conversation.session.events[1:5]] == [
+    assert [event.type for event in conversation.session.events[1:7]] == [
         "skill_catalog_state",
         "user_message",
         "skill_context",
+        "assistant_phase",
+        "assistant_phase",
         "assistant_message",
     ]
     assert [message.content for message in conversation.session.messages] == ["hello", "ok"]

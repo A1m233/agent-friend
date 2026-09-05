@@ -1,0 +1,26 @@
+{
+  "synthetic": true,
+  "ids": {
+    "session": "5b39770e-29cd-4312-a428-9ee83587cb48",
+    "native_user": "5c8f62bc-43da-4d13-92e6-de2d84d39998",
+    "native_start": "61a1d9fc-b905-45ee-953d-e4603107ea93",
+    "native_phase": "664e97ae-3b9d-4424-9a32-fde35172b4e7",
+    "native_a": "fbd83232-55ba-4131-8568-76870b018456",
+    "native_unknown": "968ca20c-242b-4da0-add3-72bedcd886b1",
+    "native_b": "69867895-dd11-462b-99f2-31fe0958d048",
+    "native_final": "06ad4d0c-a554-486d-930e-a1642e6bd753",
+    "native_terminal": "2c90956b-d03d-4dba-b2fc-5752a7f22b5c",
+    "legacy_user": "827c9f32-4c7e-4490-9f84-64a28f06fc58",
+    "legacy_start": "f0ae3d26-2d0a-4e7e-96fc-dd28f688bb79",
+    "legacy_phase": "78c17265-e4d1-4b70-bce1-b4120911db09",
+    "legacy_text": "465782b2-fa86-466f-888a-e0e869f360dd",
+    "legacy_terminal": "fa3f5289-c124-4f70-b467-05c7e31d2d40",
+    "interrupted_user": "c9399ad2-e055-446b-b91f-25aa5757624c",
+    "interrupted_start": "5ba9aa2a-c1ce-4dc2-be59-069fa256e31f",
+    "interrupted_phase": "7ae38936-7b64-40d8-b18b-dae0a0f54234",
+    "interrupted_text": "c14ee6e1-5473-4b36-8252-b29cfb747539",
+    "interrupted_terminal": "0ed39b0e-4acd-4e25-b4db-d122833e4a6e",
+    "current_model": "5433e5d8-4948-4da4-8dfc-1d747463a693"
+  },
+  "session_id": "5b39770e-29cd-4312-a428-9ee83587cb48"
+}

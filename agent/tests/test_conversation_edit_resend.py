@@ -793,6 +793,7 @@ def test_stream_first_llm_failure_persists_user_turn(tmp_path: Path) -> None:
     assert [ev.type for ev in conv.session.events] == [
         "session_meta",
         "user_message",
+        "assistant_phase",
     ]
     assert [(m.role, m.content) for m in conv.session.messages] == [
         ("user", "question before failure"),
@@ -871,6 +872,7 @@ def test_stream_commits_user_before_first_cancel_check(tmp_path: Path) -> None:
         "content": "",
         "partial": True,
         "interruption_reason": "explicit_request",
+        "phase": "unknown",
     }
 
 
@@ -921,6 +923,7 @@ def test_edit_resend_latest_first_llm_failure_persists_rewrite_and_user(
         "assistant_message",
         "turn_rewrite",
         "user_message",
+        "assistant_phase",
     ]
     assert [(m.role, m.content) for m in conv.session.messages] == [
         ("user", "new question"),

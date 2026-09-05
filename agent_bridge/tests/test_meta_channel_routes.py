@@ -703,6 +703,7 @@ class TestAgUiRunChannelBoundary:
         ] == [
             "session_meta",
             "user_message",
+            "assistant_phase",
             "run_error",
         ]
         user_events = [event for event in loaded.events if event.type == "user_message"]

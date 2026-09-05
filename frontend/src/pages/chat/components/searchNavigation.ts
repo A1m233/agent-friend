@@ -37,6 +37,18 @@ export function findSearchAnchor(root: ParentNode, anchorEventUuid: string): HTM
   );
 }
 
+/** Quote/search hosts use display:contents; measure their rendered child box. */
+export function scrollToRenderedAnchor(viewport: HTMLElement, anchor: HTMLElement, bottomInset: number): void {
+  const candidates = [anchor, ...Array.from(anchor.children)];
+  const rect = candidates.map((element) => element.getBoundingClientRect())
+    .find((candidate) => candidate.width > 0 && candidate.height > 0);
+  if (!rect) return;
+  const viewportRect = viewport.getBoundingClientRect();
+  const availableHeight = Math.max(0, viewportRect.height - bottomInset);
+  viewport.scrollBy({ top: rect.top + Math.min(rect.height, availableHeight) / 2
+    - (viewportRect.top + availableHeight / 2), behavior: "auto" });
+}
+
 export function installSearchTextHighlight(root: HTMLElement, query: string): (() => void) | null {
   if (typeof CSS === "undefined") {
     return null;

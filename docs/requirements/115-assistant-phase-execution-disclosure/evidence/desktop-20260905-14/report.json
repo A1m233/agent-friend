@@ -1,0 +1,396 @@
+{
+  "synthetic": true,
+  "llmCalls": 0,
+  "checks": [
+    "run header: body-size typography, text alignment within one CSS pixel, separator below, hover unchanged",
+    "native collapsed; unknown/final visible; persisted duration 112s",
+    "one real click expands both separated process sections",
+    "legacy has time and no toggle; interrupted remains visible with unknown duration",
+    "real WebView reload restores native disclosure under the persisted legacy current model",
+    "real global search query and Enter navigation expands hidden commentary",
+    "expanded commentary can be selected and quoted via real button click",
+    "UI-only send/admission: no time header/separator while queued, activity stays; actual start shows live time without unknown flash or queue seconds",
+    "UI-only legacy run: running label ticks through cancellation request, neutral stopped header freezes at terminal, no duplicate stopped tail",
+    "UI-only native run: independent timer, initial waiting, text/tool/tail visual order, no duplicate tool loading, tail survives manual collapse, terminal removes activity",
+    "synthetic quoted user message: real reference popover click reopens commentary and highlights original text"
+  ],
+  "passed": true,
+  "url": "http://localhost:1420/chat.html",
+  "viewport": {
+    "width": 1050,
+    "height": 920
+  },
+  "headerStyle": {
+    "normal": {
+      "color": "rgb(107, 114, 128)",
+      "background": "rgba(0, 0, 0, 0)",
+      "shadow": "none",
+      "fontSize": "14px",
+      "lineHeight": "21px",
+      "paddingLeft": "2px",
+      "paddingRight": "2px"
+    },
+    "body": {
+      "fontSize": "14px",
+      "lineHeight": "21px"
+    },
+    "durationBounds": {
+      "x": 278.8000183105469,
+      "y": 156.8000030517578,
+      "width": 83.08749389648438,
+      "height": 21
+    },
+    "bodyBounds": {
+      "x": 278.3999938964844,
+      "y": 203.90000915527344,
+      "width": 732.8000183105469,
+      "height": 21
+    },
+    "separatorBounds": {
+      "x": 276.8000183105469,
+      "y": 185.8000030517578,
+      "width": 735.9999694824219,
+      "height": 0.5
+    },
+    "hover": {
+      "color": "rgb(107, 114, 128)",
+      "background": "rgba(0, 0, 0, 0)",
+      "shadow": "none",
+      "fontSize": "14px",
+      "lineHeight": "21px",
+      "paddingLeft": "2px",
+      "paddingRight": "2px"
+    }
+  },
+  "quote": {
+    "referenceId": "72d76138-1f25-483e-b4dd-0e3cbe80ea4f",
+    "source": {
+      "kind": "session_message",
+      "messageEventUuid": "fbd83232-55ba-4131-8568-76870b018456",
+      "textBlockId": "fbd83232-55ba-4131-8568-76870b018456",
+      "externalSourceKey": null
+    },
+    "text": "合成过程A：检查现有业务。"
+  },
+  "startTransition": {
+    "queuedMs": 2404,
+    "samples": [
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      },
+      {
+        "label": "已进行 0秒",
+        "separator": true
+      }
+    ]
+  },
+  "activityBounds": {
+    "duration": {
+      "x": 278.8000183105469,
+      "y": 576,
+      "width": 67.27499389648438,
+      "height": 21
+    },
+    "text": {
+      "x": 278.3999938964844,
+      "y": 615.1000366210938,
+      "width": 732.8000183105469,
+      "height": 21
+    },
+    "tool": {
+      "x": 276.8000183105469,
+      "y": 645.7000122070312,
+      "width": 242.02499389648438,
+      "height": 23.98748779296875
+    },
+    "tail": {
+      "x": 276.8000183105469,
+      "y": 678.2875366210938,
+      "width": 735.9999694824219,
+      "height": 15.98748779296875
+    }
+  },
+  "referenceBounds": {
+    "x": 278.3999938964844,
+    "y": 195.90000915527344,
+    "width": 732.8000183105469,
+    "height": 21
+  }
+}

@@ -218,7 +218,7 @@ def run_provider(provider: str) -> dict[str, Any]:
                         tool_call.arguments_json
                     ) != {"record": "AF-114"}:
                         raise AssertionError("incorrect function or arguments")
-                    messages.append(dict(done.assistant_turn.to_openai_message()))
+                    messages.extend(dict(item) for item in done.assistant_turn.to_openai_messages())
                     messages.append(
                         {
                             "role": "tool",

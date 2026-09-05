@@ -1,0 +1,106 @@
+{
+  "synthetic": true,
+  "llmCalls": 0,
+  "checks": [
+    "run header: body-size typography, text alignment within one CSS pixel, separator below, hover unchanged",
+    "native collapsed; unknown/final visible; persisted duration 112s",
+    "one real click expands both separated process sections",
+    "legacy has time and no toggle; interrupted remains visible with unknown duration",
+    "real WebView reload restores native disclosure under the persisted legacy current model",
+    "real global search query and Enter navigation expands hidden commentary",
+    "expanded commentary can be selected and quoted via real button click",
+    "UI-only legacy run: running label ticks through cancellation request, neutral stopped header freezes at terminal, no duplicate stopped tail",
+    "UI-only native run: independent timer, initial waiting, text/tool/tail visual order, no duplicate tool loading, tail survives manual collapse, terminal removes activity",
+    "synthetic quoted user message: real reference popover click reopens commentary and highlights original text"
+  ],
+  "passed": true,
+  "url": "http://localhost:1420/chat.html",
+  "viewport": {
+    "width": 1055,
+    "height": 752
+  },
+  "headerStyle": {
+    "normal": {
+      "color": "rgb(107, 114, 128)",
+      "background": "rgba(0, 0, 0, 0)",
+      "shadow": "none",
+      "fontSize": "14px",
+      "lineHeight": "21px",
+      "paddingLeft": "2px",
+      "paddingRight": "2px"
+    },
+    "body": {
+      "fontSize": "14px",
+      "lineHeight": "21px"
+    },
+    "durationBounds": {
+      "x": 281.6000061035156,
+      "y": 76.80000305175781,
+      "width": 83.08749389648438,
+      "height": 21
+    },
+    "bodyBounds": {
+      "x": 281.20001220703125,
+      "y": 123.9000015258789,
+      "width": 732.7999877929688,
+      "height": 21.00000762939453
+    },
+    "separatorBounds": {
+      "x": 279.6000061035156,
+      "y": 105.80000305175781,
+      "width": 736.0000305175781,
+      "height": 0.5
+    },
+    "hover": {
+      "color": "rgb(107, 114, 128)",
+      "background": "rgba(0, 0, 0, 0)",
+      "shadow": "none",
+      "fontSize": "14px",
+      "lineHeight": "21px",
+      "paddingLeft": "2px",
+      "paddingRight": "2px"
+    }
+  },
+  "quote": {
+    "referenceId": "a312459a-69da-495b-9e1d-c35e561d2a43",
+    "source": {
+      "kind": "session_message",
+      "messageEventUuid": "fbd83232-55ba-4131-8568-76870b018456",
+      "textBlockId": "fbd83232-55ba-4131-8568-76870b018456",
+      "externalSourceKey": null
+    },
+    "text": "合成过程A：检查现有业务。"
+  },
+  "activityBounds": {
+    "duration": {
+      "x": 281.6000061035156,
+      "y": 408,
+      "width": 67.27499389648438,
+      "height": 21
+    },
+    "text": {
+      "x": 281.20001220703125,
+      "y": 447.1000061035156,
+      "width": 732.7999877929688,
+      "height": 21
+    },
+    "tool": {
+      "x": 279.6000061035156,
+      "y": 477.70001220703125,
+      "width": 242.02499389648438,
+      "height": 23.98748779296875
+    },
+    "tail": {
+      "x": 279.6000061035156,
+      "y": 510.2875061035156,
+      "width": 736.0000305175781,
+      "height": 15.987518310546875
+    }
+  },
+  "referenceBounds": {
+    "x": 281.20001220703125,
+    "y": 195.90000915527344,
+    "width": 732.7999877929688,
+    "height": 21
+  }
+}

@@ -380,6 +380,8 @@ function terminalizeRunMessage(
     return {
       ...message,
       runOutcome: outcome ?? message.runOutcome,
+      runStartedAt: snapshot.started_at ?? message.runStartedAt,
+      runFinishedAt: snapshot.finished_at ?? undefined,
       runStatus: undefined,
     };
   }
@@ -388,6 +390,8 @@ function terminalizeRunMessage(
     ...message,
     status,
     runOutcome: outcome ?? undefined,
+    runStartedAt: snapshot.started_at ?? message.runStartedAt,
+    runFinishedAt: snapshot.finished_at ?? undefined,
     createdAt: snapshot.finished_at ?? message.createdAt,
     ...(status === "error" && !message.error
       ? { error: FRIENDLY_FALLBACK, errorCode: snapshot.reason_code || "runtime_error" }

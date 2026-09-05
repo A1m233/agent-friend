@@ -31,6 +31,17 @@ class ProviderToolCall:
     tool_call_id: str
     tool_name: str
     arguments_json: str
+    output_index: int | None = None
+
+
+@dataclass(frozen=True, repr=False)
+class ProviderAssistantItem:
+    """One completed assistant text item, distinct even when phases match."""
+
+    item_id: str
+    output_index: int
+    content: str
+    phase: Literal["commentary", "final_answer"] | None = None
 
 
 @dataclass(frozen=True, repr=False)
@@ -40,6 +51,7 @@ class ProviderAssistantTurn:
     content: str | None
     tool_calls: tuple[ProviderToolCall, ...] = ()
     reasoning_state: ProviderReasoningState | None = None
+    text_items: tuple[ProviderAssistantItem, ...] = ()
 
     def __repr__(self) -> str:
         return (
@@ -71,6 +83,36 @@ class ProviderAssistantTurn:
                 message["reasoning_details"] = [dict(item) for item in state.payload]
         return message
 
+    def to_openai_messages(self) -> list[dict[str, object]]:
+        """Lossless multi-item replay; the singular method is a legacy aggregate."""
+        if not self.text_items:
+            return [self.to_openai_message()]
+        group = self.text_items[0].item_id
+        ordered: list[tuple[int, dict[str, object]]] = []
+        for item in self.text_items:
+            message: dict[str, object] = {"role": "assistant", "content": item.content}
+            if item.phase is not None:
+                message["phase"] = item.phase
+            ordered.append((item.output_index, message))
+        tail = max(item.output_index for item in self.text_items) + 1
+        for call in self.tool_calls:
+            ordered.append(
+                (
+                    call.output_index if call.output_index is not None else tail,
+                    ProviderAssistantTurn(None, (call,)).to_openai_message(),
+                )
+            )
+        messages = [message for _, message in sorted(ordered, key=lambda item: item[0])]
+        for message in messages:
+            message["_assistant_response_id"] = group
+        reasoning = ProviderAssistantTurn(
+            None, reasoning_state=self.reasoning_state
+        ).to_openai_message()
+        for key in ("reasoning_content", "reasoning_details"):
+            if key in reasoning:
+                messages[0][key] = reasoning[key]
+        return messages
+
 
 @dataclass(frozen=True)
 class LLMTextDelta:
@@ -79,6 +121,26 @@ class LLMTextDelta:
     text: str = ""
     type: Literal["text_delta"] = "text_delta"
     phase: Literal["commentary", "final_answer"] | None = None
+    item_id: str | None = None
+    output_index: int | None = None
+
+
+@dataclass(frozen=True)
+class LLMAssistantItemStart:
+    """Provider-neutral assistant item boundary; not visible output itself."""
+
+    item_id: str
+    output_index: int
+    phase: Literal["commentary", "final_answer"] | None = None
+    type: Literal["assistant_item_start"] = "assistant_item_start"
+
+
+@dataclass(frozen=True)
+class LLMAssistantItemDone:
+    item_id: str
+    output_index: int
+    phase: Literal["commentary", "final_answer"] | None = None
+    type: Literal["assistant_item_done"] = "assistant_item_done"
 
 
 @dataclass(frozen=True)
@@ -268,5 +330,13 @@ class LLMTurnDone:
     type: Literal["done"] = "done"
 
 
-LLMStreamEvent = LLMTextDelta | LLMToolCallDelta | LLMRetryScheduled | LLMActivity | LLMTurnDone
+LLMStreamEvent = (
+    LLMTextDelta
+    | LLMToolCallDelta
+    | LLMRetryScheduled
+    | LLMActivity
+    | LLMTurnDone
+    | LLMAssistantItemStart
+    | LLMAssistantItemDone
+)
 """所有 :meth:`LLMClient.stream` 可能 yield 的事件类型并集。"""

@@ -13,6 +13,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
+from uuid import uuid4
 
 from llm_providers import ProviderAssistantTurn
 
@@ -232,7 +233,55 @@ class SessionModelHistory:
         timestamp: datetime,
         event_uuid: str | None = None,
         run_id: str | None = None,
+        item_event_uuids: Mapping[str, str] | None = None,
     ) -> Message:
+        if assistant.text_items:
+            group_id = str(uuid4())
+            ordered: list[tuple[int, ProviderAssistantTurn, str | None, str | None]] = [
+                (
+                    item.output_index,
+                    ProviderAssistantTurn(item.content),
+                    (item_event_uuids or {}).get(item.item_id),
+                    item.phase,
+                )
+                for item in assistant.text_items
+                if item.content
+            ]
+            ordered.extend(
+                (
+                    call.output_index
+                    if call.output_index is not None
+                    else max((item.output_index for item in assistant.text_items), default=0) + 1,
+                    ProviderAssistantTurn(None, (call,)),
+                    None,
+                    None,
+                )
+                for call in assistant.tool_calls
+            )
+            first: Message | None = None
+            for _, part, identity, phase in sorted(ordered, key=lambda entry: entry[0]):
+                message = self.append_provider_assistant(
+                    part,
+                    timestamp=timestamp,
+                    event_uuid=identity,
+                    run_id=run_id,
+                )
+                # append() owns a copy: set the same metadata on both returned
+                # and stored objects before any serialization/checkpoint.
+                extra: dict[str, object] = {
+                    "assistant_response_id": group_id,
+                    "phase": phase or "unknown",
+                }
+                if first is None and assistant.reasoning_state is not None:
+                    extra["provider_reasoning_state"] = assistant.reasoning_state.to_event_payload()
+                    if run_id:
+                        extra["provider_reasoning_run_id"] = run_id
+                message.meta.update(extra)
+                self.items[-1].meta.update(copy.deepcopy(extra))
+                if first is None:
+                    first = message
+            if first is not None:
+                return first
         meta: dict[str, object] = {}
         if run_id:
             meta["provider_run_id"] = run_id
@@ -347,18 +396,21 @@ class SessionModelHistory:
 
         missing: list[tuple[str, str, str | None]] = []
         pending: dict[str, tuple[str, str | None]] = {}
+        pending_group: object = None
         for message in self.items:
             if message.role == "tool":
                 tool_call_id = message.meta.get("tool_call_id")
                 if isinstance(tool_call_id, str):
                     pending.pop(tool_call_id, None)
                 continue
-            if pending:
+            group = message.meta.get("assistant_response_id")
+            if pending and not (message.role == "assistant" and group and group == pending_group):
                 missing.extend(
                     (tool_call_id, tool_name, run_id)
                     for tool_call_id, (tool_name, run_id) in pending.items()
                 )
                 pending = {}
+            pending_group = group
             if message.role != "assistant":
                 continue
             raw_calls = message.meta.get("tool_calls")
@@ -392,6 +444,7 @@ class SessionModelHistory:
         """Fail locally when a provider message list violates tool pairing rules."""
 
         pending: set[str] = set()
+        pending_group: object = None
         for index, message in enumerate(messages):
             role = message.get("role")
             if role == "tool":
@@ -408,11 +461,13 @@ class SessionModelHistory:
                     )
                 pending.remove(tool_call_id)
                 continue
-            if pending:
+            group = message.get("_assistant_response_id")
+            if pending and not (role == "assistant" and group and group == pending_group):
                 raise ValueError(
                     "model_history_tool_transaction_invalid: missing tool results "
                     f"{sorted(pending)!r} before message index {index}"
                 )
+            pending_group = group
             if role != "assistant":
                 continue
             raw_calls = message.get("tool_calls")
@@ -428,12 +483,12 @@ class SessionModelHistory:
                 call_ids.append(call_id)
             if not call_ids:
                 continue
-            if len(call_ids) != len(set(call_ids)):
+            if len(call_ids) != len(set(call_ids)) or pending.intersection(call_ids):
                 raise ValueError(
                     "model_history_tool_transaction_invalid: duplicate tool call ids "
                     f"at message index {index}"
                 )
-            pending = set(call_ids)
+            pending.update(call_ids)
         if pending:
             raise ValueError(
                 "model_history_tool_transaction_invalid: missing tool results "
@@ -462,13 +517,23 @@ class SessionModelHistory:
             if run_id and message_run_id != run_id:
                 continue
             insertion_index = index + 1
-            while insertion_index < len(self.items) and self.items[insertion_index].role == "tool":
+            group = message.meta.get("assistant_response_id")
+            while insertion_index < len(self.items) and (
+                self.items[insertion_index].role == "tool"
+                or (
+                    group and self.items[insertion_index].meta.get("assistant_response_id") == group
+                )
+            ):
                 insertion_index += 1
             return insertion_index
         if fallback_index is None:
             return None
         insertion_index = fallback_index + 1
-        while insertion_index < len(self.items) and self.items[insertion_index].role == "tool":
+        group = self.items[fallback_index].meta.get("assistant_response_id")
+        while insertion_index < len(self.items) and (
+            self.items[insertion_index].role == "tool"
+            or (group and self.items[insertion_index].meta.get("assistant_response_id") == group)
+        ):
             insertion_index += 1
         return insertion_index
 

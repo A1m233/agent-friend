@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "@/types/chat";
 import {
   findCaseInsensitiveOccurrences,
   findSearchMessageIndex,
+  scrollToRenderedAnchor,
 } from "./searchNavigation";
 
 const messages: ChatMessage[] = [
@@ -27,6 +28,23 @@ const messages: ChatMessage[] = [
 ];
 
 describe("global search message navigation", () => {
+  it("centers the rendered child of display:contents above the composer", () => {
+    const scrollBy = vi.fn();
+    const viewport = { getBoundingClientRect: () => ({ top: 100, height: 700 }), scrollBy } as unknown as HTMLElement;
+    const anchor = { getBoundingClientRect: () => ({ top: 0, width: 0, height: 0 }),
+      children: [{ getBoundingClientRect: () => ({ top: 900, width: 400, height: 100 }) }] } as unknown as HTMLElement;
+    scrollToRenderedAnchor(viewport, anchor, 200);
+    expect(scrollBy).toHaveBeenCalledWith({ top: 600, behavior: "auto" });
+  });
+
+  it("does not scroll to a not-yet-rendered empty anchor", () => {
+    const scrollBy = vi.fn();
+    const viewport = { scrollBy } as unknown as HTMLElement;
+    const anchor = { getBoundingClientRect: () => ({ width: 0, height: 0 }), children: [] } as unknown as HTMLElement;
+    scrollToRenderedAnchor(viewport, anchor, 0);
+    expect(scrollBy).not.toHaveBeenCalled();
+  });
+
   it("maps user event ids and assistant text block ids to the virtual row", () => {
     expect(findSearchMessageIndex(messages, "user-event")).toBe(0);
     expect(findSearchMessageIndex(messages, "assistant-second")).toBe(1);

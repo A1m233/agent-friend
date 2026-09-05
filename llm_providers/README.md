@@ -27,11 +27,16 @@
 - `stream()` 仅对显式配置 `ResponsesRoute` 的模型使用 OpenAI SDK 原生 Responses；没有声明的模型保持现有 Chat transport（LiteLLM / Kimi direct）。
 - 原生 Responses 不经过 LiteLLM 的兼容桥，不允许失败后切换 Chat。SDK 自动重试关闭，由项目现有同 API 有界重试层处理瞬时故障。
 - 文本事件的 `phase` 为 `commentary`、`final_answer` 或 `None`，只来自对应 assistant output item；Chat 始终为 `None`，不能根据工具或消息位置补值。
+- 原生文本通过 `LLMAssistantItemStart` / `LLMAssistantItemDone` 和 delta 的 `item_id`、`output_index` 保留身份与顺序。完成结果的 `ProviderAssistantTurn.text_items` 保留各段，手动回放使用 `to_openai_messages()`；单数方法仅保留旧的聚合入口。
+- phase 是可更新的生命周期元数据：item 完成事件提供当前 phase，完整 response 的 `text_items` 提供最终 phase；不要求开始/完成值不变。身份、正文与工具参数仍单独校验，阶段校正不重发正文；缺失/非法完成值为 `None`，不沿用开始值猜测。
+- Chat 请求边界移除 phase 和内部 response 分组字段，并把同一响应的多个 assistant item 合并为合法工具事务；原始模型历史不被修改。
 - 下游以 `get_model_capabilities(model).assistant_message_phase` 查询 `native` / `unavailable`；旧 LanguageModel 实现无需新增属性，缺失时保守返回 unavailable。静态 native 不保证每个 item 都有 phase，也不保证一轮出现两个阶段。
 - 工具调用仍通过 `LLMToolCallDelta` 与 `LLMTurnDone.assistant_turn` 交付。取消、错误、usage 与诊断继续归一化到项目类型。
 - `response.incomplete`、失败、取消和缺失终态均不发成功 `LLMTurnDone`，避免执行未完成的工具调用。
 
 当前原生 Responses route 为 DeepSeek V4 Flash / Pro / Flash Vision 和 Kimi K3。Kimi K2.x 保持 Chat；既有默认模型不变。接口能力与原生 phase 的正面证据分开维护，不能由同族模型推断。
+
+115 按确认范围开启 DeepSeek 三个现有模型的 native capability，K3 保持 unavailable；这是产品启用范围，不等于三个模型都完成了本期真实验证。逐 run 语义校验与 UI 资格来自 Agent 产品事件，具体状态见 [115 进度](../docs/requirements/115-assistant-phase-execution-disclosure/progress.md)。
 
 OpenRouter **暂不维护、公开模型与凭据入口隐藏**，内部 catalog、凭据校验、Chat transport 与存量设置兼容仍保留，不自动删除用户配置。
 

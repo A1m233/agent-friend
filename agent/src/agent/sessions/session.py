@@ -549,6 +549,7 @@ class Session:
                 last_assistant = None
             elif ev.type == "assistant_message":
                 msg_meta: dict[str, Any] = dict(ev.meta)
+                msg_meta["phase"] = ev.payload.get("phase", "unknown")
                 if ev.payload.get("partial"):
                     msg_meta["partial"] = True
                 msg = Message(

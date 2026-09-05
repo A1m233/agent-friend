@@ -31,6 +31,7 @@ import type {
   ToolBlock,
 } from "@/types/chat";
 import type { PushEvent } from "@/types/push";
+import { applyAssistantPhase, setAssistantItem, updateAssistantItemPhase } from "./assistantPhase";
 
 /** 工具结果里 bridge 用此前缀表达 is_error（006 encoders：无专用字段，约定前缀）。 */
 export const TOOL_ERROR_PREFIX = "[error] ";
@@ -46,6 +47,7 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
   switch (evt.type) {
     case EventType.TEXT_MESSAGE_START: {
       const e = evt as TextMessageStartEvent;
+      if (msg.blocks.some((block) => block.kind === "text" && block.mid === e.messageId)) return msg;
       const block: TextBlock = { kind: "text", mid: e.messageId, text: "" };
       return { ...msg, status: "streaming", runStatus: undefined, blocks: [...msg.blocks, block] };
     }
@@ -107,6 +109,22 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
 
     case EventType.CUSTOM: {
       const e = evt as CustomEvent;
+      if (e.name === "agent_friend.assistant_phase") {
+        const data = e.value as Record<string, unknown>;
+        return applyAssistantPhase(msg, data, typeof data?.runId === "string" ? data.runId : undefined);
+      }
+      if (e.name === "agent_friend.assistant_message") {
+        const data = e.value as Record<string, unknown>;
+        return typeof data?.messageId === "string" ? {
+          ...msg, blocks: setAssistantItem(msg.blocks, data.messageId, data.phase, data.itemIndex),
+        } : msg;
+      }
+      if (e.name === "agent_friend.assistant_message_phase") {
+        const data = e.value as Record<string, unknown>;
+        return typeof data?.messageId === "string" ? {
+          ...msg, blocks: updateAssistantItemPhase(msg.blocks, data.messageId, data.phase),
+        } : msg;
+      }
       if (e.name === "agent_friend.run_status") {
         const runStatus = parseRunStatus(e.value);
         return runStatus ? {
@@ -134,7 +152,8 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
       return {
         ...msg,
         createdAt: eventTimestampIso(e.timestamp) ?? msg.createdAt,
-        status: isCancelledRunResult(e.result) ? "interrupted" : "complete",
+        status: isInterruptedRunResult(e.result) ? "interrupted" : "complete",
+        runOutcome: isCancelledRunResult(e.result) ? "cancelled" : "completed",
         runStatus: undefined,
         blocks: removeRunningCompactions(msg.blocks),
       };
@@ -165,6 +184,12 @@ function isCancelledRunResult(value: unknown): boolean {
   return (value as Record<string, unknown>).outcome === "cancelled";
 }
 
+function isInterruptedRunResult(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Record<string, unknown>;
+  return result.outcome === "cancelled" || result.status === "interrupted";
+}
+
 /**
  * 把 Runtime 主动续跑的原始 ConversationEvent 应用到 assistant 消息。
  *
@@ -178,9 +203,24 @@ export function applyPushConversationEvent(
   runId: string,
 ): ChatMessage {
   switch (evt.type) {
+    case "assistant_phase":
+      return applyAssistantPhase(msg, evt, runId);
+    case "assistant_message_start":
+      return typeof evt.message_id === "string" ? {
+        ...msg, blocks: setAssistantItem(msg.blocks, evt.message_id, evt.phase, evt.item_index),
+      } : msg;
+    case "assistant_message_phase":
+      return typeof evt.message_id === "string" ? {
+        ...msg, blocks: updateAssistantItemPhase(msg.blocks, evt.message_id, evt.phase),
+      } : msg;
     case "text_delta": {
       const text = typeof evt.text === "string" ? evt.text : "";
       if (!text) return msg;
+      if (typeof evt.message_id === "string") {
+        const blocks = setAssistantItem(msg.blocks, evt.message_id, evt.phase, evt.item_index);
+        return { ...msg, status: "streaming", runStatus: undefined,
+          blocks: appendText(blocks, evt.message_id, text) };
+      }
       const last = msg.blocks.at(-1);
       if (last?.kind === "text") {
         const blocks = [...msg.blocks];
@@ -272,7 +312,7 @@ export function applyPushConversationEvent(
       return {
         ...msg,
         createdAt: eventTimestampIso(evt.timestamp) ?? msg.createdAt,
-        status: "complete",
+        status: evt.status === "interrupted" ? "interrupted" : evt.status === "failed" ? "error" : "complete",
         runStatus: undefined,
         blocks: removeRunningCompactions(msg.blocks),
       };

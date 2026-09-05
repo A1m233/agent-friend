@@ -64,12 +64,15 @@ class QQReferenceResolver:
             message_aliases=referenced_aliases,
         )
         direct_text = _direct_quoted_text(event)
-        source_event = self._event_for_alias(entry)
+        source_events = self._events_for_alias(entry)
+        source_event = source_events[0] if source_events else None
         if source_event is not None:
             source_role: Literal["user", "assistant"] = (
                 "user" if source_event.type == "user_message" else "assistant"
             )
-            source_text = source_event.payload.get("content", "")
+            source_text = "\n\n".join(
+                str(item.payload.get("content", "")) for item in source_events
+            )
             quoted_text = direct_text or (source_text if isinstance(source_text, str) else "")
             availability: Literal["available", "unavailable"] = (
                 "available" if quoted_text.strip() else "unavailable"
@@ -109,22 +112,22 @@ class QQReferenceResolver:
         )
         return InboundResolveResult.route(event, references=(reference,))
 
-    def _event_for_alias(self, entry: IMReferenceAlias | None) -> Any | None:
+    def _events_for_alias(self, entry: IMReferenceAlias | None) -> list[Any]:
         if entry is None:
-            return None
+            return []
         try:
             session = self._session_loader(entry.session_id)
         except Exception:
-            return None
-        return next(
-            (
-                event
-                for event in session.active_events
-                if event.uuid == entry.event_uuid
-                and event.type in {"user_message", "assistant_message"}
-            ),
-            None,
-        )
+            return []
+        active = {
+            event.uuid: event
+            for event in session.active_events
+            if event.type in {"user_message", "assistant_message"}
+        }
+        identities = entry.event_uuids or (entry.event_uuid,)
+        if any(identity not in active for identity in identities):
+            return []
+        return [active[identity] for identity in identities]
 
 
 def qq_referenced_message_aliases(event: InboundEvent) -> list[str]:

@@ -12,6 +12,10 @@ from agent_bridge.protocols.ag_ui.encoders import encode_stream
 from agent_bridge.session_turns import SessionTurnCoordinator
 
 from agent import (
+    AssistantMessageEnd,
+    AssistantMessagePhase,
+    AssistantMessageStart,
+    AssistantPhaseStatus,
     ContextCompactionStatus,
     Conversation,
     ConversationEvent,
@@ -34,6 +38,38 @@ class _ConversationStub:
 
     def stream(self, _user_input: str, **_kwargs: Any) -> Iterator[ConversationEvent]:
         yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
+
+
+def test_item_identity_and_phase_survive_agui_without_provider_decisions() -> None:
+    class PhaseConversation(_ConversationStub):
+        def stream(self, _user_input: str, **kwargs: Any) -> Iterator[ConversationEvent]:
+            assert kwargs["run_id"] == "run-a"
+            yield AssistantPhaseStatus("run-a", "native")
+            for identity, phase in (("item-a", "commentary"), ("item-b", "unknown")):
+                yield AssistantMessageStart(identity, cast(Any, phase))
+                yield TextDelta(identity, message_id=identity, phase=cast(Any, phase))
+                yield AssistantMessageEnd(identity)
+                yield AssistantMessagePhase(identity, "final_answer")
+            yield TextDelta("resumed", message_id="item-c", phase="final_answer")
+            yield TurnDone()
+
+    body = b"".join(
+        encode_stream(
+            lambda: cast(Conversation, PhaseConversation()),
+            "hi",
+            thread_id="session-a",
+            run_id="run-a",
+            accept="text/event-stream",
+        )
+    )
+    assert body.count(b'"type":"TEXT_MESSAGE_START"') == 3
+    assert body.count(b'"type":"TEXT_MESSAGE_END"') == 3
+    assert body.count(b'"type":"TEXT_MESSAGE_CONTENT"') == 3
+    assert body.count(b'"name":"agent_friend.assistant_message_phase"') == 2
+    assert b'"phase":"final_answer"' in body
+    assert b'"messageId":"item-a"' in body and b'"messageId":"item-b"' in body
+    assert b'"phase":"commentary"' in body and b'"phase":"unknown"' in body
+    assert b'"name":"agent_friend.assistant_phase"' in body
 
 
 def test_encode_stream_waits_for_session_turn_lock() -> None:

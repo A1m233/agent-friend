@@ -130,6 +130,10 @@ class Message:
         if self.role == "tool":
             out["tool_call_id"] = self.meta.get("tool_call_id", "")
         elif self.role == "assistant":
+            if self.meta.get("assistant_response_id"):
+                out["_assistant_response_id"] = self.meta["assistant_response_id"]
+            if self.meta.get("phase") in {"commentary", "final_answer"}:
+                out["phase"] = self.meta["phase"]
             tool_calls = self.meta.get("tool_calls")
             if tool_calls:
                 out["tool_calls"] = [

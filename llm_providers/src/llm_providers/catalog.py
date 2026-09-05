@@ -283,7 +283,9 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 litellm_model="deepseek/deepseek-v4-pro",
                 context_window=1_000_000,
                 reasoning=DEEPSEEK_REASONING,
-                responses=ResponsesRoute("deepseek-v4-pro", DEEPSEEK_API_BASE, "deepseek"),
+                responses=ResponsesRoute(
+                    "deepseek-v4-pro", DEEPSEEK_API_BASE, "deepseek", "native"
+                ),
             ),
             ProviderModel(
                 id=DEEPSEEK_VISION_MODEL_ID,
@@ -295,7 +297,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 capabilities=DEEPSEEK_VISION_CAPABILITIES,
                 reasoning=DEEPSEEK_REASONING,
                 responses=ResponsesRoute(
-                    "deepseek-v4-flash-vision-exp", DEEPSEEK_API_BASE, "deepseek"
+                    "deepseek-v4-flash-vision-exp", DEEPSEEK_API_BASE, "deepseek", "native"
                 ),
             ),
         ),

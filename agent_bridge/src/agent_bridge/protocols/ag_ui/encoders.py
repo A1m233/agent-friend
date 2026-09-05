@@ -53,6 +53,10 @@ from agent.system_prompt.sections import PromptChannel
 from agent.system_prompt.surfaces import InteractionSurfaceId
 
 from agent import (
+    AssistantMessageEnd,
+    AssistantMessagePhase,
+    AssistantMessageStart,
+    AssistantPhaseStatus,
     ContextCompactionStatus,
     Conversation,
     ConversationEvent,
@@ -112,6 +116,7 @@ def encode_stream(
         return encoder.encode(event).encode("utf-8")
 
     open_message_id: str | None = None
+    open_items: set[str] = set()
     conv: Conversation | None = None
 
     turn_scope = (
@@ -142,7 +147,7 @@ def encode_stream(
                 event_stream = (
                     run_conversation(conv, user_input)
                     if run_conversation is not None
-                    else conv.stream(user_input, channel=channel, surface=surface)
+                    else conv.stream(user_input, channel=channel, surface=surface, run_id=run_id)
                 )
             for ev in event_stream:
                 # 014: 镜像复制给 push 通道订阅者（kinds=user_turn 时可见）
@@ -156,7 +161,84 @@ def encode_stream(
                     except Exception:
                         # 镜像失败绝不影响 pull 路径——log warning 后继续
                         logger.warning("listener fan_out 失败", exc_info=True)
-                if isinstance(ev, TextDelta):
+                if isinstance(ev, AssistantMessageStart):
+                    open_items.add(ev.message_id)
+                    yield _encode(
+                        TextMessageStartEvent(
+                            type=EventType.TEXT_MESSAGE_START,
+                            message_id=ev.message_id,
+                            role="assistant",
+                        )
+                    )
+                    yield _encode(
+                        CustomEvent(
+                            type=EventType.CUSTOM,
+                            name="agent_friend.assistant_message",
+                            value={
+                                "messageId": ev.message_id,
+                                "phase": ev.phase,
+                                "itemIndex": ev.item_index,
+                            },
+                        )
+                    )
+                elif isinstance(ev, AssistantMessagePhase):
+                    yield _encode(
+                        CustomEvent(
+                            type=EventType.CUSTOM,
+                            name="agent_friend.assistant_message_phase",
+                            value={"messageId": ev.message_id, "phase": ev.phase},
+                        )
+                    )
+                elif isinstance(ev, AssistantMessageEnd):
+                    if ev.message_id in open_items:
+                        yield _encode(
+                            TextMessageEndEvent(
+                                type=EventType.TEXT_MESSAGE_END,
+                                message_id=ev.message_id,
+                            )
+                        )
+                        open_items.remove(ev.message_id)
+                elif isinstance(ev, AssistantPhaseStatus):
+                    yield _encode(
+                        CustomEvent(
+                            type=EventType.CUSTOM,
+                            name="agent_friend.assistant_phase",
+                            value={
+                                "runId": ev.run_id,
+                                "mode": ev.mode,
+                                "validation": ev.validation,
+                            },
+                        )
+                    )
+                elif isinstance(ev, TextDelta) and ev.message_id is not None:
+                    if ev.message_id not in open_items:
+                        open_items.add(ev.message_id)
+                        yield _encode(
+                            TextMessageStartEvent(
+                                type=EventType.TEXT_MESSAGE_START,
+                                message_id=ev.message_id,
+                                role="assistant",
+                            )
+                        )
+                        yield _encode(
+                            CustomEvent(
+                                type=EventType.CUSTOM,
+                                name="agent_friend.assistant_message",
+                                value={
+                                    "messageId": ev.message_id,
+                                    "phase": ev.phase,
+                                    "itemIndex": ev.item_index,
+                                },
+                            )
+                        )
+                    yield _encode(
+                        TextMessageContentEvent(
+                            type=EventType.TEXT_MESSAGE_CONTENT,
+                            message_id=ev.message_id,
+                            delta=ev.text,
+                        )
+                    )
+                elif isinstance(ev, TextDelta):
                     if open_message_id is None:
                         open_message_id = _new_message_id()
                         yield _encode(
@@ -270,6 +352,11 @@ def encode_stream(
                     pass
 
         except Exception as exc:
+            for identity in sorted(open_items):
+                yield _encode(
+                    TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=identity)
+                )
+            open_items.clear()
             if open_message_id is not None:
                 yield _encode(
                     TextMessageEndEvent(
@@ -301,6 +388,9 @@ def encode_stream(
             )
             return
 
+        for identity in sorted(open_items):
+            yield _encode(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=identity))
+        open_items.clear()
         if run_handle is not None:
             terminal = run_handle.terminal
             if terminal is not None and terminal.outcome is RunOutcome.CANCELLED:

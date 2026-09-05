@@ -36,6 +36,40 @@ class TextDelta:
 
     text: str = ""
     type: Literal["text_delta"] = "text_delta"
+    message_id: str | None = None
+    phase: Literal["commentary", "final_answer", "unknown"] = "unknown"
+    item_index: int | None = None
+
+
+@dataclass(frozen=True)
+class AssistantMessageStart:
+    message_id: str
+    phase: Literal["commentary", "final_answer", "unknown"]
+    item_index: int = 0
+    type: Literal["assistant_message_start"] = "assistant_message_start"
+
+
+@dataclass(frozen=True)
+class AssistantMessageEnd:
+    message_id: str
+    type: Literal["assistant_message_end"] = "assistant_message_end"
+
+
+@dataclass(frozen=True)
+class AssistantMessagePhase:
+    """Metadata correction for an existing message, never another text delivery."""
+
+    message_id: str
+    phase: Literal["commentary", "final_answer", "unknown"]
+    type: Literal["assistant_message_phase"] = "assistant_message_phase"
+
+
+@dataclass(frozen=True)
+class AssistantPhaseStatus:
+    run_id: str
+    mode: Literal["native", "legacy"]
+    validation: Literal["pending", "valid", "missing_final", "conflict"] = "pending"
+    type: Literal["assistant_phase"] = "assistant_phase"
 
 
 @dataclass(frozen=True)
@@ -159,6 +193,10 @@ class TurnDone:
 
 ConversationEvent = (
     TextDelta
+    | AssistantMessageStart
+    | AssistantMessageEnd
+    | AssistantMessagePhase
+    | AssistantPhaseStatus
     | ToolCallRequest
     | ToolCallResult
     | ModelResponseStatus

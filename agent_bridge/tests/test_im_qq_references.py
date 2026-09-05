@@ -53,6 +53,40 @@ def _put_alias(index: IMReferenceAliasIndex, alias: str = "REFIDX-SOURCE") -> No
 
 
 @pytest.mark.asyncio
+async def test_aggregate_quote_restores_all_source_items_and_fails_closed_if_inactive(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "aliases.json"
+    aliases = IMReferenceAliasIndex(path)
+    aliases.put(
+        im_type="qq",
+        provider_bind_id="BOT-1",
+        chat_scope="c2c",
+        chat_id="OPENID-USER",
+        message_aliases=["REFIDX-SOURCE"],
+        session_id="s",
+        event_uuid="final",
+        source_role="assistant",
+        event_uuids=("commentary", "final"),
+    )
+    session = SimpleNamespace(
+        active_events=[
+            SimpleNamespace(
+                uuid="commentary", type="assistant_message", payload={"content": "进度"}
+            ),
+            SimpleNamespace(uuid="final", type="assistant_message", payload={"content": "回答"}),
+        ]
+    )
+    resolver = QQReferenceResolver(IMReferenceAliasIndex(path), lambda _: cast(Session, session))
+    event = _event(elements=[MsgElement(msg_idx="REFIDX-SOURCE")])
+    result = await resolver.resolve("qq", event, provider_bind_id="BOT-1")
+    assert result.references[0].quoted_text == "进度\n\n回答"
+    session.active_events.pop(0)
+    result = await resolver.resolve("qq", event, provider_bind_id="BOT-1")
+    assert result.references[0].availability == "unavailable"
+
+
+@pytest.mark.asyncio
 async def test_qq_quote_prefers_direct_snapshot_and_recovers_session_anchor(tmp_path: Path) -> None:
     aliases = IMReferenceAliasIndex(tmp_path / "references.json")
     _put_alias(aliases)

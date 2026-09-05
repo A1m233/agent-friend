@@ -1,0 +1,71 @@
+{
+  "synthetic": true,
+  "llmCalls": 0,
+  "checks": [
+    "native collapsed; unknown/final visible; persisted duration 112s",
+    "one real click expands both separated process sections",
+    "legacy has time and no toggle; interrupted remains visible with unknown duration",
+    "real WebView reload restores native disclosure under the persisted legacy current model",
+    "real global search query and Enter navigation expands hidden commentary",
+    "expanded commentary can be selected and quoted via real button click",
+    "synthetic UI-only live snapshot: legacy timer ticks through stopping and freezes at terminal"
+  ],
+  "passed": false,
+  "url": "http://localhost:1420/chat.html",
+  "viewport": {
+    "width": 1055,
+    "height": 758
+  },
+  "quote": {
+    "referenceId": "f8a17bfd-a7ed-4307-9825-4a169896635a",
+    "source": {
+      "kind": "session_message",
+      "messageEventUuid": "fbd83232-55ba-4131-8568-76870b018456",
+      "textBlockId": "fbd83232-55ba-4131-8568-76870b018456",
+      "externalSourceKey": null
+    },
+    "text": "合成过程A：检查现有业务。"
+  },
+  "referenceBounds": {
+    "x": 281.20001220703125,
+    "y": -206.41250610351562,
+    "width": 732.7999877929688,
+    "height": 21
+  },
+  "error": "AssertionError [ERR_ASSERTION]: reference must land visibly above the composer, not only expand offscreen",
+  "stack": "AssertionError [ERR_ASSERTION]: reference must land visibly above the composer, not only expand offscreen\n    at file:///C:/Users/example-user/.codex/worktrees/2df5/agent-friend/scripts/assistant-phase-desktop/probe.mjs:153:10",
+  "messageRows": [
+    {
+      "id": "5c8f62bc-43da-4d13-92e6-de2d84d39998",
+      "text": "21:13"
+    },
+    {
+      "id": "fbd83232-55ba-4131-8568-76870b018456",
+      "text": "用时 1分 52秒\n21:13"
+    },
+    {
+      "id": "827c9f32-4c7e-4490-9f84-64a28f06fc58",
+      "text": "21:15"
+    },
+    {
+      "id": "465782b2-fa86-466f-888a-e0e869f360dd",
+      "text": "用时 8秒\n21:15"
+    },
+    {
+      "id": "c9399ad2-e055-446b-b91f-25aa5757624c",
+      "text": "21:17"
+    },
+    {
+      "id": "c14ee6e1-5473-4b36-8252-b29cfb747539",
+      "text": "已停止回答\n用时未知\n21:17"
+    },
+    {
+      "id": "5b39770e-29cd-4312-a428-9ee83587cb48:ui-clock",
+      "text": "已停止回答\n用时 6秒\n21:26"
+    },
+    {
+      "id": "5b39770e-29cd-4312-a428-9ee83587cb48:ui-reference",
+      "text": "1 个已选文本\n21:26"
+    }
+  ]
+}

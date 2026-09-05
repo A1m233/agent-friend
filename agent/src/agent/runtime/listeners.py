@@ -109,7 +109,14 @@ class _RunJournal:
 
 def _serialize_conversation_event(cev: ConversationEvent) -> dict[str, Any]:
     """ConversationEvent dataclass → 可 JSON 化 dict（自带 ``type`` discriminator）。"""
-    return asdict(cev)
+    payload = asdict(cev)
+    if payload.get("type") == "text_delta" and payload.get("message_id") is None:
+        # Host-generated notifications are not model items. Preserve their
+        # legacy wire shape; model-originated text always has an explicit ID.
+        payload.pop("message_id", None)
+        payload.pop("item_index", None)
+        payload.pop("phase", None)
+    return payload
 
 
 class Subscriber:
