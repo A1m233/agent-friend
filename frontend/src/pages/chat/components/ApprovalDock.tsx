@@ -1,4 +1,5 @@
 import { Button, StatusDot, TextEllipsis } from "@/components/ui";
+import { toast } from "sonner";
 import { openSettings } from "@/lib/settings/navigation";
 import {
   useCommandRuntimeStore,
@@ -153,12 +154,17 @@ export function ApprovalDock({
     : null;
   if (!current && !currentRunning && !genericLabel) return null;
 
-  const decide = (approved: boolean) => {
+  const decide = async (approved: boolean) => {
     if (!current) return;
     if (current.kind === "command") {
-      void decideCommand(current.requestId, approved);
+      const result = await decideCommand(current.requestId, approved);
+      if (result.status === "failed") {
+        toast.error("暂时无法确认授权结果", { description: result.message });
+      } else if (result.status === "stale") {
+        toast.info(result.message);
+      }
     } else {
-      void decideFilesystem(current.requestId, approved);
+      await decideFilesystem(current.requestId, approved);
     }
   };
 

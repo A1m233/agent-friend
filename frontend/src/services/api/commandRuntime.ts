@@ -139,8 +139,8 @@ export const commandRuntimeApi = {
     ) as CommandRuntimeStatus;
   },
 
-  async decide(request: CommandApprovalRequest, allow: boolean): Promise<void> {
-    await http.post(
+  async decide(request: CommandApprovalRequest, allow: boolean): Promise<CommandApprovalRequest> {
+    const payload = await http.post(
       `/v1/approvals/${encodeURIComponent(request.request_id)}/command-decision`,
       {
         session_id: request.session_id,
@@ -148,7 +148,8 @@ export const commandRuntimeApi = {
         allow,
         lifetime: "once",
       },
-    );
+    ) as { accepted: true; approval: CommandApprovalRequest };
+    return payload.approval;
   },
 
   async cancel(process: CommandProcessSnapshot): Promise<void> {

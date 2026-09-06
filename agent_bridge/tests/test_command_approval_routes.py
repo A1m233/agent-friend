@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import Mock
 
 import pytest
 from agent.approvals import ApprovalBroker
@@ -188,7 +189,10 @@ def test_combined_approval_keeps_history_validation_before_granting(
     assert not worker.is_alive()
 
 
-def test_command_approval_is_listed_and_decided_on_common_control_plane() -> None:
+@pytest.mark.parametrize("allow", [True, False], ids=["allow", "deny"])
+def test_command_approval_is_listed_and_decided_on_common_control_plane(
+    monkeypatch: pytest.MonkeyPatch, allow: bool
+) -> None:
     broker = ApprovalBroker()
     request = PendingCommandApproval.create(
         session_id="session-1",
@@ -240,18 +244,70 @@ def test_command_approval_is_listed_and_decided_on_common_control_plane() -> Non
     assert unsupported.status_code == 422
     assert broker.pending(kind="command")
 
+    decide = Mock(wraps=broker.decide)
+    monkeypatch.setattr(broker, "decide", decide)
+    body = {
+        "session_id": "session-1",
+        "run_id": "run-1",
+        "allow": allow,
+        "lifetime": "once",
+    }
     decided = client.post(
         f"/v1/approvals/{request.request_id}/command-decision",
-        json={
-            "session_id": "session-1",
-            "run_id": "run-1",
-            "allow": True,
-            "lifetime": "once",
-        },
+        json=body,
     )
     assert decided.status_code == 200
     worker.join(timeout=2)
-    assert decisions[0].approved is True
+    assert not worker.is_alive()
+    assert len(decisions) == 1
+    assert decisions[0].approved is allow
+    assert decided.json() == {"accepted": True, "approval": request.to_dict()}
+    snapshot = decided.json()["approval"]
+    assert snapshot["request_id"] == request.request_id
+    assert snapshot["kind"] == "command"
+    assert snapshot["session_id"] == "session-1"
+    assert snapshot["run_id"] == "run-1"
+    assert snapshot["tool_call_id"] == "tool-1"
+    assert snapshot["status"] == ("approved" if allow else "denied")
+    assert snapshot["version"] == 2
+    assert snapshot["decision_source"] == "user_once"
+
+    repeated = client.post(
+        f"/v1/approvals/{request.request_id}/command-decision",
+        json=body,
+    )
+    assert repeated.status_code == 404
+    assert repeated.json()["detail"] == {
+        "error": "approval_request_stale",
+        "message": "这项授权已处理或已失效，请查看当前任务状态。",
+    }
+    assert decide.call_count == 1
+    assert len(decisions) == 1
+    assert request.to_dict() == snapshot
+
+
+def test_command_decision_reports_stale_when_broker_rejects_after_pending_lookup() -> None:
+    broker = SimpleNamespace(
+        pending=Mock(return_value=(SimpleNamespace(request_id="request-1"),)),
+        decide=Mock(return_value=False),
+    )
+    app = FastAPI()
+    register_routes(
+        app,
+        cast(Any, SimpleNamespace(approval_broker=broker, command_runtime=None)),
+    )
+
+    response = TestClient(app).post(
+        "/v1/approvals/request-1/command-decision",
+        json={"session_id": "session-1", "run_id": "run-1", "allow": False},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == {
+        "error": "approval_request_stale",
+        "message": "这项授权已处理或已失效，请查看当前任务状态。",
+    }
+    broker.decide.assert_called_once()
 
 
 def test_windows_sandbox_setup_requires_explicit_endpoint_call() -> None:
