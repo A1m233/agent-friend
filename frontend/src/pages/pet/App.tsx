@@ -11,7 +11,8 @@ import { listen } from "@tauri-apps/api/event";
 import { Menu } from "@tauri-apps/api/menu";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@/utils/tauri";
-import { recordPetWebviewVisibility } from "@/services";
+import { notificationsApi, recordPetWebviewVisibility } from "@/services";
+import type { NotificationDebugScenario } from "@/types/notification";
 import {
   openFeedback as openFeedbackWindow,
   openSettings as openSettingsWindow,
@@ -20,6 +21,8 @@ import type { PushEnvelope } from "@/types/push";
 import { useSpine38ImportCoordinator } from "@/avatar-models";
 
 import { ActionBar } from "./ActionBar";
+import { actionBarButtonCount } from "@/pet/accessoryLayout/actionBarMetrics";
+import { usePetAccessoryLayout } from "@/pet/accessoryLayout/usePetAccessoryLayout";
 import { shouldRenderActionBar } from "./actionBarVisibility";
 import { runNativeContextMenuPopup } from "./nativeContextMenuLifecycle";
 import { usePetPassthrough } from "./usePetPassthrough";
@@ -561,6 +564,15 @@ export function PetApp() {
     [actionBarAnchor, monitorViewports, overlayViewport, spriteScreen],
   );
 
+  const accessoryLayout = usePetAccessoryLayout({
+    anchor: actionBarAnchor ?? spriteScreen,
+    fallbackViewport: overlayViewport,
+    dpr: webviewDpr,
+    topologyGeneration: displayTopologyGeneration,
+    buttonCount: actionBarButtonCount(import.meta.env.DEV, memoryInspectorEnabled),
+    isDragging,
+  });
+
   const displayProfile = useMemo(
     () => {
       const anchor = actionBarAnchor ?? spriteScreen;
@@ -977,26 +989,18 @@ export function PetApp() {
     void requestStartVoice();
   };
 
-  // 016 M16.9 · dev-only：手动注入测试气泡，跳过 bridge / 真 LLM，方便纯 GUI 验证。
-  // release build 时 import.meta.env.DEV=false，整段被 ActionBar 内部 tree-shake 掉。
-  const injectShort = () => {
-    if (!isTauri()) return;
-    void invoke("inject_test_envelope", {
-      text: "晚安啦，今天辛苦了，早点休息哦 🐾",
+  // 117 · Provided debug notifications use the same host queue, receipt and sound as real ones.
+  // The host dev-mode gate independently prevents this endpoint from existing in production.
+  const injectNotification = (scenario: NotificationDebugScenario) => {
+    if (!import.meta.env.DEV) return;
+    void notificationsApi.debug(scenario).catch((error: unknown) => {
+      console.warn("[pet] notification debug request failed", error);
     });
   };
-  const injectLong = () => {
-    if (!isTauri()) return;
-    const long =
-      "这是一段超长测试文本，用来验证 bubble window 的尺寸自适应是否生效、长文本是否会被裁切、内部滚动条是否正确工作。" +
-      "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(8) +
-      "结尾标记 ✅";
-    void invoke("inject_test_envelope", { text: long });
-  };
-  const injectReminder = () => {
-    if (!isTauri()) return;
-    void invoke("inject_test_reminder_envelope", {
-      text: `提醒队列测试 · ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`,
+  const clearDebugNotifications = () => {
+    if (!import.meta.env.DEV) return;
+    void notificationsApi.clearDebug().catch((error: unknown) => {
+      console.warn("[pet] clearing debug notifications failed", error);
     });
   };
 
@@ -1040,6 +1044,7 @@ export function PetApp() {
       }) &&
         spriteScreen && (
           <ActionBar
+            accessoryLayout={accessoryLayout}
             actionBarAnchor={actionBarAnchor ?? spriteScreen}
             viewport={interactionViewport}
             onMouseEnter={() => setHoverActionBarDom(true)}
@@ -1058,9 +1063,10 @@ export function PetApp() {
             memoryInspectorEnabled={memoryInspectorEnabled}
             onOpenMemoryInspector={openMemoryInspector}
             onOpenLive2DDebugger={openLive2DDebugger}
-            onInjectShort={injectShort}
-            onInjectLong={injectLong}
-            onInjectReminder={injectReminder}
+            onInjectShort={() => injectNotification("short")}
+            onInjectLong={() => injectNotification("long")}
+            onInjectReminder={() => injectNotification("stack")}
+            onClearDebugNotifications={clearDebugNotifications}
           />
         )}
     </>

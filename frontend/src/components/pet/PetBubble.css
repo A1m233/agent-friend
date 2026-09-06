@@ -1,0 +1,55 @@
+/* The shared presentation owner sets viewport position/size and the stack height.
+ * No ancestor transform: exiting fixed rows must remain in window coordinates. */
+html[data-bubble-window],
+html[data-bubble-window] body {
+  overflow: hidden;
+}
+
+[data-bubble-viewport] {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  left: 0;
+  top: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  box-sizing: border-box;
+  outline: none;
+}
+
+[data-bubble-stack] {
+  position: relative;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pet-notification-row {
+  opacity: 0;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--spacing) * 1.5);
+  padding: calc(var(--spacing) * 4);
+  padding-inline-start: calc(var(--spacing) * 8);
+  box-sizing: border-box;
+  font-size: var(--font-size-notification);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-snug);
+  overflow-wrap: anywhere;
+}
+
+.pet-notification-row[data-state="exiting"] {
+  pointer-events: none;
+}
+
+.pet-notification-close {
+  position: absolute;
+  left: var(--spacing);
+  top: var(--spacing);
+}

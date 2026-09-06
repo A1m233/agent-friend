@@ -1,7 +1,9 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
+  type ComponentProps,
   type CSSProperties,
   type MouseEventHandler,
   type ReactNode,
@@ -23,11 +25,13 @@ import {
   ScrollText,
   Settings,
   SlidersHorizontal,
+  Trash2,
   Unlock,
 } from "lucide-react";
 
 import { FeedbackIcon } from "@/components/app/FeedbackIcon";
 import {
+  Button,
   Carousel,
   CarouselContent,
   CarouselItem,
@@ -36,18 +40,22 @@ import {
   type CarouselApi,
 } from "@/components/ui";
 
-import { computeActionBarLayout } from "./actionBarLayout";
 import { derivePageState } from "./actionBarPaging";
+import { useActionBarPaging } from "./useActionBarPaging";
+import { createActionBarWheelPager } from "./actionBarWheel";
 import { isFiniteRect, isFiniteViewport } from "./petGeometry";
+import type { AccessoryLayout } from "@/pet/accessoryLayout/geometry";
+import { actionBarPageCapacity, readAccessorySpacing } from "@/pet/accessoryLayout/actionBarMetrics";
 import { publishAnchorDiagnostics } from "@/pet/anchorDiagnostics";
 import type { PetAvatarSize } from "@/lib/settings";
-import type { PetViewport } from "./petDisplayProfile";
+import type { PetRect, PetViewport } from "./petDisplayProfile";
+import type { NotificationDebugScenario } from "@/types/notification";
 
 /**
  * 019 · 桌宠操作栏 sprite-relative DOM 浮动（design §2.4 / R-4.x）。
  *
  * 17a 接缝点（design §3.6）100% 不动：
- * - 浮动定位：通过 `computeActionBarLayout` 根据 sprite 锚和屏幕边缘选择横/竖布局
+ * - 浮动定位：消费 pet 页统一计算的 accessory layout，与气泡共同选择横/竖布局
  * - 显隐机制：由 PetApp 条件渲染（PIXI sprite hover bridge + DOM 自身 onMouseEnter/Leave 双触发）
  * - 命中机制：容器 + 每颗按钮标 `data-hit`（usePetPassthrough DOM hit-test 优先承担）
  *
@@ -62,6 +70,7 @@ import type { PetViewport } from "./petDisplayProfile";
  */
 
 interface Props {
+  accessoryLayout: AccessoryLayout | null;
   actionBarAnchor: { x: number; y: number; w: number; h: number };
   viewport: PetViewport;
   onMouseEnter: MouseEventHandler<HTMLDivElement>;
@@ -85,26 +94,108 @@ interface Props {
   onInjectShort: () => void;
   onInjectLong: () => void;
   onInjectReminder: () => void;
+  onClearDebugNotifications: () => void;
 }
-
-// 容器尺寸常量（design §2.4.3）—— 改这里就能调每页容量与视觉密度
-const PAGE_SIZE = 6;
-const ITEM_BASIS_CLASS = "basis-1/6";
-const ICON_BTN = 32; // size-8 = 32px（Button icon-sm 变体）
-const GAP = 4; // gap-1 = 4px
-const PAD_X = 8; // px-2 = 8px each side
-const PAD_Y = 6; // py-1.5 ≈ 6px each side
-const ARROW_AREA = ICON_BTN + GAP; // 圆箭头 32 + 间距 4
 
 interface BtnDef {
   icon: ReactNode;
   tooltip: string;
   onClick: () => void;
+  debugAction?: NotificationDebugScenario | "clear";
 }
 
-type TooltipSide = "top" | "right" | "bottom" | "left";
+/** Radix couples flip and shift; this page keeps its side and shifts only across it. */
+function OutwardTooltipButton({
+  boundary,
+  icon,
+  tooltip,
+  tooltipSide = "top",
+  tooltipDelayMs,
+  tooltipContentProps,
+  size = "icon-sm",
+  variant = "ghost",
+  ...props
+}: ComponentProps<typeof TooltipButton> & { boundary: PetRect | null }) {
+  const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null);
+  const [content, setContent] = useState<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState({ alignOffset: 0, sideOffset: 0, scroll: false });
+  const spacing = readAccessorySpacing();
+  const horizontal = tooltipSide === "top" || tooltipSide === "bottom";
+  const maxWidth = boundary ? Math.min(boundary.w, 64 * spacing) : undefined;
+  const maxHeight = boundary?.h;
+
+  useLayoutEffect(() => {
+    if (!boundary || !trigger || !content) return;
+    const update = () => {
+      const rect = trigger.getBoundingClientRect();
+      // Layout dimensions exclude the shared tooltip's entrance scale animation.
+      const extent = horizontal ? content.offsetWidth : content.offsetHeight;
+      const start = horizontal ? rect.left : rect.top;
+      const triggerExtent = horizontal ? rect.width : rect.height;
+      const lower = horizontal ? boundary.x : boundary.y;
+      const upper = lower + (horizontal ? boundary.w : boundary.h) - extent;
+      const centered = start + (triggerExtent - extent) / 2;
+      const alignOffset = Math.max(lower, Math.min(upper, centered)) - start;
+      const mainGap = tooltipSide === "top" ? rect.top - boundary.y - boundary.h
+        : tooltipSide === "bottom" ? boundary.y - rect.bottom
+          : tooltipSide === "left" ? rect.left - boundary.x - boundary.w
+            : boundary.x - rect.right;
+      // TooltipContent's shared Arrow is size-2.5; Radix adds its height itself.
+      const sideOffset = mainGap - 2.5 * spacing;
+      const scroll = content.scrollHeight > boundary.h;
+      setPosition((previous) => previous.alignOffset === alignOffset &&
+        previous.sideOffset === sideOffset && previous.scroll === scroll
+        ? previous : { alignOffset, sideOffset, scroll });
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(trigger);
+    observer.observe(content);
+    window.addEventListener("resize", update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [boundary, content, horizontal, maxHeight, spacing, tooltipSide, trigger]);
+
+  if (!boundary) {
+    return (
+      <Button {...props} size={size} variant={variant} aria-label={props["aria-label"] ?? tooltip}>
+        {icon}
+      </Button>
+    );
+  }
+
+  return (
+    <TooltipButton
+      {...props}
+      icon={icon}
+      tooltip={tooltip}
+      tooltipDelayMs={tooltipDelayMs}
+      size={size}
+      variant={variant}
+      ref={setTrigger}
+      tooltipSide={tooltipSide}
+      tooltipContentProps={{
+        ...tooltipContentProps,
+        ref: setContent,
+        avoidCollisions: false,
+        align: "start",
+        alignOffset: position.alignOffset,
+        sideOffset: position.sideOffset,
+        style: {
+          maxWidth,
+          maxHeight,
+          // Keep the arrow visible normally; exceptionally small areas scroll text.
+          overflowY: position.scroll ? "auto" : undefined,
+        },
+      }}
+    />
+  );
+}
 
 export function ActionBar({
+  accessoryLayout,
   actionBarAnchor,
   viewport,
   onMouseEnter,
@@ -126,6 +217,7 @@ export function ActionBar({
   onInjectShort,
   onInjectLong,
   onInjectReminder,
+  onClearDebugNotifications,
 }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const buttons: BtnDef[] = [
@@ -154,99 +246,62 @@ export function ActionBar({
   }
   if (import.meta.env.DEV) {
     buttons.push(
+      { icon: <MessageSquareDashed />, tooltip: "调试短通知（不调用模型）", onClick: onInjectShort, debugAction: "short" },
+      { icon: <ScrollText />, tooltip: "调试长通知（不调用模型）", onClick: onInjectLong, debugAction: "long" },
+      { icon: <Bell />, tooltip: "调试通知队列（不调用模型）", onClick: onInjectReminder, debugAction: "stack" },
+      { icon: <Trash2 />, tooltip: "清空调试通知（不影响真实通知）", onClick: onClearDebugNotifications, debugAction: "clear" },
       { icon: <SlidersHorizontal />, tooltip: "Live2D 调试器", onClick: onOpenLive2DDebugger },
-      { icon: <MessageSquareDashed />, tooltip: "注入短气泡", onClick: onInjectShort },
-      { icon: <ScrollText />, tooltip: "注入长气泡", onClick: onInjectLong },
-      { icon: <Bell />, tooltip: "加入提醒队列", onClick: onInjectReminder },
     );
   }
 
-  // 当前页索引（embla 在 slidesToScroll: PAGE_SIZE 时 selectedScrollSnap 已是页索引）
   const [api, setApi] = useState<CarouselApi>();
-  const [currentPage, setCurrentPage] = useState(0);
-  const [canScrollPrev, setCanScrollPrev] = useState(false);
-  const [canScrollNext, setCanScrollNext] = useState(false);
-  useEffect(() => {
-    if (!api) return;
-    const update = () => {
-      setCurrentPage(api.selectedScrollSnap());
-      setCanScrollPrev(api.canScrollPrev());
-      setCanScrollNext(api.canScrollNext());
-    };
-    update();
-    api.on("select", update);
-    api.on("reInit", update);
-    api.on("resize", update);
-    return () => {
-      api.off("select", update);
-      api.off("reInit", update);
-      api.off("resize", update);
-    };
-  }, [api]);
-
+  const layout = accessoryLayout?.actionBar ?? null;
+  const isVertical = layout?.orientation === "vertical";
+  const pageSize = actionBarPageCapacity(
+    buttons.length,
+    (isVertical ? layout?.height : layout?.width) ?? 0,
+    isVertical,
+    readAccessorySpacing(),
+  );
+  const { currentPage, canScrollPrev, canScrollNext, startIndex } = useActionBarPaging(
+    api, buttons.length > pageSize, `${isVertical}:${pageSize}:${buttons.length}`,
+  );
   const pageState = derivePageState({
     buttonCount: buttons.length,
-    pageSize: PAGE_SIZE,
+    pageSize,
     currentPage,
   });
-  const { needsCarousel, totalPages } = pageState;
-
-  useEffect(() => {
-    if (currentPage <= totalPages - 1) return;
-    setCurrentPage(Math.max(0, totalPages - 1));
-  }, [currentPage, totalPages]);
-
-  // 容器宽度（design §2.4.3 两段宽语义）：
-  // - needsCarousel=true：永远按"PAGE_SIZE 个按钮 + 两个箭头位"算；左右箭头按钮常驻，
-  //   首末页只切 disabled，chip 与 carousel viewport 在分页切换中都保持稳定。
-  // - needsCarousel=false：按实际按钮数收缩
-  const chipW = needsCarousel
-    ? PAD_X * 2 + ARROW_AREA * 2 + PAGE_SIZE * ICON_BTN + (PAGE_SIZE - 1) * GAP
-    : PAD_X * 2 + buttons.length * ICON_BTN + Math.max(0, buttons.length - 1) * GAP;
-  const chipH = PAD_Y * 2 + ICON_BTN; // = 44px
-  const verticalW = PAD_X * 2 + ICON_BTN;
-  const verticalButtonSlots = needsCarousel ? PAGE_SIZE : buttons.length;
-  const verticalH = needsCarousel
-    ? PAD_Y * 2 +
-      ARROW_AREA * 2 +
-      verticalButtonSlots * ICON_BTN +
-      Math.max(0, verticalButtonSlots - 1) * GAP
-    : PAD_Y * 2 +
-      verticalButtonSlots * ICON_BTN +
-      Math.max(0, verticalButtonSlots - 1) * GAP;
+  const { needsCarousel } = pageState;
 
   const hasValidGeometry =
     isFiniteRect(actionBarAnchor) && isFiniteViewport(viewport);
-  const layout = hasValidGeometry
-    ? computeActionBarLayout(
-        actionBarAnchor,
-        {
-          horizontal: { w: chipW, h: chipH },
-          vertical: { w: verticalW, h: verticalH },
-        },
-        viewport,
-        8,
-      )
-    : null;
+  const hasBar = hasValidGeometry && layout !== null;
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !api || !needsCarousel || !hasBar) return;
+    const pageWheel = createActionBarWheelPager();
+    const wheel = (event: WheelEvent) => {
+      if (event.ctrlKey || (!event.deltaX && !event.deltaY)) return;
+      event.preventDefault();
+      const direction = pageWheel(event, performance.now(), api.canScrollPrev(), api.canScrollNext());
+      if (direction < 0) api.scrollPrev();
+      if (direction > 0) api.scrollNext();
+    };
+    // React delegates wheel passively; this local listener prevents scrolling
+    // through the transparent pet window while paging its toolbar.
+    root.addEventListener("wheel", wheel, { passive: false });
+    return () => root.removeEventListener("wheel", wheel);
+  }, [api, hasBar, needsCarousel]);
   const left = layout?.left ?? 0;
   const top = layout?.top ?? 0;
   const layoutWidth = layout?.width ?? 0;
   const layoutHeight = layout?.height ?? 0;
-  const isVertical = layout?.orientation === "vertical";
   const actionBarCenterX = left + layoutWidth / 2;
   const anchorCenterX = hasValidGeometry
     ? actionBarAnchor.x + actionBarAnchor.w / 2
     : 0;
-  const tooltipSide: TooltipSide =
-    hasValidGeometry && layout
-      ? isVertical
-        ? actionBarCenterX <= anchorCenterX
-          ? "left"
-          : "right"
-        : top + layoutHeight / 2 <= actionBarAnchor.y + actionBarAnchor.h / 2
-          ? "top"
-          : "bottom"
-      : "top";
+  const tooltipSide = accessoryLayout?.side ?? "top";
+  const tooltipBoundary = accessoryLayout?.tooltipBoundary ?? null;
   const showPrev = needsCarousel && canScrollPrev;
   const showNext = needsCarousel && canScrollNext;
   const style: CSSProperties = {
@@ -283,13 +338,16 @@ export function ActionBar({
   }, [actionBarAnchor, hasValidGeometry, layout, left, top]);
 
   const renderActionButton = (button: BtnDef, key: string | number) => (
-    <TooltipButton
+    <OutwardTooltipButton
       key={key}
       icon={button.icon}
       tooltip={button.tooltip}
       tooltipSide={tooltipSide}
+      boundary={tooltipBoundary}
       tooltipContentProps={tooltipContentProps}
       onClick={button.onClick}
+      aria-label={button.tooltip}
+      data-notification-debug={button.debugAction}
       data-hit
     />
   );
@@ -314,10 +372,12 @@ export function ActionBar({
 
     return (
       <div className="flex size-8 shrink-0 items-center justify-center">
-        <TooltipButton
+        <OutwardTooltipButton
           icon={icon}
           tooltip={isPrev ? "上一页" : "下一页"}
+          aria-label={isPrev ? "上一页" : "下一页"}
           tooltipSide={tooltipSide}
+          boundary={tooltipBoundary}
           tooltipDelayMs={500}
           tooltipContentProps={tooltipContentProps}
           className="rounded-full"
@@ -342,13 +402,13 @@ export function ActionBar({
       <>
         {renderPageArrow("prev", () => api?.scrollPrev(), !showPrev)}
         <Carousel
-          opts={{ slidesToScroll: PAGE_SIZE, align: "start", loop: false }}
+          opts={{ slidesToScroll: pageSize, align: "start", loop: false, startIndex }}
           setApi={setApi}
           className="min-w-0 flex-1 overflow-hidden"
         >
           <CarouselContent className="-ml-1">
             {buttons.map((button, index) => (
-              <CarouselItem key={index} className={`pl-1 ${ITEM_BASIS_CLASS}`}>
+              <CarouselItem key={index} className="pl-1" style={{ flexBasis: `${100 / pageSize}%` }}>
                 {renderActionButton(button, index)}
               </CarouselItem>
             ))}
@@ -369,13 +429,13 @@ export function ActionBar({
         {renderPageArrow("prev", () => api?.scrollPrev(), !showPrev)}
         <Carousel
           orientation="vertical"
-          opts={{ slidesToScroll: PAGE_SIZE, align: "start", loop: false }}
+          opts={{ slidesToScroll: pageSize, align: "start", loop: false, startIndex }}
           setApi={setApi}
           className="min-h-0 flex-1 overflow-hidden [&>[data-slot=carousel-content]]:h-full"
         >
           <CarouselContent className="-mt-1 h-full">
             {buttons.map((button, index) => (
-              <CarouselItem key={index} className={`pt-1 ${ITEM_BASIS_CLASS}`}>
+              <CarouselItem key={index} className="pt-1" style={{ flexBasis: `${100 / pageSize}%` }}>
                 {renderActionButton(button, index)}
               </CarouselItem>
             ))}
@@ -396,6 +456,7 @@ export function ActionBar({
       <div
         ref={rootRef}
         data-hit
+        data-actionbar-page={currentPage}
         data-anchor-diagnostics={import.meta.env.DEV ? "actionbar" : undefined}
         data-anchor-actionbar-anchor-center-x={
           import.meta.env.DEV && hasValidGeometry ? anchorCenterX : undefined

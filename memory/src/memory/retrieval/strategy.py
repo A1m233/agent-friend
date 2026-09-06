@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
 from ..contracts import Layer
+from ..host_episodes.presentation import project_notification_summary
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,12 @@ class KeywordRetrieval:
         ):
             cands.append(
                 Candidate(
-                    text=ep.summary,
+                    text=project_notification_summary(
+                        ep.summary,
+                        episode_id=ep.id,
+                        source_ref=ep.source_ref,
+                        occurred_at=ep.occurred_at,
+                    ),
                     layer="episodic",
                     source_ref=ep.id,
                     importance=ep.importance,

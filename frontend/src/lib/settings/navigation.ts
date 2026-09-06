@@ -5,6 +5,7 @@ import type { RuntimeConfigGroup } from "@/lib/runtime-config";
 
 export type SettingsTarget =
   | "general"
+  | "notifications"
   | "persona"
   | "pet"
   | "voice"
@@ -20,6 +21,7 @@ export const PRIMARY_SETTINGS_SECTIONS = [
   { key: "persona", label: "人格" },
   { key: "pet", label: "桌宠" },
   { key: "general", label: "通用" },
+  { key: "notifications", label: "通知" },
   { key: "voice", label: "语音" },
   { key: "runtime", label: "模型与凭据" },
   { key: "permissions", label: "系统权限" },

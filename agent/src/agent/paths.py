@@ -81,6 +81,11 @@ def todos_db_path() -> Path:
     return user_data_dir() / "todos" / "todos.db"
 
 
+def notifications_db_path(data_root: Path | None = None) -> Path:
+    """Durable notification facts and presentation receipts."""
+    return (data_root or user_data_dir()) / "notifications" / "notifications.db"
+
+
 def scheduled_tasks_db_path() -> Path:
     """Scheduled Task SQLite：``<user_data_dir>/scheduled-tasks/scheduled-tasks.db``。"""
     return user_data_dir() / "scheduled-tasks" / "scheduled-tasks.db"
@@ -140,6 +145,7 @@ __all__ = [
     "execution_environments_dir",
     "log_dir",
     "memory_db_path",
+    "notifications_db_path",
     "persona_internal_dir",
     "personas_dir",
     "scheduled_tasks_db_path",

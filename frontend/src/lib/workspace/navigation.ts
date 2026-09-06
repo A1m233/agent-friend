@@ -18,6 +18,7 @@ export interface WorkspaceNavigationEnvelope {
   target: WorkspaceTarget;
   chat?: {
     newConversation: boolean;
+    sessionId?: string;
   };
   settings?: SettingsOpenRequest;
 }
@@ -66,7 +67,7 @@ export function applyWorkspaceNavigationEnvelope(
     lastRequestId: envelope.requestId,
     visitedTargets: includeVisitedTarget(snapshot.visitedTargets, envelope.target),
     chatNavigation:
-      envelope.target === "chat" && envelope.chat?.newConversation
+      envelope.target === "chat" && (envelope.chat?.newConversation || envelope.chat?.sessionId)
         ? envelope
         : snapshot.chatNavigation,
     settingsNavigation:

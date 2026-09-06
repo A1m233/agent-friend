@@ -13,7 +13,7 @@ import {
 import { VoiceCallApp } from "./App";
 
 installProductContextMenuPolicy();
-registerSettingsListener();
+const settingsReady = registerSettingsListener();
 startVoiceStateSubscriber();
 startVoiceOwnerCommandListener();
 
@@ -25,8 +25,10 @@ window.addEventListener("beforeunload", () => {
 
 void initializePermissionSync();
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <VoiceCallApp />
-  </StrictMode>,
-);
+void settingsReady.then(() => {
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <VoiceCallApp />
+    </StrictMode>,
+  );
+});

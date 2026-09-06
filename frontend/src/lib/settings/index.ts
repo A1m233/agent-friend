@@ -8,6 +8,8 @@ import { syncDocumentTheme } from "@/lib/settings/theme";
 export type ThemeMode = "light" | "dark";
 export type BackgroundOnlinePolicy = "followSystem" | "pluggedIn" | "always";
 export type ReminderNotificationMode = "smart" | "all";
+export type NotificationCompletionMode = "never" | "whenNotViewing" | "always";
+export type NotificationSound = { kind: "default" };
 export type DeepseekModel = "deepseek/deepseek-v4-flash" | "deepseek/deepseek-v4-pro";
 export type ModelProvider = "deepseek" | "kimi" | "openrouter";
 export interface ModelSelection {
@@ -22,6 +24,11 @@ export interface Settings {
   theme: ThemeMode;
   backgroundOnlinePolicy: BackgroundOnlinePolicy;
   reminderNotificationMode: ReminderNotificationMode;
+  notificationCompletionMode: NotificationCompletionMode;
+  notificationNeedsActionEnabled: boolean;
+  notificationFailureEnabled: boolean;
+  notificationSoundEnabled: boolean;
+  notificationSound: NotificationSound;
   voiceTunnelConsentAccepted: boolean;
   immersiveMode: boolean;
   displayRecoveryProtectionEnabled: boolean;
@@ -29,6 +36,7 @@ export interface Settings {
   memoryModel: ModelSelection;
   avatarModelId: AvatarModelId;
   petAvatarSize: PetAvatarSize;
+  petActionBarPage: number;
   avatarModelScalePercents: Record<string, number>;
   petMiniScalePercent: number;
 }
@@ -37,6 +45,11 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   backgroundOnlinePolicy: "followSystem",
   reminderNotificationMode: "smart",
+  notificationCompletionMode: "whenNotViewing",
+  notificationNeedsActionEnabled: true,
+  notificationFailureEnabled: true,
+  notificationSoundEnabled: true,
+  notificationSound: { kind: "default" },
   voiceTunnelConsentAccepted: false,
   immersiveMode: true,
   displayRecoveryProtectionEnabled: false,
@@ -44,6 +57,7 @@ export const DEFAULT_SETTINGS: Settings = {
   memoryModel: { provider: "deepseek", model: "deepseek/deepseek-v4-flash" },
   avatarModelId: DEFAULT_AVATAR_MODEL_ID,
   petAvatarSize: "normal",
+  petActionBarPage: 0,
   avatarModelScalePercents: {},
   petMiniScalePercent: 50,
 };
@@ -83,6 +97,9 @@ function normalizeSettingsSnapshot(payload?: SettingsSnapshotPayload): Settings 
   const { petDisplayMode, deepseekModel, deepseekMemoryModel, ...current } =
     payload ?? {};
   const settings = { ...DEFAULT_SETTINGS, ...current };
+  if (!Number.isInteger(settings.petActionBarPage) || settings.petActionBarPage < 0 || settings.petActionBarPage > 0xffff_ffff) {
+    settings.petActionBarPage = DEFAULT_SETTINGS.petActionBarPage;
+  }
   if (
     settings.reminderNotificationMode !== "smart" &&
     settings.reminderNotificationMode !== "all"
@@ -92,6 +109,15 @@ function normalizeSettingsSnapshot(payload?: SettingsSnapshotPayload): Settings 
   if (!payload?.chatModel && deepseekModel) {
     settings.chatModel = { provider: "deepseek", model: deepseekModel };
   }
+  if (!["never", "whenNotViewing", "always"].includes(settings.notificationCompletionMode)) {
+    settings.notificationCompletionMode = DEFAULT_SETTINGS.notificationCompletionMode;
+  }
+  for (const key of [
+    "notificationNeedsActionEnabled", "notificationFailureEnabled", "notificationSoundEnabled",
+  ] as const) {
+    if (typeof settings[key] !== "boolean") settings[key] = DEFAULT_SETTINGS[key];
+  }
+  if (settings.notificationSound?.kind !== "default") settings.notificationSound = { kind: "default" };
   if (!payload?.memoryModel && deepseekMemoryModel) {
     settings.memoryModel = {
       provider: "deepseek",
@@ -104,11 +130,15 @@ function normalizeSettingsSnapshot(payload?: SettingsSnapshotPayload): Settings 
   return settings;
 }
 
-/** 启动期由 Rust facade plugin 的 js_init_script 同步注入，首帧即可用。 */
+/** Rust's initialization script seeds this cache; page bootstrap refreshes it from get_setting. */
 export function getSettingsSnapshot(): Settings {
   return normalizeSettingsSnapshot(
     typeof window === "undefined" ? undefined : window.__AGENT_FRIEND_SETTINGS__,
   );
+}
+
+export function replaceSettingsCache(settings: Partial<Settings>): void {
+  window.__AGENT_FRIEND_SETTINGS__ = normalizeSettingsSnapshot(settings);
 }
 
 /** 兼容旧调用名；新代码优先用 getSettingsSnapshot 表达"当前快照"。 */
@@ -170,9 +200,16 @@ export function useSetting<K extends keyof Settings>(
         }
       },
     );
+    // The page-level listener may receive a change between render and this
+    // hook's native subscription becoming active, including StrictMode remounts.
+    void unlistenPromise.then(() => {
+      if (mounted) setValueState(getSettingsSnapshot()[key]);
+    }).catch((error) => {
+      console.warn("setting subscription unavailable", error);
+    });
     return () => {
       mounted = false;
-      void unlistenPromise.then((unlisten) => unlisten());
+      void unlistenPromise.then((unlisten) => unlisten()).catch(() => undefined);
     };
   }, [key]);
 

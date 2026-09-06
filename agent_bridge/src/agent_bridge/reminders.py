@@ -71,6 +71,7 @@ class ReminderDeliveryOrchestrator:
         policy: DestinationPolicy | None = None,
         notification_mode_provider: Callable[[], ReminderNotificationMode] | None = None,
         clock: Callable[[], datetime] | None = None,
+        pet_notification: Callable[[ReminderOccurrence], str] | None = None,
     ) -> None:
         self._todos = todo_store
         self._sessions = session_store
@@ -82,6 +83,7 @@ class ReminderDeliveryOrchestrator:
             lambda: ReminderNotificationMode.SMART
         )
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._pet_notification = pet_notification
 
     def deliver(self, occurrence: ReminderOccurrence) -> None:
         self.deliver_batch((occurrence,))
@@ -318,6 +320,26 @@ class ReminderDeliveryOrchestrator:
                         increment_attempt=False,
                     )
                 else:
+                    if self._pet_notification is not None:
+                        # New ledger owns presentation. This legacy row records only
+                        # delegation, never proof that a user has seen the bubble.
+                        try:
+                            notification_id = self._pet_notification(occurrence)
+                        except Exception:
+                            logger.exception(
+                                "Reminder notification delegation failed: %s", occurrence.id
+                            )
+                            return  # Preserve the independent conversation/IM Agent path.
+                        self._todos.update_delivery(
+                            occurrence.id,
+                            ReminderProjectionKind.PET_FIXED,
+                            state=ReminderDeliveryState.SKIPPED,
+                            receipt=notification_id,
+                            error_kind="delegated_to_notification_manager",
+                            now=now,
+                            increment_attempt=False,
+                        )
+                        return
                     _attempt, started = self._todos.begin_delivery_attempt(
                         occurrence.id,
                         ReminderProjectionKind.PET_FIXED,

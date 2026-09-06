@@ -572,6 +572,9 @@ def test_submit_runs_conversation_and_correlates_session_events(
         assert finished.payload["started_at"] == snapshot.started_at.isoformat()
         assert finished.payload["finished_at"] == snapshot.finished_at.isoformat()
         assert all("started_at" not in str(msg) for msg in fake.received[0])
+        # The stream sentinel precedes the scheduler's finally/logging work.
+        # Join that worker before asserting its terminal diagnostic.
+        runtime.stop()
         latency_text = "\n".join(
             record.getMessage()
             for record in caplog.records
@@ -1282,6 +1285,8 @@ def test_submit_failure_runs_post_turn_once_with_failed_outcome(tmp_path: Path) 
     conv = _make_conversation(tmp_path, fake_llm=fake)
     runtime = AgentRuntime(conversation_factory=lambda sid: conv)
     seen: list[PostTurnContext] = []
+    terminal_seen: list[Any] = []
+    runtime.add_terminal_observer(terminal_seen.append)
     runtime.register_hook(HookKind.POST_TURN, seen.append)
 
     def fail_runner(
@@ -1305,6 +1310,7 @@ def test_submit_failure_runs_post_turn_once_with_failed_outcome(tmp_path: Path) 
         assert terminal.outcome is RunOutcome.FAILED
         assert len(seen) == 1
         assert seen[0].outcome is RunOutcome.FAILED
+        assert terminal_seen[0].outcome is RunOutcome.FAILED
         assert isinstance(seen[0].error, RuntimeError)
     finally:
         runtime.stop()

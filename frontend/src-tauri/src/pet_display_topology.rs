@@ -8,6 +8,7 @@ pub struct MonitorSnapshot {
     pub width: u32,
     pub height: u32,
     pub scale_milli: i32,
+    pub work_area: OverlayBounds,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -50,6 +51,10 @@ pub struct TopologyEpochDecision {
 }
 
 impl TopologyEpochState {
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
     pub fn accept(
         &mut self,
         snapshot: &DisplayTopologySnapshot,
@@ -132,6 +137,12 @@ mod tests {
             width,
             height,
             scale_milli,
+            work_area: OverlayBounds {
+                x,
+                y,
+                width,
+                height,
+            },
         }
     }
 
@@ -194,6 +205,18 @@ mod tests {
         assert_ne!(base, resized);
         assert_eq!(resized.bounds.width, 2560);
         assert_eq!(resized.bounds.height, 1440);
+    }
+
+    #[test]
+    fn work_area_changes_advance_topology_without_changing_overlay_union() {
+        let base = display_topology_snapshot(vec![monitor(0, 0, 1920, 1080, 1000)]).unwrap();
+        let mut changed = base.clone();
+        changed.monitors[0].work_area.height = 1040;
+        let mut epoch = TopologyEpochState::default();
+        epoch.accept(&base, false);
+        assert!(epoch.accept(&changed, false).topology_changed);
+        assert_eq!(epoch.generation(), 2);
+        assert_eq!(base.bounds, changed.bounds);
     }
 
     #[test]

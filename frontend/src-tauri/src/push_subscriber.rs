@@ -55,6 +55,8 @@ pub struct PushEnvelope {
     pub approval: Option<serde_json::Value>,
     #[serde(default)]
     pub command_process: Option<serde_json::Value>,
+    #[serde(default)]
+    pub notification: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -122,7 +124,7 @@ pub fn spawn_push_subscriber(app: &AppHandle, bridge_base_url: String) {
 
 async fn run_reconnecting(app: AppHandle, base_url: String) {
     let url = format!(
-        "{}/push/subscribe?kinds=agent_turn,run_event,session_changed,run_changed,filesystem_approval_changed,approval_changed,command_process_changed,sandbox_capability_changed",
+        "{}/push/subscribe?kinds=agent_turn,run_event,session_changed,run_changed,filesystem_approval_changed,approval_changed,command_process_changed,sandbox_capability_changed,notification_changed",
         base_url.trim_end_matches('/')
     );
     let client = reqwest::Client::new();
@@ -160,6 +162,9 @@ async fn run_connection(
     }
     backoff.reset();
     if recovering {
+        if let Err(error) = app.emit_to("bubble", "notification://push-reconnected", ()) {
+            log::warn!("emit_to(bubble, reconnected) failed: {error}");
+        }
         if let Err(error) = app.emit_to("chat", "session://push-reconnected", ()) {
             log::warn!("emit_to(chat, reconnected) failed: {error}");
         }
@@ -177,6 +182,11 @@ async fn run_connection(
             match parse_envelope_frame(frame) {
                 Some(env) if env.kind == "heartbeat" => {
                     log::trace!("push heartbeat seq={}", env.seq);
+                }
+                Some(env) if env.kind == "notification_changed" => {
+                    if let Err(error) = app.emit_to("bubble", "notification://changed", env) {
+                        log::warn!("emit_to(bubble, notification changed) failed: {error}");
+                    }
                 }
                 Some(env) if env.kind == "session_changed" => {
                     if let Err(e) = app.emit_to("chat", "session://changed", env) {
@@ -408,6 +418,7 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
             filesystem_approval: None,
             approval: None,
             command_process: None,
+            notification: None,
         };
         let json = serde_json::to_string(&original).unwrap();
         let parsed: PushEnvelope = serde_json::from_str(&json).unwrap();

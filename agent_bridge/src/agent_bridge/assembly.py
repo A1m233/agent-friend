@@ -35,7 +35,13 @@ from agent.execution_environment import (
 from agent.filesystem import ProtectedPathPolicy
 from agent.filesystem.policy import canonical_path
 from agent.memory_search import SessionHistorySource, SessionStoreSourceOrderProvider
-from agent.paths import command_workspaces_dir, log_dir, tool_execution_evidence_dir
+from agent.notifications import NotificationStore
+from agent.paths import (
+    command_workspaces_dir,
+    log_dir,
+    notifications_db_path,
+    tool_execution_evidence_dir,
+)
 from agent.runtime import (
     PRE_TURN_PROCEED,
     AgentEvent,
@@ -102,6 +108,8 @@ from runtime_config import (
 
 from .agent_runtime_factory import build_agent_runtime
 from .dev.recall_buffer import RecallBuffer
+from .notifications import NotificationService
+from .notifications.generation import NotificationGenerator
 from .presence import PresenceRegistry
 from .reminder_settings import DesktopReminderNotificationModeProvider
 from .reminders import ReminderDeliveryOrchestrator
@@ -266,6 +274,8 @@ class BridgeRuntime:
     """099：把 AgentRuntime handle 终态持久化回 occurrence。"""
     schedule_coordinator: ScheduleCoordinator | None = None
     """099：Reminder 与 Scheduled Task 共享的进程级时间 coordinator。"""
+    notification_service: NotificationService | None = None
+    """117: Durable notification generation and desktop presentation lifecycle."""
     social_platform_service: SocialPlatformService | None = None
     """072：共享的本地只读平台 connector 与 opaque resource 生命周期。"""
     social_auth_orchestrator: SocialAuthOrchestrator | None = None
@@ -298,6 +308,8 @@ class BridgeRuntime:
 
     def close(self) -> None:
         """进程退出时调用：drain 抽取队列并关库（幂等）。"""
+        if self.notification_service is not None:
+            self.notification_service.stop()
         self.persistent_session_manager.close()
         if self.persona_editor_session_manager is not None:
             self.persona_editor_session_manager.close()
@@ -694,6 +706,28 @@ def build_runtime(
         agent_runtime,
     )
 
+    notification_service = NotificationService(
+        store=NotificationStore(notifications_db_path(settings.sessions_dir.parent)),
+        sessions=persistent_store,
+        presence=presence_registry,
+        reader=resolved_desktop_settings_reader,
+        generator=NotificationGenerator(
+            reader=resolved_desktop_settings_reader,
+            factory=llm_client_factory,
+            persona=persona_store,
+            memory=memory,
+        ),
+        publisher=agent_runtime.listeners.publish_notification_change,
+        memory=memory,
+        todos=todo_store,
+        approvals=approval_broker,
+        session_metadata_store=session_metadata_store,
+    )
+    agent_runtime.add_terminal_observer(notification_service.on_terminal)
+    agent_runtime.listeners.manage_ambient_notifications()
+    transaction_reconciler.add_terminal_observer(notification_service.on_recovered)
+    approval_broker.add_listener(notification_service.on_approval)
+
     def make_schedule_runtime(
         reminder_delivery: ReminderDeliveryOrchestrator,
     ) -> tuple[ScheduledRunTracker, ScheduleCoordinator]:
@@ -852,6 +886,7 @@ def build_runtime(
             presence_registry=presence_registry,
             im_runtime=im_runtime,
             notification_mode_provider=reminder_notification_mode_provider,
+            pet_notification=notification_service.on_todo,
         )
         scheduled_run_tracker, schedule_coordinator = make_schedule_runtime(reminder_delivery)
         # final BridgeRuntime = pre_runtime + IM 字段
@@ -862,6 +897,7 @@ def build_runtime(
             scheduled_run_tracker=scheduled_run_tracker,
             schedule_coordinator=schedule_coordinator,
             social_auth_orchestrator=social_auth_orchestrator,
+            notification_service=notification_service,
         )
 
     reminder_delivery = ReminderDeliveryOrchestrator(
@@ -870,6 +906,7 @@ def build_runtime(
         agent_runtime=agent_runtime,
         presence_registry=presence_registry,
         notification_mode_provider=reminder_notification_mode_provider,
+        pet_notification=notification_service.on_todo,
     )
     scheduled_run_tracker, schedule_coordinator = make_schedule_runtime(reminder_delivery)
     social_auth_orchestrator = SocialAuthOrchestrator(
@@ -909,6 +946,7 @@ def build_runtime(
         presence_registry=presence_registry,
         scheduled_run_tracker=scheduled_run_tracker,
         schedule_coordinator=schedule_coordinator,
+        notification_service=notification_service,
         social_platform_service=social_platform_service,
         social_auth_orchestrator=social_auth_orchestrator,
         approval_broker=approval_broker,
