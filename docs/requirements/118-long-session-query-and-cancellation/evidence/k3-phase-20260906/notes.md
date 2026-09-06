@@ -10,7 +10,7 @@
 |---|---|---|---|
 | `.tmp/k3-phase-public-20260906-recheck-01.json` | [public-smoke.json](public-smoke.json) | 7691 / `4421c2c1be65df31f92cae1feaa40bc6b1abbb4955bdc2d2bc417e529a69cf70` | 7553 / `bff9c6af55b6c3d3cb766192670af335668bc9bc71b505238c17f605009d12a4` |
 | `.tmp/k3-phase-wire-20260906-recheck-01.json` | [raw-sse.json](raw-sse.json) | 13392 / `c426d33de59df8052cafcb35f9640493d2205bc541cde2c3b3ee5fc6abddb8bc` | 12672 / `0145577dde6089f74df7cd54e46b136544a61db277051f3fc500e44ec19e6e49` |
-| `.tmp/k3_phase_wire_probe_20260906.py` | [probe.py](probe.py) | 11975 / `b1c278e12091ab145d8bafd135a7da2349596ebe27bcf8ef2e8c52d326b63578` | 11975 / 同原 SHA256 |
+| `.tmp/k3_phase_wire_probe_20260906.py` | [probe.py.txt](probe.py.txt) | 11975 / `b1c278e12091ab145d8bafd135a7da2349596ebe27bcf8ef2e8c52d326b63578` | 11975 / 同原 SHA256 |
 
 public 报告仅 CRLF→LF，JSON 字段完全相同；probe 按原字节保存。wire 报告唯一字段与脱敏变化是把 `phase_prompt` 全文换成 `phase_prompt_reference`，同时规范 JSON 格式与 LF，其余字段逐项保持。该字段引用仓库已有 [assistant_phase.md](../../../../../agent/src/agent/prompt_sections/assistant_phase.md)：原文件字节 SHA256 为 `a2836081cbb61d87b3bdbe7a69a0bdb506a56ae4d9bbce3fec0420a903abe974`，probe 按 UTF-8 读取并统一换行后的文本 SHA256 为 `970f541cbd9a0031fc1c39d4fe43b0d2d1a4a26b5fd44f764ca712d19b011f82`。归档时两者均核对通过，没有重复保存完整 prompt。
 
@@ -38,3 +38,5 @@ wire 环境记录为 Python 3.12.6、httpx 0.28.1、OpenAI 2.24.0。实际 endpo
 归档 probe 的 `ROOT = Path(__file__).resolve().parents[1]` 只适用于历史 `.tmp/` 布局，不能直接从本 evidence 目录运行。未来复跑须先取得新的真实 LLM 授权，核对源码 / prompt / 环境，并将原字节脚本恢复到项目根下 `.tmp/k3_phase_wire_probe_20260906.py`；选择新的 output 路径，保留现有报告。`--allow-llm` 只是脚本门槛，不替代新的用户授权。公共探针的历史 harness 为 [scripts/responses-smoke/run.py](../../../../../scripts/responses-smoke/run.py)，身份已记录在 public 报告中。本次未复跑任一脚本。
 
 完整性由上级 [MANIFEST.sha256](../MANIFEST.sha256) 覆盖四个归档文件；旧九项条目及对应文件保持原字节。E-012 仍只代表其原先的性能测量候选，不因本批 phase 观察变成新组合候选的验收证据。
+
+收尾时将历史探针以 probe.py.txt 保存为源码文本，原11975字节及SHA256保持不变；复用时复制到原探针位置并恢复.py扩展名。它不作为产品维护脚本参与Python lint。

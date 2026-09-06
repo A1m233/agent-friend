@@ -57,6 +57,8 @@ E-012 绑定 03:47 UTC 阶段候选的 23 个源文件与 harness hash，在 17 
 | E-022 | 2026-09-06 | 无phase成功运行能否按逻辑消息形成展示回退，同时保留原生事实 | 最终实现与确定性验证 / code-supported + deterministic-validation | 最终三份改动源码与正式检查入口hash；任何保存的conflict均不回退；正式frontend runner退出0，总64.6s：lint/typecheck、135文件912tests（新增文件32项）、production build通过；probe仅语法通过 | confirmed，限最终代码与自动化；真实Tauri仍not verified | active；supersedes E-021 的当前行为适用范围，原调查保留；K3 native能力不变 | [验证与源码锚点](evidence/disclosure-118-validation.json)、[已确认方案](design.md#7-原生阶段与推断展示分离) |
 | E-023 | 2026-09-06 | 展示回退在真实Tauri中能否正确开关、复制和引用，并完成运行态恢复 | 授权真实WebView合成UI检查 / runtime-observed + human-reviewed | 最终04轮退出0，11组checks，passed/restored=true、零LLM；原mid导航、复制payload与UTF-16引用范围通过；源3hash与E-022一致；118停止释放后116已恢复且健康 | confirmed，限真实WebView展示/交互与所记生命周期；无系统clipboard、持久化或真实模型E2E | active；补充E-022桌面范围，保留其历史not verified及01/03 harness失败 | [验收口径与六图](evidence/disclosure-desktop-20260906/notes.md)、[派生报告](evidence/disclosure-desktop-20260906/report.json) |
 
+| E-024 | 2026-09-06 | 主干整合后的组合候选能否完成收口 | 最终门禁、真实K3隔离smoke与synthetic性能 / deterministic-validation + runtime-observed | backend2872/5、frontend1213、Rust全绿；真实三场景6请求，独立进程复用、HTTP取消后续聊；320MiB三次结果一致 | confirmed，限归档口径；非生产桌面E2E/p95 | active；覆盖E-012/E-022最终组合候选用途，保留旧记录 | [收口口径](evidence/closeout-20260906/notes.md)、[验证锚点](evidence/closeout-20260906/validation.json) |
+
 ## 未决问题
 
 | 问题 | 当前边界与最有区分力的下一项证据 | 阻塞情况 |
@@ -65,7 +67,7 @@ E-012 绑定 03:47 UTC 阶段候选的 23 个源文件与 harness hash，在 17 
 | 排除与读取限额的收益是否稳定，是否保持质量 | E-002 至 E-004 各为单次；E-011 / E-012 分别有三次同类合成 fixture 对照及正文 / 顺序 guardrail，不合并成独立总体样本。OS cache 未控且可见历史极少，仍需不同可见历史规模、并发及失效条件的隔离比较 | 不支持真实长会话的稳定时延、p95 或新增观测开销归因 |
 | 分页是否适合现有投影与恢复语义 | 官方 SQL 分页只说明一种可行机制；需评估本项目存储、排序、搜索、跳转与恢复边界 | 是否实施留待 design 确认 |
 | 历史输入与 harness 能否精确恢复 | 临时输入已删除；原报告含敏感标识，留存 probe 又晚于前两份报告。只有数据拥有者重新提供有界输入后才能核对 | 本归档不能独立复现，当前也不授权重跑 |
-| 追加摘要修复后的组合候选是否通过最终验证 | 后端2721 passed/5 skipped及lint/typecheck已通过；展示UI由E-023补充，真实摘要与取消链路仍未验证 | 自动化和限定展示UI已有证据，整体用户验收仍待；E-012不继承为新候选性能证据，E-016/E-023不替代摘要AC |
+| 追加摘要修复后的组合候选是否通过最终验证 | E-024已补齐主干整合后的完整门禁、真实K3三场景与最终性能对照；E-023保留UI范围 | 已收口；用户授权合入推送，仍不外推生产桌面E2E或历史事故归因 |
 | 晚间测试是否还有无法量化的等待 | E-013 未记录点击和 HTTP 响应时间；原始异常全文及 checkpoint 原文未归档，无法从摘要精确重放 | 不支持点击到终态时延或完整现场复现声明；本归档不新增真实实验 |
 | K3 后续能否声明原生阶段能力 | E-016在六次请求未观察到phase，E-017无官方开关；更有区分力的是厂商新增文档或实际带phase的完整工具闭环 | 原生能力仍未启用；用户已采纳的展示回退使用inferred，不冒充native |
 | 展示UI证据是否覆盖系统剪贴板与端到端历史行为 | E-023已通过11组真实WebView合成UI检查；复制在writeText边界截获，引用写入合成内存草稿，搜索只注入导航目标 | 不外推系统clipboard、持久化/重载恢复、后端搜索或真实K3/取消链路；本记录不增加实验范围 |
@@ -95,10 +97,10 @@ E-012 绑定 03:47 UTC 阶段候选的 23 个源文件与 harness hash，在 17 
 | E-011 | 本工作树 `.tmp/query-118-320mib.json`；临时路径只在原机器可访问 | [synthetic-query-320mib-report.json](evidence/synthetic-query-320mib-report.json)、[归档口径](evidence/synthetic-query-320mib-notes.md) | 纯 synthetic 统计；仅 CRLF→LF，全部 JSON 字段保持；原文件 / 归档 hash、22 文件校验与 harness 归档时锚点见记录 |
 | E-012 | 本工作树 `.tmp/query-118-final-320mib.json`；临时路径只在原机器可访问 | [synthetic-query-final-320mib-report.json](evidence/synthetic-query-final-320mib-report.json)、[归档口径](evidence/synthetic-query-final-320mib-notes.md) | 纯 synthetic 统计；仅 CRLF→LF；报告内 UTC、harness hash、23 个源码 hash 与归档时实文件核对通过 |
 | E-013 至 E-015 | 当前任务已完成诊断；原运行位于本机 `0bcf/agent-friend`，日志 / 数据仅本机可访问 | [summary-recovery-diagnosis-2026-09-06.json](evidence/summary-recovery-diagnosis-2026-09-06.json) | 派生白名单摘要，非原始日志或 probe；无用户正文、会话 / checkpoint ID、异常全文或完整 runtime ID；原始 artifact hash 不可用，不能精确重放 |
-| E-016 | 本工作树 `.tmp/k3-phase-{public,wire}-20260906-recheck-01.json` 与 `.tmp/k3_phase_wire_probe_20260906.py` | [归档口径](evidence/k3-phase-20260906/notes.md)、[公共接口](evidence/k3-phase-20260906/public-smoke.json)、[原始SSE字段摘要](evidence/k3-phase-20260906/raw-sse.json)、[历史探针](evidence/k3-phase-20260906/probe.py) | 仅合成输入的字段摘要，不保留原始SSE/隐藏reasoning；完整阶段prompt改为仓库路径/hash引用；原报告、归档hash与harness复用位置边界见notes |
+| E-016 | 本工作树 `.tmp/k3-phase-{public,wire}-20260906-recheck-01.json` 与 `.tmp/k3_phase_wire_probe_20260906.py` | [归档口径](evidence/k3-phase-20260906/notes.md)、[公共接口](evidence/k3-phase-20260906/public-smoke.json)、[原始SSE字段摘要](evidence/k3-phase-20260906/raw-sse.json)、[历史探针](evidence/k3-phase-20260906/probe.py.txt) | 仅合成输入的字段摘要，不保留原始SSE/隐藏reasoning；完整阶段prompt改为仓库路径/hash引用；原报告、归档hash与harness复用位置边界见notes |
 | E-022 | 实施者已完成正式runner检查的结果、冻结前端源码与正式脚本；未保存完整命令输出 | [disclosure-118-validation.json](evidence/disclosure-118-validation.json) | 白名单派生验证事实、八项归档时源码 / 入口hash；不含私有用户数据或绝对机器路径，不将归档时hash冒充测量前后双检 |
 | E-023 | 本工作树 `.tmp/disclosure-118/` 四轮报告、最终probe、runtime/source与两次恢复记录；仅本机可访问 | [派生报告](evidence/disclosure-desktop-20260906/report.json)、[notes与六图](evidence/disclosure-desktop-20260906/notes.md)、[最终probe](evidence/disclosure-desktop-20260906/probe.mjs) | 绝对路径改相对绑定，保留原hash与失败摘要；最终六PNG/probe原字节，不含真实用户数据；restored合成视图与116恢复分开记录 |
-| 已归档 artifact | 本需求 `evidence/` | [MANIFEST.sha256](evidence/MANIFEST.sha256) | 共23项，新增E-023九项；旧14项内容和hash不变，文本UTF-8 without BOM |
+| 已归档 artifact | 本需求 `evidence/` | [MANIFEST.sha256](evidence/MANIFEST.sha256) | 共30项；E-024新增七项，历史K3探针原字节改扩展名并同步notes；文本UTF-8 without BOM |
 
 ## 对账记录
 
@@ -113,3 +115,5 @@ E-012 绑定 03:47 UTC 阶段候选的 23 个源文件与 harness hash，在 17 
 | 2026-09-06 | 用户质疑115展示前提，并要求对照Codex | 新增E-020/E-021；公开源码统一固定ac192cd，明确CLI/协议与闭源Desktop边界；核对本地native门禁同时禁用工具统一执行区。工具可独立收纳是候选调整依据，未知正文不静默改phase，未改产品代码或已确认方案。 |
 | 2026-09-06 | 用户采纳展示回退、来源分离及真实Tauri验收；归档最终实现与正式前端门禁 | 新增E-022并覆盖E-021的当前行为适用范围，旧调查与此前对账原文保留。补齐任何保存的conflict都不回退后，正式frontend runner退出0：135文件912 tests（新增文件32项），lint/tsc/三类治理与build通过，总64.6秒；以此取代前版31/911的最终验证用途。本次无后端/Rust增量，不重跑。旧13项artifact保持；probe仅语法通过且116占用唯一lease，桌面仍not verified，未停止或接管用户运行态。 |
 | 2026-09-06 | 用户授权临时切换116、118真实WebView展示与补充引用/复制验收、运行态恢复 | 新增E-023：最终04轮11组通过，零LLM，六原图与final probe归档；01/03的最终guard误拦分别保留为harness失败，02保留9组较窄范围。三源码hash未变，912门禁继续适用；IPC可能fallback，复制未接触系统clipboard，无持久化/真实K3/取消E2E。两批118均标准停止后恢复116，最终健康HTTP200且保留用户运行态。E-022历史not verified不改，旧14artifact原字节保留。 |
+
+| 2026-09-06 | E-024最终主干整合候选、完整门禁、6次真实K3调用与320MiB对照 | 新增七项artifact，真实模型只用隔离合成数据；源hash逐项核对。原K3探针按原字节改为.py.txt并更新其notes，其他历史artifact不变。用户确认按顺序收口、合入推送与本地测试包，运行/质量/计费局限见E-024。 |

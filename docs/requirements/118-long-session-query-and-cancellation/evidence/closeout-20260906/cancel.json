@@ -1,0 +1,90 @@
+{
+  "phase": "cancel",
+  "pid": 41480,
+  "started_at": "2026-09-06T14:26:58.230344+00:00",
+  "synthetic": true,
+  "model": "kimi/kimi-k3",
+  "reasoning_preset": "low",
+  "test_context_window": 14000,
+  "retries": 0,
+  "passed": true,
+  "scope": "real provider + engine + isolated JSONL/rollout; no desktop/AGUI or production data",
+  "http_attempt": {
+    "path": "/v1/chat/completions",
+    "method": "POST"
+  },
+  "cancel_to_return_ms": 31.0,
+  "cancelled_before_main_and_checkpoint": true,
+  "resume": {
+    "phases": [
+      "started",
+      "completed"
+    ],
+    "answer": "项目代号 cobalt-73，校验数字 391。"
+  },
+  "resumed_after_cancel": true,
+  "calls": [
+    {
+      "kind": "summary_chat",
+      "started_at": "2026-09-06T14:26:59.454163+00:00",
+      "outcome": "RunCancelled",
+      "elapsed_ms": 1140.0
+    },
+    {
+      "kind": "summary_chat",
+      "started_at": "2026-09-06T14:27:00.632403+00:00",
+      "usage": {
+        "prompt_tokens": 3232,
+        "completion_tokens": 413,
+        "total_tokens": 3645,
+        "cached_prompt_tokens": 0,
+        "cache_write_prompt_tokens": 0,
+        "input_other_prompt_tokens": 3232,
+        "cache_miss_prompt_tokens": 3232,
+        "usage_source": "top_level",
+        "input_total_prompt_tokens_source": "prompt_tokens",
+        "completion_tokens_source": "completion_tokens",
+        "total_tokens_source": "total_tokens",
+        "cached_prompt_tokens_source": "_cache_read_input_tokens",
+        "cache_write_prompt_tokens_source": "_cache_creation_input_tokens",
+        "input_other_prompt_tokens_source": "derived_input_total_minus_cache_read_write",
+        "cache_miss_prompt_tokens_source": "derived_prompt_minus_cached",
+        "input_token_accounting": "inclusive_total",
+        "input_other_prompt_tokens_derived": true,
+        "cache_miss_prompt_tokens_derived": true
+      },
+      "summary_chars": 692,
+      "summary_has_marker": true,
+      "outcome": "completed",
+      "elapsed_ms": 32937.0
+    },
+    {
+      "kind": "main_responses",
+      "started_at": "2026-09-06T14:27:33.600296+00:00",
+      "usage": {
+        "prompt_tokens": 2813,
+        "completion_tokens": 95,
+        "total_tokens": 2908,
+        "cached_prompt_tokens": 0,
+        "cache_write_prompt_tokens": 0,
+        "input_other_prompt_tokens": 2813,
+        "cache_miss_prompt_tokens": 2813,
+        "usage_source": "responses",
+        "input_total_prompt_tokens_source": "input_tokens",
+        "completion_tokens_source": "output_tokens",
+        "total_tokens_source": "total_tokens",
+        "cached_prompt_tokens_source": "input_tokens_details.cached_tokens",
+        "cache_write_prompt_tokens_source": "input_tokens_details.cache_write_tokens",
+        "input_other_prompt_tokens_source": "derived_input_total_minus_cache_read_write",
+        "cache_miss_prompt_tokens_source": "derived_prompt_minus_cached",
+        "input_token_accounting": "inclusive_total",
+        "input_other_prompt_tokens_derived": true,
+        "cache_miss_prompt_tokens_derived": true
+      },
+      "outcome": "completed",
+      "elapsed_ms": 4110.0
+    }
+  ],
+  "finished_at": "2026-09-06T14:27:37.743872+00:00",
+  "harness_sha256": "d428f2c7c41cc13abf9db5379cfa2b494a7c5926b4fb8230767bf7e8a7dbd607"
+}

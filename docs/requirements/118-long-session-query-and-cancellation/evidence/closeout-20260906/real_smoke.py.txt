@@ -1,0 +1,206 @@
+"""Authorized synthetic K3 engine smoke; a shared ledger caps all phases at ten calls."""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import hashlib
+import json
+import logging
+import os
+import time
+from dataclasses import asdict, replace
+from datetime import UTC, datetime
+from pathlib import Path
+from uuid import uuid4
+
+import httpx
+from agent import BUILTIN_DEFAULT_PERSONA_ID, ContextCompactionStatus, Conversation, Event, JsonlSessionStore, PersonaCatalog, Session, TextDelta
+from agent.context import SummarizingContextManager
+from agent.context.checkpoints import resolve_prior_summary
+from agent.messages import Message
+from agent.runtime.cancellation import CancellationToken, CancelReason, RunCancelled
+from agent.sessions.rollout import SessionRolloutRecorder, restore_rollout
+from llm_providers import LLMClient, ModelRequest, build_provider_spec
+from runtime_config import credential_source_for_mode
+
+ROOT = Path(__file__).resolve().parents[2]
+FACT = "项目代号 cobalt-73，校验数字 391。"
+
+class Prompt:
+    def build(self, *, channel_override=None):
+        return "你是合成验收助手。仅根据历史与摘要回答，保留项目代号和校验数字。回答简短，不使用工具。"
+
+def write(path, value):
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+
+class ObservedModel:
+    def __init__(self, client, directory):
+        self.client, self.directory = client, directory
+        self.calls = []
+    def __getattr__(self, name):
+        return getattr(self.client, name)
+    def begin(self, kind):
+        path = self.directory / "ledger.json"
+        ledger = json.loads(path.read_text(encoding="utf-8"))
+        assert ledger["attempts"] < 10, "request budget exhausted"
+        ledger["attempts"] += 1
+        write(path, ledger)
+        row = {"kind": kind, "started_at": datetime.now(UTC).isoformat()}
+        self.calls.append(row)
+        return row, time.monotonic()
+    def generate(self, request):
+        row, started = self.begin("summary_chat")
+        try:
+            response = self.client.generate(replace(request, control=replace(request.control, allow_retries=False)))
+            row["usage"] = asdict(response.usage) if response.usage else None
+            row["summary_chars"] = len(response.text)
+            row["summary_has_marker"] = "cobalt-73" in response.text and "391" in response.text
+            row["outcome"] = "completed"
+            return response
+        except BaseException as error:
+            row["outcome"] = type(error).__name__
+            raise
+        finally:
+            row["elapsed_ms"] = round((time.monotonic() - started) * 1000, 2)
+    def stream(self, request):
+        row, started = self.begin("main_responses")
+        try:
+            request = replace(request, settings={**request.settings, "max_tokens": 1024}, control=replace(request.control, allow_retries=False))
+            for event in self.client.stream(request):
+                usage = getattr(event, "usage", None)
+                if usage is not None:
+                    row["usage"] = asdict(usage)
+                yield event
+            row["outcome"] = "completed"
+        except BaseException as error:
+            row["outcome"] = type(error).__name__
+            raise
+        finally:
+            row["elapsed_ms"] = round((time.monotonic() - started) * 1000, 2)
+
+def make_conv(directory, model, session=None, *, restore=False):
+    store = JsonlSessionStore(base_dir=directory / "sessions")
+    if session is None:
+        session = Session.new("118 synthetic real smoke", "default", "kimi/kimi-k3", reasoning_preset="low", persona_id=BUILTIN_DEFAULT_PERSONA_ID)
+        store.create(session)
+        for index in range(80):
+            for kind in ["user_message", "assistant_message"]:
+                event = Event(type=kind, uuid=str(uuid4()), ts=datetime.now(UTC), payload={"content": f"合成记录{index}：{FACT}" + "x" * 200, **({"partial": False} if kind == "assistant_message" else {})})
+                store.append_event(session.session_id, event)
+                session.append(event)
+    kwargs = {}
+    if restore:
+        restored = restore_rollout(session)
+        kwargs = dict(session_model_history=restored.history, session_model_context=restored.model_context, cache_epoch=restored.cache_epoch)
+    conv = Conversation(session=session, store=store, llm_client=model, context_manager=SummarizingContextManager(), prompt_builder=Prompt(), catalog=PersonaCatalog(external_dir=directory / "personas"), rollout_recorder=SessionRolloutRecorder(store=store, session=session), **kwargs)
+    return conv, session, store
+
+def run(conv, text, *, token=None):
+    phases, output = [], []
+    for event in conv.stream(text, run_id=str(uuid4()), cancel_check=token.raise_if_cancelled if token else None):
+        if isinstance(event, ContextCompactionStatus):
+            phases.append(event.phase)
+        if isinstance(event, TextDelta):
+            output.append(event.text)
+    return {"phases": phases, "answer": "".join(output)}
+
+def check_answer(result):
+    assert "cobalt-73" in result["answer"] and "391" in result["answer"], "synthetic facts missing"
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--phase", choices=["initial", "restart", "cancel"], required=True)
+    parser.add_argument("--directory", type=Path, required=True)
+    parser.add_argument("--allow-llm", action="store_true")
+    args = parser.parse_args()
+    assert args.allow_llm, "requires explicit authorization"
+    directory = args.directory.resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    result_path = directory / f"{args.phase}.json"
+    assert not result_path.exists(), "result exists"
+    if args.phase == "initial":
+        assert not (directory / "ledger.json").exists(), "ledger exists"
+        write(directory / "ledger.json", {"attempts": 0, "maximum": 10})
+    os.environ["AGENT_FRIEND_DATA_DIR"] = str(directory / "isolated-data")
+    os.environ["AGENT_FRIEND_LOG_DIR"] = str(directory / "isolated-logs")
+    logging.disable(logging.CRITICAL)
+    report = {"phase": args.phase, "pid": os.getpid(), "started_at": datetime.now(UTC).isoformat(), "synthetic": True, "model": "kimi/kimi-k3", "reasoning_preset": "low", "test_context_window": 14000, "retries": 0, "passed": False, "scope": "real provider + engine + isolated JSONL/rollout; no desktop/AGUI or production data"}
+    credential = credential_source_for_mode("desktop").get("KIMI_API_KEY")
+    assert credential and credential.value, "credential unavailable"
+    spec = build_provider_spec(provider_id="kimi", model_id="kimi/kimi-k3", api_key=credential.value, reasoning_preset="low", context_window=14000, timeout_seconds=60)
+    model = ObservedModel(LLMClient(spec, network_retries=0, engine_overload_retries=0, stream_timeout_seconds=60), directory)
+    try:
+        if args.phase == "initial":
+            conv, session, store = make_conv(directory, model)
+            history = []
+            for message in conv._session_model_history.items:
+                history.append(message)
+                if message.role == "assistant":
+                    history.append(Message(role="system", content="合成记录：此前执行已终止。", meta={"synthetic": "turn_aborted"}))
+            conv._session_model_history.items = history
+            report["reply"] = run(conv, "请只回答项目代号和校验数字。")
+            check_answer(report["reply"])
+            checkpoint = session.latest_compaction()
+            assert checkpoint is not None and checkpoint.payload["checkpoint_version"] == 3
+            assert report["reply"]["phases"] == ["started", "completed"]
+            report["checkpoint"] = {"version": 3, "covered_model_only_id": checkpoint.payload["covered_through_uuid"] not in {event.uuid for event in session.active_events}, "summary_has_marker": "cobalt-73" in checkpoint.payload["summary"]}
+            write(directory / "state.json", {"session_id": session.session_id, "checkpoint_id": checkpoint.uuid})
+        elif args.phase == "restart":
+            state = json.loads((directory / "state.json").read_text(encoding="utf-8"))
+            store = JsonlSessionStore(base_dir=directory / "sessions")
+            session = store.load(state["session_id"])
+            restored = restore_rollout(session)
+            resolution = resolve_prior_summary(session.active_events, restored.history.snapshot(), scope="model")
+            assert resolution.status == "materialized", resolution.status
+            conv, session, _ = make_conv(directory, model, session, restore=True)
+            report["reply"] = run(conv, "我们继续。请只回答项目代号和校验数字。")
+            check_answer(report["reply"])
+            assert not report["reply"]["phases"]
+            assert session.latest_compaction().uuid == state["checkpoint_id"]
+            assert all(call["kind"] != "summary_chat" for call in model.calls)
+            report["same_checkpoint_reused"] = True
+        else:
+            conv, session, store = make_conv(directory / "cancel-case", model)
+            token = CancellationToken()
+            original_send = httpx.AsyncClient.send
+            cancel_times = []
+            def trigger_cancel():
+                cancel_times.append(time.monotonic())
+                token.cancel(CancelReason.EXPLICIT_REQUEST)
+            async def observed_send(client, request, *a, **kw):
+                if request.url.host == "api.moonshot.cn" and not cancel_times:
+                    report["http_attempt"] = {"path": request.url.path, "method": request.method}
+                    asyncio.get_running_loop().call_later(0.4, trigger_cancel)
+                return await original_send(client, request, *a, **kw)
+            httpx.AsyncClient.send = observed_send
+            try:
+                try:
+                    run(conv, "请只回答项目代号和校验数字。", token=token)
+                    raise AssertionError("cancelled run unexpectedly completed")
+                except RunCancelled:
+                    report["cancel_to_return_ms"] = round((time.monotonic() - cancel_times[0]) * 1000, 2)
+            finally:
+                httpx.AsyncClient.send = original_send
+            assert session.latest_compaction() is None
+            assert len(model.calls) == 1 and model.calls[0]["kind"] == "summary_chat"
+            report["cancelled_before_main_and_checkpoint"] = True
+            reloaded = store.load(session.session_id)
+            resumed, reloaded, _ = make_conv(directory / "cancel-case", model, reloaded, restore=True)
+            report["resume"] = run(resumed, "继续刚才的问题：只回答项目代号和校验数字。")
+            check_answer(report["resume"])
+            assert reloaded.latest_compaction() is not None
+            report["resumed_after_cancel"] = True
+        report["passed"] = True
+    except BaseException as error:
+        report["error_type"] = type(error).__name__
+        report["error_message"] = str(error).replace(credential.value, "[redacted]")[:400]
+    finally:
+        report["calls"] = model.calls
+        report["finished_at"] = datetime.now(UTC).isoformat()
+        report["harness_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        write(result_path, report)
+        print(json.dumps(report, ensure_ascii=False), flush=True)
+    return 0 if report["passed"] else 1
+
+if __name__ == "__main__":
+    raise SystemExit(main())

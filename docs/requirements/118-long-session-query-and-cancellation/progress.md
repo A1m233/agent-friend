@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-IN_PROGRESS
+COMPLETED
 
 ## 任务列表
 
@@ -13,7 +13,7 @@ IN_PROGRESS
 - [x] T3 已登记准备、输入接收协议与跨阶段取消及测试。
 - [x] T4 前端详情合并、取消意图与草稿恢复及测试。
 - [x] T5 集成对账、隔离性能对照与项目全量检查。
-- [ ] T6 用户验收与交付收口。
+- [x] T6 用户验收与需求收口；已授权的Guide发布、主干推送与本地测试包继续按交付顺序执行。
 - [x] T7 验收调查追加：K3 摘要 Chat 参数兼容与定点回归。
 - [x] T8 验收调查追加：摘要 checkpoint 身份与恢复一致性、确定性失败防重复。
 - [x] T9 补齐摘要 generate 在 HTTP 等待及重试期间的取消，并复验受影响门禁。
@@ -29,12 +29,12 @@ IN_PROGRESS
 | AC-3 接纳前取消 | 自动化通过 | runtime_dispatch 的 registered_preparation + run_routes 的已登记附件失败；前端 runCancellation 的404、在途失败与登记重试，不把404当拒绝 |
 | AC-4 执行中取消 | 自动化通过 | runtime_scheduler/dispatch、session_query/observation、memory search/vector、context_summarizing、tool_batch_executor；取消后不启动后续source/model/tool，已落盘输入及副作用保持。追加 cancellable_completion/stream：真实 SDK 配合 HTTP mock 验证响应头/正文等待、响应竞态、重试间隔取消以及客户端/请求线程释放 |
 | AC-5 并发一致性 | 自动化通过 | session_query 的并行构建/取消等待者/解析期间写入；sessionDetailReads持续更新可推进；conversation/sessionSync导航、runtime、revision和审批保护；runCancellation重复请求与晚到响应 |
-| AC-6 首次处理与兼容性 | 自动化通过；真实桌面未验收 | 缓存淘汰、源替换/截断/外部追加、writer lease、rollout/recovery、旧factory及旧null acceptance兼容；共享CLI/voice/IM由全量门禁对账 |
-| AC-7 性能对照 | 最终版本复测通过 | 最终报告 .tmp/query-118-final-320mib.json，E-012归档：results/detail/source hashes三项true；旧adapter 4561/1664/1675ms，新路径20.33/2.40/3.30ms；首建详情652ms，后续0.361/0.306ms。仅synthetic三次、不设预定时延门槛，不外推真实现场 |
+| AC-6 首次处理与兼容性 | 自动化通过；组合验证见E-024 | 缓存淘汰、源替换/截断/外部追加、writer lease、rollout/recovery、旧factory及旧null acceptance兼容；共享CLI/voice/IM由全量门禁对账 |
+| AC-7 性能对照 | 最终组合候选通过 | E-024：320MiB/17会话/3次；旧adapter 4626.80/1660.60/1587.65ms，新21.65/2.12/2.44ms，首建详情618.20ms、复用0.337/0.316ms；结果/详情/源文件一致，无数值硬门槛，不外推现场 |
 | AC-8 分页取舍 | 方案已确认 | 本期不分页，见 design §4 |
 | AC-9 可观测性与证据 | 自动化通过 | query_observation 8项：匿名字段、命中/等待后复用/重建/拒绝发布/取消/异常/维护失败、锁外日志与日志失败不影响业务；runtime阶段日志及SSE接收事实 |
-| AC-10 项目门禁与用户验收 | 项目门禁通过；待用户验收 | 追加修复后的 backend：2721 passed/5 skipped、629文件typecheck、730文件format/lint，207.7秒。本次折叠增量后的frontend正式全门禁64.6秒通过：lint/typecheck、135文件912 tests和production build；Rust未受影响，沿用252+6 tests/release check（1 ignored）。本次折叠合成桌面通过；真实长会话摘要/取消与整体用户验收仍待 |
-| AC-11 摘要可靠性 | 自动化通过；真实模型与桌面未验收 | K3 low/high/max 通过实际 SDK 与 HTTP mock；v3 模型身份、稳定摘要标记、真实 rollout 恢复、业务记忆截止及编辑重发、旧 checkpoint 保守兼容、同 run 参数失败防重复与取消，均纳入最终 backend 门禁。E-013—E-015 为修复前诊断，不作为修复后真实运行证据 |
+| AC-10 项目门禁与用户验收 | 通过，用户已授权收口与合入推送 | 整合最新主干后backend 2872 passed/5 skipped、frontend 146文件1213 tests，全部lint/typecheck/build及Rust fmt/tests/release check通过。E-024补齐最终真实K3三场景；用户确认“按这个顺序收尾，然后合入主干推送远端” |
+| AC-11 摘要可靠性 | 自动化与限定真实模型验证通过 | 三档HTTP mock、边界/恢复/编辑/旧数据/取消回归纳入最终backend。E-024真实K3 low：摘要v3落盘、独立进程复用且不重复摘要、摘要HTTP等待取消后重新加载续聊成功；6请求，不外推完整桌面E2E |
 | AC-12 阶段展示来源 | 自动化与合成桌面通过 | 32项新增定点回归纳入135文件912项前端测试，lint/typecheck/build通过。118真实Tauri完成11组UI检查：来源、开关、原mid导航、运行到成功转换、取消/失败/旧终态/legacy冲突、单正文、折叠时复制完整正文payload、展开后引用原mid及UTF-16范围。E-023记录真实WebView/交互和mock边界；不外推系统剪贴板、后端搜索、持久化或真实K3 E2E |
 
 ## 实现日志
@@ -73,16 +73,16 @@ IN_PROGRESS
 | 2026-09-06 | 第一批结束后恢复116运行态；对照AC12准备补齐引用和复制UI证据 | 118标准stop后lease与端口释放，恢复0bcf/116；Tauri owner匹配，bridge/voice均健康200，正常data/log默认值。引用/复制probe准备期间116继续运行，后续在相同授权范围内短暂补验 |
 | 2026-09-06 | 补齐引用与复制，最终11组桌面UI检查通过 | 第三轮11组UI断言通过，但probe把只读desktop_presence_probe IPC误判成业务写；按Rust源码精确放行后第四轮exit0，passed/restored=true。复制按钮真实点击，仅捕获writeText payload不读写系统剪贴板；引用浮层中心可点击，真实点击后原消息ID/mid、正文与UTF-16范围0..22正确。原有9组全部复验；无产品代码改动、无模型调用 |
 | 2026-09-06 | T11完成，118补验实例释放，116再次恢复供用户继续使用 | 118补验lease19548标准停止，status确认无活动lease且端口释放；恢复0bcf/feature116，lease31828、Tauri22288、正常data/log默认值，bridge与voice健康HTTP200。仅保留用户116运行态；最终证据为E-023，912项前端门禁仍对应未变更的产品源码 |
+| 2026-09-06 | 用户确认完成收口、合入主干推送，随后打本地测试包；整合主干552c61f | 保留118输入接收/取消与117通知presentation字段、重试开关。三文件仅格式修正后完整重跑门禁；历史probe按原字节改为文本归档 |
+| 2026-09-06 | E-024最终验证完成，需求收口 | backend2872/5、frontend1213、Rust全绿；真实K3三场景6请求通过；最终320MiB查询对照通过。用户授权沿既定顺序交付，无新增验收门槛 |
 
 ## 交付与剩余边界
 
-- 原范围与验收调查追加的 T7/T8/T9/T10 实现及自动化验证均已完成，T11折叠改动的合成真实桌面验收完成。统一保留在 feature/118-long-session-query-and-cancellation；T6整体用户验收未完成，状态保持 IN_PROGRESS。尚未 commit、merge 或 push 实现。
-- 本期不实施聊天分页，不设置时延数值硬门槛；详见已确认设计。
-- 当前335 MB现场之外的额外约125秒仍未定位；新增阶段与查询观测便于下一次区分等待、读取和解析，不宣称历史事故已完全复现。
-- 用户已授权本次真实Tauri验收和临时切换116/118；最终11组桌面DOM/交互检查通过，116已恢复，118验收实例已停止。用户自身长会话、真实摘要/取消以及真实K3的本次回退仍未做E2E；单独授权的K3阶段探针见E-016。复制只验证完整正文payload，定位只验证前端原mid导航，不能据此宣称系统剪贴板或后端全文搜索通过。
-- 建议用户体验：发送后在准备阶段立即取消；取消后继续发送；长会话反复打开并切换；断线恢复后取消状态；准备失败时草稿恢复且不覆盖新输入；K3 长会话触发摘要、完成后重启续聊以及摘要等待中取消。需要加载本 118 候选代码的运行态，既有 116 dev 的现象不能作为本次修复验收；自动化测试不能替代真实体验观察。
-- frozen-runtime分类为standard：新增模块均为静态Python导入，无新依赖、资源布局、原生库或打包收集变化；未运行PyInstaller或安装包构建。
+- T1–T11完成；全部AC已有对应机制或限定观察证据。用户明确授权按已讨论顺序收口、合入主干并推送，再构建本地测试包；需求状态COMPLETED。实际Git与包结果以交付回报及制品manifest为准，不能把本状态当成包已构建。
+- 本期不分页，不设置1秒/2秒/p95硬门槛。原136.628秒事件额外约125秒仍未定位，未宣称历史事故完整复现。
+- E-024真实引擎/存储/模型三场景与E-023真实WebView合成UI各自保留范围；没有用户真实长会话的端到端测试，不声明系统剪贴板或生产点击延迟。用户116开发实例已恢复并保留。
+- 118自身新增模块均静态导入，无新依赖或资源收集改变；当前package runner因本机main基线较旧，将已在远端main的assistant_phase.md一并计入package-sensitive。后续用户指定的local-test构建保留脚本计算的等级，不降档；不安装到production。
 
 ## 运行与授权边界
 
-用户本次“去验证下”单独授权 K3 阶段能力的真实短请求；执行前已告知最多4–6次，实际6次完成，授权已用于该次验证。用户随后采用native/inferred分离的展示回退，并明确授权由agent做真实桌面验收；另已同意临时停止116、切到118验收后恢复116，覆盖本任务的合成UI检查与必要复验。其它真实摘要/取消实验和真实数据新实验仍未授权；可以自主执行隔离 fake/mock、合成数据测量和项目检查。尚未用户验收，不标 COMPLETED，不合入或推送实现。
+此前K3阶段探针6次请求的授权已用完。本次用户批准最终收口顺序，新增三场景/最多6–10次真实摘要与取消验证，实际6次已完成，无进一步真实模型请求。Tauri验收与116/118临时切换已完成；保留用户116运行态。当前授权覆盖正常提交、Guide自动发布、保留merge commit合入main并推送，以及本地测试包构建；不覆盖真实安装、正式产品发布或删除其他工作树。
