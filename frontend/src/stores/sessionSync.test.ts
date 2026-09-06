@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("@/utils/tauri", () => ({ isTauri: () => false }));
 vi.mock("@/services", () => ({
+  imApi: { listProviders: vi.fn(async () => []) },
   sessionsApi: {
     list: vi.fn(),
     get: vi.fn(),
@@ -74,7 +75,7 @@ describe("sessionSync", () => {
     vi.clearAllMocks();
     resetSessionSyncForTests();
     useConversationStore.getState().invalidateBackgroundRefreshes();
-    useSessionsStore.setState({ list: [], loading: false, loaded: true });
+    useSessionsStore.setState({ list: [], loading: false, loaded: true, error: false });
     useConversationStore.setState({
       currentSessionId: "s1",
       approvalMode: "per_request",
