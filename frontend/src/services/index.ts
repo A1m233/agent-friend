@@ -24,6 +24,7 @@ export type { AttachmentDraft, AttachmentRef } from "./attachments";
 export { sessionsApi } from "./api/sessions";
 export { modelsApi } from "./api/models";
 export { runsApi } from "./api/runs";
+export { notificationsApi } from "./api/notifications";
 export { socialAuthApi } from "./api/socialAuth";
 export type {
   SocialAuthRequestSnapshot,

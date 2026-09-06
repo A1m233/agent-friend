@@ -49,6 +49,7 @@ from .routes.filesystem import register_routes as register_filesystem_routes
 from .routes.memory import register_routes as register_memory_routes
 from .routes.meta import register_routes as register_meta_routes
 from .routes.models import register_routes as register_model_routes
+from .routes.notifications import register_routes as register_notification_routes
 from .routes.persona import register_routes as register_persona_routes
 from .routes.presence import register_routes as register_presence_routes
 from .routes.runs import register_routes as register_run_routes
@@ -163,6 +164,7 @@ def create_app_with_runtime(
     register_todo_routes(app, runtime)
     register_scheduled_task_routes(app, runtime)
     register_presence_routes(app, runtime)
+    register_notification_routes(app, runtime)
     register_social_auth_routes(app, runtime)
     register_skill_routes(app, runtime)
     register_push_routes(app, runtime)
@@ -193,6 +195,8 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        if runtime.notification_service is not None:
+            runtime.notification_service.start()
         reconcile_attachments(runtime)
         if runtime.skill_service is not None:
             runtime.skill_service.start()
@@ -216,6 +220,8 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
         try:
             yield
         finally:
+            if runtime.notification_service is not None:
+                runtime.notification_service.quiesce()
             if reconciliation_task is not None:
                 try:
                     await asyncio.wait_for(asyncio.shield(reconciliation_task), timeout=5.0)
@@ -229,6 +235,8 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
                 runtime.agent_runtime.stop(timeout=5.0)
             if runtime.scheduled_run_tracker is not None:
                 runtime.scheduled_run_tracker.stop(timeout=5.0)
+            if runtime.notification_service is not None:
+                runtime.notification_service.stop(timeout=5.0)
             runtime.close()
 
     return lifespan

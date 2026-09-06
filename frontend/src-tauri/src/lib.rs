@@ -17,6 +17,7 @@ mod data_migration;
 mod desktop_instance;
 mod diagnostics;
 pub mod install_contract;
+mod notification_sound;
 mod owner_capabilities;
 mod paths;
 mod permissions;
@@ -105,6 +106,8 @@ struct WorkspaceNavigationEnvelope {
 #[serde(rename_all = "camelCase")]
 struct ChatOpenRequest {
     new_conversation: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -343,6 +346,12 @@ fn read_pet_display_topology(
                 y: position.y,
                 width: size.width,
                 height: size.height,
+                work_area: pet_display_topology::OverlayBounds {
+                    x: monitor.work_area().position.x,
+                    y: monitor.work_area().position.y,
+                    width: monitor.work_area().size.width,
+                    height: monitor.work_area().size.height,
+                },
                 scale_milli: pet_display_topology::scale_to_milli(monitor.scale_factor()),
             }
         })
@@ -676,6 +685,22 @@ fn open_chat(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_chat_session(app: tauri::AppHandle, session_id: String) -> Result<(), String> {
+    if session_id.trim().is_empty() {
+        return Err("notification session is empty".into());
+    }
+    navigate_workspace_with_context(
+        &app,
+        WorkspaceTarget::Chat,
+        Some(ChatOpenRequest {
+            new_conversation: false,
+            session_id: Some(session_id),
+        }),
+        None,
+    )
+}
+
+#[tauri::command]
 fn open_new_conversation(app: tauri::AppHandle) -> Result<(), String> {
     navigate_new_conversation(&app)
 }
@@ -694,6 +719,7 @@ fn navigate_new_conversation(app: &tauri::AppHandle) -> Result<(), String> {
         WorkspaceTarget::Chat,
         Some(ChatOpenRequest {
             new_conversation: true,
+            session_id: None,
         }),
         None,
     )
@@ -1362,6 +1388,7 @@ pub fn run() {
             desktop_owner.clone(),
         ))
         .manage(bubble_window::BubbleState::default())
+        .manage(notification_sound::NotificationSoundState::default())
         .manage(PetOverlayState::default())
         .manage(PetWebviewState::default())
         .manage(pet_evidence)
@@ -1401,6 +1428,13 @@ pub fn run() {
     #[cfg(debug_assertions)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
+        open_chat_session,
+        notification_sound::play_notification_sound,
+        bubble_window::begin_pet_accessory_layout,
+        bubble_window::get_pet_accessory_context,
+        bubble_window::apply_pet_accessory_layout,
+        bubble_window::commit_bubble_carrier,
+        bubble_window::get_bubble_presentation_state,
         open_new_conversation,
         open_settings,
         consume_pending_workspace_navigation,
@@ -1477,13 +1511,19 @@ pub fn run() {
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
-        bubble_window::update_sprite_pos,
         bubble_window::inject_test_envelope,
         bubble_window::inject_test_reminder_envelope,
     ]);
     #[cfg(not(debug_assertions))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
+        open_chat_session,
+        notification_sound::play_notification_sound,
+        bubble_window::begin_pet_accessory_layout,
+        bubble_window::get_pet_accessory_context,
+        bubble_window::apply_pet_accessory_layout,
+        bubble_window::commit_bubble_carrier,
+        bubble_window::get_bubble_presentation_state,
         open_new_conversation,
         open_settings,
         consume_pending_workspace_navigation,
@@ -1557,7 +1597,6 @@ pub fn run() {
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
-        bubble_window::update_sprite_pos,
     ]);
 
     builder
@@ -1998,6 +2037,7 @@ mod tests {
                 WorkspaceTarget::Chat,
                 Some(ChatOpenRequest {
                     new_conversation: true,
+                    session_id: None,
                 }),
                 None,
             )

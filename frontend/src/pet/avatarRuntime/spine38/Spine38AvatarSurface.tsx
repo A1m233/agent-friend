@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import * as PIXI7 from "pixi7";
 import type { Spine as Spine38 } from "pixi-spine";
 import type {
@@ -22,7 +21,6 @@ import type {
 import type { PixelRegion } from "@/pet/petAlphaHitTest";
 import type { PetFacing } from "@/pet/avatarRuntime/facing";
 import { publishAnchorDiagnostics } from "@/pet/anchorDiagnostics";
-import { isTauri } from "@/utils/tauri";
 import type { PetDisplayProfile } from "@/pages/pet/petDisplayProfile";
 import type { PetWebviewDisplayContext } from "@/pages/pet/petWebviewDisplayContext";
 import { isFiniteRect } from "@/pages/pet/petGeometry";
@@ -179,19 +177,6 @@ function toScreenPoint(
     { x: spine.x, y: spine.y },
     point,
     facing,
-  );
-}
-
-function reportSpritePosition(bounds: PixelRegion): void {
-  if (!isTauri()) return;
-  const dpr = window.devicePixelRatio || 1;
-  void invoke("update_sprite_pos", {
-    x: Math.round(bounds.x * dpr),
-    y: Math.round(bounds.y * dpr),
-    w: Math.round(bounds.w * dpr),
-    h: Math.round(bounds.h * dpr),
-  }).catch((error: unknown) =>
-    console.warn("[spine38] update_sprite_pos failed:", error),
   );
 }
 
@@ -499,7 +484,6 @@ export function Spine38AvatarSurface({
       visibleBounds: actionBarAnchor,
       actionBarAnchor: actionBarAnchor ?? nextBounds,
     });
-    reportSpritePosition(nextBounds);
   }, [
     applyDisplayProfile,
     entry.backend,

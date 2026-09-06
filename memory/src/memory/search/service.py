@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass, replace
 from datetime import UTC
 
+from ..host_episodes import is_notification_episode_source
+from ..host_episodes.presentation import project_notification_summary
 from .analyzer import QueryAnalyzer
 from .contracts import (
     AnalyzedQuery,
@@ -29,6 +31,22 @@ _RRF_K = 60
 _SCOPE_SCAN_LIMIT = 256
 
 logger = logging.getLogger(__name__)
+
+
+def _present_evidence(candidate: EvidenceCandidate) -> EvidenceCandidate:
+    """Localize host notification text after ranking, keeping source evidence intact."""
+    if candidate.kind != "episodic" or candidate.occurred_at is None:
+        return candidate
+    for source_ref in candidate.provenance:
+        text = project_notification_summary(
+            candidate.text,
+            episode_id=candidate.evidence_id,
+            source_ref=source_ref,
+            occurred_at=candidate.occurred_at,
+        )
+        if text != candidate.text:
+            return replace(candidate, text=text)
+    return candidate
 
 
 @dataclass(frozen=True)
@@ -165,7 +183,7 @@ class MemorySearchService:
         return SearchResult(
             request=request,
             query=query,
-            evidence=tuple(ranked),
+            evidence=tuple(_present_evidence(candidate) for candidate in ranked),
             failures=tuple(failures),
             source_runs=tuple(source_runs),
             decisions=tuple(decisions),
@@ -326,6 +344,18 @@ def _evaluate_scope(
             evidence_id=candidate.evidence_id,
             status="eligible",
             reason="core_profile_exempt",
+        )
+
+    if (
+        candidate.kind == "episodic"
+        and candidate.session_id is None
+        and len(candidate.provenance) == 1
+        and is_notification_episode_source(candidate.evidence_id, candidate.provenance[0])
+    ):
+        return RecallScopeDecision(
+            evidence_id=candidate.evidence_id,
+            status="eligible",
+            reason="host_notification_event",
         )
 
     scope = context.scope

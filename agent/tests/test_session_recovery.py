@@ -98,6 +98,38 @@ def test_reconciler_appends_interrupted_result_and_run_terminal(tmp_path: Path) 
     assert results[0].payload["executed"] == "unknown"
 
 
+def test_model_only_lost_owner_notifies_after_durable_terminal_once(tmp_path: Path) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    session = Session.new(title="model only", persona="default", model="fake")
+    store.create(session)
+    store.append_event(
+        session.session_id, _event("run_started", "started", {"run_id": "r"}, run_id="r")
+    )
+    reconciler = ToolTransactionReconciler(store, runtime_instance_id="new")
+    seen: list[str] = []
+
+    def observed(current: Session, terminal: Event) -> None:
+        assert any(item.uuid == terminal.uuid for item in store.load(current.session_id).events)
+        seen.append(str(terminal.payload["run_id"]))
+
+    reconciler.add_terminal_observer(observed)
+    assert reconciler.reconcile_session(session.session_id).appended_run_terminals == 1
+    assert reconciler.reconcile_session(session.session_id).appended_run_terminals == 0
+    assert seen == ["r"]
+
+
+def test_model_only_current_owner_is_not_declared_lost(tmp_path: Path) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    session = Session.new(title="model only", persona="default", model="fake")
+    store.create(session)
+    store.append_event(
+        session.session_id,
+        _event("run_started", "started", {"run_id": "r"}, run_id="r", owner="current"),
+    )
+    reconciler = ToolTransactionReconciler(store, runtime_instance_id="current")
+    assert reconciler.reconcile_session(session.session_id).appended_run_terminals == 0
+
+
 def test_reconciler_restores_persisted_partial_command_output_without_reexecution(
     tmp_path: Path,
 ) -> None:

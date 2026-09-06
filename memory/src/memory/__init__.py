@@ -57,6 +57,14 @@ from .extraction import (
 )
 from .facade import Memory
 from .factory import build_memory
+from .host_episodes import (
+    HostEpisode,
+    HostEpisodeConflict,
+    HostEpisodeWriteResult,
+    is_notification_episode_id,
+    notification_episode_id,
+    notification_source_ref,
+)
 from .retrieval import (
     Candidate,
     KeywordRetrieval,
@@ -126,6 +134,9 @@ __all__ = [
     "Extractor",
     "GateDecision",
     "GateMode",
+    "HostEpisode",
+    "HostEpisodeConflict",
+    "HostEpisodeWriteResult",
     "KeywordRetrieval",
     "Layer",
     "Memory",
@@ -161,4 +172,7 @@ __all__ = [
     "Utterance",
     "VectorIndex",
     "build_memory",
+    "is_notification_episode_id",
+    "notification_episode_id",
+    "notification_source_ref",
 ]

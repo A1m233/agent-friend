@@ -26,9 +26,15 @@ from .contracts import (
 )
 from .core_profile import CoreProfileError, CoreProfileRenderer
 from .extraction import AsyncExtractionWorker
+from .host_episodes import (
+    HostEpisode,
+    HostEpisodeWriteResult,
+    notification_episode_id,
+    notification_source_ref,
+)
 from .retrieval import Renderer, ScoreWeights, rank
 from .search import CurrentSessionRecallScope, MemorySearchService, SearchRequest
-from .store import SemanticRow
+from .store import EpisodicRow, SemanticRow
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +120,28 @@ class Memory:
         return self._store
 
     # ----- 写路径 -----
+
+    def record_host_episode(self, episode: HostEpisode) -> HostEpisodeWriteResult:
+        """Project a confirmed host receipt without invoking extraction.
+
+        The caller owns receipt durability and must stop accepting receipts before
+        closing Memory. A retry preserves the first committed or deleted fact.
+        """
+        result = self._store.insert_episodic_once(
+            EpisodicRow(
+                id=notification_episode_id(episode.notification_id),
+                source_ref=notification_source_ref(episode.notification_id),
+                owner_user_id=episode.owner_user_id,
+                persona_id=episode.persona_id,
+                occurred_at=episode.occurred_at,
+                created_at=datetime.now(UTC),
+                summary=episode.summary,
+            )
+        )
+        if result != "deleted" and self._index_manager is not None:
+            # A duplicate can be a retry after commit but before the wakeup.
+            self._index_manager.request_backfill()
+        return result
 
     def observe(self, fragment: ConversationFragment) -> None:
         """提交一段对话素材做异步抽取（非阻塞）。"""

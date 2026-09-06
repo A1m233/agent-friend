@@ -47,6 +47,7 @@ class ModelCallControl:
     """Non-provider control signals for one model request."""
 
     cancel_check: Callable[[], None] | None = None
+    allow_retries: bool = True
     diagnostic_callback: Callable[[LLMTransportDiagnostic], None] | None = None
     previous_request_witness: ProviderRequestWitness | None = None
     continuation_disposition: str = "baseline"

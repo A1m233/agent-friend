@@ -15,6 +15,18 @@ const initial: WorkspaceNavigationSnapshot = {
 };
 
 describe("workspace navigation projection", () => {
+  it("keeps a notification target separate from new-conversation navigation", () => {
+    const requested = applyWorkspaceNavigationEnvelope(initial, {
+      requestId: 3, target: "chat", chat: { newConversation: false, sessionId: "notified-session" },
+    });
+    expect(requested.chatNavigation?.chat?.sessionId).toBe("notified-session");
+    expect(applyWorkspaceNavigationEnvelope(requested, {
+      requestId: 2, target: "chat", chat: { newConversation: true },
+    })).toBe(requested);
+    expect(applyWorkspaceNavigationEnvelope(requested, {
+      requestId: 4, target: "chat",
+    }).chatNavigation).toBe(requested.chatNavigation);
+  });
   it("records a locally visited surface without changing request ordering", () => {
     const next = navigateWorkspaceSnapshot(initial, "im-connect");
 

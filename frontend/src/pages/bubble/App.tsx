@@ -1,33 +1,24 @@
 import { useEffect } from "react";
 import { PetBubble } from "@/components/pet/PetBubble";
-import { startPetBubbleSubscriber, attachBubbleWindowSync } from "@/stores/petBubble";
+import { startPetBubbleSubscriber } from "@/stores/petBubble";
+import { startNotificationSubscriber } from "@/stores/notifications";
 
 /**
  * 016 · 桌宠气泡独立窗（label="bubble"）入口。
  *
- * 承载层：015 的 PetBubble 组件 + petBubble store + push subscriber 全部搬到这个
- * 独立 webview。pet 主窗回 240×320 只承载形象（见 pet/App.tsx）；bubble window 由
- * Rust 侧 `bubble_window.rs` 控制显隐 / size / 位置（16ms tick + outer_position 跟随）。
- *
- * 本组件职责（M16.6）：
- * - `startPetBubbleSubscriber()` —— tauri event `agent://push` → `store.ingest`
- *   （015 已有逻辑，搬位置不改实现）
- * - `attachBubbleWindowSync()` —— phase 变化 → invoke `show_bubble` / `hide_bubble`，
- *   让 Rust 侧 bubble window 显隐与 store 状态严格同步
- * - 渲染 `<PetBubble />` —— 070 起由 Sonner 承载多条短气泡并动态上报整个栈的尺寸
- *
- * 透明背景：bubble webview 整窗 transparent，CSS root 也透明 —— 让 bubble 实心区
- * 由 Sonner 的项目适配层使用语义 token 上色，toast 栈之外保持透明。
+ * 本入口保留通知账本与 legacy push 订阅。PetBubble 的呈现 owner 统一处理
+ * 动画、尺寸和原生窗口显隐；退出节点完成动画前，不按 store 条数提前隐藏窗口。
+ * 提醒卡片使用项目主题 token，窗口剩余区域保持透明。
  */
 export function BubbleApp() {
   useEffect(() => {
-    const unsubSync = attachBubbleWindowSync();
+    const stopNotifications = startNotificationSubscriber();
     let unlistenPush: (() => void) | null = null;
     void startPetBubbleSubscriber().then((u) => {
       unlistenPush = u;
     });
     return () => {
-      unsubSync();
+      stopNotifications();
       unlistenPush?.();
     };
   }, []);

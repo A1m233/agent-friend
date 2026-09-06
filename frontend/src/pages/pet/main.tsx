@@ -9,13 +9,15 @@ import { startVoiceStateSubscriber } from "@/stores/voice";
 import { PetApp } from "./App";
 
 installProductContextMenuPolicy();
-registerSettingsListener();
+const settingsReady = registerSettingsListener();
 startVoiceStateSubscriber();
 
 void initializePermissionSync();
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <PetApp />
-  </StrictMode>,
-);
+void settingsReady.then(() => {
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <PetApp />
+    </StrictMode>,
+  );
+});

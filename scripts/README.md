@@ -16,6 +16,20 @@
 
 本目录包含项目所有"非写代码"操作的脚本。**开发者只应该接触：写代码 + 跑这里的脚本**，不需要记忆任何具体的 `uv run python -m ...` 命令。
 
+| 验收入口 | 用途 | mac / linux | windows |
+| --- | --- | --- | --- |
+| `notification-visual/` | 经授权连接已有 Tauri WebView2/CDP，检查通知几何、点击 ActionBar 调试按钮、拖动与截图；不启动/关闭桌面主程序、不调用 LLM。显式 `restart-bridge` 可经既有supervisor重载Python。Windows 额外同步系统光标以匹配桌宠穿透；其它平台只使用 CDP 输入，未提供原生光标适配。 | `./scripts/notification-visual/run.sh inspect\|hover\|action short\|action long\|action stack\|action clear\|drag X Y\|restart-bridge` | `.\scripts\notification-visual\run.ps1 inspect\|hover\|action short\|action long\|action stack\|action clear\|drag X Y\|restart-bridge` |
+
+`notification-visual` 先用 `dev/run.* status` 核对当前 worktree、源码新鲜度与 CDP 9222 运行态。`settings inspect/off/on` 进入“设置 → 通知”操作真实声音开关；`reload-pet`、`reload-bubble`、`reload-chat` 刷新指定 WebView；`expand ID`、`close ID` 通过真实按钮检查展开/关闭；`tooltip '按钮名称'` 悬停并记录朝向、边界及桌宠 WebView 截图，不点击该按钮。使用 `--help` 查看完整命令。报告和气泡截图默认位于系统临时目录的 `agent-friend-notification-visual-117/`，可用 `--output=<私有目录>` 指定；可能包含用户通知正文，不应提交。ActionBar 的四个调试按钮仅在 dev 提供，固定文案不调用模型、不写记忆，清空仅作用于调试来源。
+
+`notification-visual/run.* trace-close ID` 通过同一真实点击入口关闭明确 ID，记录点击前及点击后约 1.5 秒的逐帧通知顺序、退出状态、局部/桌面物理几何、CSS transform、滚动视口和 native layout/move/resize 事件；窗口查询仅在起止点及最多 4 个合并事件点执行。摘要列出存续通知最大单帧位移、最终位移及新通知补位时间，兼容 Sonner 与受控气泡列表。此命令的 JSON 不含通知正文，最终气泡截图仍可能包含正文，保持私有。
+
+可加 `--repeat=2..4`，首次点击后每隔约 35ms 用 Enter 关闭已转移焦点的下一条消息；`--duration=500..5000` 调整点击后的观察毫秒数。探针保留原始几何；DOM 与缓存原生尺寸不一致的帧标记 uncertain，不参与最大相邻位移，也不跨不确定区间拼接帧。滚动条宽度不当作原生窗口缩放。通知 HTTP 元数据仅记录路径、方法、状态和时间，不读取正文、请求头或凭据；用于区分队列准备等待与动画耗时。
+
+`wheel DELTA_Y [DELTA_X] [--count=1..10]` 在 ActionBar 内发送真实滚轮事件，`away` 移出桌宠供验证 hover 卸载，随后 `hover` 或 `reload-pet` 检查分页恢复。报告包含 DOM 当前页与原生设置的 `petActionBarPage`；这些操作不生成通知或调用模型。
+
+Python通知代码调整后可显式执行 `restart-bridge`，复用前端的 `restartLocalService` 和原生supervisor进行受控重启，遵守既有活跃任务阻止条件，不绕过检查或直接杀进程。该命令只返回重启时间，不采集截图或生成调试通知；桌面主程序和voice保持运行。执行前仍须核对当前runtime归属并具有重启授权。
+
 ## 新开发者起步（一键上手）
 
 | 步骤 | mac / linux | windows |
@@ -63,6 +77,7 @@
 | `prompt-cache-report/` | 从现有 `agent_bridge.log*` 或显式日志文件聚合版本化 prompt-cache observation，输出 JSON / Markdown 的 token 加权比例、请求比例、read/write/other、coverage、时延、关键分段，以及按最早断点域互斥归因的跨用户回合 lost-prefix token 机会排序；只读，不调用 LLM | `./scripts/prompt-cache-report/run.sh [--input PATH] [--format json\|markdown] [--output PATH]` | `.\scripts\prompt-cache-report\run.ps1 [--input PATH] [--format json\|markdown] [--output PATH]` |
 | `test/` | 跑 pytest（参数透传；可选 HTTPX 离线护栏见页首） | `./scripts/test/run.sh` | `.\scripts\test\run.ps1` |
 | `responses-smoke/` | 114 原生 Responses 公共接口合成工具闭环，默认拒绝真实请求；每 Provider 最多 2 次，不自动重试，只写脱敏证据 | `./scripts/responses-smoke/run.sh --allow-llm --provider both --output <new.json>` | `.\scripts\responses-smoke\run.ps1 --allow-llm --provider both --output <new.json>` |
+| `notification-smoke/` | 117 通知生成的三次有界真实 smoke：默认模型最低档、本地 persona 与只读复制的真实记忆快照；不写生产记忆、会话或通知、不发送 IM；`--prepare-only` 零调用预检，实际执行需授权及 `--allow-llm`。`--output` 必须为 Git checkout 外的新绝对路径；旁边 `<报告名>.inputs/` 保存最终 ModelRequest 与不含 headers/凭据值的 wire JSON，仍含私有人格/记忆，禁止提交或复制进文档；拒绝覆盖 | `./scripts/notification-smoke/run.sh --allow-llm --output <new.json>` | `.\scripts\notification-smoke\run.ps1 --allow-llm --output <new.json>` |
 | `assistant-phase-smoke/` | 115 Vision → Agent → 产品事件/rollout 阶段闭环；需单次授权，最多一次合成图片上传、两次生成（各 1024 输出 token），拒绝重试；隔离数据且不覆盖证据 | `./scripts/assistant-phase-smoke/run.sh --allow-llm --output <new.json>` | `.\scripts\assistant-phase-smoke\run.ps1 --allow-llm --output <new.json>` |
 | `assistant-phase-desktop/` | 115 已授权桌面验收用合成夹具：seed 只新建可识别会话；probe 连接真实 WebView2 CDP 检查折叠/历史用时、入口文字对齐/字号/细线/hover，以及发送排队→实际开始的计时头显隐、运行/中性停止/完成摘要、尾部活动时序/几何/终态去重，不调用模型，不覆盖报告。实时状态为 UI-only 合成注入，执行前核对 dev 实例；夹具不是模型 E2E，CDP 路径只适用于支持该端点的平台 | `./scripts/assistant-phase-desktop/run.sh seed --fixture <new.json>`；`probe --fixture <json> --output-dir <new-dir>` | `.\scripts\assistant-phase-desktop\run.ps1 seed --fixture <new.json>`；`probe --fixture <json> --output-dir <new-dir>` |
 | `memory-eval/` | 可恢复的 memory 召回评测：首次 ingest 触发真实 LLM（需授权），逐 fragment 记录抽取状态 / 原始响应并持久化 case DB / checkpoint；`--replay` 在同一抽取产物上对照结构化或生产 unified 检索，0 次 LLM；`--stability-probe` 可重复固定小样本并断点续跑；hybrid 未 ready 时 fail-closed | `./scripts/memory-eval/run.sh --retrieval-mode keyword\|hybrid\|legacy-keyword\|unified-keyword\|unified-hybrid [--workspace DIR] [--resume\|--replay]` 或 `./scripts/memory-eval/run.sh --stability-probe --stability-fragments 30 --stability-repeats 3 [...]` | `.\scripts\memory-eval\run.ps1 [...]` |

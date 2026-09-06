@@ -35,6 +35,7 @@ EnvelopeKind = Literal[
     "run_event",
     "session_changed",
     "run_changed",
+    "notification_changed",
     "filesystem_approval_changed",
     "approval_changed",
     "command_process_changed",
@@ -77,6 +78,7 @@ class PushEnvelope:
     sandbox_capability: dict[str, Any] | None = None
     runtime_instance_id: str | None = None
     run_event_seq: int | None = None
+    notification: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -168,6 +170,11 @@ class ListenerRegistry:
         self._journal_max_bytes = journal_max_bytes
         self._run_journals: dict[str, _RunJournal] = {}
         self._lock = threading.Lock()
+        self._managed_ambient = False
+
+    def manage_ambient_notifications(self) -> None:
+        """The host notification manager owns ambient presentation from now on."""
+        self._managed_ambient = True
 
     def run_event_journal(
         self,
@@ -366,6 +373,12 @@ class ListenerRegistry:
                     continue
                 key = (sub.id, agent_event.session_id, run_id)
                 events = self._turn_buffers.pop(key, [])
+                if (
+                    self._managed_ambient
+                    and isinstance(agent_event, SystemTriggerEvent)
+                    and agent_event.presentation == "ambient"
+                ):
+                    continue
                 self._seq[sub.id] += 1
                 self._safe_push(
                     sub,
@@ -457,6 +470,25 @@ class ListenerRegistry:
                         events=[],
                         run=snapshot,
                         runtime_instance_id=snapshot.runtime_instance_id,
+                    ),
+                )
+
+    def publish_notification_change(self, notification: dict[str, Any]) -> None:
+        """Publish a durable notification revision, never an Agent turn."""
+        with self._lock:
+            for sub in list(self._subs.values()):
+                if "notification_changed" not in sub.accept_kinds:
+                    continue
+                self._seq[sub.id] += 1
+                self._safe_push(
+                    sub,
+                    PushEnvelope(
+                        kind="notification_changed",
+                        session_id=notification.get("sessionId") or "",
+                        seq=self._seq[sub.id],
+                        source_kind=None,
+                        events=[],
+                        notification=notification,
                     ),
                 )
 

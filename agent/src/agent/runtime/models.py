@@ -151,6 +151,9 @@ class RunSnapshot:
     finished_at: datetime | None
     version: int
     runtime_instance_id: str = ""
+    source_kind: str | None = None
+    presentation: str | None = None
+    output_visibility: str | None = None
     turn_status: TurnStatus | None = None
     total_tool_calls: int = 0
     tool_call_items: int = 0
@@ -364,6 +367,9 @@ class RunHandle:
             finished_at=terminal.finished_at if terminal is not None else None,
             version=self._version,
             runtime_instance_id=self.request.runtime_instance_id,
+            source_kind=getattr(self.request.event, "source_kind", None),
+            presentation=getattr(self.request.event, "presentation", "conversation"),
+            output_visibility=getattr(self.request.event, "output_visibility", "user"),
             turn_status=terminal.turn_status if terminal is not None else None,
             total_tool_calls=terminal.total_tool_calls if terminal is not None else 0,
             tool_call_items=terminal.tool_call_items if terminal is not None else 0,

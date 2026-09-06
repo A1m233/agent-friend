@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -12,8 +12,10 @@ from agent_bridge.assembly import BridgeRuntime
 from agent_bridge.dev.recall_buffer import RecallBuffer
 from agent_bridge.settings import BridgeSettings
 from fastapi.testclient import TestClient
+from memory.contracts import RecallTrace, RecallTraceItem
 from memory.core_profile import normalize_core_value
 from memory.facade import Memory
+from memory.host_episodes import presentation
 
 from agent import (
     JsonlSessionStore,
@@ -292,6 +294,72 @@ class TestEpisodicRoutes:
         data = resp.json()
         assert {r["id"] for r in data} == {"e1", "e2"}
 
+    @pytest.mark.parametrize("route", ["episodic", "search"])
+    def test_notification_summary_projects_local_time_without_changing_evidence(
+        self,
+        client: TestClient,
+        runtime: BridgeRuntime,
+        monkeypatch: pytest.MonkeyPatch,
+        route: str,
+    ) -> None:
+        occurred_at = datetime(2026, 9, 6, 9, 9, 26, 5000, tzinfo=UTC)
+        local_zone = timezone(timedelta(hours=8))
+        monkeypatch.setattr(
+            presentation,
+            "format_notification_time",
+            lambda value: value.astimezone(local_zone).strftime("%Y-%m-%d %H:%M:%S") + " +08:00",
+        )
+        original_prefix = "2026-09-06T09:09:26.005000+00:00"
+        quoted_suffix = (
+            "，我通过桌宠气泡就「clockproof」发出提醒，实际显示："
+            '"17:10 提醒喝水，原文还包含 2026-09-06T09:10:00+00:00。"。'
+        )
+        original_summary = original_prefix + quoted_suffix
+        notification = EpisodicRow(
+            id="notification-presented:clockproof",
+            summary=original_summary,
+            source_ref="notification:clockproof",
+            persona_id="p1",
+            occurred_at=occurred_at,
+            created_at=occurred_at,
+        )
+        ordinary = EpisodicRow(
+            id="ordinary-clockproof",
+            summary=original_summary,
+            source_ref="session-clockproof#event",
+            persona_id="p1",
+            occurred_at=occurred_at,
+            created_at=occurred_at,
+        )
+        assert runtime.memory is not None
+        runtime.memory.store.add_episodic(notification)
+        runtime.memory.store.add_episodic(ordinary)
+
+        if route == "search":
+            response = client.get(
+                "/v1/memory/search",
+                params={"q": "clockproof", "layer": "episodic", "persona_id": "p1"},
+            )
+            assert response.status_code == 200
+            rows = [match["row"] for match in response.json()["episodic"]]
+        else:
+            response = client.get("/v1/memory/episodic", params={"persona_id": "p1"})
+            assert response.status_code == 200
+            rows = response.json()
+        by_id = {row["id"]: row for row in rows}
+        shown = by_id[notification.id]
+        assert shown["summary"] == "2026-09-06 17:09:26 +08:00" + quoted_suffix
+        assert shown["occurred_at"] == "2026-09-06T09:09:26.005000Z"
+        assert shown["created_at"] == "2026-09-06T09:09:26.005000Z"
+        assert shown["source_ref"] == notification.source_ref
+        assert by_id[ordinary.id]["summary"] == original_summary
+        stored = {
+            row.id: row
+            for row in runtime.memory.store.list_episodic(owner_user_id="local", persona_id="p1")
+        }
+        assert stored[notification.id] == notification
+        assert stored[ordinary.id] == ordinary
+
 
 class TestRecallProbe:
     def test_recall_probe_records_trace(self, client: TestClient) -> None:
@@ -309,3 +377,44 @@ class TestRecallProbe:
         resp2 = client.get("/v1/memory/recalls")
         assert resp2.status_code == 200
         assert resp2.json()[0]["source"] == "probe"
+
+    def test_historical_notification_recall_trace_keeps_original_text(
+        self, client: TestClient, runtime: BridgeRuntime
+    ) -> None:
+        occurred_at = datetime(2026, 9, 6, 9, 9, 26, 5000, tzinfo=UTC)
+        original_summary = (
+            "2026-09-06T09:09:26.005000+00:00，我通过桌宠气泡就「clockproof」发出提醒，"
+            '实际显示："17:10 提醒喝水。"。'
+        )
+        trace = RecallTrace(
+            timestamp=occurred_at,
+            query="clockproof",
+            owner_user_id="local",
+            persona_id="p1",
+            top_k=8,
+            source="natural",
+            pinned_pre_gate=0,
+            pinned_post_gate=0,
+            gate_enabled=False,
+            gate_mode=None,
+            gate_decision="disabled",
+            candidates_count=1,
+            ranked_count=1,
+            items=[
+                RecallTraceItem(
+                    text=original_summary,
+                    layer="episodic",
+                    source_ref="episodic:notification-presented:clockproof",
+                    score=1.0,
+                )
+            ],
+        )
+        assert runtime.recall_buffer is not None
+        runtime.recall_buffer.record(trace)
+
+        response = client.get("/v1/memory/recalls")
+
+        assert response.status_code == 200
+        assert response.json()[0]["timestamp"] == "2026-09-06T09:09:26.005000Z"
+        assert response.json()[0]["items"][0]["text"] == original_summary
+        assert runtime.recall_buffer.snapshot()[0] == trace
