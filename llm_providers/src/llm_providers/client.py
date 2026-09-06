@@ -351,7 +351,11 @@ class LLMClient:
         """Execute one provider-neutral non-streaming model request."""
 
         started = time.perf_counter()
-        max_retries = max(self._network_retries, self._engine_overload_retries)
+        max_retries = (
+            max(self._network_retries, self._engine_overload_retries)
+            if request.control.allow_retries
+            else 0
+        )
         try:
             for attempt in range(max_retries + 1):
                 try:
@@ -371,7 +375,7 @@ class LLMClient:
                         started=started,
                     )
                 except (LLMNetworkError, LLMTransientProviderError) as exc:
-                    retry_limit = self._retry_limit(exc)
+                    retry_limit = self._retry_limit(exc) if request.control.allow_retries else 0
                     if attempt >= retry_limit:
                         raise
                     delay = self._retry_delay(exc, attempt)
@@ -528,6 +532,7 @@ class LLMClient:
             cancel_check=cancel_check,
             previous_request_witness=previous_request_witness,
             transcript_item_domains=transcript_item_domains,
+            allow_retries=control.allow_retries,
             **overrides,
         )
         return self._observe_stream(
@@ -613,10 +618,13 @@ class LLMClient:
         cancel_check: Callable[[], None] | None = None,
         previous_request_witness: ProviderRequestWitness | None = None,
         transcript_item_domains: tuple[str, ...] | None = None,
+        allow_retries: bool = True,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
         """仅在上游尚未产出任何事件时重试临时故障，避免重复文本或工具调用。"""
-        max_retries = max(self._network_retries, self._engine_overload_retries)
+        max_retries = (
+            max(self._network_retries, self._engine_overload_retries) if allow_retries else 0
+        )
         relation_witness = previous_request_witness
         for attempt in range(max_retries + 1):
             emitted = False
@@ -654,7 +662,7 @@ class LLMClient:
                     yield event
                 return
             except (LLMNetworkError, LLMTransientProviderError) as exc:
-                retry_limit = self._retry_limit(exc)
+                retry_limit = self._retry_limit(exc) if allow_retries else 0
                 if emitted:
                     raise LLMStreamInterruptedAfterOutputError(
                         "provider stream failed after visible output"

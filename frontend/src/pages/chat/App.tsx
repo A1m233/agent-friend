@@ -34,6 +34,7 @@ import {
   useWorkspaceNavigationStore,
 } from "@/lib/workspace/navigation";
 import { ChatContentSurface } from "./components/ChatContentSurface";
+import { toast } from "sonner";
 
 const SettingsApp = lazy(() =>
   import("@/pages/settings/App").then((module) => ({ default: module.SettingsApp })),
@@ -57,6 +58,7 @@ export function ChatApp() {
   const ping = useConnectionStore((s) => s.ping);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
   const newSession = useConversationStore((s) => s.newSession);
+  const openSession = useConversationStore((s) => s.openSession);
   const resolveNewConversationDraftRuntimeConfig = useConversationStore(
     (s) => s.resolveNewConversationDraftRuntimeConfig,
   );
@@ -108,9 +110,18 @@ export function ChatApp() {
   useEffect(() => startWorkspaceNavigationSync(), []);
 
   useEffect(() => {
-    if (!chatNavigation?.chat?.newConversation) return;
-    startNewConversation();
-  }, [chatNavigation, startNewConversation]);
+    const request = chatNavigation?.chat;
+    if (request?.newConversation) {
+      startNewConversation();
+    } else if (request?.sessionId) {
+      blockAutoRestore();
+      void openSession(request.sessionId, { failureMode: "previous" }).then((opened) => {
+        if (!opened && useWorkspaceNavigationStore.getState().chatNavigation === chatNavigation) {
+          toast.error("暂时无法打开这条提醒对应的会话，请稍后再试。");
+        }
+      });
+    }
+  }, [chatNavigation, startNewConversation, blockAutoRestore, openSession]);
 
   useEffect(() => {
     void invoke<{ memoryInspector: boolean }>("get_local_capabilities")

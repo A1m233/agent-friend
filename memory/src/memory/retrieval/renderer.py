@@ -6,7 +6,7 @@ pinned 在前作"身份底色"，召回片段在后并带时间感（连续感�
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 from ..contracts import MemoryContext, MemoryItem
@@ -137,21 +137,26 @@ def _evidence_time_hint(candidate: EvidenceCandidate, now: datetime) -> str:
     occurred_at = candidate.occurred_at or candidate.valid_from
     if occurred_at is None:
         return ""
-    age_days = max(0, (now - occurred_at).days)
+    local_date = _local_date(occurred_at)
+    age_days = max(0, (_local_date(now) - local_date).days)
     if age_days == 0:
         relative = "今天"
     elif age_days == 1:
         relative = "昨天"
     else:
         relative = f"{age_days} 天前"
-    return f"（{occurred_at.date().isoformat()}，{relative}）"
+    return f"（{local_date.isoformat()}，{relative}）"
+
+
+def _local_date(value: datetime) -> date:
+    return value.astimezone().date()
 
 
 def _time_hint(cand: Candidate, now: datetime) -> str:
     """给 episodic 片段加时间感后缀（连续感）；semantic 不加。"""
     if cand.layer != "episodic":
         return ""
-    age_days = (now - cand.ts).days
+    age_days = (_local_date(now) - _local_date(cand.ts)).days
     if age_days <= 0:
         return "（最近）"
     if age_days == 1:

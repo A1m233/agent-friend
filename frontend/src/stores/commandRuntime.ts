@@ -17,6 +17,10 @@ import {
   type SnapshotFenceState,
 } from "./snapshotFence";
 
+type CommandApprovalResult =
+  | { status: "applied" | "ignored" }
+  | { status: "failed" | "stale"; message: string };
+
 interface CommandRuntimeState {
   approvals: Record<string, CommandApprovalRequest>;
   processes: Record<string, CommandProcessSnapshot>;
@@ -29,7 +33,7 @@ interface CommandRuntimeState {
   refresh: () => Promise<void>;
   handlePush: (envelope: PushEnvelope) => void;
   finishRun: (runId: string) => void;
-  decide: (requestId: string, allow: boolean) => Promise<void>;
+  decide: (requestId: string, allow: boolean) => Promise<CommandApprovalResult>;
   cancel: (processId: string) => Promise<void>;
   setupWindowsSandbox: () => Promise<CommandRuntimeStatus | null>;
   markDisconnected: () => void;
@@ -236,10 +240,62 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
   },
   async decide(requestId, allow) {
     const request = get().approvals[requestId];
-    if (!request || request.status !== "pending" || get().submitting.has(requestId)) return;
-    set((state) => ({ submitting: new Set(state.submitting).add(requestId) }));
+    if (!request || request.status !== "pending" || get().submitting.has(requestId)) {
+      return { status: "ignored" };
+    }
+    set((state) => ({
+      submitting: new Set(state.submitting).add(requestId),
+      approvalFence: touchSnapshotKey(state.approvalFence, requestId),
+    }));
+    const decidedStatus = allow ? "approved" : "denied";
     try {
-      await commandRuntimeApi.decide(request, allow);
+      const decided = await commandRuntimeApi.decide(request, allow);
+      if (
+        !validApproval(decided)
+        || decided.request_id !== requestId
+        || decided.session_id !== request.session_id
+        || decided.run_id !== request.run_id
+        || decided.version <= request.version
+        || decided.status !== decidedStatus
+      ) {
+        throw new Error("授权已提交，但返回的状态无法确认。请查看当前任务状态。");
+      }
+      set((state) => {
+        const current = state.approvals[requestId];
+        // A cleared store or a newer push must not be replaced by a late HTTP response.
+        if (!current || current.version >= decided.version) return {};
+        return {
+          approvals: { ...state.approvals, [requestId]: decided },
+          approvalFence: touchSnapshotKey(state.approvalFence, requestId),
+        };
+      });
+      return { status: "applied" };
+    } catch (error) {
+      const stale = typeof error === "object" && error !== null
+        && "code" in error && error.code === "approval_request_stale";
+      if (stale) {
+        set((state) => {
+          const current = state.approvals[requestId];
+          if (!current || current.version > request.version || current.status !== "pending") return {};
+          // Match the existing missing-from-authority reconciliation. Keep the version
+          // so a later authoritative terminal push can still replace this local state.
+          return {
+            approvals: { ...state.approvals, [requestId]: { ...current, status: "cancelled" } },
+            approvalFence: touchSnapshotKey(state.approvalFence, requestId),
+          };
+        });
+      }
+      // A failed response can still have reached the server. Reconcile before
+      // enabling a retry, without automatically submitting the decision again.
+      await get().refresh().catch(() => undefined);
+      const current = get().approvals[requestId];
+      if (current && current.version > request.version && current.status === decidedStatus) {
+        return { status: "applied" };
+      }
+      if (stale || (current && current.status !== "pending")) {
+        return { status: "stale", message: "这项授权已处理或已失效，请查看当前任务状态。" };
+      }
+      return { status: "failed", message: friendlyErrorMessage(error) };
     } finally {
       set((state) => {
         const next = new Set(state.submitting);

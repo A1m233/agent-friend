@@ -469,6 +469,15 @@ def default_model_runtime_config(model_id: str) -> ModelRuntimeConfig:
     return ModelRuntimeConfig(model_id=model_id, reasoning_preset=reasoning.default_preset)
 
 
+def minimum_model_runtime_config(model_id: str) -> ModelRuntimeConfig:
+    """Select the least expensive supported reasoning preset from this catalog."""
+    reasoning = model_reasoning(model_id)
+    for preset in ("off", "none", "minimal", "low", "medium", "high", "xhigh", "max", "on"):
+        if reasoning.preset(preset) is not None:
+            return ModelRuntimeConfig(model_id, preset)
+    raise ValueError(f"Model {model_id!r} has no supported minimum reasoning preset")
+
+
 def validate_model_runtime_config(config: ModelRuntimeConfig) -> ModelRuntimeConfig:
     reasoning = model_reasoning(config.model_id)
     if reasoning.preset(config.reasoning_preset) is None:

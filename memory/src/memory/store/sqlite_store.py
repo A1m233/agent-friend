@@ -38,6 +38,7 @@ from ..core_profile import (
     normalize_core_value,
     validate_core_value,
 )
+from ..host_episodes import HostEpisodeConflict, HostEpisodeWriteResult
 from .schema import (
     DDL_STATEMENTS,
     SCHEMA_VERSION,
@@ -195,30 +196,7 @@ class ExtractionTransaction:
         )
 
     def add_episodic(self, row: EpisodicRow) -> None:
-        tokens = _tokenize(row.summary)
-        cur = self._conn.execute(
-            """INSERT INTO episodic
-                   (id, summary, summary_tokens, source_ref, importance, participants,
-                    occurred_at, deleted_at, owner_user_id, persona_id, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                row.id,
-                row.summary,
-                tokens,
-                row.source_ref,
-                row.importance,
-                json.dumps(row.participants, ensure_ascii=False),
-                serialize_ts(row.occurred_at),
-                serialize_ts(row.deleted_at),
-                row.owner_user_id,
-                row.persona_id,
-                serialize_ts(row.created_at),
-            ),
-        )
-        self._conn.execute(
-            "INSERT INTO episodic_fts(rowid, summary_tokens) VALUES (?, ?)",
-            (cur.lastrowid, tokens),
-        )
+        _insert_episodic(self._conn, row, _tokenize(row.summary))
 
 
 class SqliteMemoryStore:
@@ -532,35 +510,42 @@ class SqliteMemoryStore:
         tokens = _tokenize(row.summary)
         try:
             with self._lock:
-                cur = self._conn.execute(
-                    """
-                    INSERT INTO episodic
-                        (id, summary, summary_tokens, source_ref, importance, participants,
-                         occurred_at, deleted_at, owner_user_id, persona_id, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        row.id,
-                        row.summary,
-                        tokens,
-                        row.source_ref,
-                        row.importance,
-                        json.dumps(row.participants, ensure_ascii=False),
-                        serialize_ts(row.occurred_at),
-                        serialize_ts(row.deleted_at),
-                        row.owner_user_id,
-                        row.persona_id,
-                        serialize_ts(row.created_at),
-                    ),
-                )
-                self._conn.execute(
-                    "INSERT INTO episodic_fts(rowid, summary_tokens) VALUES (?, ?)",
-                    (cur.lastrowid, tokens),
-                )
+                _insert_episodic(self._conn, row, tokens)
                 self._conn.commit()
         except sqlite3.Error:
             logger.exception("add_episodic failed id=%s owner=%s", row.id, row.owner_user_id)
             raise
+
+    def insert_episodic_once(self, row: EpisodicRow) -> HostEpisodeWriteResult:
+        """Atomically insert a host fact and its FTS tokens without resurrecting it.
+
+        The write lock is acquired before reading identity so separate store
+        connections cannot both pass the duplicate check. ``created_at`` belongs
+        to the first successful projection and is excluded from retry comparison.
+        """
+        tokens = _tokenize(row.summary)
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                stored = self._conn.execute(
+                    "SELECT * FROM episodic WHERE id = ?", (row.id,)
+                ).fetchone()
+                result: HostEpisodeWriteResult
+                if stored is None:
+                    _insert_episodic(self._conn, row, tokens)
+                    result = "inserted"
+                elif stored["deleted_at"] is not None:
+                    result = "deleted"
+                elif _episodic_fact_data(_to_episodic(stored)) == _episodic_fact_data(row):
+                    result = "duplicate"
+                else:
+                    logger.error("host episode immutable input conflict id=%s", row.id)
+                    raise HostEpisodeConflict(f"host episode immutable input conflict: {row.id}")
+                self._conn.commit()
+                return result
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def soft_delete_by_source_events(
         self,
@@ -1192,6 +1177,45 @@ class SqliteMemoryStore:
         """关闭连接。"""
         with self._lock:
             self._conn.close()
+
+
+def _insert_episodic(conn: sqlite3.Connection, row: EpisodicRow, tokens: str) -> None:
+    """Insert primary data and FTS inside the caller's transaction."""
+    cur = conn.execute(
+        """INSERT INTO episodic
+               (id, summary, summary_tokens, source_ref, importance, participants,
+                occurred_at, deleted_at, owner_user_id, persona_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            row.id,
+            row.summary,
+            tokens,
+            row.source_ref,
+            row.importance,
+            json.dumps(row.participants, ensure_ascii=False),
+            serialize_ts(row.occurred_at),
+            serialize_ts(row.deleted_at),
+            row.owner_user_id,
+            row.persona_id,
+            serialize_ts(row.created_at),
+        ),
+    )
+    conn.execute(
+        "INSERT INTO episodic_fts(rowid, summary_tokens) VALUES (?, ?)",
+        (cur.lastrowid, tokens),
+    )
+
+
+def _episodic_fact_data(row: EpisodicRow) -> tuple[object, ...]:
+    return (
+        row.summary,
+        row.source_ref,
+        row.owner_user_id,
+        row.persona_id,
+        serialize_ts(row.occurred_at),
+        row.importance,
+        row.participants,
+    )
 
 
 def _source_ref_touches(source_ref: str, session_id: str, event_uuids: set[str]) -> bool:

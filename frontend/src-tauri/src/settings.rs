@@ -23,6 +23,16 @@ pub struct Settings {
     #[serde(default)]
     pub reminder_notification_mode: ReminderNotificationMode,
     #[serde(default)]
+    pub notification_completion_mode: NotificationCompletionMode,
+    #[serde(default = "default_notification_enabled")]
+    pub notification_needs_action_enabled: bool,
+    #[serde(default = "default_notification_enabled")]
+    pub notification_failure_enabled: bool,
+    #[serde(default = "default_notification_enabled")]
+    pub notification_sound_enabled: bool,
+    #[serde(default)]
+    pub notification_sound: NotificationSoundSource,
+    #[serde(default)]
     pub voice_tunnel_consent_accepted: bool,
     #[serde(default = "default_immersive_mode")]
     pub immersive_mode: bool,
@@ -36,6 +46,8 @@ pub struct Settings {
     pub avatar_model_id: String,
     #[serde(default)]
     pub pet_avatar_size: PetAvatarSize,
+    #[serde(default)]
+    pub pet_action_bar_page: u32,
     #[serde(default)]
     pub avatar_model_scale_percents: BTreeMap<String, u16>,
     #[serde(default = "default_pet_mini_scale_percent")]
@@ -55,6 +67,29 @@ pub enum ReminderNotificationMode {
     #[default]
     Smart,
     All,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum NotificationCompletionMode {
+    Never,
+    #[default]
+    WhenNotViewing,
+    Always,
+}
+
+/// Sound selection is independent from its enabled flag and notification policy.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum NotificationSoundSource {
+    // A struct variant makes Serde reject unknown payload fields as well as unknown kinds.
+    Default {},
+}
+
+impl Default for NotificationSoundSource {
+    fn default() -> Self {
+        Self::Default {}
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -154,6 +189,10 @@ fn default_immersive_mode() -> bool {
     true
 }
 
+fn default_notification_enabled() -> bool {
+    true
+}
+
 fn validate_percent(value: u16, min: u16, max: u16, key: &str) -> Result<u16, String> {
     if value < min || value > max {
         return Err(format!("invalid {key}: expected {min}..={max}"));
@@ -167,6 +206,11 @@ impl Default for Settings {
             theme: ThemeMode::Light,
             background_online_policy: BackgroundOnlinePolicy::FollowSystem,
             reminder_notification_mode: ReminderNotificationMode::Smart,
+            notification_completion_mode: NotificationCompletionMode::WhenNotViewing,
+            notification_needs_action_enabled: true,
+            notification_failure_enabled: true,
+            notification_sound_enabled: true,
+            notification_sound: NotificationSoundSource::default(),
             voice_tunnel_consent_accepted: false,
             immersive_mode: default_immersive_mode(),
             display_recovery_protection_enabled: false,
@@ -174,6 +218,7 @@ impl Default for Settings {
             memory_model: default_memory_model(),
             avatar_model_id: default_avatar_model_id(),
             pet_avatar_size: PetAvatarSize::Normal,
+            pet_action_bar_page: 0,
             avatar_model_scale_percents: BTreeMap::new(),
             pet_mini_scale_percent: default_pet_mini_scale_percent(),
         }
@@ -562,6 +607,45 @@ pub struct SetPayload {
     pub value: serde_json::Value,
 }
 
+fn update_notification_setting(
+    settings: &mut Settings,
+    key: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    let invalid = |error| format!("invalid {key}: {error}");
+    match key {
+        "notificationCompletionMode" => {
+            settings.notification_completion_mode =
+                serde_json::from_value(value).map_err(invalid)?;
+        }
+        "notificationNeedsActionEnabled" => {
+            settings.notification_needs_action_enabled =
+                serde_json::from_value(value).map_err(invalid)?;
+        }
+        "notificationFailureEnabled" => {
+            settings.notification_failure_enabled =
+                serde_json::from_value(value).map_err(invalid)?;
+        }
+        "notificationSoundEnabled" => {
+            settings.notification_sound_enabled = serde_json::from_value(value).map_err(invalid)?;
+        }
+        "notificationSound" => {
+            settings.notification_sound = serde_json::from_value(value).map_err(invalid)?;
+        }
+        _ => return Err(format!("unknown notification setting key: {key}")),
+    }
+    Ok(())
+}
+
+fn update_pet_action_bar_page(
+    settings: &mut Settings,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    settings.pet_action_bar_page = serde_json::from_value(value)
+        .map_err(|error| format!("invalid petActionBarPage: {error}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn set_setting(
     app: AppHandle,
@@ -590,6 +674,13 @@ pub fn set_setting(
             let mode: ReminderNotificationMode = serde_json::from_value(payload.value.clone())
                 .map_err(|e| format!("invalid reminderNotificationMode: {e}"))?;
             s.reminder_notification_mode = mode;
+        }
+        key @ ("notificationCompletionMode"
+        | "notificationNeedsActionEnabled"
+        | "notificationFailureEnabled"
+        | "notificationSoundEnabled"
+        | "notificationSound") => {
+            update_notification_setting(&mut s, key, payload.value.clone())?;
         }
         "voiceTunnelConsentAccepted" => {
             let accepted: bool = serde_json::from_value(payload.value.clone())
@@ -639,6 +730,9 @@ pub fn set_setting(
             let size: PetAvatarSize = serde_json::from_value(payload.value.clone())
                 .map_err(|e| format!("invalid petAvatarSize: {e}"))?;
             s.pet_avatar_size = size;
+        }
+        "petActionBarPage" => {
+            update_pet_action_bar_page(&mut s, payload.value.clone())?;
         }
         "avatarModelScalePercents" => {
             let scales: BTreeMap<String, u16> = serde_json::from_value(payload.value.clone())
@@ -732,6 +826,146 @@ mod tests {
     fn write_raw(path: &Path, raw: &str) {
         fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
         fs::write(path, raw).expect("write raw settings");
+    }
+
+    #[test]
+    fn action_bar_page_defaults_to_zero_for_existing_settings() {
+        assert_eq!(Settings::default().pet_action_bar_page, 0);
+        for raw in [r#"{"theme":"dark"}"#, r#"{"settings":{"theme":"dark"}}"#] {
+            let (settings, _) =
+                parse_settings(raw, Path::new("settings.json")).expect("legacy settings");
+            assert_eq!(settings.pet_action_bar_page, 0);
+            assert_eq!(settings.theme, ThemeMode::Dark);
+            assert_eq!(
+                serde_json::to_value(settings).unwrap()["petActionBarPage"],
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn action_bar_page_updates_round_trip_without_a_layout_specific_limit() {
+        let dir = temp_settings_dir("action-bar-page");
+        let path = dir.join("settings.json");
+        let mut settings = Settings::default();
+        for page in [0, 2, 100, u32::MAX] {
+            update_pet_action_bar_page(&mut settings, serde_json::json!(page))
+                .expect("update page");
+            assert_eq!(settings.pet_action_bar_page, page);
+            write_settings_file(&path, &settings).expect("save");
+            let restored = read_settings_file(&path).expect("read saved settings");
+            assert_eq!(restored, settings);
+            assert!(build_init_script(&restored).contains(&format!("\"petActionBarPage\":{page}")));
+        }
+        fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn invalid_action_bar_pages_are_rejected_without_changing_current_settings() {
+        let mut settings = Settings {
+            pet_action_bar_page: 2,
+            ..Settings::default()
+        };
+        let previous = settings.clone();
+        for value in [
+            serde_json::json!(-1),
+            serde_json::json!(1.5),
+            serde_json::json!(1.0),
+            serde_json::json!(u64::from(u32::MAX) + 1),
+            serde_json::json!("2"),
+            serde_json::json!(true),
+            serde_json::json!(null),
+            serde_json::json!([]),
+            serde_json::json!({}),
+        ] {
+            let error =
+                update_pet_action_bar_page(&mut settings, value.clone()).expect_err("invalid page");
+            assert!(error.starts_with("invalid petActionBarPage:"));
+            assert_eq!(settings, previous);
+            let raw = serde_json::json!({"settings":{"theme":"dark","petActionBarPage":value}})
+                .to_string();
+            assert!(parse_settings(&raw, Path::new("settings.json")).is_err());
+        }
+    }
+
+    #[test]
+    fn notification_defaults_are_compatible_with_existing_settings() {
+        let (settings, _) = parse_settings(
+            r#"{"settings":{"theme":"dark"}}"#,
+            Path::new("settings.json"),
+        )
+        .expect("legacy settings parse");
+        assert_eq!(
+            settings.notification_completion_mode,
+            NotificationCompletionMode::WhenNotViewing
+        );
+        assert!(settings.notification_needs_action_enabled);
+        assert!(settings.notification_failure_enabled);
+        assert!(settings.notification_sound_enabled);
+        assert_eq!(
+            settings.notification_sound,
+            NotificationSoundSource::default()
+        );
+        let value = serde_json::to_value(settings).expect("serialize");
+        assert_eq!(value["notificationCompletionMode"], "whenNotViewing");
+        assert_eq!(
+            value["notificationSound"],
+            serde_json::json!({"kind":"default"})
+        );
+    }
+
+    #[test]
+    fn notification_setting_updates_persist_in_canonical_snapshot() {
+        let dir = temp_settings_dir("notification-settings");
+        let path = dir.join("settings.json");
+        let mut settings = Settings::default();
+        for (key, value) in [
+            ("notificationCompletionMode", serde_json::json!("always")),
+            ("notificationNeedsActionEnabled", serde_json::json!(false)),
+            ("notificationFailureEnabled", serde_json::json!(false)),
+            ("notificationSoundEnabled", serde_json::json!(false)),
+            ("notificationSound", serde_json::json!({"kind":"default"})),
+        ] {
+            update_notification_setting(&mut settings, key, value).expect("update");
+        }
+        write_settings_file(&path, &settings).expect("save");
+        let restored = read_settings_file(&path).expect("read saved settings");
+        assert_eq!(restored, settings);
+        assert_eq!(
+            restored.notification_completion_mode,
+            NotificationCompletionMode::Always
+        );
+        assert!(!restored.notification_needs_action_enabled);
+        assert!(!restored.notification_failure_enabled);
+        assert!(!restored.notification_sound_enabled);
+        assert_eq!(
+            restored.notification_sound,
+            NotificationSoundSource::default()
+        );
+        fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn invalid_notification_settings_do_not_change_current_values() {
+        let mut settings = Settings::default();
+        for (key, value) in [
+            ("notificationCompletionMode", serde_json::json!("sometimes")),
+            ("notificationNeedsActionEnabled", serde_json::json!("true")),
+            ("notificationFailureEnabled", serde_json::json!(1)),
+            ("notificationSoundEnabled", serde_json::json!(null)),
+            (
+                "notificationSound",
+                serde_json::json!({"kind":"file","path":"sound.wav"}),
+            ),
+            ("notificationSound", serde_json::json!("default")),
+            (
+                "notificationSound",
+                serde_json::json!({"kind":"default","path":"sound.wav"}),
+            ),
+        ] {
+            assert!(update_notification_setting(&mut settings, key, value).is_err());
+            assert_eq!(settings, Settings::default());
+        }
     }
 
     #[test]

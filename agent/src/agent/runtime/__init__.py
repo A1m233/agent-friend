@@ -456,6 +456,18 @@ class AgentRuntime:
                     return
                 self._active_run_snapshots[snapshot.run_id] = snapshot
         self._listeners.publish_run_change(snapshot)
+        if snapshot.status is RunStatus.TERMINAL:
+            for observer in tuple(getattr(self, "_terminal_observers", ())):
+                try:
+                    observer(snapshot)
+                except Exception:
+                    logger.exception("run terminal observer failed: %s", snapshot.run_id)
+
+    def add_terminal_observer(self, observer: Callable[[RunSnapshot], None]) -> None:
+        """Observe final persisted run outcomes without adding a push subscriber."""
+        if not hasattr(self, "_terminal_observers"):
+            self._terminal_observers: list[Callable[[RunSnapshot], None]] = []
+        self._terminal_observers.append(observer)
 
     def _prune_recent_terminal_locked(self, now: datetime) -> None:
         cutoff = now - self._recent_terminal_ttl
@@ -639,6 +651,9 @@ class AgentRuntime:
                     run_id=request.run_id,
                     started_at=started_at,
                     owner_runtime_instance_id=request.runtime_instance_id,
+                    source_kind=getattr(request.event, "source_kind", None),
+                    presentation=getattr(request.event, "presentation", "conversation"),
+                    output_visibility=getattr(request.event, "output_visibility", "user"),
                 )
             if request.conversation_runner is not None:
                 events_iter = request.conversation_runner(conv, request, handle.token)

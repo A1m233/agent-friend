@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import * as PIXI from "pixi.js";
 import type { PetInteractionCallbacks } from "./usePetInteractions";
-import { invoke } from "@tauri-apps/api/core";
-import { isTauri } from "@/utils/tauri";
 import { findVisibleRegion } from "@/pet/petAlphaHitTest";
 import type { PetDisplayProfile } from "./petDisplayProfile";
 import type { PetWebviewDisplayContext } from "./petWebviewDisplayContext";
@@ -20,7 +18,7 @@ import { isPrimaryPointerButton } from "@/pet/pointerInput";
  *   避免启动时先闪一下占位形象
  * - drag handler（pointerdown / globalpointermove / pointerup / pointerupoutside）
  * - sprite world position 上报：mount 完成同步 + drag 期间**每帧都发**（无节流，
- *   配合 Rust update_sprite_pos 同步即时 bubble.set_position，消除 016 16ms tick 视觉滞后）
+ *   交给 pet 页统一计算 ActionBar 与 bubble 的位置，不叠加原生跟随轮询）
  *
  * 17b 接缝（design §7）：5 个接缝点中 #2 / #3 / #4 / #5 全部挂在外层 slot Container
  * 上；17b 替 slot 内 children 为 Live2DSprite 时不重接。hook 返回 `{ slotRef, appRef }`
@@ -169,7 +167,6 @@ export function usePixiAvatarSlot(
       //
       // 18 · alpha-scan 一次锁定 visible bounds 在 cachedOffsetRef 内（hook 顶部 useRef，
       // 让 invalidateAnchor 从外部清掉触发重扫）。drag 时只更新 slot.x/y，spriteScreen 跟随。
-      const dpr = window.devicePixelRatio || 1;
       let initialAnchorAligned = initialAnchorPoint === null;
 
       resetInitialAnchorAlignmentRef.current = () => {
@@ -240,15 +237,6 @@ export function usePixiAvatarSlot(
         const { x, y, w, h } = bounds;
         // React state 用 CSS px（驱动 ActionBar 定位）
         setSpriteScreen({ x, y, w, h });
-        // Rust invoke 用物理像素（Rust 端拼 monitors union 起点）
-        if (isTauri()) {
-          void invoke("update_sprite_pos", {
-            x: Math.round(x * dpr),
-            y: Math.round(y * dpr),
-            w: Math.round(w * dpr),
-            h: Math.round(h * dpr),
-          });
-        }
       };
 
       const applyDisplayProfile = () => {
@@ -379,14 +367,6 @@ export function usePixiAvatarSlot(
         }
         lastBounds = { x, y, w, h };
         setSpriteScreen({ x, y, w, h });
-        if (isTauri()) {
-          void invoke("update_sprite_pos", {
-            x: Math.round(x * dpr),
-            y: Math.round(y * dpr),
-            w: Math.round(w * dpr),
-            h: Math.round(h * dpr),
-          });
-        }
         slot.hitArea = new PIXI.Rectangle(
           (x - slot.x) / (slot.scale.x || 1),
           (y - slot.y) / (slot.scale.y || 1),
@@ -454,9 +434,7 @@ export function usePixiAvatarSlot(
         lastPointer = { x: e.global.x, y: e.global.y };
         lastPointerTs = now;
 
-        // AC-5 修复：前端不节流，每帧 emit；Rust update_sprite_pos 内同步即时
-        // 算 bubble position 并 set_position（不等 016 follow loop 16ms tick），
-        // 消除"前端节流 16ms + Rust tick 16ms 串联"的视觉卡顿
+        // 每帧更新统一布局锚点，不叠加前端节流或原生位置轮询。
         emitSpritePos();
       });
 

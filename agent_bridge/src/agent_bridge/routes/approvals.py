@@ -185,6 +185,10 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     "message": "当前版本只支持仅本次授权。",
                 },
             )
+        stale_detail = {
+            "error": "approval_request_stale",
+            "message": "这项授权已处理或已失效，请查看当前任务状态。",
+        }
         pending_request = next(
             (
                 item
@@ -198,7 +202,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             None,
         )
         if pending_request is None:
-            raise HTTPException(status_code=404, detail="approval request not pending")
+            raise HTTPException(status_code=404, detail=stale_detail)
         if body.allow:
             _ensure_command_request_ready(runtime, pending_request)
         decision = CommandApprovalDecision(allow=body.allow, lifetime=body.lifetime)
@@ -210,8 +214,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             expected_kind="command",
             lifetime=body.lifetime,
         ):
-            raise HTTPException(status_code=404, detail="approval request not pending")
-        return {"accepted": True}
+            raise HTTPException(status_code=404, detail=stale_detail)
+        return {"accepted": True, "approval": pending_request.to_dict()}
 
     @router.get("/command-processes")
     def command_processes(

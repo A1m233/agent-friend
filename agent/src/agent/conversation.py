@@ -2569,7 +2569,14 @@ class Conversation:
         self._session.append(event)
 
     def append_run_started_event(
-        self, *, run_id: str, started_at: datetime, owner_runtime_instance_id: str
+        self,
+        *,
+        run_id: str,
+        started_at: datetime,
+        owner_runtime_instance_id: str,
+        source_kind: str | None = None,
+        presentation: str = "conversation",
+        output_visibility: str = "user",
     ) -> None:
         if any(
             event.type == "run_started" and event.payload.get("run_id") == run_id
@@ -2580,7 +2587,13 @@ class Conversation:
             type="run_started",
             uuid=str(uuid4()),
             ts=datetime.now(UTC),
-            payload={"run_id": run_id, "started_at": started_at.isoformat()},
+            payload={
+                "run_id": run_id,
+                "started_at": started_at.isoformat(),
+                "source_kind": source_kind,
+                "presentation": presentation,
+                "output_visibility": output_visibility,
+            },
             meta={"run_id": run_id, "owner_runtime_instance_id": owner_runtime_instance_id},
         )
         self._store.append_event(self._session.session_id, event)

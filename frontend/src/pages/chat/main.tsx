@@ -14,15 +14,17 @@ import { ChatApp } from "./App";
 import "./layout.css";
 
 installProductContextMenuPolicy();
-registerSettingsListener();
+const settingsReady = registerSettingsListener();
 startSessionsChangedSubscriber();
 startVoiceStateSubscriber();
 
 void initializePermissionSync();
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <ChatApp />
-    <AppToaster />
-  </StrictMode>,
-);
+void settingsReady.then(() => {
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <ChatApp />
+      <AppToaster />
+    </StrictMode>,
+  );
+});

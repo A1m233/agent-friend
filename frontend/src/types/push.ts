@@ -19,6 +19,7 @@
 
 import type { SessionEvent } from "./meta";
 import type { RunSnapshot } from "./run";
+import type { AgentNotification } from "./notification";
 
 /** ConversationEvent serialize 后的平铺 dict（字段随 type 不同）。 */
 export interface PushEvent {
@@ -28,7 +29,7 @@ export interface PushEvent {
 
 export interface PushEnvelope {
   /** run_event 是桌面对话主动续跑的实时增量；agent_turn 仍供 pet/bubble 消费完整 turn。 */
-  kind: "user_turn" | "agent_turn" | "run_event" | "session_changed" | "run_changed" | "filesystem_approval_changed" | "approval_changed" | "command_process_changed" | "sandbox_capability_changed" | "heartbeat";
+  kind: "user_turn" | "agent_turn" | "run_event" | "session_changed" | "run_changed" | "filesystem_approval_changed" | "approval_changed" | "command_process_changed" | "sandbox_capability_changed" | "notification_changed" | "heartbeat";
   session_id: string;
   /** subscriber 视角下的单调递增序号；store 用 `${session_id}:${seq}` 作 BubbleItem id。 */
   seq: number;
@@ -55,6 +56,7 @@ export interface PushEnvelope {
   approval?: unknown;
   command_process?: unknown;
   sandbox_capability?: unknown;
+  notification?: AgentNotification | null;
 }
 
 // SessionEvent 仍由 sessionProjection 消费（GET /v1/sessions/{id} 返回的持久化 events）；

@@ -40,14 +40,14 @@ describe("persistModelSettingSelection", () => {
 
   it("does not claim a restart or current-draft update in user-facing copy", () => {
     expect(NEW_CONVERSATION_DEFAULT_MODEL_COPY).toEqual({
-      groupTitle: "新对话默认模型",
+      groupTitle: "默认对话模型",
       groupDescription:
-        "只决定之后新建对话的初始选择；当前对话和已经打开的新对话草稿不会跟着切换。",
+        "用于之后新建的对话和通知文案。当前对话和已经打开的新对话草稿不会跟着切换。",
       modelLabel: "默认模型",
-      successTitle: "新对话默认模型已保存",
+      successTitle: "默认对话模型已保存",
       successDescription:
-        "下次新建对话时将默认选择该模型；当前对话和已打开的草稿不会切换。",
-      errorTitle: "新对话默认模型未保存",
+        "后续新对话和通知将使用该模型；当前对话和已打开的草稿不会切换。",
+      errorTitle: "默认对话模型未保存",
     });
     expect(JSON.stringify(NEW_CONVERSATION_DEFAULT_MODEL_COPY)).not.toContain("重启");
   });

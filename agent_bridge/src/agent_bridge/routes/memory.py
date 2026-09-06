@@ -22,11 +22,12 @@ from typing import Any
 
 from fastapi import APIRouter, FastAPI, HTTPException
 from memory.contracts import RecallTrace, RecallTraceItem
+from memory.host_episodes.presentation import project_notification_summary
 from memory.store import SqliteMemoryStore
 from memory.store.schema import serialize_ts
 from pydantic import BaseModel, Field
 
-from memory import Memory
+from memory import EpisodicRow, Memory
 
 from ..assembly import BridgeRuntime
 from ..dev.recall_buffer import RecallBuffer
@@ -127,7 +128,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         rows = _store().list_episodic(
             owner_user_id=OWNER, persona_id=persona_id, limit=limit, offset=offset
         )
-        return [_dataclass_to_dict(r) for r in rows]
+        return [_episodic_to_dict(r) for r in rows]
 
     @router.get("/search")
     def search(
@@ -143,7 +144,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             out["semantic"] = [{"row": _dataclass_to_dict(r), "bm25": b} for r, b in sem]
         if layer in ("episodic", "both"):
             epi = store.search_episodic(q, owner_user_id=OWNER, persona_id=persona_id, limit=limit)
-            out["episodic"] = [{"row": _dataclass_to_dict(r), "bm25": b} for r, b in epi]
+            out["episodic"] = [{"row": _episodic_to_dict(r), "bm25": b} for r, b in epi]
         return out
 
     @router.get("/recalls")
@@ -182,6 +183,17 @@ def _dataclass_to_dict(obj: Any) -> dict[str, Any]:
     if isinstance(obj, dict):
         return {k: _serialize_value(v) for k, v in obj.items()}
     raise TypeError(f"expected dataclass or dict, got {type(obj).__name__}")
+
+
+def _episodic_to_dict(row: EpisodicRow) -> dict[str, Any]:
+    result = _dataclass_to_dict(row)
+    result["summary"] = project_notification_summary(
+        row.summary,
+        episode_id=row.id,
+        source_ref=row.source_ref,
+        occurred_at=row.occurred_at,
+    )
+    return result
 
 
 def _serialize_value(value: Any) -> Any:

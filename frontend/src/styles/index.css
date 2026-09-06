@@ -52,6 +52,7 @@
   --text-base: var(--font-size-base);
   --text-lg: var(--font-size-lg);
   --text-xl: var(--font-size-xl);
+  --text-notification: var(--font-size-notification);
 
   /* 字重 */
   --font-weight-normal: var(--font-weight-normal);

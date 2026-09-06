@@ -8,12 +8,14 @@ import { registerSettingsListener } from "@/lib/settings/listen";
 import { BubbleApp } from "./App";
 
 installProductContextMenuPolicy();
-registerSettingsListener();
+const settingsReady = registerSettingsListener();
 
 void initializePermissionSync();
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <BubbleApp />
-  </StrictMode>,
-);
+void settingsReady.then(() => {
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <BubbleApp />
+    </StrictMode>,
+  );
+});

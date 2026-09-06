@@ -5,10 +5,12 @@ import "@/styles/index.css";
 import { registerSettingsListener } from "@/lib/settings/listen";
 import { DevHub } from "./App";
 
-registerSettingsListener();
+const settingsReady = registerSettingsListener();
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <DevHub />
-  </StrictMode>,
-);
+void settingsReady.then(() => {
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <DevHub />
+    </StrictMode>,
+  );
+});

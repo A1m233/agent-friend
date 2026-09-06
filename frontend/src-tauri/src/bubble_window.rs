@@ -1,644 +1,1313 @@
-//! 016 · 桌宠气泡独立窗承载 —— Rust 侧 bubble window 控制模块。
-//!
-//! 本模块统一持有 bubble window 的建窗 / 显隐 / 位置跟随 / 尺寸调整 / macOS 加料。
-//!
-//! - 设计取向：window 控制权统一在 Rust 侧，绕开 Tauri JS 侧
-//!   `getCurrentWebviewWindow().position()` 在 macOS 返 0,0 的已知 bug
-//!   （Tauri #14673）。前端只通过 invoke 表达"显隐意图 + 期望尺寸"。
-//! - 跨平台策略：核心动作走 Tauri 跨平台 WebviewWindow API；唯一 macOS 加料
-//!   （`setLevel` + `setCollectionBehavior`）走 015 已有的 `apply_pet_window_level`
-//!   helper（M16.5 重命名为 `apply_floating_window_level`）。
-//! - 关联需求：[`docs/requirements/016-pet-bubble-independent-window/`](../../../docs/requirements/016-pet-bubble-independent-window/)
-//!
-//! 本文件按里程碑分层落地：
-//! - M16.2：模块骨架 + 几何常量 + `compute_bubble_position` 纯函数 + 单测
-//! - M16.3：`BubbleState` + invoke 命令（`show_bubble` / `hide_bubble` / `set_bubble_size`）+ `init` 透明窗 workaround
-//! - **M16.4（当前）**：跟随轮询 tokio task（50ms tick + `outer_position`；hidden 时 park）
-//! - M16.5：build_bubble_window + macOS 加料调用
-
-use std::sync::atomic::{AtomicBool, Ordering};
+//! Native application of the pet-owned accessory layout; bubble remains an independent window.
+use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition, WebviewWindow};
+#[cfg(not(target_os = "windows"))]
+use tauri::PhysicalSize;
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewWindow};
 use tokio::sync::Notify;
 
-/// bubble window 在 tauri.conf.json / Manager 里的 label。
 pub const BUBBLE_LABEL: &str = "bubble";
-
-/// 跟随轮询间隔（毫秒）。
-///
-/// 16ms ≈ 60Hz，与显示器刷新率对齐，拖拽时视觉无错位感。
-/// hidden 时整段 task park（visible_notify），static-period CPU 占用 ~ 0。
-/// Hyprnote `tauri-plugin-overlay` 用 50ms，但 M16.9 真跑发现拖拽有卡顿感 → 提到 60Hz。
-pub const TICK_MS: u64 = 16;
-
-/// bubble window 与 pet 主窗之间的视觉间距（px）。
-pub const MARGIN: i32 = 8;
-
-/// bubble window 尺寸下限（px）。低于此值由 Rust 端 clamp 到 MIN_*。
 pub const MIN_W: u32 = 240;
 pub const MIN_H: u32 = 64;
-
-/// bubble window 尺寸上限（px）。超过此值由 Rust 端 clamp 到 MAX_*，
-/// 前端 PetBubble 内部走滚动条吸收超长内容。
 pub const MAX_W: u32 = 360;
 pub const MAX_H: u32 = 480;
+const MEASUREMENT_EVENT: &str = "pet://bubble-measurement";
+const PRESENTATION_EVENT: &str = "bubble://layout-applied";
+static NEXT_LAYOUT_OWNER: AtomicU64 = AtomicU64::new(1);
+static NEXT_PRESENTATION_REVISION: AtomicU64 = AtomicU64::new(1);
 
-/// 初始建窗尺寸（与 tauri.conf.json 的 bubble window width / height 对齐）。
-/// init 阶段做透明窗 workaround 时 set_size 用这个值。
-const INIT_W: f64 = 280.0;
-const INIT_H: f64 = 96.0;
-
-/// pet 主窗的位置 + 尺寸（屏幕物理坐标系）。
-#[derive(Debug, Clone, Copy)]
-pub struct Anchor {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhysicalRect {
     pub x: i32,
     pub y: i32,
-    pub w: u32,
-    pub h: u32,
+    pub width: u32,
+    pub height: u32,
+}
+impl PhysicalRect {
+    fn union(self, other: Self) -> Option<Self> {
+        let x = self.x.min(other.x);
+        let y = self.y.min(other.y);
+        let right = (i64::from(self.x) + i64::from(self.width))
+            .max(i64::from(other.x) + i64::from(other.width));
+        let bottom = (i64::from(self.y) + i64::from(self.height))
+            .max(i64::from(other.y) + i64::from(other.height));
+        let width = u32::try_from(right - i64::from(x)).ok()?;
+        let height = u32::try_from(bottom - i64::from(y)).ok()?;
+        (width <= i32::MAX as u32 && height <= i32::MAX as u32).then_some(Self {
+            x,
+            y,
+            width,
+            height,
+        })
+    }
+    fn contains(self, other: Self) -> bool {
+        other.width > 0
+            && other.height > 0
+            && other.x >= self.x
+            && other.y >= self.y
+            && i64::from(other.x) + i64::from(other.width)
+                <= i64::from(self.x) + i64::from(self.width)
+            && i64::from(other.y) + i64::from(other.height)
+                <= i64::from(self.y) + i64::from(self.height)
+    }
 }
 
-/// bubble window 的当前尺寸（用于翻转判定 + 水平居中计算）。
-#[derive(Debug, Clone, Copy)]
-pub struct BubbleSize {
-    pub w: u32,
-    pub h: u32,
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BubbleMeasurement {
+    revision: u64,
+    width_physical: u32,
+    height_physical: u32,
+    desired_width_physical: u32,
+    desired_height_physical: u32,
+    scale_factor: f64,
+    show_requested: bool,
+    retain_bounds: bool,
 }
 
-/// 当前显示器的可用矩形（屏幕物理坐标系，左上为原点）。
-#[derive(Debug, Clone, Copy)]
-pub struct Screen {
-    pub x: i32,
-    pub y: i32,
-    pub w: u32,
-    pub h: u32,
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BubblePresentationState {
+    pub state_revision: u64,
+    pub layout_owner: u64,
+    pub visible: bool,
+    pub applied: bool,
+    pub measurement_revision: u64,
+    pub layout_revision: u64,
+    pub width_css: f64,
+    pub height_css: f64,
+    pub host_rect_physical: Option<PhysicalRect>,
+    pub target_rect_physical: Option<PhysicalRect>,
+    pub scale_factor: f64,
+    pub retaining: bool,
+    pub carrier_plan: Option<BubbleCarrierPlan>,
 }
 
-/// 17a · 前端 PIXI sprite 在屏幕物理坐标系中的位置 + 尺寸。
-///
-/// 由前端 `update_sprite_pos` invoke 写入；`run_follow_loop` 16ms tick 读它代替
-/// 016 的 `pet.outer_position()`（pet 窗 17a 后撑整屏，outer_position = monitors
-/// union 起点，对 sprite 跟随无意义）。
-///
-/// 坐标系 = 屏幕物理坐标系（与 016 `Anchor.x/y` 一致），`compute_bubble_position` 直接消费。
-#[derive(Debug, Clone, Copy)]
-pub struct SpritePos {
-    pub x: i32,
-    pub y: i32,
-    pub w: u32,
-    pub h: u32,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BubbleCarrierPlan {
+    owner: u64,
+    generation: u64,
+    layout_revision: u64,
+    measurement_revision: u64,
+    rect_physical: PhysicalRect,
 }
 
-/// bubble window 跨 invoke 共享的运行时状态。
-///
-/// 由 `lib.rs` 在 `Builder::manage` 阶段注册；invoke 命令通过 `tauri::State` 取；
-/// 跟随轮询 tokio task 持有 `Clone`（Arc 引用 clone，开销可忽略）后跨 thread / await 共享。
-///
-/// - `is_visible` —— show / hide 命令更新；跟随轮询 task 读它决定 park / run。
-/// - `visible_notify` —— hidden→show 时 `notify_one`，唤醒 park 中的轮询 task。
-/// - `sprite_pos`（17a）—— 前端 `update_sprite_pos` invoke 写入；`run_follow_loop`
-///   16ms tick 读它代替 016 的 `pet.outer_position()`。None 时 skip 本 tick（race 兜底：
-///   PIXI app mount 慢于 setup hook 时，bubble follow loop 早起 tick 读到 None）。
-#[derive(Clone)]
-pub struct BubbleState {
-    pub is_visible: Arc<AtomicBool>,
-    pub visible_notify: Arc<Notify>,
-    pub sprite_pos: Arc<Mutex<Option<SpritePos>>>,
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessoryContext {
+    generation: u64,
+    origin: PhysicalPosition<i32>,
+    monitors: Vec<crate::pet_display_topology::MonitorSnapshot>,
 }
 
-impl Default for BubbleState {
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessoryLayoutSession {
+    owner: u64,
+    context: AccessoryContext,
+    measurement: BubbleMeasurement,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessoryLayoutRequest {
+    owner: u64,
+    generation: u64,
+    revision: u64,
+    measurement_revision: u64,
+    bubble: Option<PhysicalRect>,
+    retain_bounds: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Carrier {
+    owner: u64,
+    generation: u64,
+    measurement_revision: u64,
+    rect: PhysicalRect,
+    scale: f64,
+}
+
+#[derive(Debug)]
+struct LayoutState {
+    owner: u64,
+    last_revision: u64,
+    measurement_revision: u64,
+    desired: (u32, u32),
+    actual: (u32, u32),
+    actual_position: (i32, i32),
+    scale: f64,
+    applied: Option<AccessoryLayoutRequest>,
+    carrier: Option<Carrier>,
+    pending_carrier: Option<BubbleCarrierPlan>,
+    show_requested: bool,
+    retain_bounds: bool,
+    retaining: bool,
+}
+impl Default for LayoutState {
     fn default() -> Self {
         Self {
-            is_visible: Arc::new(AtomicBool::new(false)),
-            visible_notify: Arc::new(Notify::new()),
-            sprite_pos: Arc::new(Mutex::new(None)),
+            owner: 0,
+            last_revision: 0,
+            measurement_revision: 1,
+            desired: (280, 96),
+            actual: (280, 96),
+            actual_position: (0, 0),
+            scale: 1.0,
+            applied: None,
+            carrier: None,
+            pending_carrier: None,
+            show_requested: false,
+            retain_bounds: false,
+            retaining: false,
         }
     }
 }
-
-/// setup 阶段调一次。
-///
-/// 当前职责：
-/// 1. 确认 bubble window 已由 tauri.conf.json 自动建出（log 兜底）。
-/// 2. 透明窗渲染 workaround（Tauri #1564）：创建后立刻 `set_size` 一次，
-///    避免 macOS 上首次内容到达前 transparent 窗失去 shadow/border。
-/// 3. M16.4 · spawn 跟随轮询 tokio task（hidden 时 park、show 时唤醒；50ms tick）。
-///
-/// M16.5 会在此基础上叠加 `apply_floating_window_level(&bubble)`。
-pub fn init(app: &AppHandle) -> tauri::Result<()> {
-    match app.get_webview_window(BUBBLE_LABEL) {
-        Some(bubble) => {
-            // 透明窗 workaround（Tauri #1564）：让 macOS 在首次 layout 后正确画
-            // transparent shadow/border —— 即便 size 不变，调用 set_size 也能触发重新布局。
-            if let Err(e) = bubble.set_size(LogicalSize::new(INIT_W, INIT_H)) {
-                log::warn!("bubble_window::init set_size workaround failed: {e}");
+impl LayoutState {
+    fn measurement(&self) -> BubbleMeasurement {
+        BubbleMeasurement {
+            revision: self.measurement_revision,
+            width_physical: self.actual.0,
+            height_physical: self.actual.1,
+            desired_width_physical: (f64::from(self.desired.0) * self.scale).round().max(1.0)
+                as u32,
+            desired_height_physical: (f64::from(self.desired.1) * self.scale).round().max(1.0)
+                as u32,
+            scale_factor: self.scale,
+            show_requested: self.show_requested,
+            retain_bounds: self.retain_bounds,
+        }
+    }
+    fn accepts(&self, request: &AccessoryLayoutRequest, generation: u64) -> bool {
+        request.owner == self.owner
+            && request.owner != 0
+            && request.generation == generation
+            && request.revision > self.last_revision
+            && request.measurement_revision == self.measurement_revision
+    }
+    fn actual_rect(&self) -> PhysicalRect {
+        PhysicalRect {
+            x: self.actual_position.0,
+            y: self.actual_position.1,
+            width: self.actual.0,
+            height: self.actual.1,
+        }
+    }
+    // A newer content measurement invalidates its receipt, not the last valid
+    // screen surface. This keeps an exiting DOM alive while the pet computes T.
+    fn carrier_valid_for(&self, generation: u64) -> bool {
+        self.carrier.is_some_and(|carrier| {
+            carrier.owner == self.owner
+                && carrier.owner != 0
+                && carrier.generation == generation
+                && (carrier.scale - self.scale).abs() <= 0.001
+                && carrier.rect == self.actual_rect()
+        })
+    }
+    fn applied_for(&self, generation: u64) -> bool {
+        if self.pending_carrier.is_some() || !self.carrier_valid_for(generation) {
+            return false;
+        }
+        self.applied.as_ref().is_some_and(|r| {
+            r.owner == self.owner
+                && r.generation == generation
+                && r.measurement_revision == self.measurement_revision
+                && self.carrier.is_some_and(|carrier| {
+                    carrier.measurement_revision == r.measurement_revision
+                        && r.bubble.is_some_and(|target| {
+                            if self.retaining {
+                                carrier.rect.contains(target)
+                            } else {
+                                carrier.rect == target
+                            }
+                        })
+                })
+        })
+    }
+    fn set_request(&mut self, desired: (u32, u32), retain_bounds: bool) {
+        if self.desired != desired || self.retain_bounds != retain_bounds {
+            self.desired = desired;
+            self.retain_bounds = retain_bounds;
+            self.measurement_revision = self.measurement_revision.saturating_add(1);
+            self.pending_carrier = None;
+        }
+    }
+    fn can_retain(&self, request: &AccessoryLayoutRequest, generation: u64, visible: bool) -> bool {
+        self.retain_bounds
+            && request.retain_bounds
+            && self.show_requested
+            && visible
+            && request.owner == self.owner
+            && request.generation == generation
+            && self.carrier_valid_for(generation)
+    }
+    fn planned_carrier(
+        &self,
+        request: &AccessoryLayoutRequest,
+        generation: u64,
+        visible: bool,
+    ) -> Option<PhysicalRect> {
+        request.bubble.map(|target| {
+            if self.can_retain(request, generation, visible) && self.actual_rect().contains(target)
+            {
+                self.actual_rect()
             } else {
-                log::info!(
-                    "bubble window initialized: transparent workaround set_size({INIT_W}x{INIT_H}) applied"
-                );
+                target
             }
-            // M16.5 · macOS 加料：bubble 窗跟随跨 Space + 浮全屏（复用 015 helper）
-            crate::apply_floating_window_level(&bubble);
-        }
-        None => {
-            log::warn!(
-                "bubble window not found at setup; check tauri.conf.json windows[] for label=\"{BUBBLE_LABEL}\""
-            );
-        }
+        })
     }
-
-    // M16.4 · 跟随轮询：从 Tauri State 拿出 BubbleState clone（Arc 引用），
-    // 跨 tokio task 共享。spawn 之后 task 在 hidden 时 park、show 时唤醒。
-    let state = app.state::<BubbleState>().inner().clone();
-    spawn_follow_loop(app.clone(), state);
-
-    Ok(())
+    fn growth_plan(
+        &self,
+        request: &AccessoryLayoutRequest,
+        generation: u64,
+        visible: bool,
+        work_areas: &[PhysicalRect],
+    ) -> Option<BubbleCarrierPlan> {
+        if !self.can_retain(request, generation, visible) {
+            return None;
+        }
+        let target = request.bubble?;
+        let host = self.actual_rect();
+        if host.contains(target) {
+            return None;
+        }
+        let rect_physical = host.union(target)?;
+        // A union across monitors could cover a taskbar or a gap between screens.
+        if !work_areas.iter().any(|area| area.contains(rect_physical)) {
+            return None;
+        }
+        Some(BubbleCarrierPlan {
+            owner: request.owner,
+            generation,
+            layout_revision: request.revision,
+            measurement_revision: request.measurement_revision,
+            rect_physical,
+        })
+    }
+    fn prepare_carrier(&mut self, request: AccessoryLayoutRequest, plan: BubbleCarrierPlan) {
+        self.commit(request, Some(self.actual_rect()));
+        self.pending_carrier = Some(plan);
+    }
+    fn accepts_carrier(&self, plan: &BubbleCarrierPlan, generation: u64) -> bool {
+        self.pending_carrier.as_ref() == Some(plan)
+            && plan.owner == self.owner
+            && plan.generation == generation
+            && plan.layout_revision == self.last_revision
+            && plan.measurement_revision == self.measurement_revision
+            && self.show_requested
+            && self.retain_bounds
+            && self.carrier_valid_for(generation)
+            && self.applied.as_ref().is_some_and(|request| {
+                request.retain_bounds
+                    && request.owner == plan.owner
+                    && request.generation == plan.generation
+                    && request.revision == plan.layout_revision
+                    && request.measurement_revision == plan.measurement_revision
+                    && request
+                        .bubble
+                        .is_some_and(|target| plan.rect_physical.contains(target))
+            })
+    }
+    fn commit(&mut self, request: AccessoryLayoutRequest, carrier: Option<PhysicalRect>) {
+        self.retaining = carrier.is_some()
+            && (carrier != request.bubble
+                || (self.retaining && self.retain_bounds && request.retain_bounds));
+        self.pending_carrier = None;
+        self.carrier = carrier.map(|rect| Carrier {
+            owner: request.owner,
+            generation: request.generation,
+            measurement_revision: request.measurement_revision,
+            rect,
+            scale: self.scale,
+        });
+        self.last_revision = request.revision;
+        self.applied = Some(request);
+    }
+    fn refresh_actual(&mut self, rect: PhysicalRect, scale: f64) -> bool {
+        let scale_changed = (scale - self.scale).abs() > 0.001;
+        let changed = self.actual_rect() != rect || scale_changed;
+        let displaced = self.carrier.is_some_and(|carrier| carrier.rect != rect);
+        if scale_changed || displaced {
+            self.measurement_revision = self.measurement_revision.saturating_add(1);
+            self.applied = None;
+            self.carrier = None;
+            self.pending_carrier = None;
+            self.retaining = false;
+        }
+        self.actual = (rect.width, rect.height);
+        self.actual_position = (rect.x, rect.y);
+        self.scale = scale;
+        changed
+    }
 }
 
-/// 显示 bubble window + 唤醒跟随轮询 task。
-///
-/// 前端在 `usePetBubbleStore.phase` 从 idle 切到 showing/expanded 时 invoke 调本命令。
-/// 多次调用幂等：Tauri `show()` 对已可见窗口 no-op；`is_visible` 写入只是更新内部
-/// "应该可见"语义；`notify_one` 对未 park 的 task 也是 no-op。
-///
-/// **AC-5 不抢焦点**：macOS 上用 NSWindow `orderFrontRegardless` 而不是 Tauri 默认
-/// 的 `makeKeyAndOrderFront`，避免抢走当前 key window（如 chat 输入态）。
-/// Windows / Linux 上 Tauri `.show()` 默认行为对透明无焦点 window 一般也不抢焦点
-/// （未真跑验证；跨平台 spike 留下个需求）。
-#[tauri::command]
-pub fn show_bubble(app: AppHandle, state: tauri::State<'_, BubbleState>) -> Result<(), String> {
-    let bubble = app
-        .get_webview_window(BUBBLE_LABEL)
-        .ok_or_else(|| format!("window '{BUBBLE_LABEL}' not found"))?;
+#[derive(Clone, Default)]
+pub struct BubbleState {
+    pub is_visible: Arc<AtomicBool>,
+    inner: Arc<Mutex<LayoutState>>,
+    notify: Arc<Notify>,
+}
+fn native_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    app.get_webview_window(BUBBLE_LABEL)
+        .ok_or_else(|| "bubble window is unavailable".to_string())
+}
 
-    // 默认 .show() 在 macOS 上调 makeKeyAndOrderFront 抢焦点；用 orderFrontRegardless 替代
+// Native reads and the state mutation run on the same thread as bounds changes.
+// Never hold the state mutex while waiting for a queued main-thread operation.
+async fn on_native_state<T, F>(
+    app: &AppHandle,
+    state: &BubbleState,
+    operation: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&AppHandle, &WebviewWindow, &BubbleState, &mut LayoutState) -> Result<T, String>
+        + Send
+        + 'static,
+{
+    let window = native_window(app)?;
+    let scheduler = window.clone();
+    let app = app.clone();
+    let state = state.clone();
+    let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+    scheduler
+        .run_on_main_thread(move || {
+            let result = state
+                .inner
+                .lock()
+                .map_err(|error| error.to_string())
+                .and_then(|mut inner| operation(&app, &window, &state, &mut inner));
+            let _ = result_tx.send(result);
+        })
+        .map_err(|error| error.to_string())?;
+    result_rx
+        .await
+        .map_err(|_| "bubble native operation was cancelled".to_string())?
+}
+
+#[cfg(target_os = "windows")]
+fn set_native_bounds(window: &WebviewWindow, rect: PhysicalRect) -> Result<(), String> {
+    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+    let hwnd = window.hwnd().map_err(|error| error.to_string())?;
+    let width = i32::try_from(rect.width).map_err(|_| "bubble width exceeds native range")?;
+    let height = i32::try_from(rect.height).map_err(|_| "bubble height exceeds native range")?;
+    // One geometry operation avoids a shrunken frame at the previous origin.
+    // The caller is already on the window thread; no async-position flag is used.
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            rect.x,
+            rect.y,
+            width,
+            height,
+            SWP_NOACTIVATE | SWP_NOZORDER,
+        )
+    }
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_native_bounds(window: &WebviewWindow, rect: PhysicalRect) -> Result<(), String> {
+    // Tauri does not expose a combined bounds operation on these platforms.
+    // Preserve the existing path; WebView/compositor paint timing is not atomic.
+    window
+        .set_size(PhysicalSize::new(rect.width, rect.height))
+        .map_err(|error| error.to_string())?;
+    window
+        .set_position(PhysicalPosition::new(rect.x, rect.y))
+        .map_err(|error| error.to_string())
+}
+
+fn topology_generation(app: &AppHandle) -> u64 {
+    app.try_state::<crate::PetOverlayState>()
+        .and_then(|state| {
+            state
+                .inner
+                .lock()
+                .ok()
+                .map(|guard| guard.topology_epoch.generation())
+        })
+        .unwrap_or(0)
+}
+fn refresh_measurement(window: &WebviewWindow, inner: &mut LayoutState) -> Result<bool, String> {
+    let actual = window.outer_size().map_err(|e| e.to_string())?;
+    let position = window.outer_position().map_err(|e| e.to_string())?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    Ok(inner.refresh_actual(
+        PhysicalRect {
+            x: position.x,
+            y: position.y,
+            width: actual.width,
+            height: actual.height,
+        },
+        scale,
+    ))
+}
+fn presentation(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    inner: &LayoutState,
+) -> BubblePresentationState {
+    let generation = topology_generation(app);
+    BubblePresentationState {
+        state_revision: NEXT_PRESENTATION_REVISION.fetch_add(1, Ordering::Relaxed),
+        layout_owner: inner.owner,
+        visible: window.is_visible().unwrap_or(false),
+        applied: inner.applied_for(generation),
+        measurement_revision: inner.measurement_revision,
+        layout_revision: inner.last_revision,
+        width_css: f64::from(inner.actual.0) / inner.scale,
+        height_css: f64::from(inner.actual.1) / inner.scale,
+        host_rect_physical: Some(inner.actual_rect()),
+        target_rect_physical: inner
+            .applied
+            .as_ref()
+            .filter(|request| request.owner == inner.owner && request.generation == generation)
+            .and_then(|request| request.bubble),
+        scale_factor: inner.scale,
+        retaining: inner.retaining && inner.carrier_valid_for(generation),
+        carrier_plan: inner
+            .pending_carrier
+            .filter(|plan| inner.accepts_carrier(plan, generation)),
+    }
+}
+fn emit_presentation(app: &AppHandle, value: &BubblePresentationState) {
+    let _ = app.emit_to(BUBBLE_LABEL, PRESENTATION_EVENT, value);
+}
+fn show_without_focus(window: &WebviewWindow) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         use objc2::{msg_send, runtime::AnyObject};
-        let ns_window_ptr = bubble.ns_window().map_err(|e| e.to_string())?;
-        if !ns_window_ptr.is_null() {
-            let ns_window: &AnyObject = unsafe { &*(ns_window_ptr as *const AnyObject) };
+        let ptr = window.ns_window().map_err(|e| e.to_string())?;
+        if !ptr.is_null() {
+            let native: &AnyObject = unsafe { &*(ptr as *const AnyObject) };
             unsafe {
-                let _: () = msg_send![ns_window, orderFrontRegardless];
+                let _: () = msg_send![native, orderFrontRegardless];
             }
-        } else {
-            bubble.show().map_err(|e| e.to_string())?;
+            return Ok(());
         }
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        bubble.show().map_err(|e| e.to_string())?;
+    window.show().map_err(|e| e.to_string())
+}
+fn reconcile_visibility(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    state: &BubbleState,
+    inner: &LayoutState,
+) -> Result<(), String> {
+    let should_show = inner.show_requested && inner.carrier_valid_for(topology_generation(app));
+    let visible = window.is_visible().unwrap_or(false);
+    if should_show && !visible {
+        show_without_focus(window)?;
     }
-
-    state.is_visible.store(true, Ordering::Release);
-    state.visible_notify.notify_one();
+    if !should_show && visible {
+        window.hide().map_err(|e| e.to_string())?;
+    }
+    state.is_visible.store(should_show, Ordering::Release);
     Ok(())
 }
 
-/// 隐藏 bubble window + 标记内部"应该不可见"（M16.4 轮询 task 读到后 park）。
-#[tauri::command]
-pub fn hide_bubble(app: AppHandle, state: tauri::State<'_, BubbleState>) -> Result<(), String> {
-    let bubble = app
-        .get_webview_window(BUBBLE_LABEL)
-        .ok_or_else(|| format!("window '{BUBBLE_LABEL}' not found"))?;
-    bubble.hide().map_err(|e| e.to_string())?;
-    state.is_visible.store(false, Ordering::Release);
+pub fn init(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(BUBBLE_LABEL) {
+        let _ = window.set_size(LogicalSize::new(280.0, 96.0));
+        crate::apply_floating_window_level(&window);
+    }
+    let state = app.state::<BubbleState>().inner().clone();
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let requested = state
+                .inner
+                .lock()
+                .map(|inner| inner.show_requested)
+                .unwrap_or(false);
+            if !requested {
+                state.notify.notified().await;
+                continue;
+            }
+            let _ = on_native_state(&handle, &state, |app, window, state, inner| {
+                if refresh_measurement(window, inner)? {
+                    let _ = app.emit_to("pet", MEASUREMENT_EVENT, inner.measurement());
+                }
+                let was_visible = state.is_visible.load(Ordering::Acquire);
+                reconcile_visibility(app, window, state, inner)?;
+                if was_visible != state.is_visible.load(Ordering::Acquire) {
+                    emit_presentation(app, &presentation(app, window, inner));
+                }
+                Ok(())
+            })
+            .await;
+            tokio::time::sleep(Duration::from_millis(16)).await;
+        }
+    });
     Ok(())
 }
 
-/// 把 bubble window 的物理尺寸调整到 `(width, height)`，clamp 到 (MIN_*, MAX_*)。
-///
-/// 前端 `<PetBubble />` 用 `ResizeObserver` 监测内容尺寸 → debounce 一帧 →
-/// invoke 调本命令。超过 MAX_H 时前端内部走滚动条吸收。
 #[tauri::command]
-pub fn set_bubble_size(app: AppHandle, width: u32, height: u32) -> Result<(), String> {
-    let (w, h) = clamp_bubble_size(width, height);
-    let bubble = app
-        .get_webview_window(BUBBLE_LABEL)
-        .ok_or_else(|| format!("window '{BUBBLE_LABEL}' not found"))?;
-    bubble
-        .set_size(LogicalSize::new(f64::from(w), f64::from(h)))
-        .map_err(|e| e.to_string())?;
-    Ok(())
+pub async fn get_pet_accessory_context(app: AppHandle) -> Result<AccessoryContext, String> {
+    let pet = app
+        .get_webview_window("pet")
+        .ok_or("pet window is unavailable")?;
+    let snapshot =
+        crate::read_pet_display_topology(&pet).ok_or("monitor topology is unavailable")?;
+    Ok(AccessoryContext {
+        generation: topology_generation(&app),
+        origin: pet.outer_position().map_err(|e| e.to_string())?,
+        monitors: snapshot.monitors,
+    })
 }
-
-/// 17a · 前端 PIXI sprite world position 上报。
-///
-/// 触发时机：(1) PIXI app mount 完成首次同步；(2) drag pointermove（无前端节流）；
-/// (3) drag pointerup commit。idle 期不发。
-///
-/// **坐标系约定**：前端发的 `(x, y)` 是 sprite 在 pet content 区（= 整屏 webview viewport）
-/// 内的**物理像素偏移**（已乘 devicePixelRatio）。Rust 端补上 `pet.outer_position()`
-/// （= monitors union 起点 `(min_x, min_y)`，多屏场景可能 < 0）→ 写入 `sprite_pos` cache，
-/// 屏幕物理坐标系语义与 016 `Anchor.x/y` 一致，`compute_bubble_position` 直接消费。
-///
-/// `(w, h)` 是 sprite bounding box 物理像素（avatar-slot Container `getBounds()` 转 DPR 后）。
-///
-/// **AC-5 修复 · 即时 apply**：写完 cache 后，如 bubble 当前可见，**同步**算 bubble
-/// position + `set_position` 一次，**消除 follow loop 16ms tick 等待**。follow loop
-/// 保留兜底（show/hide 状态切换 + 多屏起点变化的偶发漂移）。
-///
-/// **AC-4 trace**：首次 cache 写入（None → Some）log::info 一次，证明 sprite world position
-/// 数据流通；drag 期间后续上报保持静默不刷屏。
 #[tauri::command]
-pub fn update_sprite_pos(
+pub async fn begin_pet_accessory_layout(
     app: AppHandle,
     state: tauri::State<'_, BubbleState>,
-    x: i32,
-    y: i32,
-    w: u32,
-    h: u32,
-) -> Result<(), String> {
-    // 拿 pet 窗 outer_position（17a 后 = monitors union 起点）；
-    // 拿不到时退化为 (0, 0)（边缘场景：app 启动早期 / pet 窗暂时不可达）
-    let origin = app
-        .get_webview_window("pet")
-        .and_then(|w| w.outer_position().ok())
-        .unwrap_or(PhysicalPosition { x: 0, y: 0 });
-    let sp = SpritePos {
-        x: origin.x + x,
-        y: origin.y + y,
-        w,
-        h,
-    };
-    let was_none = {
-        let mut guard = state.sprite_pos.lock().map_err(|e| e.to_string())?;
-        let was_none = guard.is_none();
-        *guard = Some(sp);
-        was_none
-    };
-    if was_none {
-        log::info!(
-            "update_sprite_pos: first sprite pos cached x={} y={} w={} h={} (后续 drag 上报静默不刷屏)",
-            sp.x,
-            sp.y,
-            sp.w,
-            sp.h
-        );
-    }
-
-    // AC-5 即时 apply：跳过 follow loop 16ms tick 等待
-    if state.is_visible.load(Ordering::Acquire) {
-        if let (Some(pet), Some(bubble)) = (
-            app.get_webview_window("pet"),
-            app.get_webview_window(BUBBLE_LABEL),
-        ) {
-            if let (Ok(bubble_size), Some(screen)) =
-                (bubble.outer_size(), current_screen_rect(&pet))
-            {
-                let anchor = Anchor {
-                    x: sp.x,
-                    y: sp.y,
-                    w: sp.w,
-                    h: sp.h,
-                };
-                let bub = BubbleSize {
-                    w: bubble_size.width,
-                    h: bubble_size.height,
-                };
-                let (bx, by) = compute_bubble_position(anchor, bub, screen);
-                let _ = bubble.set_position(PhysicalPosition { x: bx, y: by });
-            }
-        }
-    }
-
-    Ok(())
+) -> Result<AccessoryLayoutSession, String> {
+    let context = get_pet_accessory_context(app.clone()).await?;
+    on_native_state(&app, state.inner(), move |app, window, state, inner| {
+        inner.owner = NEXT_LAYOUT_OWNER.fetch_add(1, Ordering::Relaxed);
+        inner.last_revision = 0;
+        inner.applied = None;
+        inner.carrier = None;
+        inner.pending_carrier = None;
+        inner.retaining = false;
+        refresh_measurement(window, inner)?;
+        reconcile_visibility(app, window, state, inner)?;
+        Ok(AccessoryLayoutSession {
+            owner: inner.owner,
+            context,
+            measurement: inner.measurement(),
+        })
+    })
+    .await
 }
-
-/// 016 M16.9 · dev-only：往 bubble webview emit 一条假的 push envelope，
-/// 模拟 BedtimeSource 产出，跳过 bridge / 真 LLM，便于纯 GUI 手动验证 AC-3/4/5/7。
-///
-/// 仅 debug build（`cfg(debug_assertions)`）下导出；release build 该 fn 不存在，
-/// frontend 也用 `import.meta.env.DEV` gate 入口按钮——双层确保不进生产。
-///
-/// 调用方：`frontend/src/pages/pet/App.tsx` 的"inject 测试气泡"按钮（dev only）。
+#[tauri::command]
+pub async fn set_bubble_size(
+    app: AppHandle,
+    state: tauri::State<'_, BubbleState>,
+    width: u32,
+    height: u32,
+    retain_bounds: Option<bool>,
+) -> Result<BubbleMeasurement, String> {
+    on_native_state(&app, state.inner(), move |app, window, state, inner| {
+        refresh_measurement(window, inner)?;
+        inner.set_request(
+            clamp_bubble_size(width, height),
+            retain_bounds.unwrap_or(false),
+        );
+        // Keep the previous legal carrier visible while waiting for the pet's
+        // target. The new measurement cannot qualify a receipt before apply.
+        reconcile_visibility(app, window, state, inner)?;
+        let measurement = inner.measurement();
+        app.emit_to("pet", MEASUREMENT_EVENT, &measurement)
+            .map_err(|e| e.to_string())?;
+        emit_presentation(app, &presentation(app, window, inner));
+        Ok(measurement)
+    })
+    .await
+}
+#[tauri::command]
+pub async fn apply_pet_accessory_layout(
+    app: AppHandle,
+    state: tauri::State<'_, BubbleState>,
+    request: AccessoryLayoutRequest,
+) -> Result<BubblePresentationState, String> {
+    on_native_state(&app, state.inner(), move |app, window, state, inner| {
+        refresh_measurement(window, inner)?;
+        let generation = topology_generation(app);
+        // Validate on the actual window thread, immediately before mutating it.
+        if !inner.accepts(&request, generation) {
+            let _ = app.emit_to("pet", MEASUREMENT_EVENT, inner.measurement());
+            return Ok(presentation(app, window, inner));
+        }
+        if request.bubble.is_some_and(|rect| {
+            rect.width == 0
+                || rect.height == 0
+                || rect.width > i32::MAX as u32
+                || rect.height > i32::MAX as u32
+        }) {
+            return Err("invalid bubble layout size".to_string());
+        }
+        let visible = window.is_visible().unwrap_or(false);
+        let work_areas = if inner.can_retain(&request, generation, visible) {
+            app.get_webview_window("pet")
+                .and_then(|pet| crate::read_pet_display_topology(&pet))
+                .map(|snapshot| {
+                    snapshot
+                        .monitors
+                        .into_iter()
+                        .map(|monitor| PhysicalRect {
+                            x: monitor.work_area.x,
+                            y: monitor.work_area.y,
+                            width: monitor.work_area.width,
+                            height: monitor.work_area.height,
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        if let Some(plan) = inner.growth_plan(&request, generation, visible, &work_areas) {
+            // Publish the target before expanding the native host. The bubble
+            // installs viewport compensation and echoes this exact plan to commit.
+            inner.prepare_carrier(request, plan);
+        } else {
+            let carrier = inner.planned_carrier(&request, generation, visible);
+            if let Some(rect) = carrier {
+                if inner.actual_rect() != rect {
+                    set_native_bounds(window, rect)?;
+                }
+            }
+            inner.commit(request, carrier);
+        }
+        let changed = refresh_measurement(window, inner)?;
+        reconcile_visibility(app, window, state, inner)?;
+        if changed {
+            let _ = app.emit_to("pet", MEASUREMENT_EVENT, inner.measurement());
+        }
+        let value = presentation(app, window, inner);
+        emit_presentation(app, &value);
+        Ok(value)
+    })
+    .await
+}
+#[tauri::command]
+pub async fn commit_bubble_carrier(
+    app: AppHandle,
+    state: tauri::State<'_, BubbleState>,
+    plan: BubbleCarrierPlan,
+) -> Result<BubblePresentationState, String> {
+    on_native_state(&app, state.inner(), move |app, window, state, inner| {
+        refresh_measurement(window, inner)?;
+        if !inner.accepts_carrier(&plan, topology_generation(app)) {
+            return Ok(presentation(app, window, inner));
+        }
+        let request = inner
+            .applied
+            .clone()
+            .ok_or("bubble carrier target is unavailable")?;
+        set_native_bounds(window, plan.rect_physical)?;
+        inner.commit(request, Some(plan.rect_physical));
+        inner.retaining = true;
+        let changed = refresh_measurement(window, inner)?;
+        reconcile_visibility(app, window, state, inner)?;
+        if changed {
+            let _ = app.emit_to("pet", MEASUREMENT_EVENT, inner.measurement());
+        }
+        let value = presentation(app, window, inner);
+        emit_presentation(app, &value);
+        Ok(value)
+    })
+    .await
+}
+#[tauri::command]
+pub async fn show_bubble(
+    app: AppHandle,
+    state: tauri::State<'_, BubbleState>,
+) -> Result<BubblePresentationState, String> {
+    on_native_state(&app, state.inner(), |app, window, state, inner| {
+        inner.show_requested = true;
+        refresh_measurement(window, inner)?;
+        reconcile_visibility(app, window, state, inner)?;
+        state.notify.notify_one();
+        let _ = app.emit_to("pet", MEASUREMENT_EVENT, inner.measurement());
+        let value = presentation(app, window, inner);
+        emit_presentation(app, &value);
+        Ok(value)
+    })
+    .await
+}
+#[tauri::command]
+pub async fn hide_bubble(
+    app: AppHandle,
+    state: tauri::State<'_, BubbleState>,
+) -> Result<(), String> {
+    on_native_state(&app, state.inner(), |app, window, state, inner| {
+        if inner.show_requested || inner.retain_bounds || inner.carrier.is_some() {
+            inner.measurement_revision = inner.measurement_revision.saturating_add(1);
+        }
+        inner.show_requested = false;
+        inner.retain_bounds = false;
+        inner.retaining = false;
+        inner.carrier = None;
+        inner.pending_carrier = None;
+        inner.applied = None;
+        let _ = app.emit_to("pet", MEASUREMENT_EVENT, inner.measurement());
+        reconcile_visibility(app, window, state, inner)?;
+        emit_presentation(app, &presentation(app, window, inner));
+        Ok(())
+    })
+    .await
+}
+#[tauri::command]
+pub async fn get_bubble_presentation_state(
+    app: AppHandle,
+    state: tauri::State<'_, BubbleState>,
+) -> Result<BubblePresentationState, String> {
+    on_native_state(&app, state.inner(), |app, window, _, inner| {
+        if refresh_measurement(window, inner)? {
+            let _ = app.emit_to("pet", MEASUREMENT_EVENT, inner.measurement());
+        }
+        Ok(presentation(app, window, inner))
+    })
+    .await
+}
+pub(crate) fn clamp_bubble_size(w: u32, h: u32) -> (u32, u32) {
+    (w.clamp(MIN_W, MAX_W), h.clamp(MIN_H, MAX_H))
+}
 #[cfg(debug_assertions)]
 #[tauri::command]
 pub fn inject_test_envelope(app: AppHandle, text: String) -> Result<(), String> {
     emit_test_envelope(&app, text, "cron:bedtime")
 }
-
-/// 070 · dev-only：注入一条 Reminder 气泡，用于连续点击验证 Sonner 堆叠与溢出队列。
 #[cfg(debug_assertions)]
 #[tauri::command]
 pub fn inject_test_reminder_envelope(app: AppHandle, text: String) -> Result<(), String> {
     emit_test_envelope(&app, text, "todo_reminder")
 }
-
 #[cfg(debug_assertions)]
 fn emit_test_envelope(app: &AppHandle, text: String, source_kind: &str) -> Result<(), String> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use tauri::Emitter;
-
-    static NEXT_DEV_ENVELOPE_SEQ: AtomicU64 = AtomicU64::new(1);
-    let seq = NEXT_DEV_ENVELOPE_SEQ.fetch_add(1, Ordering::Relaxed);
-    let envelope = build_test_envelope(&text, source_kind, seq);
-
-    // emit_to bubble webview —— 与真 push channel（push_subscriber.rs）走同一通道
-    app.emit_to(BUBBLE_LABEL, "agent://push", envelope)
-        .map_err(|e| format!("emit_to failed: {e}"))?;
-    log::info!(
-        "inject_test_envelope: source_kind={source_kind} seq={seq} emit_to bubble {} bytes",
-        text.len()
-    );
-    Ok(())
+    static NEXT_DEV_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+    let seq = NEXT_DEV_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    app.emit_to(
+        BUBBLE_LABEL,
+        "agent://push",
+        build_test_envelope(&text, source_kind, seq),
+    )
+    .map_err(|e| e.to_string())
 }
-
 #[cfg(debug_assertions)]
 fn build_test_envelope(text: &str, source_kind: &str, seq: u64) -> serde_json::Value {
-    serde_json::json!({
-        "kind": "agent_turn",
-        "session_id": "dev-test",
-        "seq": seq,
-        "source_kind": source_kind,
-        "events": [
-            { "type": "text_delta", "text": text }
-        ]
-    })
+    serde_json::json!({"kind":"agent_turn", "session_id":"dev-test", "seq":seq, "source_kind":source_kind, "events":[{"type":"text_delta", "text":text}]})
 }
-
-/// 计算 bubble window 应在的左上角屏幕坐标。
-///
-/// 规则：
-/// - 默认贴 pet 主窗**上方**，水平居中对齐 pet 主窗中线。
-/// - 屏顶贴墙（pet 顶部距屏顶 < bubble.h + MARGIN）→ 翻到 pet 下方。
-/// - 水平方向：clamp 到 `[screen.x, screen.x + screen.w - bubble.w]`，
-///   避免气泡左右越出屏幕边界。若 bubble 比 screen 还宽（极端情况），仅保证 x >= screen.x。
-///
-/// 翻转策略只看屏顶距离 —— 不考虑屏底翻转回上方的二次翻转，因为视觉上"贴底"
-/// 比"翻回上方"更稳定（bubble 在 pet 下方但仍在屏内，不影响读）。
-pub fn compute_bubble_position(pet: Anchor, bubble: BubbleSize, screen: Screen) -> (i32, i32) {
-    // 水平：居中对齐 pet 中线，再 clamp 到屏幕水平范围
-    let pet_cx = pet.x + (pet.w as i32) / 2;
-    let raw_x = pet_cx - (bubble.w as i32) / 2;
-    let max_x = screen.x + (screen.w as i32) - (bubble.w as i32);
-    let x = raw_x.clamp(screen.x, max_x.max(screen.x));
-
-    // 垂直：默认贴上方；屏顶贴墙翻到下方
-    let above_y = pet.y - (bubble.h as i32) - MARGIN;
-    let below_y = pet.y + (pet.h as i32) + MARGIN;
-    let top_limit = screen.y + MARGIN;
-    let y = if above_y >= top_limit {
-        above_y
-    } else {
-        below_y
-    };
-
-    (x, y)
-}
-
-/// 把 `set_bubble_size` invoke 接收到的尺寸 clamp 到模块定义的 (MIN_W..=MAX_W, MIN_H..=MAX_H)。
-pub(crate) fn clamp_bubble_size(w: u32, h: u32) -> (u32, u32) {
-    (w.clamp(MIN_W, MAX_W), h.clamp(MIN_H, MAX_H))
-}
-
-/// 取当前显示器（pet 主窗所在的）的可用矩形（物理坐标）。
-///
-/// 失败（拿不到 monitor / 跨多屏边界）→ 返回 None，调用方放弃本 tick 的位置同步。
-fn current_screen_rect(window: &WebviewWindow) -> Option<Screen> {
-    let monitor = window.current_monitor().ok().flatten()?;
-    let pos = monitor.position();
-    let size = monitor.size();
-    Some(Screen {
-        x: pos.x,
-        y: pos.y,
-        w: size.width,
-        h: size.height,
-    })
-}
-
-/// 跟随轮询的实际 loop —— 暴露给 `spawn_follow_loop` 作为 spawned future。
-///
-/// 设计要点：
-/// - hidden 时 `notified().await` park，static-period 零空转；show 时 invoke 命令调
-///   `visible_notify.notify_one()` 唤醒。
-/// - visible 时每 `TICK_MS` 取一次 pet 主窗位置 + bubble 当前尺寸 + 屏幕矩形，
-///   算出 bubble 应在的左上角坐标，调 `set_position`。
-/// - 任何中间环节失败（pet 或 bubble 窗暂时不在 / 取位置失败）→ 跳过本 tick，
-///   不打断 loop 也不报错（loop 是 long-running、丢一帧不影响后续）。
-async fn run_follow_loop(app: AppHandle, state: BubbleState) {
-    loop {
-        // hidden 时整段 park，避免 long-running 桌宠 idle 期空转
-        if !state.is_visible.load(Ordering::Acquire) {
-            state.visible_notify.notified().await;
-            continue;
-        }
-
-        // 17a · 跟随源切换：从 sprite_pos cache 读 anchor 替代 016 的 pet.outer_position()。
-        // None 时 skip 本 tick（race 兜底：PIXI app mount 慢于 setup hook 时早起 tick）。
-        let sprite = state.sprite_pos.lock().ok().and_then(|g| *g);
-        let Some(sp) = sprite else {
-            tokio::time::sleep(Duration::from_millis(TICK_MS)).await;
-            continue;
-        };
-
-        if let (Some(pet), Some(bubble)) = (
-            app.get_webview_window("pet"),
-            app.get_webview_window(BUBBLE_LABEL),
-        ) {
-            if let (Ok(bubble_size), Some(screen)) =
-                (bubble.outer_size(), current_screen_rect(&pet))
-            {
-                let anchor = Anchor {
-                    x: sp.x,
-                    y: sp.y,
-                    w: sp.w,
-                    h: sp.h,
-                };
-                let bub = BubbleSize {
-                    w: bubble_size.width,
-                    h: bubble_size.height,
-                };
-                let (x, y) = compute_bubble_position(anchor, bub, screen);
-                let _ = bubble.set_position(PhysicalPosition { x, y });
-            }
-        }
-
-        tokio::time::sleep(Duration::from_millis(TICK_MS)).await;
-    }
-}
-
-/// 在 Tauri 的 tokio runtime 上 spawn 跟随轮询 task。
-///
-/// task 持有 `BubbleState` 的 Arc 引用 clone，跨 await 安全；
-/// app 退出时 runtime drop 自然终止 loop。
-pub fn spawn_follow_loop(app: AppHandle, state: BubbleState) {
-    tauri::async_runtime::spawn(run_follow_loop(app, state));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn reminder_test_envelope_uses_queue_source_and_stable_sequence() {
-        let envelope = build_test_envelope("提醒队列测试", "todo_reminder", 42);
-
-        assert_eq!(envelope["session_id"], "dev-test");
-        assert_eq!(envelope["seq"], 42);
-        assert_eq!(envelope["source_kind"], "todo_reminder");
-        assert_eq!(envelope["events"][0]["text"], "提醒队列测试");
+    fn request() -> AccessoryLayoutRequest {
+        AccessoryLayoutRequest {
+            owner: 2,
+            generation: 4,
+            revision: 8,
+            measurement_revision: 3,
+            retain_bounds: false,
+            bubble: Some(PhysicalRect {
+                x: -200,
+                y: 30,
+                width: 400,
+                height: 100,
+            }),
+        }
     }
-
-    /// 标准屏幕：1920×1080，原点 (0, 0)。
-    const SCREEN: Screen = Screen {
-        x: 0,
-        y: 0,
-        w: 1920,
-        h: 1080,
-    };
-    /// 默认 bubble 尺寸：280×96（与 tauri.conf.json 初始值一致）。
-    const BUBBLE: BubbleSize = BubbleSize { w: 280, h: 96 };
-    /// pet 主窗尺寸：240×320。
-    const PET_W: u32 = 240;
-    const PET_H: u32 = 320;
-
-    #[test]
-    fn case1_pet_at_screen_center_bubble_above_and_centered() {
-        // pet 在屏幕中央 (840, 380) —— 顶部距屏顶 380px，远大于 bubble.h + MARGIN = 104
-        let pet = Anchor {
-            x: 840,
-            y: 380,
-            w: PET_W,
-            h: PET_H,
+    fn committed_state(rect: PhysicalRect, scale: f64) -> LayoutState {
+        let mut state = LayoutState {
+            owner: 2,
+            measurement_revision: 3,
+            actual: (rect.width, rect.height),
+            actual_position: (rect.x, rect.y),
+            scale,
+            show_requested: true,
+            ..Default::default()
         };
-        let (x, y) = compute_bubble_position(pet, BUBBLE, SCREEN);
-        // 水平居中：pet 中线 = 840 + 120 = 960；bubble 左上 x = 960 - 140 = 820
-        assert_eq!(x, 820);
-        // 垂直贴上方：bubble 底边 = pet.y - MARGIN = 372；bubble 左上 y = 372 - 96 = 276
-        assert_eq!(y, 380 - 96 - MARGIN);
+        state.commit(
+            AccessoryLayoutRequest {
+                bubble: Some(rect),
+                ..request()
+            },
+            Some(rect),
+        );
+        state
     }
-
+    fn next_request(
+        state: &LayoutState,
+        target: Option<PhysicalRect>,
+        retain_bounds: bool,
+    ) -> AccessoryLayoutRequest {
+        AccessoryLayoutRequest {
+            owner: state.owner,
+            generation: 4,
+            revision: state.last_revision + 1,
+            measurement_revision: state.measurement_revision,
+            bubble: target,
+            retain_bounds,
+        }
+    }
     #[test]
-    fn case2_pet_at_top_edge_flips_below() {
-        // pet 顶部贴墙 (840, 0) —— above_y = 0 - 96 - 8 = -104 < top_limit = 8 → 翻到下方
-        let pet = Anchor {
-            x: 840,
+    fn rejects_old_owner_topology_revision_and_measurement() {
+        let state = LayoutState {
+            owner: 2,
+            last_revision: 7,
+            measurement_revision: 3,
+            ..Default::default()
+        };
+        assert!(state.accepts(&request(), 4));
+        for stale in [
+            AccessoryLayoutRequest {
+                owner: 1,
+                ..request()
+            },
+            AccessoryLayoutRequest {
+                generation: 3,
+                ..request()
+            },
+            AccessoryLayoutRequest {
+                revision: 7,
+                ..request()
+            },
+            AccessoryLayoutRequest {
+                measurement_revision: 2,
+                ..request()
+            },
+        ] {
+            assert!(!state.accepts(&stale, 4));
+        }
+    }
+    #[test]
+    fn presentation_requires_matching_native_size_and_current_layout() {
+        let mut state = committed_state(request().bubble.unwrap(), 1.0);
+        assert!(state.applied_for(4));
+        assert!(!state.applied_for(5));
+        state.actual_position = (-100, 30);
+        assert!(!state.applied_for(4));
+        state.actual_position = (-200, 30);
+        state.actual = (400, 200);
+        assert!(!state.applied_for(4));
+        state.actual = (400, 100);
+        state.measurement_revision += 1;
+        assert!(!state.applied_for(4));
+    }
+    #[test]
+    fn content_or_retention_change_keeps_carrier_but_requires_a_new_receipt_layout() {
+        let host = request().bubble.unwrap();
+        let mut state = committed_state(host, 1.0);
+        let desired = state.desired;
+        let initial_revision = state.measurement_revision;
+        state.set_request(desired, true);
+        assert_eq!(state.measurement_revision, initial_revision + 1);
+        assert!(state.measurement().retain_bounds);
+        assert!(state.carrier_valid_for(4));
+        assert!(!state.applied_for(4));
+        state.set_request(desired, true);
+        assert_eq!(state.measurement_revision, initial_revision + 1);
+        state.set_request((360, 80), true);
+        assert_eq!(state.measurement_revision, initial_revision + 2);
+        assert!(state.carrier_valid_for(4));
+        state.set_request((360, 80), false);
+        assert_eq!(state.measurement_revision, initial_revision + 3);
+        assert!(!state.measurement().retain_bounds);
+    }
+    #[test]
+    fn contained_shrink_keeps_the_screen_carrier_for_every_direction_and_clamp() {
+        let host = PhysicalRect {
+            x: -200,
+            y: 30,
+            width: 400,
+            height: 400,
+        };
+        for target in [
+            PhysicalRect {
+                y: 230,
+                height: 200,
+                ..host
+            }, // top: keep lower edge
+            PhysicalRect {
+                height: 200,
+                ..host
+            }, // bottom: keep upper edge
+            PhysicalRect {
+                x: 0,
+                y: 130,
+                width: 200,
+                height: 200,
+            }, // left + centered
+            PhysicalRect {
+                y: 130,
+                width: 200,
+                height: 200,
+                ..host
+            }, // right + centered
+            PhysicalRect {
+                width: 240,
+                height: 100,
+                ..host
+            }, // clamped screen corner
+        ] {
+            let mut state = committed_state(host, 1.0);
+            state.set_request((target.width, target.height), true);
+            let request = next_request(&state, Some(target), true);
+            assert!(state.accepts(&request, 4));
+            let carrier = state.planned_carrier(&request, 4, true);
+            assert_eq!(carrier, Some(host));
+            state.commit(request, carrier);
+            assert!(!state.refresh_actual(host, 1.0));
+            assert!(state.retaining);
+            assert!(state.applied_for(4));
+            assert_eq!(state.applied.as_ref().unwrap().bubble, Some(target));
+        }
+    }
+    #[test]
+    fn release_reclaims_the_target_and_stale_requests_cannot_retain_or_reclaim_it() {
+        let host = PhysicalRect {
+            x: 300,
+            y: 100,
+            width: 360,
+            height: 480,
+        };
+        let target = PhysicalRect {
+            y: 380,
+            height: 200,
+            ..host
+        };
+        let mut state = committed_state(host, 1.0);
+        state.set_request((360, 200), true);
+        let held = next_request(&state, Some(target), true);
+        state.commit(held.clone(), Some(host));
+        assert!(state.retaining);
+        state.set_request((360, 200), false);
+        assert!(state.carrier_valid_for(4));
+        assert!(!state.applied_for(4));
+        assert!(!state.accepts(&held, 4));
+        let release = next_request(&state, Some(target), false);
+        let carrier = state.planned_carrier(&release, 4, true);
+        assert_eq!(carrier, Some(target));
+        state.commit(release.clone(), carrier);
+        state.refresh_actual(target, 1.0);
+        assert!(!state.retaining);
+        assert!(state.applied_for(4));
+        assert!(!state.accepts(&release, 4));
+        state.set_request((360, 300), true);
+        assert!(!state.accepts(&release, 4));
+    }
+    #[test]
+    fn drag_hidden_or_invalid_context_bypass_retention_and_growth_needs_a_plan() {
+        let host = PhysicalRect {
+            x: 200,
+            y: 200,
+            width: 360,
+            height: 400,
+        };
+        let contained = PhysicalRect {
+            y: 220,
+            height: 200,
+            ..host
+        };
+        let mut state = committed_state(host, 1.0);
+        state.set_request((360, 200), true);
+        let held = next_request(&state, Some(contained), true);
+        let drag = AccessoryLayoutRequest {
+            retain_bounds: false,
+            ..held.clone()
+        };
+        assert_eq!(state.planned_carrier(&drag, 4, true), Some(contained));
+        assert_eq!(state.planned_carrier(&held, 4, false), Some(contained));
+        assert_eq!(state.planned_carrier(&held, 5, true), Some(contained));
+        for target in [
+            PhysicalRect {
+                y: 190,
+                ..contained
+            },
+            PhysicalRect {
+                height: 500,
+                ..host
+            },
+        ] {
+            let request = next_request(&state, Some(target), true);
+            assert_eq!(state.planned_carrier(&request, 4, true), Some(target));
+        }
+        state.owner += 1;
+        let new_owner = next_request(&state, Some(contained), true);
+        assert_eq!(state.planned_carrier(&new_owner, 4, true), Some(contained));
+    }
+    fn growth_fixture() -> (LayoutState, AccessoryLayoutRequest, PhysicalRect) {
+        let host = PhysicalRect {
+            x: -600,
+            y: 300,
+            width: 450,
+            height: 400,
+        };
+        let target = PhysicalRect {
+            y: 100,
+            height: 600,
+            ..host
+        };
+        let area = PhysicalRect {
+            x: -1920,
             y: 0,
-            w: PET_W,
-            h: PET_H,
+            width: 1920,
+            height: 1040,
         };
-        let (_, y) = compute_bubble_position(pet, BUBBLE, SCREEN);
-        assert_eq!(y, 0 + (PET_H as i32) + MARGIN);
+        let mut state = committed_state(host, 1.25);
+        state.set_request((360, 480), true);
+        let request = next_request(&state, Some(target), true);
+        (state, request, area)
     }
-
     #[test]
-    fn case3_pet_at_left_edge_clamps_to_screen_left() {
-        // pet 紧贴屏幕左边 (0, 380) —— pet 中线 = 120，raw_x = 120 - 140 = -20 < 0 → clamp 到 0
-        let pet = Anchor {
-            x: 0,
-            y: 380,
-            w: PET_W,
-            h: PET_H,
-        };
-        let (x, _) = compute_bubble_position(pet, BUBBLE, SCREEN);
-        assert_eq!(x, 0);
+    fn growth_keeps_old_host_until_matching_ready_then_retains_the_union() {
+        let (mut state, request, area) = growth_fixture();
+        let host = state.actual_rect();
+        let target = request.bubble;
+        let plan = state.growth_plan(&request, 4, true, &[area]).unwrap();
+        assert_eq!(Some(plan.rect_physical), target);
+        state.prepare_carrier(request.clone(), plan);
+        assert_eq!(state.actual_rect(), host);
+        assert_eq!(state.applied.as_ref().unwrap().bubble, target);
+        assert_eq!(state.last_revision, plan.layout_revision);
+        assert!(state.carrier_valid_for(4));
+        assert!(!state.applied_for(4));
+        assert!(state.accepts_carrier(&plan, 4));
+        assert!(!state.accepts(&request, 4));
+        assert!(!state.refresh_actual(host, 1.25));
+        assert!(state.accepts_carrier(&plan, 4));
+
+        state.commit(request, Some(plan.rect_physical));
+        state.retaining = true;
+        state.refresh_actual(plan.rect_physical, 1.25);
+        assert!(state.applied_for(4));
+        assert!(state.pending_carrier.is_none());
+        assert!(!state.accepts_carrier(&plan, 4));
+        assert!(state.retaining);
+        // The pet may recompute after the physical-size event; keep holding.
+        let reflow = next_request(&state, target, true);
+        let carrier = state.planned_carrier(&reflow, 4, true);
+        state.commit(reflow, carrier);
+        assert!(state.retaining);
+        state.set_request(state.desired, false);
+        let release = next_request(&state, target, false);
+        let carrier = state.planned_carrier(&release, 4, true);
+        state.commit(release, carrier);
+        assert!(state.applied_for(4));
+        assert!(!state.retaining);
     }
-
     #[test]
-    fn case4_pet_at_right_edge_clamps_to_screen_right() {
-        // pet 紧贴屏幕右边 (1680, 380) —— pet 中线 = 1800，raw_x = 1800 - 140 = 1660
-        // max_x = 1920 - 280 = 1640；1660 > 1640 → clamp 到 1640
-        let pet = Anchor {
-            x: 1680,
-            y: 380,
-            w: PET_W,
-            h: PET_H,
-        };
-        let (x, _) = compute_bubble_position(pet, BUBBLE, SCREEN);
-        assert_eq!(x, 1920 - (BUBBLE.w as i32));
-    }
-
-    #[test]
-    fn case5_bubble_wider_than_screen_pins_to_screen_left() {
-        // 极端：screen 比 bubble 还窄（virtual screen=200×1080，bubble=280×96）
-        // max_x = 200 - 280 = -80 < screen.x = 0 → clamp 到 screen.x，保证不越左
-        let narrow_screen = Screen {
-            x: 0,
-            y: 0,
-            w: 200,
-            h: 1080,
-        };
-        let pet = Anchor {
-            x: 0,
-            y: 380,
-            w: PET_W,
-            h: PET_H,
-        };
-        let (x, _) = compute_bubble_position(pet, BUBBLE, narrow_screen);
-        assert_eq!(x, 0);
-    }
-
-    // —— clamp_bubble_size ——
-    #[test]
-    fn clamp_size_within_range_unchanged() {
-        assert_eq!(clamp_bubble_size(280, 200), (280, 200));
-    }
-
-    #[test]
-    fn clamp_size_below_min_pulled_up() {
-        assert_eq!(clamp_bubble_size(100, 32), (MIN_W, MIN_H));
-    }
-
-    #[test]
-    fn clamp_size_above_max_pulled_down() {
-        assert_eq!(clamp_bubble_size(800, 999), (MAX_W, MAX_H));
-    }
-
-    // —— 17a · BubbleState.sprite_pos cache ——
-    #[test]
-    fn sprite_pos_default_none() {
-        let state = BubbleState::default();
-        let g = state.sprite_pos.lock().expect("lock");
-        assert!(g.is_none());
-    }
-
-    #[test]
-    fn sprite_pos_write_then_read() {
-        let state = BubbleState::default();
-        {
-            let mut g = state.sprite_pos.lock().expect("lock");
-            *g = Some(SpritePos {
-                x: 100,
+    fn growth_union_covers_all_directions_and_clamps_without_crossing_work_area() {
+        let (state, request, area) = growth_fixture();
+        let host = state.actual_rect();
+        for target in [
+            request.bubble.unwrap(),
+            PhysicalRect {
+                height: 600,
+                ..host
+            },
+            PhysicalRect {
+                x: -800,
                 y: 200,
-                w: 160,
-                h: 160,
-            });
+                width: 650,
+                height: 600,
+            },
+            PhysicalRect {
+                y: 200,
+                width: 550,
+                height: 600,
+                ..host
+            },
+            PhysicalRect {
+                y: 0,
+                height: 600,
+                ..host
+            },
+        ] {
+            let request = AccessoryLayoutRequest {
+                bubble: Some(target),
+                ..request.clone()
+            };
+            let plan = state.growth_plan(&request, 4, true, &[area]).unwrap();
+            assert!(plan.rect_physical.contains(host));
+            assert!(plan.rect_physical.contains(target));
+            assert!(area.contains(plan.rect_physical));
         }
-        let g = state.sprite_pos.lock().expect("lock");
-        let sp = g.expect("Some");
-        assert_eq!(sp.x, 100);
-        assert_eq!(sp.y, 200);
-        assert_eq!(sp.w, 160);
-        assert_eq!(sp.h, 160);
+        let adjacent = PhysicalRect { x: 0, ..area };
+        let across = AccessoryLayoutRequest {
+            bubble: Some(PhysicalRect { x: 100, ..host }),
+            ..request.clone()
+        };
+        assert!(state
+            .growth_plan(&across, 4, true, &[area, adjacent])
+            .is_none());
+        assert!(state.growth_plan(&request, 4, true, &[]).is_none());
+        let taskbar = PhysicalRect {
+            height: 650,
+            ..area
+        };
+        assert!(state.growth_plan(&request, 4, true, &[taskbar]).is_none());
     }
-
     #[test]
-    fn sprite_pos_overwrite() {
-        let state = BubbleState::default();
-        {
-            let mut g = state.sprite_pos.lock().expect("lock");
-            *g = Some(SpritePos {
-                x: 1,
-                y: 2,
-                w: 10,
-                h: 10,
-            });
+    fn growth_ready_requires_every_plan_field_and_current_context() {
+        let (mut state, request, area) = growth_fixture();
+        let plan = state.growth_plan(&request, 4, true, &[area]).unwrap();
+        state.prepare_carrier(request, plan);
+        for stale in [
+            BubbleCarrierPlan {
+                owner: plan.owner + 1,
+                ..plan
+            },
+            BubbleCarrierPlan {
+                generation: plan.generation + 1,
+                ..plan
+            },
+            BubbleCarrierPlan {
+                layout_revision: plan.layout_revision + 1,
+                ..plan
+            },
+            BubbleCarrierPlan {
+                measurement_revision: plan.measurement_revision + 1,
+                ..plan
+            },
+            BubbleCarrierPlan {
+                rect_physical: PhysicalRect {
+                    x: 1,
+                    ..plan.rect_physical
+                },
+                ..plan
+            },
+        ] {
+            assert!(!state.accepts_carrier(&stale, 4));
         }
-        {
-            let mut g = state.sprite_pos.lock().expect("lock");
-            *g = Some(SpritePos {
-                x: 999,
-                y: -50,
-                w: 20,
-                h: 20,
-            });
+        assert!(!state.accepts_carrier(&plan, 5));
+        assert!(state.accepts_carrier(&plan, 4));
+    }
+    #[test]
+    fn newer_measurement_or_layout_invalidates_a_prepared_growth() {
+        for change_size in [false, true] {
+            let (mut state, request, area) = growth_fixture();
+            let plan = state.growth_plan(&request, 4, true, &[area]).unwrap();
+            state.prepare_carrier(request, plan);
+            state.set_request(
+                if change_size {
+                    (360, 420)
+                } else {
+                    state.desired
+                },
+                change_size,
+            );
+            assert!(state.pending_carrier.is_none());
+            assert!(!state.accepts_carrier(&plan, 4));
+            assert!(state.carrier_valid_for(4));
         }
-        let g = state.sprite_pos.lock().expect("lock");
-        let sp = g.expect("Some");
-        assert_eq!(sp.x, 999);
-        assert_eq!(sp.y, -50); // 多屏左屏 x 可能 < 0：sprite_pos 也允许负值
-        assert_eq!(sp.w, 20);
+        let (mut state, request, area) = growth_fixture();
+        let old = state.growth_plan(&request, 4, true, &[area]).unwrap();
+        state.prepare_carrier(request.clone(), old);
+        let next = next_request(&state, request.bubble, true);
+        let new = state.growth_plan(&next, 4, true, &[area]).unwrap();
+        state.prepare_carrier(next, new);
+        assert!(!state.accepts_carrier(&old, 4));
+        assert!(state.accepts_carrier(&new, 4));
+        let drag = next_request(&state, request.bubble, false);
+        assert!(state.growth_plan(&drag, 4, true, &[area]).is_none());
+        let carrier = state.planned_carrier(&drag, 4, true);
+        assert_eq!(carrier, request.bubble);
+        state.commit(drag, carrier);
+        assert!(!state.accepts_carrier(&new, 4));
+        assert!(state.pending_carrier.is_none());
+        assert!(!state.retaining);
+    }
+    #[test]
+    fn hidden_owner_displacement_or_dpr_changes_reject_growth_ready() {
+        for scenario in 0..4 {
+            let (mut state, request, area) = growth_fixture();
+            let plan = state.growth_plan(&request, 4, true, &[area]).unwrap();
+            state.prepare_carrier(request, plan);
+            match scenario {
+                0 => state.show_requested = false,
+                1 => state.owner += 1,
+                2 => {
+                    state.refresh_actual(
+                        PhysicalRect {
+                            x: -590,
+                            ..state.actual_rect()
+                        },
+                        1.25,
+                    );
+                }
+                _ => {
+                    state.refresh_actual(state.actual_rect(), 1.5);
+                }
+            }
+            assert!(!state.accepts_carrier(&plan, 4));
+        }
+        let (state, request, area) = growth_fixture();
+        assert!(state.growth_plan(&request, 4, false, &[area]).is_none());
+        assert!(state.growth_plan(&request, 5, true, &[area]).is_none());
+        let extreme = PhysicalRect {
+            x: i32::MIN,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        assert!(extreme
+            .union(PhysicalRect {
+                x: i32::MAX,
+                ..extreme
+            })
+            .is_none());
+    }
+    #[test]
+    fn retained_native_rect_is_not_mistaken_for_displacement_but_real_moves_and_dpr_are() {
+        let host = PhysicalRect {
+            x: -500,
+            y: 100,
+            width: 450,
+            height: 600,
+        };
+        let target = PhysicalRect {
+            y: 300,
+            height: 400,
+            ..host
+        };
+        for (actual, scale) in [(PhysicalRect { x: -499, ..host }, 1.25), (host, 1.5)] {
+            let mut state = committed_state(host, 1.25);
+            state.set_request((360, 320), true);
+            assert_eq!(state.measurement().desired_width_physical, 450);
+            assert_eq!(state.measurement().desired_height_physical, 400);
+            state.commit(next_request(&state, Some(target), true), Some(host));
+            let revision = state.measurement_revision;
+            assert!(!state.refresh_actual(host, 1.25));
+            assert_eq!(state.measurement_revision, revision);
+            assert!(state.applied_for(4));
+            assert!(state.refresh_actual(actual, scale));
+            assert_eq!(state.measurement_revision, revision + 1);
+            assert!(state.carrier.is_none());
+            assert!(state.applied.is_none());
+            assert!(!state.retaining);
+        }
+    }
+    #[test]
+    fn queued_layout_has_no_visible_carrier_even_after_a_retained_frame() {
+        let mut state = committed_state(request().bubble.unwrap(), 1.0);
+        let request = next_request(&state, None, true);
+        let carrier = state.planned_carrier(&request, 4, true);
+        assert!(carrier.is_none());
+        state.commit(request, carrier);
+        assert!(!state.carrier_valid_for(4));
+        assert!(!state.applied_for(4));
+        assert!(!state.retaining);
+    }
+    #[test]
+    fn constrained_size_does_not_replace_natural_content_measurement() {
+        let state = LayoutState {
+            desired: (360, 480),
+            actual: (450, 180),
+            scale: 1.25,
+            ..Default::default()
+        };
+        let m = state.measurement();
+        assert_eq!(m.desired_width_physical, 450);
+        assert_eq!(m.desired_height_physical, 600);
+        assert_eq!(m.height_physical, 180);
+    }
+    #[test]
+    fn size_limits_and_dev_envelope_stay_compatible() {
+        assert_eq!(clamp_bubble_size(100, 20), (240, 64));
+        assert_eq!(clamp_bubble_size(900, 900), (360, 480));
+        let env = build_test_envelope("test", "todo_reminder", 42);
+        assert_eq!(env["seq"], 42);
+        assert_eq!(env["source_kind"], "todo_reminder");
     }
 }

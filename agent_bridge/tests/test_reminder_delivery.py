@@ -282,6 +282,38 @@ def test_same_session_batch_submits_one_structured_agent_turn(tmp_path: Path) ->
     assert str(runtime.submit_kwargs[0]["surface"]) == "desktop_chat"
 
 
+def test_pet_delegation_keeps_agent_and_im_contract_and_does_not_replay_old_send(
+    tmp_path: Path,
+) -> None:
+    todo_store, occurrence = _claimed(tmp_path)
+    sessions = _sessions(tmp_path, "origin-session")
+    runtime = FakeAgentRuntime(subscribers=1)
+    delegated: list[str] = []
+
+    def notification(value: ReminderOccurrence) -> str:
+        delegated.append(value.id)
+        return "notification-1"
+
+    orchestrator = ReminderDeliveryOrchestrator(
+        todo_store=todo_store,
+        session_store=sessions,
+        agent_runtime=cast(AgentRuntime, runtime),
+        presence_registry=PresenceRegistry(),
+        pet_notification=notification,
+        clock=lambda: NOW,
+    )
+    orchestrator.deliver(occurrence)
+    orchestrator.deliver(todo_store.get_occurrence(occurrence.id))
+    assert delegated == [occurrence.id]
+    assert runtime.listeners.ambient == []
+    assert len(runtime.submitted) == 1
+    assert runtime.submitted[0].tool_mode == "normal"
+    projection = todo_store.get_delivery(occurrence.id, ReminderProjectionKind.PET_FIXED)
+    assert projection.state is ReminderDeliveryState.SKIPPED
+    assert projection.error_kind == "delegated_to_notification_manager"
+    assert projection.receipt == "notification-1"
+
+
 def test_latest_session_user_interaction_owns_history_even_when_binding_recency_disagrees(
     tmp_path: Path,
 ) -> None:

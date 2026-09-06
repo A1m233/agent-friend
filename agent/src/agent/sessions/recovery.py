@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -85,6 +86,10 @@ class ToolTransactionReconciler:
         self._tool_execution_evidence_store = tool_execution_evidence_store
         self._locks_guard = Lock()
         self._session_locks: dict[str, Lock] = {}
+        self._terminal_observers: list[Callable[[Session, Event], None]] = []
+
+    def add_terminal_observer(self, observer: Callable[[Session, Event], None]) -> None:
+        self._terminal_observers.append(observer)
 
     def reconcile_session(self, session_id: str) -> ReconciliationReport:
         with self._session_lock(session_id):
@@ -164,6 +169,16 @@ class ToolTransactionReconciler:
             if (owner := request.meta.get("owner_runtime_instance_id"))
             and owner != self._runtime_instance_id
         }
+        # A model-only run can lose its owner before issuing any tool request.
+        prior_owner_runs.update(
+            started_run_id
+            for event in session.active_events
+            if event.type == "run_started"
+            and isinstance((started_run_id := event.payload.get("run_id")), str)
+            and started_run_id
+            and (owner := event.meta.get("owner_runtime_instance_id"))
+            and owner != self._runtime_instance_id
+        )
 
         for key, request in requests.items():
             if key in results:
@@ -254,6 +269,11 @@ class ToolTransactionReconciler:
                 },
             )
             self._append(session, terminal)
+            for observer in tuple(self._terminal_observers):
+                try:
+                    observer(session, terminal)
+                except Exception:
+                    logger.exception("recovered terminal observer failed: %s", run_id)
             terminal_runs.add(run_id)
             appended_terminals += 1
 
