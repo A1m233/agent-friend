@@ -45,6 +45,13 @@ class LLMBadRequestError(LLMError):
     """请求格式错误。多半是 bug，CLI 层不重试。"""
 
 
+class LLMUnsupportedParameterError(LLMBadRequestError):
+    """The local SDK rejected a model parameter before sending a request."""
+
+    reason_code = "unsupported_model_parameter"
+    error_source = "sdk_validation"
+
+
 class LLMContextWindowError(LLMBadRequestError):
     """请求输入超过当前 Provider / Model 的上下文窗口。"""
 

@@ -23,7 +23,7 @@ vi.mock("@/services", () => ({
 vi.mock("@/lib/persistence/chatUi", () => ({ setLastChatSessionId: vi.fn() }));
 
 import { runsApi, sessionsApi } from "@/services";
-import { useConversationStore } from "./conversation";
+import { resetConversationCoordinatorsForTests, useConversationStore } from "./conversation";
 import {
   handlePushReconnectedForSync,
   handleRunEventForSync,
@@ -73,6 +73,7 @@ describe("sessionSync", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    resetConversationCoordinatorsForTests();
     resetSessionSyncForTests();
     useConversationStore.getState().invalidateBackgroundRefreshes();
     useSessionsStore.setState({ list: [], loading: false, loaded: true, error: false });
@@ -86,6 +87,8 @@ describe("sessionSync", () => {
       syncRefreshSeq: 0,
       sessionViews: {},
       runSnapshots: {},
+      runtimeInstanceId: null,
+      stopRequestsByRun: {},
       runCalibrationPhase: "ready",
       runFence: emptySnapshotFence(),
       unreadRunOutcomeBySession: {},

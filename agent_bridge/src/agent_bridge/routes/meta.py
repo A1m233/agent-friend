@@ -269,10 +269,10 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         """
         try:
             revision_before = mgr.current_revision(session_id)
-            session = mgr.open(session_id)
+            session = mgr.query(session_id) if view == "active" else mgr.open(session_id)
             revision = mgr.current_revision(session_id)
             if revision != revision_before:
-                session = mgr.open(session_id)
+                session = mgr.query(session_id) if view == "active" else mgr.open(session_id)
                 revision = mgr.current_revision(session_id)
         except SessionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e

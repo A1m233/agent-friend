@@ -34,7 +34,7 @@ from memory import Memory
 
 from ..conversation import Conversation
 from ..conversation_events import TurnDone
-from ..latency import RunLatencyContext, log_run_latency
+from ..latency import RunLatencyContext, log_run_latency, monotonic_ms
 from ..memory_feed import project_post_turn_observation
 from ..sessions.changes import reset_session_mutation_context, set_session_mutation_context
 from ..system_prompt.sections import PromptChannel
@@ -64,6 +64,7 @@ from .listeners import (
 from .models import (
     ConsumerAbandonPolicy,
     ConversationFactory,
+    ConversationPreparer,
     ConversationRunner,
     InteractiveBusyPolicy,
     RunCancelResult,
@@ -336,12 +337,14 @@ class AgentRuntime:
         channel: PromptChannel | None = None,
         surface: InteractionSurfaceId | None = None,
         conversation_factory: ConversationFactory | None = None,
+        conversation_preparer: ConversationPreparer | None = None,
         conversation_runner: ConversationRunner | None = None,
         error_callback: RunErrorCallback | None = None,
         metadata: dict[str, Any] | None = None,
         consumer_abandon_policy: ConsumerAbandonPolicy = ConsumerAbandonPolicy.CANCEL,
         interactive_busy_policy: InteractiveBusyPolicy = InteractiveBusyPolicy.QUEUE,
         control_scope: str | None = None,
+        input_accepted: bool | None = None,
     ) -> RunHandle:
         """提交一轮到 session-aware scheduler，返回可流式消费的句柄。"""
         if priority is None:
@@ -361,12 +364,14 @@ class AgentRuntime:
             "channel": channel,
             "surface": surface,
             "conversation_factory": conversation_factory,
+            "conversation_preparer": conversation_preparer,
             "conversation_runner": conversation_runner,
             "error_callback": error_callback,
             "metadata": metadata or {},
             "consumer_abandon_policy": consumer_abandon_policy,
             "interactive_busy_policy": interactive_busy_policy,
             "control_scope": control_scope,
+            "input_accepted": input_accepted,
         }
         if run_id is not None:
             kwargs["run_id"] = run_id
@@ -546,8 +551,64 @@ class AgentRuntime:
         handle: RunHandle,
     ) -> RunExecutionResult | None:
         """Execute one run while the caller holds the persistent session guard."""
-        decision = self._hooks.run_pre_turn(request.event)
+        handle.token.raise_if_cancelled()
+        prepared_conv = None
+        if request.conversation_preparer is not None:
+            prepare_started_ms = monotonic_ms()
+            prepare_latency = RunLatencyContext(
+                run_id=request.run_id,
+                session_id=request.session_id,
+                started_ms=request.latency_started_ms,
+            )
+            log_run_latency(logger, prepare_latency, "conversation_prepare_start")
+            origin = request.metadata.get("protocol")
+            prepare_mutation_token = set_session_mutation_context(
+                origin=origin if isinstance(origin, str) else None,
+                channel=request.channel,
+            )
+            try:
+                prepared_conv = request.conversation_preparer(handle.token.raise_if_cancelled)
+            finally:
+                reset_session_mutation_context(prepare_mutation_token)
+                log_run_latency(
+                    logger,
+                    prepare_latency,
+                    "conversation_prepare_done",
+                    duration_ms=monotonic_ms() - prepare_started_ms,
+                    prepared=prepared_conv is not None,
+                    cancelled=handle.token.is_cancelled,
+                )
+        handle.token.raise_if_cancelled()
+        try:
+            decision = self._hooks.run_pre_turn(
+                request.event, cancel_check=handle.token.raise_if_cancelled
+            )
+        except BaseException as exc:
+            if prepared_conv is not None:
+                self._hooks.run_post_turn(
+                    PostTurnContext(
+                        session=prepared_conv.session,
+                        turn_start_idx=len(prepared_conv.session.events),
+                        event=request.event,
+                        run_id=request.run_id,
+                        outcome=RunOutcome.CANCELLED
+                        if handle.token.is_cancelled
+                        else RunOutcome.FAILED,
+                        error=exc,
+                    )
+                )
+            raise
         if decision.skip:
+            if prepared_conv is not None:
+                self._hooks.run_post_turn(
+                    PostTurnContext(
+                        session=prepared_conv.session,
+                        turn_start_idx=len(prepared_conv.session.events),
+                        event=request.event,
+                        run_id=request.run_id,
+                        outcome=RunOutcome.SKIPPED,
+                    )
+                )
             handle.finish_once(RunOutcome.SKIPPED, reason_code=decision.reason or "pre_turn_skip")
             self._listeners.finish_run(
                 request.event,
@@ -566,7 +627,9 @@ class AgentRuntime:
         )
         try:
             conv = (
-                request.conversation_factory()
+                prepared_conv
+                if prepared_conv is not None
+                else request.conversation_factory()
                 if request.conversation_factory is not None
                 else self._conversation_factory(request.session_id)
             )
@@ -592,6 +655,8 @@ class AgentRuntime:
             surface=request.surface or "none",
         )
         session = conv.session
+        if request.input_accepted is False:
+            conv.set_input_accepted_callback(handle.mark_input_accepted)
         started_at = handle.snapshot().started_at
 
         def persist_terminal(terminal: RunTerminal) -> None:
@@ -634,6 +699,7 @@ class AgentRuntime:
         error: BaseException | None = None
         execution_result: RunExecutionResult | None = None
         try:
+            handle.token.raise_if_cancelled()
             if started_at is not None:
                 conv.append_run_started_event(
                     run_id=request.run_id,
@@ -714,7 +780,11 @@ class AgentRuntime:
             from .cancellation import RunCancelled
 
             outcome = RunOutcome.CANCELLED if isinstance(exc, RunCancelled) else RunOutcome.FAILED
-            if outcome is RunOutcome.FAILED and request.error_callback is not None:
+            if (
+                outcome is RunOutcome.FAILED
+                and request.error_callback is not None
+                and handle.snapshot().input_accepted is not False
+            ):
                 try:
                     request.error_callback(conv, exc, request)
                 except Exception:
@@ -747,6 +817,7 @@ class AgentRuntime:
                     first_text_ms=run_latency.first_text_elapsed_ms,
                 )
                 conv.set_run_latency_context(None)
+                conv.set_input_accepted_callback(None)
                 reset_session_mutation_context(mutation_token)
 
     def _dispatch(self, ev: AgentEvent) -> None:

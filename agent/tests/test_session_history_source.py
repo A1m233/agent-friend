@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from agent.memory_search import SessionHistorySource, SessionStoreSourceOrderProvider
 from agent.sessions.events import SCHEMA_VERSION, Event
 from agent.sessions.session import Session
 from agent.sessions.store import SessionSummary
-from memory.search import MemorySearchService, QueryAnalyzer, SearchRequest
+from memory.search import (
+    CurrentSessionRecallScope,
+    MemorySearchService,
+    QueryAnalyzer,
+    SearchRequest,
+)
 
 _NOW = datetime(2026, 7, 14, 12, tzinfo=UTC)
 
@@ -291,3 +297,104 @@ def test_source_order_provider_projects_only_completed_active_conversation_messa
     provider = SessionStoreSourceOrderProvider(_Store(Session.from_events(events)))
 
     assert provider.active_conversation_event_uuids("session-1") == ("u1", "a1", "u2")
+
+
+def test_empty_current_scope_skips_loading_current_session() -> None:
+    class Store(_Store):
+        def load(self, session_id: str) -> Session:
+            raise AssertionError("ineligible current session must not be loaded")
+
+    service = MemorySearchService([SessionHistorySource(Store(_session()))])
+    result = service.search(
+        SearchRequest(
+            text="日语",
+            owner_user_id="local",
+            persona_id="p1",
+            mode="automatic",
+            session_id="session-1",
+            automatic_recall_scope=CurrentSessionRecallScope("session-1", None),
+        )
+    )
+    assert result.evidence == ()
+    assert result.failures == ()
+
+
+def test_history_expansion_reuses_reads_and_preserves_complete_turn_boundary() -> None:
+    # The first turn is eligible, the many newer turns force several expansions.
+    # Scope order is deliberately supplied separately so the assertion measures
+    # candidate preparation, not the independent provenance-order capability.
+    events = list(_session().events[:3])
+    for i in range(35):
+        events.append(
+            Event(
+                type="user_message",
+                uuid=f"new-{i}",
+                ts=_NOW + timedelta(seconds=i),
+                payload={"content": f"日语 new {i}"},
+                meta={"persona_id": "p1"},
+            )
+        )
+    session = Session.from_events(events)
+
+    class Store(_Store):
+        loads = 0
+
+        def load(self, session_id: str) -> Session:
+            self.loads += 1
+            return super().load(session_id)
+
+    class Order:
+        def active_conversation_event_uuids(self, session_id: str) -> tuple[str, ...]:
+            return tuple(event.uuid for event in events[1:])
+
+    store = Store(session)
+    service = MemorySearchService([SessionHistorySource(store)], source_order_provider=Order())
+    request = SearchRequest(
+        text="日语",
+        owner_user_id="local",
+        persona_id="p1",
+        mode="automatic",
+        session_id="session-1",
+        automatic_recall_scope=CurrentSessionRecallScope("session-1", "a1"),
+    )
+    result = service.search(request)
+    assert result.failures == ()
+    assert [e.evidence_id for e in result.evidence] == ["session:session-1#turn:u1"]
+    assert [e.text for e in result.evidence[0].excerpts] == ["我最近在学日语", "可以试试影子跟读"]
+    assert result.source_runs[0].scope_scan_attempts > 1
+    assert store.loads == 1
+
+    # A boundary inside a turn must suppress the whole turn, not admit its prefix.
+    from dataclasses import replace
+
+    inside_turn = service.search(
+        replace(request, automatic_recall_scope=CurrentSessionRecallScope("session-1", "u1"))
+    )
+    assert inside_turn.evidence == ()
+    assert store.loads == 2
+
+
+def test_cancellation_after_history_read_does_not_publish_partial_candidates() -> None:
+    cancelled = False
+
+    class Store(_Store):
+        def load(self, session_id: str) -> Session:
+            nonlocal cancelled
+            cancelled = True
+            return super().load(session_id)
+
+    def check() -> None:
+        if cancelled:
+            raise InterruptedError("cancelled")
+
+    service = MemorySearchService([SessionHistorySource(Store(_session()))])
+    with pytest.raises(InterruptedError):
+        service.search(
+            SearchRequest(
+                text="日语",
+                owner_user_id="local",
+                persona_id="p1",
+                mode="explicit",
+            ),
+            cancel_check=check,
+        )

@@ -1,0 +1,138 @@
+{
+  "started_at": "2026-09-06T13:14:29.060620+00:00",
+  "source": {
+    "head": "f563938bd3f63c88a5e7a5b59825e3da33f06303",
+    "files_sha256": {
+      "scripts/responses-smoke/run.py": "fe6ae9f018cf6495e569e0b14426ddf7db1b1c687768f6d3329992f7db74dce1",
+      "uv.lock": "ef4200b13dd2e43668413c573a02cb879bf8d0714bca5e2e621d91e031b57ea3",
+      "llm_providers/src/llm_providers/__init__.py": "273f3743242ab16bc681379b51798e3ee46122d0dd5bbad4a34f894bb683cbdb",
+      "llm_providers/src/llm_providers/cancellable_stream.py": "64f05fa02b8cb31db0ac5eb59a24424fb953f5c134a726469476a16cb7fb77d1",
+      "llm_providers/src/llm_providers/catalog.py": "ad91fcc876315844a41d006775b7cd88af17ccac3d5966e46bf031637018f911",
+      "llm_providers/src/llm_providers/chat_request.py": "1702b46a1fa84e7d035e9888423581cfff1f68475767485cd382c846b751c8b8",
+      "llm_providers/src/llm_providers/client.py": "c6b0073333326815d209226957149029a36b36d542f9879e88cb804dbe133c6b",
+      "llm_providers/src/llm_providers/credential_validation.py": "75cf03eaa880c4ad717b6e1f183c94a3ebfe2738bc739fbd4cdf92a7b5f5f163",
+      "llm_providers/src/llm_providers/deepseek_vision_compat.py": "a4fc3b3263d3bdf5d49652fe38025df02656260693cf420384a5626f1b552671",
+      "llm_providers/src/llm_providers/error_normalization.py": "c3b47f5bb8905f0755929db2b0937ca958ba4a30691e3abf45f6c55ee248cbeb",
+      "llm_providers/src/llm_providers/errors.py": "d18d0a9e0b6c0fe9714e2c0ade78e61ff5677df5005fc24335d95ca60ed47ec8",
+      "llm_providers/src/llm_providers/factory.py": "53d54ff37f7079bd2473881e5ff8396643f0d588fb9e7126e69c54b6cae4b504",
+      "llm_providers/src/llm_providers/kimi_transport.py": "78847d9df8b531f1d3b51969256fcd625a28cf7a64fc267eb6332a5d8e9891da",
+      "llm_providers/src/llm_providers/litellm_transport.py": "d1988c3ff5f828afbb4001b18ab22f89a4b7673eba93a89a8dc99bedecb50d4b",
+      "llm_providers/src/llm_providers/multimodal/__init__.py": "e16a0f24b0ee396569c2ace80c0738202ef2aea4646a174d67bd4404fb465f02",
+      "llm_providers/src/llm_providers/multimodal/adapter.py": "4e98239b8402ff4f902514bdae8b94ed1953e9ff18ab1768d107a9640206bb9d",
+      "llm_providers/src/llm_providers/prompt_cache_lineage.py": "c01d373e157b972e0207df90a5c1fad5fe09751654ca8d438edfe64e7abd9401",
+      "llm_providers/src/llm_providers/prompt_cache_observation.py": "70f40e020636c0fdff86e742d8e06fbcba784b3ae302b46d45128d261b568fae",
+      "llm_providers/src/llm_providers/protocol.py": "d583e74a85bc62d080bae28ee89e49633580db09cec2d0f80c2629a416283b6b",
+      "llm_providers/src/llm_providers/reasoning.py": "a2874862add8155dcb0cb283efd29301fc0be7c45768c95cd342f6fb45a215e8",
+      "llm_providers/src/llm_providers/request_witness.py": "f7cc4095e6f39b12fd19b38042105cca52082e7cf1c5362ae6f603bcf2ca35ef",
+      "llm_providers/src/llm_providers/responses/__init__.py": "2facf1639f5a9e4bdcb07f40016c6a79821e2d732edaa4ebfe0c044212f12e4b",
+      "llm_providers/src/llm_providers/responses/request.py": "4a4ac6942b759966daec498970c223888771f3369ac19b8ff4c36ec2ec411bc3",
+      "llm_providers/src/llm_providers/responses/stream.py": "1b48c6c7bab39176cbce360a990ff685a1165d07ced9ea901cec089f93962ce3",
+      "llm_providers/src/llm_providers/responses/transport.py": "88b5cde9816abfb8305541addbd0cf3251b0b48500ad14aefe78aff63b5e910c",
+      "llm_providers/src/llm_providers/spec.py": "c2d63c614cd791df1c81586912c7e8571151485dee8202e05522e37fd886fcb5",
+      "llm_providers/src/llm_providers/stream_events.py": "0a0747cd4c5069187c8b8edb6f7eb2d46c395e60b9e75b34e30bd93ac3283d4d",
+      "llm_providers/src/llm_providers/usage.py": "8892c4c66f858d8b98186bbf8dd92b89767603bf35ea3192f913dd0e6384722e"
+    },
+    "source_sha256": "5e7792de207282574a1cfa83fdcb767b6672810e846c740a9a5b2aec42011c63"
+  },
+  "providers": [
+    {
+      "model": "kimi/kimi-k3",
+      "reasoning_preset": "low",
+      "calls": [
+        {
+          "turn": 1,
+          "event_counts": {
+            "activity": 1,
+            "tool_call_delta": 7,
+            "done": 1
+          },
+          "phase_counts": {},
+          "text_chars": 0,
+          "stop_reason": "tool_use",
+          "usage": {
+            "prompt_tokens": 195,
+            "completion_tokens": 89,
+            "total_tokens": 284,
+            "cached_prompt_tokens": 0,
+            "cache_write_prompt_tokens": 0,
+            "input_other_prompt_tokens": 195,
+            "cache_miss_prompt_tokens": 195,
+            "usage_source": "responses",
+            "input_total_prompt_tokens_source": "input_tokens",
+            "completion_tokens_source": "output_tokens",
+            "total_tokens_source": "total_tokens",
+            "cached_prompt_tokens_source": "input_tokens_details.cached_tokens",
+            "cache_write_prompt_tokens_source": "input_tokens_details.cache_write_tokens",
+            "input_other_prompt_tokens_source": "derived_input_total_minus_cache_read_write",
+            "cache_miss_prompt_tokens_source": "derived_prompt_minus_cached",
+            "input_token_accounting": "inclusive_total",
+            "input_other_prompt_tokens_derived": true,
+            "cache_miss_prompt_tokens_derived": true
+          },
+          "native_reasoning_tokens": 36,
+          "reasoning_state_present": true,
+          "transport": "responses",
+          "request_fingerprint": "1e360b8d76f7aede9f4e7c6c",
+          "response_model": "kimi-k3"
+        },
+        {
+          "turn": 2,
+          "event_counts": {
+            "activity": 1,
+            "assistant_item_start": 1,
+            "text_delta": 7,
+            "assistant_item_done": 1,
+            "done": 1
+          },
+          "phase_counts": {
+            "none": 7
+          },
+          "text_chars": 18,
+          "stop_reason": "end_turn",
+          "usage": {
+            "prompt_tokens": 320,
+            "completion_tokens": 50,
+            "total_tokens": 370,
+            "cached_prompt_tokens": 0,
+            "cache_write_prompt_tokens": 0,
+            "input_other_prompt_tokens": 320,
+            "cache_miss_prompt_tokens": 320,
+            "usage_source": "responses",
+            "input_total_prompt_tokens_source": "input_tokens",
+            "completion_tokens_source": "output_tokens",
+            "total_tokens_source": "total_tokens",
+            "cached_prompt_tokens_source": "input_tokens_details.cached_tokens",
+            "cache_write_prompt_tokens_source": "input_tokens_details.cache_write_tokens",
+            "input_other_prompt_tokens_source": "derived_input_total_minus_cache_read_write",
+            "cache_miss_prompt_tokens_source": "derived_prompt_minus_cached",
+            "input_token_accounting": "inclusive_total",
+            "input_other_prompt_tokens_derived": true,
+            "cache_miss_prompt_tokens_derived": true
+          },
+          "native_reasoning_tokens": 28,
+          "reasoning_state_present": true,
+          "transport": "responses",
+          "request_fingerprint": "8fead19174dfd9052eb984cd",
+          "response_model": "kimi-k3"
+        }
+      ],
+      "passed": true,
+      "wire_requests": [
+        {
+          "method": "POST",
+          "host": "api.moonshot.cn",
+          "path": "/v1/responses",
+          "body_sha256": "2d4e13255defb0a1992bc279f6fb0ab2ccb53298a5c0b62aec60c397cf0f9cd2"
+        },
+        {
+          "method": "POST",
+          "host": "api.moonshot.cn",
+          "path": "/v1/responses",
+          "body_sha256": "bf84bc546af3df3077331764df9158745c1a197f0c2bc6f2ed46adacdaa17848"
+        }
+      ],
+      "real_requests": 2
+    }
+  ],
+  "finished_at": "2026-09-06T13:14:43.470969+00:00"
+}

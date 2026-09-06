@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from ..store import EpisodicRow, SemanticRow, SqliteMemoryStore
 from .contracts import AnalyzedQuery, EvidenceCandidate, SearchRequest, TimeRange
+from .execution import CancelCheck, PreparedSearch, check_cancel
 
 if TYPE_CHECKING:
-    from .vector import EmbeddingIndexManager
+    from .vector import EmbeddingIndexManager, VectorHit
 
 
 class StructuredMemorySource:
@@ -39,6 +41,46 @@ class StructuredMemorySource:
         request: SearchRequest,
         limit: int,
     ) -> list[EvidenceCandidate]:
+        return self.prepare_search(query, request=request)(limit)
+
+    def prepare_search(
+        self,
+        query: AnalyzedQuery,
+        *,
+        request: SearchRequest,
+        cancel_check: CancelCheck | None = None,
+    ) -> PreparedSearch:
+        dense_search = None
+        if self._index_manager is not None:
+            dense_search = self._index_manager.prepare_search(
+                query.retrieval_text,
+                owner_user_id=request.owner_user_id,
+                cancel_check=cancel_check,
+            )
+
+        def search(limit: int) -> list[EvidenceCandidate]:
+            check_cancel(cancel_check)
+            result = self._search(
+                query,
+                request=request,
+                limit=limit,
+                dense_search=dense_search,
+                cancel_check=cancel_check,
+            )
+            check_cancel(cancel_check)
+            return result
+
+        return search
+
+    def _search(
+        self,
+        query: AnalyzedQuery,
+        *,
+        request: SearchRequest,
+        limit: int,
+        dense_search: Callable[[int], list[VectorHit]] | None,
+        cancel_check: CancelCheck | None,
+    ) -> list[EvidenceCandidate]:
         if not query.retrieval_text:
             return []
         since = query.time_range.since if query.time_range is not None else None
@@ -54,12 +96,14 @@ class StructuredMemorySource:
         )
         if query.include_historical and query.time_range is None:
             semantic = [(row, score) for row, score in semantic if row.valid_until is not None]
+        check_cancel(cancel_check)
         episodic = self._store.search_episodic(
             query.retrieval_text,
             owner_user_id=request.owner_user_id,
             persona_id=request.persona_id,
             limit=limit,
         )
+        check_cancel(cancel_check)
         expanded_provenance = self._expanded_semantic_provenance([row for row, _ in semantic])
         semantic_candidates = [
             _semantic_candidate(
@@ -81,11 +125,15 @@ class StructuredMemorySource:
                 keyword_candidates.append(semantic_candidates[index])
             if index < len(episodic_candidates):
                 keyword_candidates.append(episodic_candidates[index])
-        dense_candidates = self._dense_candidates(query, request=request, limit=limit)
+        check_cancel(cancel_check)
+        dense_candidates = self._dense_candidates(
+            query, request=request, limit=limit, search=dense_search, cancel_check=cancel_check
+        )
         merged: dict[str, EvidenceCandidate] = {
             candidate.evidence_id: candidate for candidate in keyword_candidates
         }
         for candidate in dense_candidates:
+            check_cancel(cancel_check)
             existing = merged.get(candidate.evidence_id)
             if existing is None:
                 merged[candidate.evidence_id] = candidate
@@ -99,14 +147,12 @@ class StructuredMemorySource:
         *,
         request: SearchRequest,
         limit: int,
+        search: Callable[[int], list[VectorHit]] | None,
+        cancel_check: CancelCheck | None,
     ) -> list[EvidenceCandidate]:
-        if self._index_manager is None:
+        if search is None:
             return []
-        hits = self._index_manager.search(
-            query.retrieval_text,
-            owner_user_id=request.owner_user_id,
-            limit=limit,
-        )
+        hits = search(limit)
         semantic_ids = [
             hit.evidence_id.removeprefix("semantic:")
             for hit in hits
@@ -122,6 +168,7 @@ class StructuredMemorySource:
         expanded_provenance = self._expanded_semantic_provenance(list(semantic.values()))
         candidates: list[EvidenceCandidate] = []
         for rank, hit in enumerate(hits, start=1):
+            check_cancel(cancel_check)
             if hit.evidence_id.startswith("semantic:"):
                 semantic_row = semantic.get(hit.evidence_id.removeprefix("semantic:"))
                 if semantic_row is not None and _semantic_visible(semantic_row, query, request):

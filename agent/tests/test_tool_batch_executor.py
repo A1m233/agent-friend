@@ -224,3 +224,66 @@ def test_parallel_batch_diagnostic_counts_only_real_parallel_groups() -> None:
     calls = [_call("a", "a"), _call("serial", "s"), _call("b", "b"), _call("c", "c")]
     assert ToolBatchExecutor(max_workers=2).parallel_batch_count(calls, registry=registry) == 1
     assert ToolBatchExecutor(max_workers=1).parallel_batch_count(calls, registry=registry) == 0
+
+
+def test_cancel_during_pre_hook_prevents_tool_body_start() -> None:
+    cancelled = False
+    bodies: list[str] = []
+    registry = ToolRegistry(cast(list[Tool], [_SleepTool("a", 0, start_log=bodies)]))
+
+    def pre_hook(name: str, args: dict[str, Any]) -> None:
+        nonlocal cancelled
+        cancelled = True
+
+    def check() -> None:
+        if cancelled:
+            raise InterruptedError("cancelled")
+
+    with pytest.raises(InterruptedError):
+        ToolBatchExecutor(max_workers=1).execute(
+            [_call("a", "a")],
+            registry=registry,
+            default_timeout_seconds=1,
+            invocation_args=lambda _name, args, _id: args,
+            pre_hook=pre_hook,
+            cancel_check=check,
+        )
+    assert bodies == []
+
+
+def test_cancellation_signals_all_parallel_tool_controls() -> None:
+    started = threading.Barrier(3)
+    stopped = [threading.Event(), threading.Event()]
+
+    class Controlled(_ControlledTool):
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            control = args[TOOL_INVOCATION_CONTROL_ARG]
+            control.add_cancel_callback(lambda _reason: self.cancelled.set())
+            started.wait(timeout=2)
+            assert self.cancelled.wait(2)
+            return ToolResult("cancelled")
+
+    registry = ToolRegistry(
+        cast(
+            list[Tool],
+            [
+                Controlled(stopped[0], name="a", execution_kind="parallel_read", timeout_seconds=3),
+                Controlled(stopped[1], name="b", execution_kind="parallel_read", timeout_seconds=3),
+            ],
+        )
+    )
+
+    def check() -> None:
+        if started.n_waiting == 2:
+            started.wait(timeout=2)
+            raise InterruptedError("cancelled")
+
+    with pytest.raises(InterruptedError):
+        ToolBatchExecutor(max_workers=2).execute(
+            [_call("a", "a"), _call("b", "b")],
+            registry=registry,
+            default_timeout_seconds=3,
+            invocation_args=lambda _name, args, _id: args,
+            cancel_check=check,
+        )
+    assert all(event.wait(1) for event in stopped)

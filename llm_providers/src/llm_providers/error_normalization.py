@@ -16,6 +16,7 @@ from litellm.exceptions import (
 from litellm.exceptions import (
     ContentPolicyViolationError,
     ContextWindowExceededError,
+    UnsupportedParamsError,
 )
 from litellm.exceptions import (
     Timeout as LiteLLMTimeout,
@@ -37,6 +38,7 @@ from .errors import (
     LLMRateLimitError,
     LLMStreamTimeoutError,
     LLMTransientProviderError,
+    LLMUnsupportedParameterError,
 )
 
 _TRANSIENT_PROVIDER_ERROR_TYPES = frozenset({"engine_overloaded_error"})
@@ -213,6 +215,11 @@ def map_provider_error(error: Exception, *, provider_id: str | None = None) -> L
 
     chain = tuple(_exception_chain(error))
     metadata = _provider_error_metadata(error)
+
+    # LiteLLM models this local validation error as an OpenAI BadRequestError.
+    # Preserve its origin instead of implying that a provider rejected HTTP.
+    if any(isinstance(item, UnsupportedParamsError) for item in chain):
+        return LLMUnsupportedParameterError(str(error))
 
     def transient() -> LLMTransientProviderError:
         return LLMTransientProviderError(

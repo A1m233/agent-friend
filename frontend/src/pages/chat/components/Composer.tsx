@@ -155,7 +155,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const setDraftValidation = useDraftStore((state) => state.setValidation);
   const claimHomeDraft = useDraftStore((state) => state.claimHome);
   const beginDraftSubmission = useDraftStore((state) => state.beginSubmission);
-  const finishDraftSubmission = useDraftStore((state) => state.finishSubmission);
   const catalog = useModelCatalogStore((state) => state.catalog);
   // 正常情况下新对话草稿和已有会话都持有自己的模型快照。固定默认值只用于
   // history loading 等短暂空态，不能回读实时设置并改写已存在草稿的展示。
@@ -673,9 +672,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       }
       if (voiceTargetsSubmission) voiceSegmentRef.current = null;
       draftTextRef.current = "";
-      void result.completion.then((outcome) => {
-        finishDraftSubmission(result.runId, outcome === "rejected");
-      });
+      // The conversation store settles the submission from durable acceptance or
+      // explicit rejection. A disconnected completion alone cannot decide this.
     })();
   };
 
@@ -781,6 +779,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 void stop().then((outcome) => {
                   if (outcome === "failed") {
                     toast.error("取消失败，回复仍在继续");
+                  } else if (outcome === "pending") {
+                    toast.info("停止请求已保留，正在等待确认");
                   }
                 });
               }}

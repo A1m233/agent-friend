@@ -38,7 +38,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from uuid import uuid4
 
 from llm_providers import (
@@ -102,6 +102,7 @@ from .context import (
     resolve_prior_summary,
     stream_build_messages,
 )
+from .context.checkpoints import bind_business_boundary
 from .conversation_events import (
     AssistantMessageEnd,
     AssistantMessagePhase,
@@ -297,6 +298,10 @@ def _prompt_item_identity(message: dict[str, Any]) -> str:
 _UNSET = object()
 
 
+class _CancellationArguments(TypedDict, total=False):
+    cancel_check: Callable[[], None]
+
+
 @dataclass(frozen=True)
 class _RewritePlan:
     target_user_uuid: str
@@ -487,6 +492,7 @@ class Conversation:
         self._tool_context_checkpoint_invalid_reason = ""
         self._last_context_notes: dict[str, Any] = {}
         self._run_latency_context: RunLatencyContext | None = None
+        self._input_accepted_callback: Callable[[], None] | None = None
         self._voice_latency_context: VoiceLatencyContext | None = None
         self._voice_latency_short_reply_hint = ""
         self._voice_latency_llm_overrides: dict[str, Any] = {}
@@ -531,6 +537,10 @@ class Conversation:
     def set_run_latency_context(self, context: RunLatencyContext | None) -> None:
         """Attach the runtime-owned, content-free timeline for the active run."""
         self._run_latency_context = context
+
+    def set_input_accepted_callback(self, callback: Callable[[], None] | None) -> None:
+        """Report durable input acceptance independently of run admission."""
+        self._input_accepted_callback = callback
 
     def set_runtime_identity(self, runtime_instance_id: str, start_reason: str) -> None:
         """Bind content-free process ownership for durable recovery metadata."""
@@ -811,7 +821,14 @@ class Conversation:
         # first request still receives ``new_user_input`` separately, so reading live
         # session history after the append would send the same query twice.
         prefix_history = self._session_model_history.snapshot()
-        prefix_prior_summary = self._derive_prior_summary_from_events(selection_history)
+        prefix_prior_summary = self._derive_prior_summary_from_events(
+            selection_history, prefix_history
+        )
+        prefix_recall_boundary = (
+            self._derive_business_recall_boundary(selection_history)
+            if self._memory is not None
+            else None
+        )
         if skill_turn_snapshot is not None:
             effective_skill_selections = self._normalize_selections(skill_selections)
             activated_ids = tuple(item.record.id for item in skill_turn_snapshot.activations)
@@ -883,7 +900,11 @@ class Conversation:
 
         def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
             if existing_user_event is not None:
-                return (yield from self._build_openai_messages_continuation_stream())
+                return (
+                    yield from self._build_openai_messages_continuation_stream(
+                        cancel_check=cancel_check
+                    )
+                )
             return (
                 yield from self._build_openai_messages_first_turn_stream(
                     user_input,
@@ -891,7 +912,9 @@ class Conversation:
                     references=turn_references,
                     history_override=prefix_history,
                     prior_summary_override=prefix_prior_summary,
+                    recall_boundary_override=prefix_recall_boundary,
                     catalog_message_override=first_turn_catalog_message,
+                    cancel_check=cancel_check,
                 )
             )
 
@@ -899,6 +922,8 @@ class Conversation:
             # Once execution accepts the turn, the query is durable before cancellation,
             # memory/context assembly, or provider-specific attachment rendering can fail.
             if not user_event_appended:
+                if self._input_accepted_callback is not None:
+                    self._check_cancel(cancel_check)
                 self._append_skill_catalog_state_event()
                 appended_user_id = self._append_user_event(
                     user_input,
@@ -906,8 +931,12 @@ class Conversation:
                     references=turn_references,
                     event_id=user_event_id,
                 )
-                self._append_skill_context_events(appended_user_id)
                 user_event_appended = True
+                if self._input_accepted_callback is not None:
+                    self._input_accepted_callback()
+                self._append_skill_context_events(appended_user_id)
+            elif self._input_accepted_callback is not None:
+                self._input_accepted_callback()
             self._check_cancel(cancel_check)
             if completed_replay_text is not None:
                 if completed_replay_text:
@@ -1062,7 +1091,14 @@ class Conversation:
         self._invalidate_rewrite_memory(plan.inactive_event_uuids)
 
         prefix_history = self._messages_from_events(plan.prefix_events)
-        prefix_prior_summary = self._derive_prior_summary_from_events(plan.prefix_events)
+        prefix_prior_summary = self._derive_prior_summary_from_events(
+            plan.prefix_events, prefix_history
+        )
+        prefix_recall_boundary = (
+            self._derive_business_recall_boundary(plan.prefix_events)
+            if self._memory is not None
+            else None
+        )
 
         rewrite_event_appended = False
         user_event_appended = False
@@ -1096,8 +1132,10 @@ class Conversation:
                     references=replacement_references,
                     history_override=prefix_history,
                     prior_summary_override=prefix_prior_summary,
+                    recall_boundary_override=prefix_recall_boundary,
                     persist_compaction=False,
                     catalog_message_override=first_turn_catalog_message,
+                    cancel_check=cancel_check,
                 )
             )
 
@@ -1191,7 +1229,8 @@ class Conversation:
         try:
             self._check_cancel(cancel_check)
             canonical_messages = yield from self._build_openai_messages_continuation_stream(
-                tool_specs=None
+                tool_specs=None,
+                cancel_check=cancel_check,
             )
             openai_messages = self._prepare_run_continuation(
                 canonical_messages,
@@ -1354,6 +1393,7 @@ class Conversation:
             messages = yield from self._assemble_stream(
                 trailing_user=system_prompt_addendum,
                 tool_specs=tool_specs,
+                cancel_check=cancel_check,
             )
             if not trigger_appended:
                 self._append_system_trigger_event(
@@ -1526,11 +1566,13 @@ class Conversation:
             openai_messages = yield from self._assemble_stream(
                 trailing_user=system_prompt_addendum,
                 tool_specs=None,
+                cancel_check=cancel_check,
             )
         else:
             openai_messages = self._assemble(
                 trailing_user=system_prompt_addendum,
                 tool_specs=None,
+                cancel_check=cancel_check,
             )
         openai_messages = self._prepare_run_continuation(
             openai_messages,
@@ -1547,6 +1589,7 @@ class Conversation:
             recovery_builder=lambda: self._assemble_stream(
                 trailing_user=system_prompt_addendum,
                 tool_specs=None,
+                cancel_check=cancel_check,
             ),
         ):
             self._check_cancel(cancel_check)
@@ -2646,8 +2689,10 @@ class Conversation:
         extra_context: list[Message] | None = None,
         history_override: list[Message] | None = None,
         prior_summary_override: PriorSummary | None | object = _UNSET,
+        recall_boundary_override: str | None | object = _UNSET,
         persist_compaction: bool = True,
         catalog_message_override: Message | None | object = _UNSET,
+        cancel_check: Callable[[], None] | None = None,
     ) -> list[dict[str, Any]]:
         return self._drain_assembled_messages(
             self._build_openai_messages_first_turn_stream(
@@ -2657,8 +2702,10 @@ class Conversation:
                 extra_context=extra_context,
                 history_override=history_override,
                 prior_summary_override=prior_summary_override,
+                recall_boundary_override=recall_boundary_override,
                 persist_compaction=persist_compaction,
                 catalog_message_override=catalog_message_override,
+                cancel_check=cancel_check,
             )
         )
 
@@ -2671,8 +2718,10 @@ class Conversation:
         extra_context: list[Message] | None = None,
         history_override: list[Message] | None = None,
         prior_summary_override: PriorSummary | None | object = _UNSET,
+        recall_boundary_override: str | None | object = _UNSET,
         persist_compaction: bool = True,
         catalog_message_override: Message | None | object = _UNSET,
+        cancel_check: Callable[[], None] | None = None,
     ) -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
         """工具调用循环第 0 轮：通过统一入口 :meth:`_assemble` 把 ``user_input``
         作为最新一条 user 消息组装。
@@ -2680,6 +2729,7 @@ class Conversation:
         若注入了 memory，先 ``retrieve`` 召回相关记忆，渲染成单条临时 system
         消息走 ``turn_context`` 尾部注入。空召回不注入任何记忆段；召回结果不落盘。
         """
+        self._check_cancel(cancel_check)
         effective_history = (
             self._session_model_history.snapshot() if history_override is None else history_override
         )
@@ -2700,10 +2750,10 @@ class Conversation:
         if extra_context:
             turn_context.extend(extra_context)
         if self._memory is not None:
-            effective_prior_summary = (
-                self._derive_prior_summary()
-                if prior_summary_override is _UNSET
-                else cast(PriorSummary | None, prior_summary_override)
+            recall_boundary = (
+                self._derive_business_recall_boundary(self._session.active_events)
+                if recall_boundary_override is _UNSET
+                else cast(str | None, recall_boundary_override)
             )
             memory_start_ms = monotonic_ms()
             log_voice_latency(
@@ -2712,19 +2762,20 @@ class Conversation:
                 "agent_memory_retrieve_start",
                 session_id=self._session.session_id,
             )
+            cancellation_arguments: _CancellationArguments = {}
+            if cancel_check is not None:
+                cancellation_arguments["cancel_check"] = cancel_check
             ctx = self._memory.retrieve(
                 render_retrieval_query(user_input, references or []),
                 persona_id=self._session.current_persona_id or "",
                 session_id=self._session.session_id,
                 automatic_recall_scope=CurrentSessionRecallScope(
                     current_session_id=self._session.session_id,
-                    recall_through_event_uuid=(
-                        effective_prior_summary.covered_through_uuid
-                        if effective_prior_summary is not None
-                        else None
-                    ),
+                    recall_through_event_uuid=recall_boundary,
                 ),
+                **cancellation_arguments,
             )
+            self._check_cancel(cancel_check)
             log_voice_latency(
                 logger,
                 self._voice_latency_context,
@@ -2793,6 +2844,7 @@ class Conversation:
             history_override=history_override,
             prior_summary_override=prior_summary_override,
             persist_compaction=persist_compaction,
+            cancel_check=cancel_check,
         )
         log_voice_latency(
             logger,
@@ -2884,6 +2936,7 @@ class Conversation:
         prior_summary_override: PriorSummary | None | object = _UNSET,
         persist_compaction: bool = True,
         tool_specs: list[dict[str, Any]] | None | object = _UNSET,
+        cancel_check: Callable[[], None] | None = None,
     ) -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
         """统一所有发往 LLM 的上下文组装入口（009 R-0.3）。
 
@@ -2900,15 +2953,18 @@ class Conversation:
         Returns:
             可直接放入 :class:`llm_providers.ModelRequest` 的 OpenAI 风格 dict 列表。
         """
+        self._check_cancel(cancel_check)
         build_started_ms = monotonic_ms()
         actual_tool_specs = self._current_tool_specs() if tool_specs is _UNSET else tool_specs
         typed_tool_specs = cast(list[dict[str, Any]] | None, actual_tool_specs)
+        raw_history = (
+            self._session_model_history.snapshot() if history_override is None else history_override
+        )
         runtime = self._build_runtime_context(
             prior_summary_override=prior_summary_override,
             tool_specs=typed_tool_specs,
-        )
-        raw_history = (
-            self._session_model_history.snapshot() if history_override is None else history_override
+            cancel_check=cancel_check,
+            history=raw_history,
         )
         history_for_llm = escape_user_messages_for_llm(raw_history)
         user_input_for_llm = (
@@ -2986,15 +3042,18 @@ class Conversation:
         )
         while True:
             try:
+                self._check_cancel(cancel_check)
                 progress = next(context_stream)
             except StopIteration as stopped:
                 build = stopped.value
                 break
+            self._check_cancel(cancel_check)
             if persist_compaction and isinstance(progress, ContextCompactionProgress):
                 yield ContextCompactionStatus(
                     activity_id=progress.activity_id,
                     phase=progress.phase,
                 )
+        self._check_cancel(cancel_check)
         if build.new_compaction is not None:
             prior_context_uuids = {message.uuid for message in model_context_plan.messages}
             insertion_candidates = [
@@ -3044,7 +3103,7 @@ class Conversation:
             ]
             self._pending_model_context_plan = model_context_plan
         self._pending_compaction = (
-            build.new_compaction
+            bind_business_boundary(build.new_compaction, raw_history, self._session.active_events)
             if persist_compaction and build.new_compaction is not None
             else None
         )
@@ -3059,6 +3118,7 @@ class Conversation:
         client = self._active_llm_client()
         rendered_messages: list[dict[str, Any]] = []
         for message in build.messages:
+            self._check_cancel(cancel_check)
             rendered = (
                 message.to_openai()
                 if self._message_renderer is None
@@ -3079,6 +3139,7 @@ class Conversation:
             if isinstance(prompt_cache_domain, str):
                 self._remember_prompt_item_domain(rendered, prompt_cache_domain)
             rendered_messages.append(rendered)
+        self._check_cancel(cancel_check)
         SessionModelHistory.validate_provider_tool_history(rendered_messages)
         context_index = (
             self._run_latency_context.next_context_build_index()
@@ -3103,6 +3164,8 @@ class Conversation:
         *,
         prior_summary_override: PriorSummary | None | object = _UNSET,
         tool_specs: list[dict[str, Any]] | None = None,
+        cancel_check: Callable[[], None] | None = None,
+        history: list[Message] | None = None,
     ) -> RuntimeContext:
         """构造本轮 :class:`RuntimeContext`（预算快照 + 当前 llm_client）。
 
@@ -3118,10 +3181,11 @@ class Conversation:
         )
         model_id = self._active_model_id()
         return RuntimeContext(
+            cancel_check=cancel_check,
             budget=budget,
             llm_client=self._active_llm_client(),
             model_id=model_id,
-            prior_summary=self._derive_prior_summary()
+            prior_summary=self._derive_prior_summary(history)
             if prior_summary_override is _UNSET
             else cast(PriorSummary | None, prior_summary_override),
             prior_tool_context_edit=self._derive_prior_tool_context_edit(),
@@ -3150,13 +3214,33 @@ class Conversation:
             ),
         )
 
-    def _derive_prior_summary(self) -> PriorSummary | None:
+    def _derive_prior_summary(self, history: list[Message] | None = None) -> PriorSummary | None:
         """从最近一条 ``compaction`` 事件派生 :class:`PriorSummary`（无则 ``None``）。"""
-        return self._derive_prior_summary_from_events(self._session.active_events)
+        return self._derive_prior_summary_from_events(
+            self._session.active_events,
+            self._session_model_history.snapshot() if history is None else history,
+        )
 
-    def _derive_prior_summary_from_events(self, events: list[Event]) -> PriorSummary | None:
+    def _derive_business_recall_boundary(self, events: list[Event]) -> str | None:
+        """Freeze memory's event boundary independently of model history recovery."""
+        resolution = resolve_prior_summary(
+            events, self._messages_from_events(events), scope="business"
+        )
+        return (
+            resolution.prior_summary.covered_through_uuid
+            if resolution.prior_summary is not None
+            else None
+        )
+
+    def _derive_prior_summary_from_events(
+        self, events: list[Event], history: list[Message] | None = None
+    ) -> PriorSummary | None:
         """从给定事件流里最近一条 ``compaction`` 派生 :class:`PriorSummary`。"""
-        resolution = resolve_prior_summary(events, self._messages_from_events(events))
+        resolution = resolve_prior_summary(
+            events,
+            self._messages_from_events(events) if history is None else history,
+            scope="model",
+        )
         self._checkpoint_status = resolution.status
         self._checkpoint_invalid_reason = resolution.invalid_reason
         return resolution.prior_summary
@@ -3211,6 +3295,11 @@ class Conversation:
                 "summary_attempts": record.summary_attempts,
                 "tool_results_truncated": record.tool_results_truncated,
                 "tool_results_omitted": record.tool_results_omitted,
+                "scope": record.scope,
+                "summary_message_uuid": record.summary_message_uuid,
+                "model_prefix_sha256": record.model_prefix_sha256,
+                "business_covered_through_uuid": record.business_covered_through_uuid,
+                "business_prefix_sha256": record.business_prefix_sha256,
             },
             meta=self._run_event_meta(),
         )
@@ -3450,12 +3539,15 @@ class Conversation:
         current_messages = messages
         request_overrides = dict(overrides or {})
         cache_key = self._session.session_id
-        recovery_builder = recovery_builder or (lambda: self._assemble_stream(tool_specs=tools))
+        recovery_builder = recovery_builder or (
+            lambda: self._assemble_stream(tool_specs=tools, cancel_check=cancel_check)
+        )
         context_recovery_used = False
         response_recovery_used = False
         request_attempt = 0
         while True:
             request_accepted = False
+            self._check_cancel(cancel_check)
             if request_observer is not None:
                 request_observer(current_messages, request_attempt, request_overrides)
             try:
@@ -3490,6 +3582,7 @@ class Conversation:
                 )
                 continuation_disposition = self._model_history_disposition()
                 self._stage_pending_rollout_request()
+                self._check_cancel(cancel_check)
                 stream = client.stream(
                     ModelRequest(
                         messages=current_messages,
@@ -4267,6 +4360,7 @@ class Conversation:
         self,
         *,
         tool_specs: list[dict[str, Any]] | None | object = _UNSET,
+        cancel_check: Callable[[], None] | None = None,
     ) -> list[dict[str, Any]]:
         """工具调用循环第 N>0 轮：经统一入口 :meth:`_assemble` 组装（009 R-0.3）。
 
@@ -4274,16 +4368,18 @@ class Conversation:
         ``new_user_input=None``。009 起续轮也经过上下文管理——确保带工具的长会话
         续轮同样受度量 / 兜底 / 压缩保护，不再绕过 :class:`ContextManager`。
         """
-        return self._assemble(tool_specs=tool_specs)
+        return self._assemble(tool_specs=tool_specs, cancel_check=cancel_check)
 
     def _build_openai_messages_continuation_stream(
         self,
         *,
         tool_specs: list[dict[str, Any]] | None | object = _UNSET,
+        cancel_check: Callable[[], None] | None = None,
     ) -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
         return (
             yield from self._assemble_stream(
                 tool_specs=tool_specs,
+                cancel_check=cancel_check,
             )
         )
 
@@ -4914,10 +5010,15 @@ class Conversation:
                         yield from self._assemble_stream(
                             trailing_user=host_advisory,
                             tool_specs=tool_specs,
+                            cancel_check=cancel_check,
                         )
                     )
                     if host_advisory
-                    else (yield from self._build_openai_messages_continuation_stream())
+                    else (
+                        yield from self._build_openai_messages_continuation_stream(
+                            cancel_check=cancel_check
+                        )
+                    )
                 )
                 openai_messages = self._prepare_run_continuation(
                     canonical_messages,
@@ -5394,6 +5495,7 @@ class Conversation:
         canonical_messages = yield from self._assemble_stream(
             trailing_user=host_advisory,
             tool_specs=None,
+            cancel_check=cancel_check,
         )
         openai_messages = self._prepare_run_continuation(
             canonical_messages,
@@ -5413,6 +5515,7 @@ class Conversation:
             recovery_builder=lambda: self._assemble_stream(
                 trailing_user=host_advisory,
                 tool_specs=None,
+                cancel_check=cancel_check,
             ),
             cancel_check=cancel_check,
         ):

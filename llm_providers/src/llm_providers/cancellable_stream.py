@@ -134,9 +134,17 @@ class CancellableAsyncStream:
             loop = self._loop
             task = self._task
         if loop is not None and task is not None and not task.done():
-            loop.call_soon_threadsafe(task.cancel)
+            loop.call_soon_threadsafe(self._cancel_pending_request)
         if threading.current_thread() is not self._thread:
             self._thread.join(timeout=1.0)
+
+    def _cancel_pending_request(self) -> None:
+        # Recheck on the event-loop thread: completion may have entered cleanup
+        # after close() queued this callback. Never interrupt resource release.
+        with self._task_lock:
+            task = self._task
+        if task is not None and not task.done():
+            task.cancel()
 
     def _run(self) -> None:
         asyncio.run(self._produce())
@@ -167,14 +175,14 @@ class CancellableAsyncStream:
         except BaseException as exc:
             self._record_failure(exc)
         finally:
+            with self._task_lock:
+                self._task = None
+                self._loop = None
             with suppress(Exception):
                 await self._source.close()
             self._opened.set()
             self._items.put(_STREAM_END)
             self._done.set()
-            with self._task_lock:
-                self._task = None
-                self._loop = None
 
     def _record_failure(self, error: BaseException) -> None:
         if not self._opened_successfully:

@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "derived_sanitized_summary_of_completed_diagnosis",
+  "recorded_date": "2026-09-06",
+  "evidence_ids": ["E-013", "E-014", "E-015"],
+  "provenance": {
+    "source": "Already completed diagnosis reported in the current task; no new source-data inspection or experiment was performed for this archive.",
+    "source_access": "Original runtime logs and user data are local-only and are not included in this repository.",
+    "raw_artifact_sha256": null,
+    "raw_exception_text_archived": false,
+    "user_content_archived": false,
+    "exact_replay_possible_from_archive": false,
+    "archive_actions": ["Read existing requirement evidence", "Write a whitelist aggregate", "Verify JSON, links and hashes"],
+    "new_llm_requests": 0,
+    "new_runtime_launches": 0,
+    "new_production_data_reads": 0
+  },
+  "runtime_observation": {
+    "evidence_id": "E-013",
+    "basis": "runtime-observed, retained diagnostic summary",
+    "local_date": "2026-09-06",
+    "timezone": "Asia/Shanghai",
+    "utc_offset": "+08:00",
+    "reported_observation_window": "20:34-20:36, minute precision",
+    "source_identity": {
+      "worktree_relative_to_local_codex_worktrees": "0bcf/agent-friend",
+      "worktree_locator_local_only": true,
+      "feature_context": "116",
+      "head": "fba5ea4f71805b6fd58825e7086399abb053ba5d",
+      "process_id": 41992,
+      "runtime_instance_id_redacted_prefix": "367f",
+      "full_runtime_instance_id_archived": false,
+      "exact_loaded_overlay_manifest_archived": false,
+      "is_requirement_118_acceptance": false
+    },
+    "summary_attempts": [
+      {
+        "reported_event_time": "2026-09-06T20:35:35.278+08:00",
+        "total_duration_ms": 704,
+        "error_class": "LLMBadRequestError",
+        "fallback_reason": "llm_error"
+      },
+      {
+        "reported_event_time": "2026-09-06T20:36:35.797+08:00",
+        "total_duration_ms": 812,
+        "error_class": "LLMBadRequestError",
+        "fallback_reason": "llm_error"
+      }
+    ],
+    "new_compaction_count_in_observed_attempts": 0,
+    "cancellation": {
+      "request_http_status": 200,
+      "request_time": null,
+      "button_click_time": null,
+      "stream_run_cancelled_time": "2026-09-06T20:36:44.246+08:00",
+      "terminal_done_time": "2026-09-06T20:36:49.891+08:00",
+      "derived_run_cancelled_to_terminal_done_ms": 5645,
+      "derivation": "49.891 seconds minus 44.246 seconds in the same minute",
+      "button_click_to_terminal_duration_ms": null,
+      "http_response_to_terminal_duration_ms": null,
+      "limitation": "The 5645 ms interval begins at the observed RunCancelled stream event, not at the user's click or the HTTP 200 response. It does not measure requirement 118 cancellation latency."
+    }
+  },
+  "k3_generate_parameter_diagnosis": {
+    "evidence_id": "E-014",
+    "basis": "controlled-comparison, zero-network parameter-path probe",
+    "environment_relation": "The same virtual environment as the observed runtime, as established by the completed diagnosis.",
+    "versions": {"litellm": "1.83.14", "openai": "2.24.0", "httpx": "0.28.1"},
+    "entrypoint": "K3 generate through the project public model path",
+    "model_id": "kimi/kimi-k3",
+    "baseline": {
+      "reasoning_preset": "low",
+      "max_tokens": 4096,
+      "outcome": "UnsupportedParamsError before HTTP dispatch",
+      "rejected_parameter": "reasoning_effort",
+      "http_calls_reached": 0
+    },
+    "single_change_comparison": {
+      "changed_control": "allowed_openai_params",
+      "allowed_parameter": "reasoning_effort",
+      "reasoning_presets_checked": ["low", "high", "max"],
+      "observed_result": "All three values reached the HTTP mock unchanged and completed successfully.",
+      "actual_network_requests": 0
+    },
+    "conclusion": "The local LiteLLM parameter gate rejects reasoning_effort on this K3 generate path; the bounded allowlist comparison removes that local rejection without dropping the value.",
+    "confidence": "confirmed for the local parameter-gate mechanism; linkage to the historical summary failures is supported by the prior diagnosis",
+    "limitations": [
+      "A mock accepting the parameter does not verify the live provider, actual model reasoning behavior or summary quality.",
+      "The original full input, raw exception body, probe script and exact source overlay were not archived; this aggregate is not an exact replay fixture."
+    ]
+  },
+  "checkpoint_identity_diagnosis": {
+    "evidence_id": "E-015",
+    "basis": "code-supported plus runtime metadata from the completed diagnosis",
+    "scope": "The latest active v2 checkpoint in the inspected long session",
+    "checkpoint_count": 1,
+    "boundary_identifier_count": 3,
+    "boundary_identifiers_archived": false,
+    "identifiers_found_in_model_transcript_message_space": 3,
+    "identifiers_found_in_product_event_space": 0,
+    "boundary_roles": [
+      {"role": "covered", "described_source": "synthetic turn_aborted"},
+      {"role": "retained", "described_source": "synthetic skill_filesystem_scope_expiry_delta"},
+      {"role": "source", "described_source": "current_input"}
+    ],
+    "rewrite_invalidation_observed": false,
+    "conclusion": "The checkpoint was created with model-transcript identities, while the restoration check used the product-event identity space; the three identifiers are absent from that product-event space. The observed mismatch is not explained by rewrite invalidation.",
+    "confidence": "confirmed for the inspected checkpoint and checked identity-space mismatch",
+    "limitations": [
+      "This finding does not classify every historical checkpoint or every restoration failure.",
+      "Raw checkpoint IDs, session data and message bodies are not archived, so this aggregate cannot reconstruct the original checkpoint."
+    ]
+  },
+  "implementation_checkpoint": {
+    "status": "in_progress",
+    "source": "Implementation-owner report at the time of this archive",
+    "k3_targeted_tests_reported_passed": 127,
+    "exact_test_command_archived": false,
+    "candidate_source_manifest_archived_for_this_checkpoint": false,
+    "final_combined_checks_complete": false,
+    "live_provider_verification_performed_for_this_checkpoint": false,
+    "limitation": "127 passed is a bounded progress report, not final verification of the combined requirement 118 candidate. Delivery status remains owned by progress.md."
+  },
+  "relationships": {
+    "supplements": ["E-001", "E-007", "E-012"],
+    "invalidates": [],
+    "performance_boundary": "E-012 retains its original report, harness hash and 23 source hashes for the 03:47 UTC candidate. It does not identify or validate the later combined K3/summary-recovery changes.",
+    "unresolved_original_latency": "These findings do not explain the original approximately 125 additional seconds in memory retrieval."
+  }
+}

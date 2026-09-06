@@ -1,0 +1,411 @@
+{
+  "started_at": "2026-09-06T13:16:35.878604+00:00",
+  "endpoint": "https://api.moonshot.cn/v1/responses",
+  "model": "kimi-k3",
+  "max_requests": 4,
+  "max_output_tokens_per_request": 1024,
+  "automatic_retries": 0,
+  "synthetic_only": true,
+  "raw_sse_json_before_sdk": true,
+  "raw_reasoning_retained": false,
+  "source": {
+    "head": "f563938bd3f63c88a5e7a5b59825e3da33f06303",
+    "files_sha256": {
+      ".tmp/k3_phase_wire_probe_20260906.py": "b1c278e12091ab145d8bafd135a7da2349596ebe27bcf8ef2e8c52d326b63578",
+      "uv.lock": "ef4200b13dd2e43668413c573a02cb879bf8d0714bca5e2e621d91e031b57ea3",
+      "llm_providers/src/llm_providers/catalog.py": "ad91fcc876315844a41d006775b7cd88af17ccac3d5966e46bf031637018f911",
+      "llm_providers/src/llm_providers/responses/stream.py": "1b48c6c7bab39176cbce360a990ff685a1165d07ced9ea901cec089f93962ce3",
+      "agent/src/agent/prompt_sections/assistant_phase.md": "a2836081cbb61d87b3bdbe7a69a0bdb506a56ae4d9bbce3fec0420a903abe974"
+    },
+    "python": "3.12.6",
+    "httpx": "0.28.1",
+    "openai": "2.24.0"
+  },
+  "calls": [
+    {
+      "scenario": "direct_low",
+      "reasoning_effort": "low",
+      "started_at": "2026-09-06T13:16:36.171004+00:00",
+      "request_body_sha256": "ab5ddca710a60ea309750717f349c87795777e47d53347e2c365d42e89ad777c",
+      "request_bytes": 174,
+      "input_roles_or_types": [
+        "user"
+      ],
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 40,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "message_lifecycle": [
+        {
+          "event": "response.output_item.added",
+          "id": "msg_ydXJLlYV2iGSQR3orRocf6QB",
+          "type": "message",
+          "role": "assistant",
+          "status": "in_progress",
+          "phase_present": false,
+          "phase": null,
+          "content_types": []
+        },
+        {
+          "event": "response.output_item.done",
+          "id": "msg_ydXJLlYV2iGSQR3orRocf6QB",
+          "type": "message",
+          "role": "assistant",
+          "status": "completed",
+          "phase_present": false,
+          "phase": null,
+          "content_types": [
+            "output_text"
+          ]
+        },
+        {
+          "event": "response.completed",
+          "id": "msg_ydXJLlYV2iGSQR3orRocf6QB",
+          "type": "message",
+          "role": "assistant",
+          "status": "completed",
+          "phase_present": false,
+          "phase": null,
+          "content_types": [
+            "output_text"
+          ]
+        }
+      ],
+      "parser_errors": [],
+      "parser_item_phases": [
+        {
+          "id": "msg_ydXJLlYV2iGSQR3orRocf6QB",
+          "phase": null
+        }
+      ],
+      "terminal_status": "completed",
+      "http_status": 200,
+      "response_model": "kimi-k3",
+      "usage": {
+        "input_tokens": 100,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens": 57,
+        "output_tokens_details": {
+          "reasoning_tokens": 41
+        },
+        "total_tokens": 157
+      },
+      "output_item_types": [
+        "reasoning",
+        "message"
+      ],
+      "visible_text_chars": 3,
+      "expected_result_present": true,
+      "elapsed_seconds": 2.797,
+      "response_bytes": 13981
+    },
+    {
+      "scenario": "tool_with_phase_prompt_low",
+      "reasoning_effort": "low",
+      "started_at": "2026-09-06T13:16:38.975051+00:00",
+      "request_body_sha256": "e6a4445f1f23da90443421e2909aba69b5dace5256f3977a0405217c4359ab1c",
+      "request_bytes": 1397,
+      "input_roles_or_types": [
+        "system",
+        "user"
+      ],
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 3,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 110,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 3,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 18,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.function_call_arguments.delta": 9,
+        "response.function_call_arguments.done": 1,
+        "response.completed": 1
+      },
+      "message_lifecycle": [
+        {
+          "event": "response.output_item.added",
+          "id": "msg_m6es0GJlHg6OiEGrQNPILCtP",
+          "type": "message",
+          "role": "assistant",
+          "status": "in_progress",
+          "phase_present": false,
+          "phase": null,
+          "content_types": []
+        },
+        {
+          "event": "response.output_item.done",
+          "id": "msg_m6es0GJlHg6OiEGrQNPILCtP",
+          "type": "message",
+          "role": "assistant",
+          "status": "completed",
+          "phase_present": false,
+          "phase": null,
+          "content_types": [
+            "output_text"
+          ]
+        },
+        {
+          "event": "response.completed",
+          "id": "msg_m6es0GJlHg6OiEGrQNPILCtP",
+          "type": "message",
+          "role": "assistant",
+          "status": "completed",
+          "phase_present": false,
+          "phase": null,
+          "content_types": [
+            "output_text"
+          ]
+        }
+      ],
+      "parser_errors": [],
+      "parser_item_phases": [
+        {
+          "id": "msg_m6es0GJlHg6OiEGrQNPILCtP",
+          "phase": null
+        }
+      ],
+      "terminal_status": "completed",
+      "http_status": 200,
+      "response_model": "kimi-k3",
+      "usage": {
+        "input_tokens": 374,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens": 185,
+        "output_tokens_details": {
+          "reasoning_tokens": 111
+        },
+        "total_tokens": 559
+      },
+      "output_item_types": [
+        "reasoning",
+        "message",
+        "function_call"
+      ],
+      "visible_text_chars": 38,
+      "expected_result_present": null,
+      "elapsed_seconds": 6.422,
+      "response_bytes": 37856
+    },
+    {
+      "scenario": "tool_continuation_low",
+      "reasoning_effort": "low",
+      "started_at": "2026-09-06T13:16:45.398443+00:00",
+      "request_body_sha256": "0957087e12b91b6bdd4be87d1b4fe1f91a5d92265b22b24c27e714a24eed361b",
+      "request_bytes": 2576,
+      "input_roles_or_types": [
+        "system",
+        "user",
+        "reasoning",
+        "assistant",
+        "function_call",
+        "function_call_output"
+      ],
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 18,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 5,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "message_lifecycle": [
+        {
+          "event": "response.output_item.added",
+          "id": "msg_L0ys773CVi2e8WmHi23Pav9u",
+          "type": "message",
+          "role": "assistant",
+          "status": "in_progress",
+          "phase_present": false,
+          "phase": null,
+          "content_types": []
+        },
+        {
+          "event": "response.output_item.done",
+          "id": "msg_L0ys773CVi2e8WmHi23Pav9u",
+          "type": "message",
+          "role": "assistant",
+          "status": "completed",
+          "phase_present": false,
+          "phase": null,
+          "content_types": [
+            "output_text"
+          ]
+        },
+        {
+          "event": "response.completed",
+          "id": "msg_L0ys773CVi2e8WmHi23Pav9u",
+          "type": "message",
+          "role": "assistant",
+          "status": "completed",
+          "phase_present": false,
+          "phase": null,
+          "content_types": [
+            "output_text"
+          ]
+        }
+      ],
+      "parser_errors": [],
+      "parser_item_phases": [
+        {
+          "id": "msg_L0ys773CVi2e8WmHi23Pav9u",
+          "phase": null
+        }
+      ],
+      "terminal_status": "completed",
+      "http_status": 200,
+      "response_model": "kimi-k3",
+      "usage": {
+        "input_tokens": 595,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 256
+        },
+        "output_tokens": 39,
+        "output_tokens_details": {
+          "reasoning_tokens": 19
+        },
+        "total_tokens": 634
+      },
+      "output_item_types": [
+        "reasoning",
+        "message"
+      ],
+      "visible_text_chars": 9,
+      "expected_result_present": true,
+      "elapsed_seconds": 3.703,
+      "response_bytes": 10997
+    },
+    {
+      "scenario": "direct_high_with_phase_prompt",
+      "reasoning_effort": "high",
+      "started_at": "2026-09-06T13:16:49.091857+00:00",
+      "request_body_sha256": "7e640bf5ef7ae43987c57dfcc413fbd87c6afc3e30ea69128280c74806c38dfa",
+      "request_bytes": 962,
+      "input_roles_or_types": [
+        "system",
+        "user"
+      ],
+      "events": {
+        "response.created": 1,
+        "response.in_progress": 1,
+        "response.output_item.added": 2,
+        "response.reasoning_summary_part.added": 1,
+        "response.reasoning_summary_text.delta": 35,
+        "response.reasoning_summary_text.done": 1,
+        "response.reasoning_summary_part.done": 1,
+        "response.output_item.done": 2,
+        "response.content_part.added": 1,
+        "response.output_text.delta": 1,
+        "response.output_text.done": 1,
+        "response.content_part.done": 1,
+        "response.completed": 1
+      },
+      "message_lifecycle": [
+        {
+          "event": "response.output_item.added",
+          "id": "msg_w5HtfY6H9eF9T9QWcjrRwplz",
+          "type": "message",
+          "role": "assistant",
+          "status": "in_progress",
+          "phase_present": false,
+          "phase": null,
+          "content_types": []
+        },
+        {
+          "event": "response.output_item.done",
+          "id": "msg_w5HtfY6H9eF9T9QWcjrRwplz",
+          "type": "message",
+          "role": "assistant",
+          "status": "completed",
+          "phase_present": false,
+          "phase": null,
+          "content_types": [
+            "output_text"
+          ]
+        },
+        {
+          "event": "response.completed",
+          "id": "msg_w5HtfY6H9eF9T9QWcjrRwplz",
+          "type": "message",
+          "role": "assistant",
+          "status": "completed",
+          "phase_present": false,
+          "phase": null,
+          "content_types": [
+            "output_text"
+          ]
+        }
+      ],
+      "parser_errors": [],
+      "parser_item_phases": [
+        {
+          "id": "msg_w5HtfY6H9eF9T9QWcjrRwplz",
+          "phase": null
+        }
+      ],
+      "terminal_status": "completed",
+      "http_status": 200,
+      "response_model": "kimi-k3",
+      "usage": {
+        "input_tokens": 252,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens": 52,
+        "output_tokens_details": {
+          "reasoning_tokens": 36
+        },
+        "total_tokens": 304
+      },
+      "output_item_types": [
+        "reasoning",
+        "message"
+      ],
+      "visible_text_chars": 3,
+      "expected_result_present": true,
+      "elapsed_seconds": 2.563,
+      "response_bytes": 12916
+    }
+  ],
+  "finished_at": "2026-09-06T13:16:51.667420+00:00",
+  "real_requests": 4,
+  "reported_total_tokens": 1654,
+  "source_unchanged": true,
+  "phase_prompt_reference": {
+    "repository_path": "agent/src/agent/prompt_sections/assistant_phase.md",
+    "source_file_sha256": "a2836081cbb61d87b3bdbe7a69a0bdb506a56ae4d9bbce3fec0420a903abe974",
+    "read_text_utf8_sha256": "970f541cbd9a0031fc1c39d4fe43b0d2d1a4a26b5fd44f764ca712d19b011f82",
+    "replaces_original_field": "phase_prompt",
+    "normalization": "Path.read_text(encoding=\"utf-8\") universal-newline decoding, as used by the historical probe"
+  }
+}

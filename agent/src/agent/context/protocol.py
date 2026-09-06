@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
@@ -63,7 +63,7 @@ class PriorSummary:
 
     Attributes:
         summary: 结构化摘要文本。
-        covered_through_uuid: 该 summary 覆盖到的最后一条原始事件 uuid（含）。
+        covered_through_uuid: scope 所指定身份域中，摘要覆盖到的最后一条消息 uuid（含）。
     """
 
     summary: str
@@ -73,6 +73,11 @@ class PriorSummary:
     summary_source_from_uuid: str = ""
     retained_from_uuid: str = ""
     omitted_before_count: int = 0
+    scope: Literal["business", "model"] = "business"
+    summary_message_uuid: str = ""
+    checkpoint_id: str = ""
+    materialized: bool = False
+    business_covered_through_uuid: str = ""
 
 
 @dataclass(frozen=True)
@@ -84,7 +89,7 @@ class CompactionRecord:
 
     Attributes:
         summary: 结构化摘要文本。
-        covered_through_uuid: 被折叠覆盖到的最后一条原始事件 uuid（含）。
+        covered_through_uuid: scope 所指定身份域中，被覆盖的最后一条消息 uuid（含）。
         tokens_before: 压缩前的 token 估算（observability）。
         tokens_after: 压缩后的 token 估算（observability）。
         model: 生成本摘要所用的 model 名。
@@ -107,6 +112,11 @@ class CompactionRecord:
     tool_results_truncated: int = 0
     tool_results_omitted: int = 0
     activity_id: str = ""
+    scope: Literal["business", "model"] = "business"
+    summary_message_uuid: str = ""
+    model_prefix_sha256: str = ""
+    business_covered_through_uuid: str = ""
+    business_prefix_sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -159,6 +169,11 @@ class RuntimeContext:
     run_id: str | None = None
     session_id: str | None = None
     surface: str | None = None
+    cancel_check: Callable[[], None] | None = None
+
+    def check_cancelled(self) -> None:
+        if self.cancel_check is not None:
+            self.cancel_check()
 
 
 @dataclass
@@ -221,9 +236,8 @@ class ContextManager(Protocol):
        行为完全不变）；非 ``None`` 时按策略做度量 / 裁剪 / 压缩
 
     Note:
-        009 起 ``history`` 一律传**原始全量** ``session.messages``——折叠（用
-        ``runtime.prior_summary`` 把旧段替换为 summary）发生在实现内部，使最近一次
-        摘要能基于全量原始重摘、不做 summary-of-summary。详见 design §6.3。
+        ``history`` 是本次冻结的模型视图，可能已包含先前生成的摘要。再次压缩时
+        必须保留该摘要中的信息；checkpoint 校验与折叠使用同一消息身份空间。
     """
 
     def build_messages(

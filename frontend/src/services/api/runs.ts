@@ -30,9 +30,12 @@ export const runsApi = {
     );
   },
 
-  cancel(sessionId: string, runId: string): Promise<CancelRunResponse> {
+  cancel(sessionId: string, runId: string, expectedRuntimeInstanceId?: string): Promise<CancelRunResponse> {
+    const query = expectedRuntimeInstanceId
+      ? `?expectedRuntimeInstanceId=${encodeURIComponent(expectedRuntimeInstanceId)}`
+      : "";
     return http.post<unknown, CancelRunResponse>(
-      `/v1/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/cancel`,
+      `/v1/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/cancel${query}`,
     );
   },
 };

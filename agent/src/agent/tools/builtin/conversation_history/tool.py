@@ -23,6 +23,7 @@ from memory import DEFAULT_OWNER_USER_ID
 from ....memory_search import SessionHistorySource
 from ....sessions.catalog import SessionCatalog
 from ....sessions.store import SessionStore
+from ....tool_runtime.control import TOOL_INVOCATION_CONTROL_ARG, ToolInvocationControl
 from ...protocol import ToolResult
 from .render import format_evidence
 from .time_parser import parse_time_expression
@@ -55,6 +56,7 @@ class ConversationHistoryTool:
 
     name: ClassVar[str] = "recall_past_chats"
     execution_kind: ClassVar[str] = "parallel_read"
+    supports_invocation_control: ClassVar[bool] = True
     description: ClassVar[str] = (
         "回忆过去和这位用户聊过的事。\n\n"
         "**何时使用**：\n"
@@ -261,7 +263,13 @@ class ConversationHistoryTool:
             target_session_ids=(matched_session.session_id,) if matched_session is not None else (),
             retrieval_goal=mode,
         )
-        result = self._search_service.search(request)
+        control = args.get(TOOL_INVOCATION_CONTROL_ARG)
+        result = self._search_service.search(
+            request,
+            cancel_check=control.check_cancelled
+            if isinstance(control, ToolInvocationControl)
+            else None,
+        )
         if result.failures and not result.evidence:
             return ToolResult(
                 text=format_evidence(

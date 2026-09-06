@@ -207,7 +207,9 @@ def test_edit_resend_preserves_later_model_change(tmp_path: Path) -> None:
     assert assistants[-1].meta["model"] == "kimi/kimi-k2.6"
 
 
-def test_memory_scope_uses_same_prior_summary_override_as_context(tmp_path: Path) -> None:
+def test_memory_scope_freezes_business_boundary_independently_of_model_override(
+    tmp_path: Path,
+) -> None:
     memory = _RecordingMemory()
     conv = _conversation(
         tmp_path,
@@ -218,14 +220,17 @@ def test_memory_scope_uses_same_prior_summary_override_as_context(tmp_path: Path
     conv._build_openai_messages_first_turn(
         "no checkpoint",
         prior_summary_override=None,
+        recall_boundary_override=None,
         persist_compaction=False,
     )
     conv._build_openai_messages_first_turn(
         "prefix checkpoint",
         prior_summary_override=PriorSummary(
             summary="prefix",
-            covered_through_uuid="prefix-assistant",
+            covered_through_uuid="model-only-message",
+            scope="model",
         ),
+        recall_boundary_override="prefix-assistant",
         persist_compaction=False,
     )
 
@@ -235,6 +240,28 @@ def test_memory_scope_uses_same_prior_summary_override_as_context(tmp_path: Path
     assert empty_scope.recall_through_event_uuid is None
     assert prefix_scope.current_session_id == conv.session.session_id
     assert prefix_scope.recall_through_event_uuid == "prefix-assistant"
+
+
+def test_valid_business_checkpoint_is_used_when_model_view_cannot_restore_it(
+    tmp_path: Path,
+) -> None:
+    memory = _RecordingMemory()
+    conv = _conversation(tmp_path, llm=_ScriptedLLMClient(), memory=memory)
+    user = _event("user_message", {"content": "prior user"})
+    assistant = _event("assistant_message", {"content": "prior answer"})
+    checkpoint = _event(
+        "compaction",
+        {"summary": "earlier", "covered_through_uuid": assistant.uuid, "checkpoint_version": 1},
+    )
+    for event in (user, assistant, checkpoint):
+        conv.session.append(event)
+    conv._build_openai_messages_first_turn(
+        "next", history_override=[], prior_summary_override=None, persist_compaction=False
+    )
+    assert (
+        memory.retrieve_kwargs[0]["automatic_recall_scope"].recall_through_event_uuid
+        == assistant.uuid
+    )
 
 
 def test_new_compaction_advances_memory_scope_only_on_the_next_turn(tmp_path: Path) -> None:

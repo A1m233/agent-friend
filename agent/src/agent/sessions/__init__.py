@@ -52,6 +52,13 @@ from .model_history import (
     PreparedModelHistory,
     SessionModelHistory,
 )
+from .query import (
+    SessionActivity,
+    SessionQuerySnapshot,
+    list_session_activity,
+    load_session,
+    query_session,
+)
 from .recovery import (
     ReconciliationReport,
     RecoveredToolResult,
@@ -116,6 +123,7 @@ __all__ = [
     "RolloutRestoreResult",
     "SearchTextSegment",
     "Session",
+    "SessionActivity",
     "SessionCacheEpoch",
     "SessionCatalog",
     "SessionChange",
@@ -132,6 +140,7 @@ __all__ = [
     "SessionMutationContext",
     "SessionNotFoundError",
     "SessionPersistError",
+    "SessionQuerySnapshot",
     "SessionResolution",
     "SessionRevisionStore",
     "SessionRolloutRecorder",
@@ -149,7 +158,10 @@ __all__ = [
     "ToolRecoveryAdapter",
     "ToolTransactionReconciler",
     "current_session_mutation_context",
+    "list_session_activity",
+    "load_session",
     "normalize_session_title",
+    "query_session",
     "render_interrupted_evidence",
     "render_recoverable_evidence",
     "restore_rollout",

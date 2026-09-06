@@ -31,6 +31,7 @@ from agent.context import (
     SummarizingContextManager,
     make_budget_snapshot,
 )
+from agent.context.checkpoints import resolve_prior_summary, summary_message
 from agent.context.summary_prompt import (
     build_summary_messages,
     render_summary_as_context,
@@ -38,6 +39,7 @@ from agent.context.summary_prompt import (
     strip_analysis,
 )
 from agent.messages import Message
+from agent.sessions.rollout import SessionRolloutRecorder, restore_rollout
 from agent.system_prompt import IM_QQ_SURFACE
 from agent.tools.builtin.tool_result_recovery import ToolResultRecoveryTool
 from llm_providers.request_witness import witness_from_body
@@ -60,6 +62,7 @@ from llm_providers import (
     LLMStreamEvent,
     LLMTextDelta,
     LLMTurnDone,
+    LLMUnsupportedParameterError,
     LLMUsage,
     ModelRequest,
     ModelResponse,
@@ -403,6 +406,29 @@ def test_over_threshold_triggers_summary_and_keeps_recent_tail() -> None:
     assert "U5-" in joined
 
 
+def test_summary_cancellation_is_forwarded_and_never_downgraded_to_fifo() -> None:
+    from agent.runtime.cancellation import CancellationToken, CancelReason, RunCancelled
+
+    token = CancellationToken()
+
+    class CancellingLLM(_FakeLLM):
+        def generate(self, request: ModelRequest) -> ModelResponse:
+            self.complete_calls += 1
+            assert request.control.cancel_check is not None
+            token.cancel(CancelReason.EXPLICIT_REQUEST)
+            request.control.cancel_check()
+            raise AssertionError("cancel check must interrupt")
+
+    llm = CancellingLLM()
+    runtime = _runtime(llm, window=1000)
+    runtime.cancel_check = token.raise_if_cancelled
+    cm = SummarizingContextManager()
+    with pytest.raises(RunCancelled):
+        cm.build_messages(history=_turns(6, 100), system_prompt="sys", runtime=runtime)
+    assert llm.complete_calls == 1
+    assert cm._consecutive_failures == 0
+
+
 def test_repeated_compaction_uses_operation_scoped_exact_lineage() -> None:
     llm = _WitnessSummaryLLM()
     cm = SummarizingContextManager()
@@ -732,6 +758,119 @@ def _count_tool_context_edits(session: Session) -> int:
     return sum(1 for ev in session.events if ev.type == "tool_context_edit")
 
 
+def test_compaction_model_only_boundary_survives_verified_rollout_restart(tmp_path: Path) -> None:
+    llm = _FakeLLM(context_window=14_000)
+    conv, session, store = _make_conversation(
+        tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
+    )
+    _seed_turns(session, store, n=60, size=100)
+    conv._session_model_history.reconcile(session)
+    # Every possible cut ends at a model-only identity, as in the real incident.
+    model_history: list[Message] = []
+    for message in conv._session_model_history.items:
+        model_history.append(message)
+        if message.role == "assistant":
+            model_history.append(
+                Message(
+                    role="system",
+                    content="previous transaction stopped",
+                    meta={"synthetic": "turn_aborted"},
+                )
+            )
+    conv._session_model_history.items = model_history
+    conv._rollout_recorder = SessionRolloutRecorder(store=store, session=session)
+
+    assert conv.send("compress") == "ok"
+    compaction = session.latest_compaction()
+    assert compaction is not None
+    assert compaction.payload["covered_through_uuid"] not in {
+        event.uuid for event in session.active_events
+    }
+    assert conv.send("continue") == "ok"
+    assert llm.complete_calls == 1
+
+    reloaded = store.load(session.session_id)
+    restored = restore_rollout(reloaded)
+    resolved = resolve_prior_summary(
+        reloaded.active_events, restored.history.snapshot(), scope="model"
+    )
+    assert resolved.status == "materialized"
+    restarted = Conversation(
+        session=reloaded,
+        store=store,
+        llm_client=cast(Any, llm),
+        context_manager=SummarizingContextManager(),
+        prompt_builder=conv._prompt_builder,
+        session_model_history=restored.history,
+        session_model_context=restored.model_context,
+        cache_epoch=restored.cache_epoch,
+        catalog=conv._catalog,
+    )
+    assert restarted.send("after restart") == "ok"
+    assert llm.complete_calls == 1
+    assert (
+        sum(
+            "这是压缩后的结构化摘要" in str(message.get("content", ""))
+            for message in llm.received[-1]
+        )
+        == 1
+    )
+
+
+@pytest.mark.parametrize("marked", [True, False])
+def test_repeated_compaction_keeps_prior_summary_in_bounded_input(marked: bool) -> None:
+    llm = _FakeLLM(context_window=8_000)
+    manager = SummarizingContextManager()
+    remembered = summary_message(
+        "EARLIER_FACT_MUST_SURVIVE", "previous-summary", "previous-checkpoint"
+    )
+    if not marked:
+        remembered.meta.clear()
+    history = [remembered, *_turns(80, 400)]
+    result = manager.build_messages(history, "system", "next", runtime=_runtime(llm, 8_000))
+    assert result.new_compaction is not None
+    assert llm.complete_calls == 1
+    assert "EARLIER_FACT_MUST_SURVIVE" in str(llm.generate_requests[0].messages[-1]["content"])
+    assert result.new_compaction.omitted_before_count > 0
+
+
+def test_unsupported_summary_parameter_is_blocked_only_for_same_run_and_model(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class RejectingLLM(_FakeLLM):
+        def generate(self, request: ModelRequest) -> ModelResponse:
+            self.complete_calls += 1
+            raise LLMUnsupportedParameterError("private prompt must not appear")
+
+    llm = RejectingLLM()
+    manager = SummarizingContextManager()
+    runtime = _runtime(llm, 2_000)
+    runtime.run_id = "run-1"
+    history = _turns(10, 400)
+
+    def build() -> list[Any]:
+        return list(manager.stream_build_messages(history, "system", "next", runtime=runtime))
+
+    with caplog.at_level(logging.WARNING, logger="agent.context.summarizing"):
+        assert [item.phase for item in build()] == ["started", "discarded"]
+        assert build() == []
+        assert llm.complete_calls == 1
+        runtime.run_id = "run-2"
+        build()
+        runtime.model_id = "other-model"
+        build()
+        assert llm.complete_calls == 3
+        runtime.run_id = None
+        build()
+        build()
+        assert llm.complete_calls == 5
+    assert "sdk_validation" in caplog.text
+    assert "unsupported_model_parameter" in caplog.text
+    assert "private prompt must not appear" not in caplog.text
+    assert manager._consecutive_failures == 0
+    assert manager._tripped is False
+
+
 def test_tool_context_edit_is_committed_and_reused_after_restart(tmp_path: Path) -> None:
     llm = _FakeLLM(context_window=300_000)
     conv, session, store = _make_conversation(
@@ -884,7 +1023,7 @@ def test_compaction_checkpoint_is_reused_after_real_instance_restart(tmp_path: P
     assert llm.complete_calls == 1
     compaction = session.latest_compaction()
     assert compaction is not None
-    assert compaction.payload["checkpoint_version"] == 2
+    assert compaction.payload["checkpoint_version"] == 3
 
     reloaded_store = JsonlSessionStore(base_dir=tmp_path / "sessions")
     reloaded = reloaded_store.load(session.session_id)
@@ -958,7 +1097,7 @@ def test_invalid_checkpoint_boundary_is_ignored_and_rebuilt(tmp_path: Path) -> N
     latest = session.latest_compaction()
     assert latest is not None
     assert latest.uuid != "invalid-compaction"
-    assert latest.payload["checkpoint_version"] == 2
+    assert latest.payload["checkpoint_version"] == 3
 
 
 def test_usage_calibration_persists_and_restores_per_model(tmp_path: Path) -> None:

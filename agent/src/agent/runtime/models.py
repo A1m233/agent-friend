@@ -90,6 +90,7 @@ class RunTerminal:
 
 
 ConversationFactory = Callable[[], "Conversation"]
+ConversationPreparer = Callable[[Callable[[], None]], "Conversation"]
 RunErrorCallback = Callable[["Conversation", BaseException, "RunRequest"], None]
 ConversationRunner = Callable[
     ["Conversation", "RunRequest", CancellationToken], Iterator["ConversationEvent"]
@@ -119,12 +120,14 @@ class RunRequest:
     channel: PromptChannel | None = None
     surface: InteractionSurfaceId | None = None
     conversation_factory: ConversationFactory | None = None
+    conversation_preparer: ConversationPreparer | None = None
     conversation_runner: ConversationRunner | None = None
     error_callback: RunErrorCallback | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     consumer_abandon_policy: ConsumerAbandonPolicy = ConsumerAbandonPolicy.CANCEL
     interactive_busy_policy: InteractiveBusyPolicy = InteractiveBusyPolicy.QUEUE
     control_scope: str | None = None
+    input_accepted: bool | None = None
     latency_started_ms: int = field(default_factory=monotonic_ms)
     scheduler_submitted_ms: int = field(default_factory=monotonic_ms)
 
@@ -151,6 +154,7 @@ class RunSnapshot:
     finished_at: datetime | None
     version: int
     runtime_instance_id: str = ""
+    input_accepted: bool | None = None
     turn_status: TurnStatus | None = None
     total_tool_calls: int = 0
     tool_call_items: int = 0
@@ -178,6 +182,7 @@ class RunHandle:
         self._status = RunStatus.QUEUED
         self._terminal: RunTerminal | None = None
         self._started_at: datetime | None = None
+        self._input_accepted = request.input_accepted
         self._version = 1
         self._lock = threading.Lock()
         self._terminal_event = threading.Event()
@@ -229,6 +234,16 @@ class RunHandle:
 
     def cancel(self, reason: CancelReason = CancelReason.EXPLICIT_REQUEST) -> bool:
         return self.token.cancel(reason)
+
+    def mark_input_accepted(self) -> None:
+        """Publish only after the user event has been durably appended."""
+        with self._lock:
+            if self._input_accepted is not False or self._terminal is not None:
+                return
+            self._input_accepted = True
+            self._version += 1
+            snapshot = self._snapshot_locked()
+        self._publish(snapshot)
 
     def emit(self, event: object, *, timeout: float = 0.1) -> None:
         """向 primary consumer 发事件；取消时停止等待满队列。"""
@@ -364,6 +379,7 @@ class RunHandle:
             finished_at=terminal.finished_at if terminal is not None else None,
             version=self._version,
             runtime_instance_id=self.request.runtime_instance_id,
+            input_accepted=self._input_accepted,
             turn_status=terminal.turn_status if terminal is not None else None,
             total_tool_calls=terminal.total_tool_calls if terminal is not None else 0,
             tool_call_items=terminal.tool_call_items if terminal is not None else 0,

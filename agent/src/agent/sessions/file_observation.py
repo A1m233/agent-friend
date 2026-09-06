@@ -7,12 +7,11 @@ import logging
 import os
 import threading
 from collections.abc import Iterator
-from contextlib import contextmanager, suppress
+from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Literal
 
-import portalocker
 from portalocker.exceptions import LockException
 
 logger = logging.getLogger(__name__)
@@ -32,7 +31,7 @@ class SessionFileObservation:
     error_type: str | None = None
 
     @contextmanager
-    def locked(self, lock: portalocker.Lock) -> Iterator[object]:
+    def locked(self, lock: AbstractContextManager[object]) -> Iterator[object]:
         started = perf_counter()
         acquired: float | None = None
         try:

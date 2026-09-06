@@ -22,6 +22,7 @@ from .model_context import (
     SessionModelContext,
 )
 from .model_history import SessionModelHistory, model_relevant_event_uuids
+from .query import CancelCheck, check_cancel
 from .session import Session
 from .store import SessionStore, append_session_events
 
@@ -471,12 +472,13 @@ def _degraded_restore(
     )
 
 
-def restore_rollout(session: Session) -> RolloutRestoreResult:
+def restore_rollout(session: Session, *, cancel_check: CancelCheck = None) -> RolloutRestoreResult:
     """Apply only complete, hash-valid rollout commits from the session stream."""
 
     item_events: dict[str, tuple[Event, dict[str, Any], Message]] = {}
     committed: RolloutCommitState | None = None
     for event in session.events:
+        check_cancel(cancel_check)
         if event.type == "rollout_segment":
             if event.payload.get("schema_version") != ROLLOUT_SCHEMA_VERSION:
                 return _degraded_restore(session, committed, "incompatible_rollout_schema")
@@ -561,6 +563,7 @@ def restore_rollout(session: Session) -> RolloutRestoreResult:
             ),
         )
 
+    check_cancel(cancel_check)
     if committed is None:
         return _no_rollout_baseline(session)
 

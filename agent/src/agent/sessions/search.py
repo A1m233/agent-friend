@@ -12,6 +12,7 @@ from typing import Literal, Protocol
 from .catalog import SessionCatalog, SessionDescriptor
 from .errors import SessionNotFoundError
 from .events import Event
+from .query import SourceVersion, query_session
 from .store import SessionStore
 
 SearchRole = Literal["user", "assistant"]
@@ -102,6 +103,7 @@ class _CachedSearchDocument:
     revision: int
     updated_at: datetime
     messages: tuple[_SearchMessage, ...]
+    source_version: SourceVersion | None = None
 
 
 class SessionSearchService:
@@ -137,10 +139,9 @@ class SessionSearchService:
             raise ValueError("title_limit 必须在 1 到 10 之间")
 
         pattern = re.compile(re.escape(normalized_query), re.IGNORECASE)
-        with self._lock:
-            descriptors, documents = self._refresh_documents()
-            title_results = self._match_titles(descriptors, pattern)
-            message_results = self._match_messages(descriptors, documents, pattern)
+        descriptors, documents = self._refresh_documents()
+        title_results = self._match_titles(descriptors, pattern)
+        message_results = self._match_messages(descriptors, documents, pattern)
 
         return SessionSearchResponse(
             query=normalized_query,
@@ -161,31 +162,53 @@ class SessionSearchService:
             else {session_id: 0 for session_id in session_ids}
         )
         live_ids = set(session_ids)
-        for cached_id in tuple(self._cache):
-            if cached_id not in live_ids:
-                self._cache.pop(cached_id, None)
+        with self._lock:
+            for cached_id in tuple(self._cache):
+                if cached_id not in live_ids:
+                    self._cache.pop(cached_id, None)
 
         available_descriptors: list[SessionDescriptor] = []
         documents: dict[str, _CachedSearchDocument] = {}
         for descriptor in descriptors:
             revision = revisions.get(descriptor.session_id, 0)
-            cached = self._cache.get(descriptor.session_id)
+            with self._lock:
+                cached = self._cache.get(descriptor.session_id)
+            previous_cached = cached
+            snapshot = None
+            # Native stores validate physical source identity even when a writer
+            # bypassed the best-effort revision notification wrapper.
+            if callable(getattr(self._store, "query", None)):
+                try:
+                    snapshot = query_session(self._store, descriptor.session_id)
+                except SessionNotFoundError:
+                    continue
             if (
                 cached is None
-                or cached.revision != revision
-                or cached.updated_at != descriptor.updated_at
+                or (snapshot is not None and cached.source_version != snapshot.source_version)
+                or (
+                    snapshot is None
+                    and (cached.revision != revision or cached.updated_at != descriptor.updated_at)
+                )
             ):
                 try:
-                    session = self._store.load(descriptor.session_id)
+                    snapshot = snapshot or query_session(self._store, descriptor.session_id)
                 except SessionNotFoundError:
-                    self._cache.pop(descriptor.session_id, None)
+                    with self._lock:
+                        self._cache.pop(descriptor.session_id, None)
                     continue
                 cached = _CachedSearchDocument(
                     revision=revision,
                     updated_at=descriptor.updated_at,
-                    messages=_project_search_messages(session.active_events),
+                    messages=_project_search_messages(list(snapshot.active_events)),
+                    source_version=snapshot.source_version,
                 )
-                self._cache[descriptor.session_id] = cached
+                with self._lock:
+                    if self._cache.get(descriptor.session_id) is previous_cached:
+                        self._cache[descriptor.session_id] = cached
+                    # Text projections are derived and cheaply evicted; the store
+                    # remains the sole owner of source freshness and file reads.
+                    while len(self._cache) > 64:
+                        self._cache.pop(next(iter(self._cache)))
             available_descriptors.append(descriptor)
             documents[descriptor.session_id] = cached
 

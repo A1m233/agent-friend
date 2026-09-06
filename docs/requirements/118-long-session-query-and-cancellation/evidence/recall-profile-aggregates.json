@@ -1,0 +1,599 @@
+{
+  "artifact_kind": "derived_whitelist_aggregate_not_original_artifact",
+  "archived_on": "2026-09-06",
+  "historical_profile_source_head": "fba5ea4f71805b6fd58825e7086399abb053ba5d",
+  "current_requirement_baseline": "f563938bd3f63c88a5e7a5b59825e3da33f06303",
+  "source_access": {
+    "scope": "machine-local only; unavailable to other checkouts or after source worktree removal",
+    "worktree_locator": "%USERPROFILE%/.codex/worktrees/0bcf/agent-friend",
+    "relative_directory": ".tmp/cancel-recall-analysis"
+  },
+  "retained_harness": {
+    "filename": "profile_recall.py",
+    "bytes": 19344,
+    "sha256": "80131190368027ec464fed417b851eca47928f76060062969ae817d2524e13cc",
+    "filesystem_last_write_local": "2026-09-06T02:18:35.869522",
+    "copy_into_repository": false,
+    "execution_identity_limit": "This retained version postdates the first two report files. Their executed harness byte identity was not captured; do not assign this hash retroactively."
+  },
+  "collection_protocol": {
+    "replicates_per_variant": 1,
+    "mode": "offline isolated child process; original production-derived input snapshots have been removed",
+    "input_binding": "unique user-message event match with 25-character query; event identity and query are not archived",
+    "scope": {
+      "current_session_boundary": "absent",
+      "current_session_eligible": false,
+      "top_k": 8
+    },
+    "query_clock_utc": "2026-09-05T17:56:31.657713Z",
+    "embedding": "local bge-small-zh-v1.5 quantized ONNX; one explicit warm-up before retrieval",
+    "external_llm_calls": "blocked by NoLLM in the retained harness",
+    "child_network": "socket connection entry points replaced with failure in retained harness",
+    "supervisor_boundary": "retained harness can access the local live recall API and production session/database paths; not safe as a generally runnable archive",
+    "snapshot_consistency": "file size and mtime checked before/after copy; no archived content digest or atomic cross-store snapshot",
+    "database_copy": "source SQLite mode=ro and query_only; SQLite backup API",
+    "background_workers": "retained harness asserts memory and index worker threads are not running",
+    "measurement": "time.perf_counter wall time; process_time CPU; wrappers plus periodic checkpoint writes",
+    "phase_additivity": "nested inclusive timings; never sum all phase rows as total; multithreaded CPU may exceed wall time"
+  },
+  "profiles": [
+    {
+      "evidence_id": "E-002",
+      "variant": "baseline",
+      "source_artifact": {
+        "filename": "baseline-report.json",
+        "bytes": 217142,
+        "sha256": "6ed33db3f86e40a3642254c129d9de9a900eb4a36b657f2195219b5b6f8eea92",
+        "filesystem_last_write_local": "2026-09-06T02:15:03.204834"
+      },
+      "snapshot": {
+        "session_count": 74,
+        "bytes": 344466289,
+        "target_bytes": 335264600,
+        "stable_during_copy": true,
+        "copy_wall_s": 0.18441650000022491
+      },
+      "snapshot_removed_as_reported": true,
+      "measurement": {
+        "embedding_warmup_s": 0.2682996999938041,
+        "retrieve_wall_s": 7.539222500003234,
+        "retrieve_cpu_s": 9.515625,
+        "context_item_count": 12,
+        "trace_count": 1
+      },
+      "phases": {
+        "scope.prepare": {
+          "calls": 1,
+          "wall_s": 1.9499995687510818e-05,
+          "cpu_s": 0.0
+        },
+        "onnx.embed": {
+          "calls": 2,
+          "wall_s": 0.006609500000195112,
+          "cpu_s": 0.0
+        },
+        "vector.search": {
+          "calls": 2,
+          "wall_s": 0.010077500002807938,
+          "cpu_s": 0.109375
+        },
+        "dense.search": {
+          "calls": 2,
+          "wall_s": 0.016928000004554633,
+          "cpu_s": 0.109375
+        },
+        "structured.search": {
+          "calls": 2,
+          "wall_s": 0.02964100000099279,
+          "cpu_s": 0.109375
+        },
+        "scope.search": {
+          "calls": 2,
+          "wall_s": 7.107343499999843,
+          "cpu_s": 7.9375
+        },
+        "reverse.self": {
+          "calls": 296,
+          "wall_s": 0.07099120046768803,
+          "cpu_s": 0.15625
+        },
+        "store._last_conversation_event_at": {
+          "calls": 148,
+          "wall_s": 0.032237900006293785,
+          "cpu_s": 0.078125
+        },
+        "store._latest_model_runtime_config": {
+          "calls": 148,
+          "wall_s": 0.1169142999642645,
+          "cpu_s": 0.28125
+        },
+        "store._read_summary": {
+          "calls": 148,
+          "wall_s": 0.5363478000217583,
+          "cpu_s": 1.359375
+        },
+        "store.list": {
+          "calls": 2,
+          "wall_s": 0.5459110000010696,
+          "cpu_s": 1.359375
+        },
+        "session.from_events": {
+          "calls": 148,
+          "wall_s": 0.0023274000122910365,
+          "cpu_s": 0.0
+        },
+        "store.load": {
+          "calls": 148,
+          "wall_s": 5.977507799936575,
+          "cpu_s": 5.9375
+        },
+        "session.active_events": {
+          "calls": 148,
+          "wall_s": 0.03577940000832314,
+          "cpu_s": 0.03125
+        },
+        "history.search": {
+          "calls": 2,
+          "wall_s": 7.076648499991279,
+          "cpu_s": 7.828125
+        }
+      },
+      "source_runs": [
+        {
+          "source": "structured_memory",
+          "candidate_count": 24,
+          "raw_candidate_count": 126,
+          "suppressed_count": 89,
+          "limit": 24,
+          "status": "ok",
+          "scope_scan_attempts": 2,
+          "scope_scan_truncated": false
+        },
+        {
+          "source": "session_history",
+          "candidate_count": 8,
+          "raw_candidate_count": 18,
+          "suppressed_count": 2,
+          "limit": 8,
+          "status": "ok",
+          "scope_scan_attempts": 2,
+          "scope_scan_truncated": false
+        }
+      ],
+      "index_state": {
+        "before": {
+          "status": "ready",
+          "indexed_count": 1529,
+          "total_count": 1529
+        },
+        "after": {
+          "status": "ready",
+          "indexed_count": 1529,
+          "total_count": 1529
+        },
+        "generation_unchanged_within_run": true
+      },
+      "file_operations_aggregate": [
+        {
+          "operation": "load",
+          "population": "other_sessions",
+          "outcome": "success",
+          "calls": 146,
+          "bytes": 18403378,
+          "wait_s": 0.012134900011005811,
+          "hold_s": 0.01840589995845221,
+          "parse_s": 0.12226259995804867
+        },
+        {
+          "operation": "load",
+          "population": "current_session",
+          "outcome": "success",
+          "calls": 2,
+          "bytes": 670529200,
+          "wait_s": 0.018346499993640464,
+          "hold_s": 0.2981335000076797,
+          "parse_s": 5.449234299994714
+        }
+      ],
+      "output_guardrail": {
+        "status": "not_recorded_in_this_artifact"
+      },
+      "execution_outcome": {
+        "child_exit_code": 0,
+        "profile_status": "complete",
+        "stdout_bytes": 0,
+        "stderr_bytes": 2257,
+        "output_text_archived": false
+      }
+    },
+    {
+      "evidence_id": "E-003",
+      "variant": "incident-prefix-baseline",
+      "source_artifact": {
+        "filename": "incident-prefix-baseline-report.json",
+        "bytes": 223224,
+        "sha256": "5b4f40980a84389aa2b00a3eec2514c0a5681de668f158f27652a3db69e4fac9",
+        "filesystem_last_write_local": "2026-09-06T02:19:08.815682"
+      },
+      "snapshot": {
+        "session_count": 74,
+        "bytes": 344466289,
+        "target_bytes": 335264600,
+        "stable_during_copy": true,
+        "copy_wall_s": 0.21583679999457672
+      },
+      "snapshot_removed_as_reported": true,
+      "measurement": {
+        "embedding_warmup_s": 0.18487789999926463,
+        "retrieve_wall_s": 11.554469299997436,
+        "retrieve_cpu_s": 13.15625,
+        "context_item_count": 12,
+        "trace_count": 1
+      },
+      "phases": {
+        "scope.prepare": {
+          "calls": 1,
+          "wall_s": 2.099999983329326e-05,
+          "cpu_s": 0.0
+        },
+        "onnx.embed": {
+          "calls": 2,
+          "wall_s": 0.007315399998333305,
+          "cpu_s": 0.0
+        },
+        "vector.search": {
+          "calls": 2,
+          "wall_s": 0.010253199994622264,
+          "cpu_s": 0.109375
+        },
+        "dense.search": {
+          "calls": 2,
+          "wall_s": 0.018533700007537846,
+          "cpu_s": 0.125
+        },
+        "structured.search": {
+          "calls": 2,
+          "wall_s": 0.031229000000166707,
+          "cpu_s": 0.125
+        },
+        "scope.search": {
+          "calls": 2,
+          "wall_s": 11.077634000008402,
+          "cpu_s": 11.546875
+        },
+        "reverse.self": {
+          "calls": 296,
+          "wall_s": 1.3862239000955014,
+          "cpu_s": 1.78125
+        },
+        "store._last_conversation_event_at": {
+          "calls": 148,
+          "wall_s": 0.036887900067085866,
+          "cpu_s": 0.078125
+        },
+        "store._latest_model_runtime_config": {
+          "calls": 148,
+          "wall_s": 2.8667837000539294,
+          "cpu_s": 3.234375
+        },
+        "store._read_summary": {
+          "calls": 148,
+          "wall_s": 3.3339437000249745,
+          "cpu_s": 3.984375
+        },
+        "store.list": {
+          "calls": 2,
+          "wall_s": 3.3444595000037225,
+          "cpu_s": 3.984375
+        },
+        "session.from_events": {
+          "calls": 148,
+          "wall_s": 0.002433299974654801,
+          "cpu_s": 0.0
+        },
+        "store.load": {
+          "calls": 148,
+          "wall_s": 7.083096899958036,
+          "cpu_s": 6.859375
+        },
+        "session.active_events": {
+          "calls": 148,
+          "wall_s": 0.0419486999817309,
+          "cpu_s": 0.046875
+        },
+        "history.search": {
+          "calls": 2,
+          "wall_s": 11.045279100006155,
+          "cpu_s": 11.421875
+        }
+      },
+      "source_runs": [
+        {
+          "source": "structured_memory",
+          "candidate_count": 24,
+          "raw_candidate_count": 126,
+          "suppressed_count": 89,
+          "limit": 24,
+          "status": "ok",
+          "scope_scan_attempts": 2,
+          "scope_scan_truncated": false
+        },
+        {
+          "source": "session_history",
+          "candidate_count": 8,
+          "raw_candidate_count": 18,
+          "suppressed_count": 2,
+          "limit": 8,
+          "status": "ok",
+          "scope_scan_attempts": 2,
+          "scope_scan_truncated": false
+        }
+      ],
+      "index_state": {
+        "before": {
+          "status": "ready",
+          "indexed_count": 1529,
+          "total_count": 1529
+        },
+        "after": {
+          "status": "ready",
+          "indexed_count": 1529,
+          "total_count": 1529
+        },
+        "generation_unchanged_within_run": true
+      },
+      "file_operations_aggregate": [
+        {
+          "operation": "load",
+          "population": "other_sessions",
+          "outcome": "success",
+          "calls": 146,
+          "bytes": 18403378,
+          "wait_s": 0.01482730002317112,
+          "hold_s": 0.023881999957666267,
+          "parse_s": 0.14253270008339314
+        },
+        {
+          "operation": "load",
+          "population": "current_session",
+          "outcome": "success",
+          "calls": 2,
+          "bytes": 670527676,
+          "wait_s": 0.014852399996016175,
+          "hold_s": 0.2730105000009644,
+          "parse_s": 6.543549900001381
+        }
+      ],
+      "incident_prefix": {
+        "before_bytes": 335264600,
+        "after_bytes": 335263838,
+        "removed_bytes": 762,
+        "ends_with_newline": true,
+        "line_count": 37435,
+        "removed_event_types": [
+          "run_terminal",
+          "model_config_change"
+        ],
+        "removed_event_bytes": [
+          500,
+          262
+        ],
+        "last_model_config_offset": 196792202,
+        "reverse_span_bytes_derived": 138471636,
+        "reverse_current_session_calls": [
+          {
+            "lines": 1,
+            "chars": 247,
+            "wall_s": 6.350000330712646e-05,
+            "cpu_s": 0.0
+          },
+          {
+            "lines": 26098,
+            "chars": 127155769,
+            "wall_s": 0.5179748999726144,
+            "cpu_s": 0.625
+          },
+          {
+            "lines": 1,
+            "chars": 247,
+            "wall_s": 7.609999738633633e-05,
+            "cpu_s": 0.0
+          },
+          {
+            "lines": 26098,
+            "chars": 127155769,
+            "wall_s": 0.6625450000356068,
+            "cpu_s": 0.625
+          }
+        ]
+      },
+      "output_guardrail": {
+        "count": 12,
+        "sha256": "d97b7b725a3f8fa38476e73637f1bd179bed5a4cc1c72526fb797dcfa6286807",
+        "scope": "sorted injected evidence ID list only",
+        "algorithm": "SHA256(json.dumps(sorted(injected_evidence_ids), ensure_ascii=False).encode(\"utf-8\"))",
+        "output_content_checked": false,
+        "output_presentation_order_checked": false
+      },
+      "execution_outcome": {
+        "child_exit_code": 0,
+        "profile_status": "complete",
+        "stdout_bytes": 0,
+        "stderr_bytes": 2257,
+        "output_text_archived": false
+      }
+    },
+    {
+      "evidence_id": "E-004",
+      "variant": "exclude-ineligible-current",
+      "source_artifact": {
+        "filename": "exclude-ineligible-current-report.json",
+        "bytes": 110253,
+        "sha256": "372a024aaad5f84c4c626780bc67acece62ded5bebbd1660383c637c40b072f8",
+        "filesystem_last_write_local": "2026-09-06T02:16:26.133695"
+      },
+      "snapshot": {
+        "session_count": 74,
+        "bytes": 344466289,
+        "target_bytes": 335264600,
+        "stable_during_copy": true,
+        "copy_wall_s": 0.1781367000003229
+      },
+      "snapshot_removed_as_reported": true,
+      "measurement": {
+        "embedding_warmup_s": 0.15371679999952903,
+        "retrieve_wall_s": 0.9358425000027637,
+        "retrieve_cpu_s": 2.96875,
+        "context_item_count": 12,
+        "trace_count": 1
+      },
+      "phases": {
+        "scope.prepare": {
+          "calls": 1,
+          "wall_s": 2.1400002879090607e-05,
+          "cpu_s": 0.0
+        },
+        "onnx.embed": {
+          "calls": 2,
+          "wall_s": 0.006710800000291783,
+          "cpu_s": 0.078125
+        },
+        "vector.search": {
+          "calls": 2,
+          "wall_s": 0.010816800000611693,
+          "cpu_s": 0.0
+        },
+        "dense.search": {
+          "calls": 2,
+          "wall_s": 0.017753699998138472,
+          "cpu_s": 0.078125
+        },
+        "structured.search": {
+          "calls": 2,
+          "wall_s": 0.02908459999889601,
+          "cpu_s": 0.078125
+        },
+        "scope.search": {
+          "calls": 2,
+          "wall_s": 0.5332342999972752,
+          "cpu_s": 1.390625
+        },
+        "reverse.self": {
+          "calls": 146,
+          "wall_s": 0.03818509978009388,
+          "cpu_s": 0.140625
+        },
+        "store._last_conversation_event_at": {
+          "calls": 73,
+          "wall_s": 0.019114399976388086,
+          "cpu_s": 0.015625
+        },
+        "store._latest_model_runtime_config": {
+          "calls": 73,
+          "wall_s": 0.060366299985616934,
+          "cpu_s": 0.234375
+        },
+        "store._read_summary": {
+          "calls": 73,
+          "wall_s": 0.4002044000008027,
+          "cpu_s": 1.203125
+        },
+        "store.list": {
+          "calls": 1,
+          "wall_s": 0.40577330000087386,
+          "cpu_s": 1.21875
+        },
+        "session.from_events": {
+          "calls": 73,
+          "wall_s": 0.0005905000216444023,
+          "cpu_s": 0.0
+        },
+        "store.load": {
+          "calls": 73,
+          "wall_s": 0.08455820000381209,
+          "cpu_s": 0.078125
+        },
+        "session.active_events": {
+          "calls": 73,
+          "wall_s": 0.0008015999701456167,
+          "cpu_s": 0.0
+        },
+        "history.search": {
+          "calls": 1,
+          "wall_s": 0.5034220000015921,
+          "cpu_s": 1.3125
+        }
+      },
+      "source_runs": [
+        {
+          "source": "structured_memory",
+          "candidate_count": 24,
+          "raw_candidate_count": 126,
+          "suppressed_count": 89,
+          "limit": 24,
+          "status": "ok",
+          "scope_scan_attempts": 2,
+          "scope_scan_truncated": false
+        },
+        {
+          "source": "session_history",
+          "candidate_count": 8,
+          "raw_candidate_count": 9,
+          "suppressed_count": 0,
+          "limit": 8,
+          "status": "ok",
+          "scope_scan_attempts": 1,
+          "scope_scan_truncated": false
+        }
+      ],
+      "index_state": {
+        "before": {
+          "status": "ready",
+          "indexed_count": 1529,
+          "total_count": 1529
+        },
+        "after": {
+          "status": "ready",
+          "indexed_count": 1529,
+          "total_count": 1529
+        },
+        "generation_unchanged_within_run": true
+      },
+      "file_operations_aggregate": [
+        {
+          "operation": "load",
+          "population": "other_sessions",
+          "outcome": "success",
+          "calls": 73,
+          "bytes": 9201689,
+          "wait_s": 0.01359929997852305,
+          "hold_s": 0.00722180003504036,
+          "parse_s": 0.053195400010736194
+        }
+      ],
+      "output_guardrail": {
+        "count": 12,
+        "sha256": "d97b7b725a3f8fa38476e73637f1bd179bed5a4cc1c72526fb797dcfa6286807",
+        "scope": "sorted injected evidence ID list only",
+        "algorithm": "SHA256(json.dumps(sorted(injected_evidence_ids), ensure_ascii=False).encode(\"utf-8\"))",
+        "output_content_checked": false,
+        "output_presentation_order_checked": false
+      },
+      "execution_outcome": {
+        "child_exit_code": 0,
+        "profile_status": "complete",
+        "stdout_bytes": 0,
+        "stderr_bytes": 2257,
+        "output_text_archived": false
+      }
+    }
+  ],
+  "limitations": [
+    "Single observations only; run order, OS file cache, ONNX warm-up, instrumentation overhead and process environment were not controlled as independent repeated trials.",
+    "All variants use separately collected post-incident snapshots. The incident-prefix variant corrects only two later events on the current session; other sessions and SQLite state are not rolled back to the incident.",
+    "The current-snapshot baseline has no final evidence-ID hash; the equal sorted-ID guardrail applies only to the incident-prefix and exclusion reports.",
+    "The original 136.628-second online retrieval was not reproduced and the remaining approximately 125 seconds are unexplained.",
+    "No raw query, user/persona/session/event IDs, session JSONL, database snapshot, output body, index generation identity, process IDs or local personal-directory names are retained in this aggregate.",
+    "Snapshot copies were reported removed; the archive alone cannot reconstruct the original private input or replay the experiment."
+  ]
+}

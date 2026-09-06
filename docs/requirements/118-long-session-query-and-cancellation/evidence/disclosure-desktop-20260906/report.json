@@ -1,0 +1,574 @@
+{
+  "synthetic": true,
+  "llmCalls": 0,
+  "surface": "desktop-webview-ui-only",
+  "passed": true,
+  "restored": true,
+  "checks": [
+    "Real copy button on a collapsed inferred message passes both hidden process and final text to the captured clipboard-write boundary; system clipboard untouched",
+    "DOM Range selects expanded process text and a real pointer click on Quote preserves its original message id, text mid, quoted text and UTF-16 locator in the synthetic draft",
+    "Inferred successful completion collapses process text and tools, preserves final text; real clicks expand and collapse",
+    "Synthetic search navigation target using the original text mid reopens its inferred process section; navigation UI only",
+    "Native valid completion retains its phase-based behavior: commentary folds, unknown and final remain visible",
+    "Same mounted message stays expanded while streaming, then folds after synthetic trustworthy completed outcome",
+    "cancelled: no inferred collapse, process and answer remain visible",
+    "failed: no inferred collapse, process and answer remain visible",
+    "old-history: no inferred collapse, process and answer remain visible",
+    "legacy-conflict: no inferred collapse, process and answer remain visible",
+    "Direct final-only answer has no empty execution toggle"
+  ],
+  "screenshots": [
+    {
+      "name": "inferred-collapsed",
+      "path": "inferred-collapsed.png",
+      "surface": "desktop-webview-viewport",
+      "width": 1300,
+      "height": 900,
+      "original_and_archive_sha256": "35391290da198eeb0e689cae728d3c6ea64819d091e5803f3aeeba94be5f1f09",
+      "bytes": 40130
+    },
+    {
+      "name": "inferred-expanded",
+      "path": "inferred-expanded.png",
+      "surface": "desktop-webview-viewport",
+      "width": 1300,
+      "height": 900,
+      "original_and_archive_sha256": "52ad613c645df34d30b632e7d169d7eb4ec12987c23270d3e0c5221d9fa72060",
+      "bytes": 45476
+    },
+    {
+      "name": "inferred-original-mid-navigation",
+      "path": "inferred-original-mid-navigation.png",
+      "surface": "desktop-webview-viewport",
+      "width": 1300,
+      "height": 900,
+      "original_and_archive_sha256": "37580a27cb516b3cdea343f119d665d16e966302fc44f73684829f6241f1c9eb",
+      "bytes": 51061
+    },
+    {
+      "name": "inferred-collapsed-copy-payload",
+      "path": "inferred-collapsed-copy-payload.png",
+      "surface": "desktop-webview-viewport",
+      "width": 1300,
+      "height": 900,
+      "original_and_archive_sha256": "97620f6f82c38b9cc4d287e6ad47fc9a4639a8ae00f973a4aabbc9b276229b73",
+      "bytes": 40092
+    },
+    {
+      "name": "inferred-quote-action",
+      "path": "inferred-quote-action.png",
+      "surface": "desktop-webview-viewport",
+      "width": 1300,
+      "height": 900,
+      "original_and_archive_sha256": "5b3fc940038de86cc36150fedf1ccd360781630aaa1454cb62ab99c70f6b797e",
+      "bytes": 47964
+    },
+    {
+      "name": "inferred-quoted-original-mid",
+      "path": "inferred-quoted-original-mid.png",
+      "surface": "desktop-webview-viewport",
+      "width": 1300,
+      "height": 900,
+      "original_and_archive_sha256": "1d6949c7aab7f44542c696d519548845e16011e11b71612c0452904f4fdfc3c3",
+      "bytes": 48075
+    }
+  ],
+  "runtime": {
+    "branch": "feature/118-long-session-query-and-cancellation",
+    "mode": "tauri",
+    "ownerPid": 19548,
+    "startedAt": "2026-09-06T14:06:36.855084+00:00",
+    "cdp": "http://127.0.0.1:9222/",
+    "worktree_binding": "requirement_118_repository_root"
+  },
+  "limitations": [
+    "Synthetic in-memory messages and lifecycle facts; no LLM or tool execution",
+    "Screenshots capture the real Tauri WebView viewport, not the native title bar",
+    "Search target injection verifies navigation UI only, not backend search",
+    "Copy checks the real UI handler payload at a mocked navigator.clipboard.writeText boundary; the system clipboard is neither read nor written",
+    "Presence heartbeats, voice prewarm, and the synthetic session runtime lookup are answered locally by the probe",
+    "Only exact Tauri log, event-emit and read-only desktop presence IPC URLs are allowed; this does not test the IPC transport",
+    "Does not verify persistence, reload restoration, or real K3 behavior"
+  ],
+  "url": "http://localhost:1420/chat.html",
+  "viewport": {
+    "width": 1040,
+    "height": 720,
+    "tauri": true
+  },
+  "transportBoundary": {
+    "allowedTauriIpcUrls": [
+      "http://ipc.localhost/plugin%3Alog%7Clog",
+      "http://ipc.localhost/plugin%3Aevent%7Cemit",
+      "http://ipc.localhost/desktop_presence_probe"
+    ],
+    "suppressedVoicePrewarmUrl": "http://127.0.0.1:18900/voice/transcriptions/prewarm"
+  },
+  "copy": {
+    "boundary": "navigator.clipboard.writeText",
+    "systemClipboardRead": false,
+    "systemClipboardWritten": false,
+    "payloads": [
+      "inferred 合成过程：先检查相关信息。\n\ninferred 合成最终回答：结果为 391。"
+    ]
+  },
+  "quoteActionGeometry": {
+    "x": 354.3000183105469,
+    "y": 68.70000457763672,
+    "width": 69.5999984741211,
+    "height": 32,
+    "hitInsideButton": true,
+    "pointerEvents": "auto",
+    "bodyPointerEvents": "auto"
+  },
+  "quote": {
+    "referenceId": "eac63721-092f-41b2-9181-45e97aa68b80",
+    "quotedText": "inferred 合成过程：先检查相关信息。",
+    "sourceRole": "assistant",
+    "availability": "available",
+    "source": {
+      "kind": "session_message",
+      "messageEventUuid": "synthetic-disclosure-118-57422ee5-2af6-47b7-9a3b-4f7ba8c36467:inferred",
+      "textBlockId": "synthetic-disclosure-118-57422ee5-2af6-47b7-9a3b-4f7ba8c36467:inferred:before",
+      "externalSourceKey": null
+    },
+    "locator": {
+      "kind": "text_range",
+      "coordinateSpace": "rendered_text_utf16_v1",
+      "start": 0,
+      "end": 22
+    }
+  },
+  "blockedMutatingRequests": [],
+  "suppressedPresenceHeartbeats": 1,
+  "suppressedFixtureRuntimeReads": 1,
+  "suppressedVoicePrewarms": 1,
+  "allowedTauriIpcRequests": [],
+  "evidence_id": "E-023",
+  "artifact_kind": "sanitized_derived_desktop_ui_report",
+  "archive_status": "active",
+  "recorded_date": "2026-09-06",
+  "trial": 4,
+  "process_exit_code": 0,
+  "exit_code_source": "Completed executions reported by the delivery agent; raw JSON records passed/restored and checks.",
+  "restored_field_scope": "Original synthetic in-memory view, synthetic draft entry and clipboard method descriptor were restored. Requirement 116 runtime restoration is recorded separately in runtime_lifecycle.",
+  "runtime_identity": {
+    "observed_at_utc": "2026-09-06T14:07:33.3172848Z",
+    "lease": {
+      "version": 1,
+      "ownerPid": 19548,
+      "ownerStartId": "2026-09-06T14:06:29.235Z",
+      "gitRepo": "https://github.com/a1m233/agent-friend",
+      "branch": "feature/118-long-session-query-and-cancellation",
+      "mode": "tauri",
+      "startedAt": "2026-09-06T22:06:36.855084+08:00",
+      "ports": [
+        1420,
+        1421,
+        9222,
+        18800,
+        18900
+      ],
+      "platform": "Windows-11-10.0.26200-SP0",
+      "worktree_binding": "requirement_118_repository_root"
+    },
+    "processes": [
+      {
+        "started_at_utc": "2026-09-06T14:06:38.7794750Z",
+        "pid": 38320
+      },
+      {
+        "started_at_utc": "2026-09-06T14:06:43.4965340Z",
+        "pid": 11504
+      },
+      {
+        "started_at_utc": "2026-09-06T14:06:43.5981270Z",
+        "pid": 45176
+      }
+    ],
+    "same_source_hashes_as": ".tmp/disclosure-118/runtime-evidence.json",
+    "bridge_health_http_status": 200,
+    "voice_health_http_status": 200,
+    "final_report": "evidence-20260906-04/report.json",
+    "source_records": [
+      {
+        "path": "frontend/src/pages/chat/components/executionDisclosurePolicy.ts",
+        "modified_at_utc": "2026-09-06T13:51:26.0607169Z",
+        "sha256": "0bedb6439c6267d124a16c01617c938e7a466ae38077e3890a8e6478dc94a453"
+      },
+      {
+        "path": "frontend/src/pages/chat/components/MessageList.tsx",
+        "modified_at_utc": "2026-09-06T13:44:39.7400412Z",
+        "sha256": "b626ebc20317ebcb0d244db6382c57b31e1501efff4239149a8f64fea17d0d48"
+      },
+      {
+        "path": "frontend/src/pages/chat/components/executionDisclosurePolicy.test.ts",
+        "modified_at_utc": "2026-09-06T13:51:26.0617164Z",
+        "sha256": "643c2d7f23bc753c6bb52ec898a49db83369d2dbcb9ba71434277f37f40c155e"
+      }
+    ],
+    "process_roles_from_delivery_report": {
+      "11504": "tauri",
+      "38320": "vite",
+      "45176": "webview2"
+    },
+    "candidate_head": "f563938bd3f63c88a5e7a5b59825e3da33f06303",
+    "candidate_state": "HEAD plus uncommitted requirement 118 implementation",
+    "three_source_hashes_match_E022_and_archive_time": true,
+    "recorded_process_starts_after_source_modifications": true
+  },
+  "initial_runtime_identity": {
+    "observed_at_utc": "2026-09-06T13:59:05.7004450Z",
+    "lease": {
+      "version": 1,
+      "ownerPid": 27232,
+      "ownerStartId": "2026-09-06T13:56:14.018Z",
+      "gitRepo": "https://github.com/a1m233/agent-friend",
+      "branch": "feature/118-long-session-query-and-cancellation",
+      "mode": "tauri",
+      "startedAt": "2026-09-06T21:56:21.634451+08:00",
+      "ports": [
+        1420,
+        1421,
+        9222,
+        18800,
+        18900
+      ],
+      "platform": "Windows-11-10.0.26200-SP0",
+      "worktree_binding": "requirement_118_repository_root"
+    },
+    "tauri_process": {
+      "started_at_utc": "2026-09-06T13:57:06.3066590Z",
+      "pid": 41544
+    },
+    "listeners": [
+      {
+        "role": "vite",
+        "port": 1420,
+        "pid": 46724,
+        "started_at_utc": "2026-09-06T13:56:23.7085730Z"
+      },
+      {
+        "role": "webview2",
+        "port": 9222,
+        "pid": 47384,
+        "started_at_utc": "2026-09-06T13:57:06.5276680Z"
+      },
+      {
+        "role": "agent_bridge",
+        "port": 18800,
+        "pid": 39416,
+        "started_at_utc": "2026-09-06T13:57:08.7940330Z"
+      },
+      {
+        "role": "voice_bridge",
+        "port": 18900,
+        "pid": 29232,
+        "started_at_utc": "2026-09-06T13:57:19.6762140Z"
+      }
+    ],
+    "sources": [
+      {
+        "path": "frontend/src/pages/chat/components/executionDisclosurePolicy.ts",
+        "modified_at_utc": "2026-09-06T13:51:26.0607169Z",
+        "sha256": "0bedb6439c6267d124a16c01617c938e7a466ae38077e3890a8e6478dc94a453"
+      },
+      {
+        "path": "frontend/src/pages/chat/components/MessageList.tsx",
+        "modified_at_utc": "2026-09-06T13:44:39.7400412Z",
+        "sha256": "b626ebc20317ebcb0d244db6382c57b31e1501efff4239149a8f64fea17d0d48"
+      },
+      {
+        "path": "frontend/src/pages/chat/components/executionDisclosurePolicy.test.ts",
+        "modified_at_utc": "2026-09-06T13:51:26.0617164Z",
+        "sha256": "643c2d7f23bc753c6bb52ec898a49db83369d2dbcb9ba71434277f37f40c155e"
+      }
+    ],
+    "isolated_data_directory": ".tmp/disclosure-118/data",
+    "isolated_log_directory": ".tmp/disclosure-118/logs",
+    "bridge_health_http_status": 200,
+    "evidence_scope": "desktop WebView UI only; source timestamps and process identity, not semantic E2E"
+  },
+  "runtime_lifecycle": {
+    "first_cycle_restoration": {
+      "observed_at_utc": "2026-09-06T14:01:42.8768036Z",
+      "restored_116": true,
+      "lease": {
+        "version": 1,
+        "ownerPid": 48748,
+        "ownerStartId": "2026-09-06T14:00:46.423Z",
+        "gitRepo": "https://github.com/a1m233/agent-friend",
+        "branch": "feature/116-long-session-read-write-reliability",
+        "mode": "tauri",
+        "startedAt": "2026-09-06T22:00:54.325676+08:00",
+        "ports": [
+          1420,
+          1421,
+          9222,
+          18800,
+          18900
+        ],
+        "platform": "Windows-11-10.0.26200-SP0",
+        "worktree_relative_to_local_codex_worktrees": "0bcf/agent-friend",
+        "worktree_locator_local_only": true
+      },
+      "tauri_pid": 31200,
+      "old_118_stopped": true,
+      "ports_confirmed_free_before_restore": true,
+      "bridge_health_http_status": 200,
+      "voice_health_http_status": 200,
+      "normal_data_and_log_defaults_restored": true,
+      "leave_running_for_user": true
+    },
+    "final_restoration": {
+      "observed_at_utc": "2026-09-06T14:08:47.8869441Z",
+      "restored_116": true,
+      "lease": {
+        "version": 1,
+        "ownerPid": 31828,
+        "ownerStartId": "2026-09-06T14:08:00.793Z",
+        "gitRepo": "https://github.com/a1m233/agent-friend",
+        "branch": "feature/116-long-session-read-write-reliability",
+        "mode": "tauri",
+        "startedAt": "2026-09-06T22:08:08.560326+08:00",
+        "ports": [
+          1420,
+          1421,
+          9222,
+          18800,
+          18900
+        ],
+        "platform": "Windows-11-10.0.26200-SP0",
+        "worktree_relative_to_local_codex_worktrees": "0bcf/agent-friend",
+        "worktree_locator_local_only": true
+      },
+      "tauri_pid": 22288,
+      "old_118_stopped": true,
+      "ports_confirmed_free_before_restore": true,
+      "bridge_health_http_status": 200,
+      "voice_health_http_status": 200,
+      "normal_data_and_log_defaults_restored": true,
+      "leave_running_for_user": true
+    }
+  },
+  "source_artifacts": {
+    "final_trial_report": {
+      "repository_relative_path": ".tmp/disclosure-118/evidence-20260906-04/report.json",
+      "bytes": 7653,
+      "sha256": "0ba876953d173c541f85b92b07f88bb5258e227fc3eec4f7ddc96a71818b5b99",
+      "file_modified_at_utc": "2026-09-06T14:07:23.456389+00:00"
+    },
+    "initial_runtime_identity": {
+      "repository_relative_path": ".tmp/disclosure-118/runtime-evidence.json",
+      "bytes": 2272,
+      "sha256": "f164669243cdda570ca6d6250934b42530aa0e7b3839377cf990f9567da93c9c",
+      "file_modified_at_utc": "2026-09-06T13:59:05.913976+00:00"
+    },
+    "supplement_runtime_identity": {
+      "repository_relative_path": ".tmp/disclosure-118/runtime-supplement-evidence.json",
+      "bytes": 1074,
+      "sha256": "20b63d765f8c40611d3b671e615422799b2058cd842909fc1912a6008ef82b3a",
+      "file_modified_at_utc": "2026-09-06T14:07:33.788308+00:00"
+    },
+    "first_runtime_restoration": {
+      "repository_relative_path": ".tmp/disclosure-118/restore-evidence.json",
+      "bytes": 862,
+      "sha256": "0322b46a5ec9e6b805f798e781b7a856fb0c172d89cd9331266ef471ac24141a",
+      "file_modified_at_utc": "2026-09-06T14:01:42.968457+00:00"
+    },
+    "final_runtime_restoration": {
+      "repository_relative_path": ".tmp/disclosure-118/restore-final-evidence.json",
+      "bytes": 862,
+      "sha256": "df5df38713116af1648805d5821bb776205ac25aa10da8d08a22bde4f8baa23e",
+      "file_modified_at_utc": "2026-09-06T14:08:47.967997+00:00"
+    },
+    "final_probe": {
+      "repository_relative_path": ".tmp/disclosure-118/probe.mjs",
+      "bytes": 23888,
+      "sha256": "0c7ae818127d58b26d1f71c31548e18ab83e3a0e45b25c709ae94cedfcdd86cc",
+      "file_modified_at_utc": "2026-09-06T14:07:21.180626+00:00"
+    }
+  },
+  "prior_trials": [
+    {
+      "trial": 1,
+      "source": {
+        "repository_relative_path": ".tmp/disclosure-118/evidence-20260906-01/report.json",
+        "bytes": 6308,
+        "sha256": "dc12e750615ca49ed896ccd22a2f8d60e6e2c81b978653f00bd4c571b8a59c97",
+        "file_modified_at_utc": "2026-09-06T13:58:01.348987+00:00"
+      },
+      "process_exit_code": 1,
+      "passed": false,
+      "synthetic_ui_state_restored": true,
+      "completed_ui_checks": 9,
+      "viewport": {
+        "width": 1040,
+        "height": 720,
+        "tauri": true
+      },
+      "blocked_requests": [
+        {
+          "method": "POST",
+          "pathname": "/plugin%3Alog%7Clog"
+        },
+        {
+          "method": "POST",
+          "pathname": "/plugin%3Aevent%7Cemit"
+        },
+        {
+          "method": "POST",
+          "pathname": "/voice/transcriptions/prewarm"
+        },
+        {
+          "method": "POST",
+          "pathname": "/plugin%3Alog%7Clog"
+        }
+      ],
+      "retained_full_screenshots": false,
+      "classification": "Probe transport-boundary failure, not product UI failure",
+      "cause": "All nine UI checks completed; the final guard incorrectly rejected normal Tauri log/event IPC and voice prewarm.",
+      "correction": "Allow only exact log/event IPC URLs unchanged and locally suppress the exact voice-prewarm endpoint.",
+      "earlier_probe_sha256": null,
+      "status": "retained history; final UI scope is trial 4"
+    },
+    {
+      "trial": 2,
+      "source": {
+        "repository_relative_path": ".tmp/disclosure-118/evidence-20260906-02/report.json",
+        "bytes": 5153,
+        "sha256": "c9d876ce5c9fb7e2f2e0fd40142438bb159e200d1ac458818fe8116a4c48db52",
+        "file_modified_at_utc": "2026-09-06T14:00:10.892595+00:00"
+      },
+      "process_exit_code": 0,
+      "passed": true,
+      "synthetic_ui_state_restored": true,
+      "completed_ui_checks": 9,
+      "viewport": {
+        "width": 2048,
+        "height": 984,
+        "tauri": true
+      },
+      "blocked_requests": [],
+      "retained_full_screenshots": false,
+      "classification": "Successful nine-check UI observation; scope later extended with copy/reference checks",
+      "probe_sha256": "fc0151e22d2a0fb5891c835ce45d52452f76a08190d3d9ec70fda4fb5320da5c",
+      "status": "retained history; final UI scope is trial 4"
+    },
+    {
+      "trial": 3,
+      "source": {
+        "repository_relative_path": ".tmp/disclosure-118/evidence-20260906-03/report.json",
+        "bytes": 8844,
+        "sha256": "05aa123d85e13a712684f9c3c519c692f15f35e6ccf6e460115787a6a4de0657",
+        "file_modified_at_utc": "2026-09-06T14:07:03.675719+00:00"
+      },
+      "process_exit_code": 1,
+      "passed": false,
+      "synthetic_ui_state_restored": true,
+      "completed_ui_checks": 11,
+      "viewport": {
+        "width": 1040,
+        "height": 720,
+        "tauri": true
+      },
+      "blocked_requests": [
+        {
+          "method": "POST",
+          "origin": "http://ipc.localhost",
+          "pathname": "/desktop_presence_probe"
+        }
+      ],
+      "retained_full_screenshots": false,
+      "classification": "Probe transport-boundary failure, not product UI failure",
+      "cause": "All eleven UI checks completed; the guard incorrectly rejected the read-only desktop_presence_probe IPC POST.",
+      "correction": "Allow the exact desktop_presence_probe IPC URL; no product frontend change.",
+      "earlier_probe_sha256": null,
+      "readonly_source": {
+        "repository_path": "frontend/src-tauri/src/presence/mod.rs",
+        "line": 16,
+        "sha256": "d39d193a9b442e05f2cb6d0b5b39a09cef1ae5504079f783af8ba9e846ed51f8"
+      },
+      "status": "retained history; final UI scope is trial 4"
+    }
+  ],
+  "archive_transformations": [
+    "Replace absolute worktree and screenshot paths with repository/local-worktree bindings.",
+    "Keep six selected trial-4 PNGs; omit the other gallery entries from this derived report.",
+    "Add source hashes, runtime/source/restoration records, and summaries of trials 1-3 without raw error stacks.",
+    "Preserve the short synthetic copy payload, quote text and synthetic-only randomly generated IDs; no user session data is included.",
+    "Normalize derived JSON to UTF-8 without BOM and LF. Final probe and selected PNGs are copied byte-for-byte."
+  ],
+  "source_locations_local_only": true,
+  "capture_boundary": {
+    "surface": "complete real Tauri WebView viewport, excluding native title bar",
+    "script_resized_viewport": false,
+    "css_viewports_by_trial": {
+      "1": {
+        "width": 1040,
+        "height": 720,
+        "tauri": true
+      },
+      "2": {
+        "width": 2048,
+        "height": 984,
+        "tauri": true
+      },
+      "3": {
+        "width": 1040,
+        "height": 720,
+        "tauri": true
+      },
+      "4": {
+        "width": 1040,
+        "height": 720,
+        "tauri": true
+      }
+    },
+    "trial_2_png_dimensions": [
+      2560,
+      1230
+    ],
+    "trial_4_png_dimensions": [
+      1300,
+      900
+    ],
+    "dpr": 1.25,
+    "dpr_basis": "PNG-to-CSS dimension ratios, consistent with reported DPR",
+    "viewport_change_cause": "not determined; no cause inferred from dimensions"
+  },
+  "transport_coverage": {
+    "real_tauri_marker": true,
+    "ipc_fetch_path_verified": false,
+    "allowed_ipc_request_count": 0,
+    "limitation": "Trial 4 recorded no allowed IPC fetch requests; standard Tauri fallback may have been active. This does not establish IPC transport-path coverage."
+  },
+  "visual_review": {
+    "delivery_agent_reviewed_initial_screenshot_count": 4,
+    "delivery_agent_reviewed_final_screenshot_names": [
+      "inferred-collapsed-copy-payload",
+      "inferred-quote-action",
+      "inferred-quoted-original-mid"
+    ],
+    "delivery_agent_conclusion": "UI matched the expected disclosure/copy/reference behavior",
+    "archive_agent_reviewed_final_screenshot_names": [
+      "inferred-collapsed-copy-payload",
+      "inferred-quote-action",
+      "inferred-quoted-original-mid"
+    ],
+    "synthetic_content_only": true,
+    "sidebar_history_empty": true
+  },
+  "verification_boundary": {
+    "frontend_912_test_gate_retained": true,
+    "frontend_changed_after_E022": false,
+    "persistence_or_reload_E2E_verified": false,
+    "real_k3_model_verified": false,
+    "real_cancellation_chain_verified": false,
+    "backend_search_verified": false,
+    "system_clipboard_verified": false,
+    "new_llm_calls_during_ui_probes": 0,
+    "new_llm_calls_during_archive": 0,
+    "new_runtime_or_CDP_access_during_archive": false
+  }
+}

@@ -58,6 +58,7 @@ function resetRuntimeFence(nextRuntimeInstanceId: string): void {
   disposeRunEventSchedulers();
   runEventCursors.clear();
   runtimeInstanceId = nextRuntimeInstanceId;
+  useConversationStore.getState().observeRuntimeIdentity(nextRuntimeInstanceId);
   if (replacedRuntime) {
     useCommandRuntimeStore.getState().markDisconnected();
     useFilesystemApprovalsStore.getState().markDisconnected();
@@ -109,7 +110,7 @@ function applyRunEventEnvelope(env: PushEnvelope, allowReattach: boolean): void 
     if (allowReattach) void reattachSessionRuntimeForSync(env.session_id, generation, env);
     return;
   }
-  if (eventRuntimeId && runtimeInstanceId === null) runtimeInstanceId = eventRuntimeId;
+  if (eventRuntimeId && runtimeInstanceId === null) resetRuntimeFence(eventRuntimeId);
   if (eventRuntimeId && Number.isSafeInteger(eventSeq) && (eventSeq ?? 0) > 0) {
     const key = runEventKey(env.session_id, env.run_id);
     const cursor = runEventCursors.get(key);
@@ -154,6 +155,7 @@ export async function reattachSessionRuntimeForSync(
     buffered: initialEnvelope ? [initialEnvelope] : [],
   };
   runtimeReattachments.set(sessionId, state);
+  const requestedRuntimeId = runtimeInstanceId;
   try {
     const snapshot = await runsApi.runtimeSnapshot(sessionId);
     if (
@@ -166,6 +168,10 @@ export async function reattachSessionRuntimeForSync(
       return;
     }
     const incomingRuntimeId = snapshot.runtime.bridgeInstanceId;
+    if (runtimeInstanceId !== requestedRuntimeId && runtimeInstanceId !== incomingRuntimeId) {
+      runtimeReattachments.delete(sessionId);
+      return;
+    }
     resetRuntimeFence(incomingRuntimeId);
     for (const run of snapshot.runs) useConversationStore.getState().applyRunSnapshot(run);
 
@@ -313,6 +319,7 @@ export function handleSessionChangedForSync(env: PushEnvelope, activeGeneration 
   const previous = highestRevision.get(env.session_id) ?? 0;
   if ((revision as number) <= previous) return;
   highestRevision.set(env.session_id, revision as number);
+  useConversationStore.getState().invalidateSessionDetail(env.session_id);
   if (import.meta.env.DEV) {
     console.debug("[session-sync] invalidation accepted", {
       sessionId: env.session_id,
@@ -337,7 +344,7 @@ export function handleRunChangedForSync(env: PushEnvelope): void {
     void reattachSessionRuntimeForSync(env.run.session_id, generation, env);
     return;
   }
-  if (envelopeRuntimeId && runtimeInstanceId === null) runtimeInstanceId = envelopeRuntimeId;
+  if (envelopeRuntimeId && runtimeInstanceId === null) resetRuntimeFence(envelopeRuntimeId);
   applyRunChangedEnvelope(env);
 }
 

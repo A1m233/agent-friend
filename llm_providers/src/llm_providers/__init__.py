@@ -62,6 +62,7 @@ from .errors import (
     LLMStreamInterruptedAfterOutputError,
     LLMStreamTimeoutError,
     LLMTransientProviderError,
+    LLMUnsupportedParameterError,
 )
 from .factory import create_language_model
 from .multimodal import MultimodalInputAdapter
@@ -153,6 +154,7 @@ __all__ = [
     "LLMTransientProviderError",
     "LLMTransportDiagnostic",
     "LLMTurnDone",
+    "LLMUnsupportedParameterError",
     "LLMUsage",
     "LanguageModel",
     "LanguageModelCapabilities",

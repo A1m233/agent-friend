@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
 from fastapi import HTTPException
 
-from agent import AttachmentRef, AttachmentStore
+from agent import AttachmentError, AttachmentRef, AttachmentStore
 from llm_providers import model_capabilities
 
 
@@ -86,9 +87,12 @@ def prepare_attachment_input(
     *,
     model_id: str,
     store: AttachmentStore | None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> AttachmentInputPlan:
     """Validate attachment identities and model limits before SSE admission."""
 
+    if cancel_check is not None:
+        cancel_check()
     capabilities = model_capabilities(model_id)
     if entries and not capabilities.attachments:
         raise HTTPException(
@@ -112,6 +116,8 @@ def prepare_attachment_input(
     prepared: list[_PreparedAttachment] = []
     draft_ids: list[str] = []
     for entry in entries:
+        if cancel_check is not None:
+            cancel_check()
         try:
             if isinstance(entry, ExistingAttachmentInput):
                 assert store is not None
@@ -124,6 +130,8 @@ def prepare_attachment_input(
                 draft_index = len(draft_ids)
                 draft_ids.append(entry.draft_id)
         except Exception as exc:
+            if cancel_check is not None:
+                cancel_check()
             raise _attachment_http_error(exc) from exc
 
         if (
@@ -158,4 +166,38 @@ def prepare_attachment_input(
             },
         )
 
+    if cancel_check is not None:
+        cancel_check()
     return AttachmentInputPlan(prepared, draft_ids, store)
+
+
+class AttachmentPreparationError(AttachmentError):
+    """Preserve the attachment code when validation happens after run admission."""
+
+    @property
+    def reason_code(self) -> str:
+        return self.code
+
+
+def prepare_run_attachment_input(
+    entries: list[AttachmentInput],
+    *,
+    model_id: str,
+    store: AttachmentStore | None,
+    cancel_check: Callable[[], None],
+) -> AttachmentInputPlan:
+    try:
+        return prepare_attachment_input(
+            entries, model_id=model_id, store=store, cancel_check=cancel_check
+        )
+    except HTTPException as exc:
+        cancel_check()
+        detail = exc.detail
+        if isinstance(detail, dict):
+            raise AttachmentPreparationError(
+                str(detail.get("error", "attachment_draft_expired")),
+                str(detail.get("message", "附件暂不可用。")),
+            ) from exc
+        raise AttachmentPreparationError(
+            "attachment_store_unavailable", "附件服务暂不可用，请稍后重试。"
+        ) from exc
