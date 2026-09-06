@@ -82,6 +82,76 @@ def test_run_query_returns_recent_terminal(tmp_path: Path) -> None:
     assert fetched.json()["outcome"] == "rejected"
 
 
+def test_cancel_rejects_a_different_runtime_instance(tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    client = TestClient(create_app_with_runtime(runtime))
+    response = client.post(
+        "/v1/sessions/s/runs/r1/cancel?expectedRuntimeInstanceId=previous-bridge"
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "run_runtime_mismatch"
+
+
+def test_agui_attachment_validation_is_registered_before_preparation_failure(
+    tmp_path: Path,
+) -> None:
+    from agent.runtime.hooks import PRE_TURN_PROCEED, HookKind, PreTurnDecision
+
+    runtime = _runtime(tmp_path)
+    agent_runtime = runtime.agent_runtime
+    assert agent_runtime is not None
+    hooks: list[str] = []
+
+    def pre_turn(_event: object) -> PreTurnDecision:
+        hooks.append("called")
+        return PRE_TURN_PROCEED
+
+    agent_runtime.register_hook(HookKind.PRE_TURN, pre_turn)
+    client = TestClient(create_app_with_runtime(runtime))
+    agent_runtime.start()
+    try:
+        response = client.post(
+            "/ag-ui/run",
+            headers={"Accept": "text/event-stream"},
+            json={
+                "thread_id": "preparing-session",
+                "run_id": "preparing-run",
+                "messages": [
+                    {
+                        "id": "draft-user",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "url",
+                                    "value": "/v1/attachments/drafts/abcdefghijklmnop/content",
+                                    "mime_type": "image/png",
+                                },
+                            }
+                        ],
+                    }
+                ],
+                "tools": [],
+                "context": [],
+                "forwarded_props": {},
+                "state": {},
+            },
+        )
+        assert response.status_code == 200
+        assert '"type":"RUN_STARTED"' in response.text
+        assert '"type":"RUN_ERROR"' in response.text
+        assert '"code":"attachment_model_unsupported"' in response.text
+        assert '"inputAccepted":false' in response.text
+        snapshot = agent_runtime.get_run_snapshot("preparing-run")
+        assert snapshot is not None and snapshot.input_accepted is False
+        assert snapshot.outcome == "failed"
+        assert hooks == []
+        assert not runtime.persistent_store.exists("preparing-session")
+    finally:
+        agent_runtime.stop()
+
+
 def test_run_event_route_returns_runtime_owned_journal(tmp_path: Path) -> None:
     runtime = _runtime(tmp_path)
     assert runtime.agent_runtime is not None

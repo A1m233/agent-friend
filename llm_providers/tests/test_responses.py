@@ -391,6 +391,32 @@ def test_kimi_reasoning_cache_and_structured_output_mapping() -> None:
     assert result["text"]["format"] == {"type": "json_schema", "name": "result", "schema": schema}
 
 
+@pytest.mark.parametrize("effort", ["low", "high", "max"])
+def test_k3_native_stream_keeps_reasoning_without_chat_compatibility_settings(
+    http_mock: Any, monkeypatch: pytest.MonkeyPatch, effort: str
+) -> None:
+    requests = http_mock(text_events())
+    monkeypatch.setattr(
+        "llm_providers.client.prepare_litellm_request",
+        lambda *_: pytest.fail("Native Responses must not use Chat request preparation"),
+    )
+    spec = build_provider_spec(
+        provider_id="kimi", model_id="kimi/kimi-k3", api_key="fixture", reasoning_preset=effort
+    )
+
+    events = list(
+        LLMClient(spec).stream(ModelRequest(messages=[{"role": "user", "content": "hi"}]))
+    )
+
+    assert isinstance(events[-1], LLMTurnDone)
+    assert len(requests) == 1
+    assert requests[0].url.path == "/v1/responses"
+    body = json.loads(requests[0].content)
+    assert body["reasoning"] == {"effort": effort}
+    assert "allowed_openai_params" not in body and "drop_params" not in body
+    assert "allowed_openai_params" not in spec.defaults
+
+
 @pytest.mark.parametrize(
     "settings",
     [

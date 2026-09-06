@@ -15,7 +15,7 @@ from agent.sessions import (
     SessionRolloutRecorder,
     restore_rollout,
 )
-from llm_providers.deepseek_vision_compat import chat_replay_messages
+from llm_providers.chat_request import chat_replay_messages
 from llm_providers.responses.request import prepare_request
 
 from agent import (

@@ -145,13 +145,21 @@ class HookRegistry:
         elif kind is HookKind.POST_TOOL_USE:
             self._post_tool_use.append(callback)
 
-    def run_pre_turn(self, event: AgentEvent) -> PreTurnDecision:
+    def run_pre_turn(
+        self, event: AgentEvent, *, cancel_check: Callable[[], None] | None = None
+    ) -> PreTurnDecision:
         for cb in self._pre_turn:
+            if cancel_check is not None:
+                cancel_check()
             try:
                 decision = cb(event)
             except Exception:
+                if cancel_check is not None:
+                    cancel_check()
                 logger.warning("pre_turn hook 抛异常，视作 PROCEED", exc_info=True)
                 continue
+            if cancel_check is not None:
+                cancel_check()
             if decision.skip:
                 return decision
         return PRE_TURN_PROCEED

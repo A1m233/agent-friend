@@ -7,10 +7,13 @@ import logging
 import os
 import sqlite3
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
+
+from .execution import check_cancel
 
 if TYPE_CHECKING:
     from ..store import SqliteMemoryStore
@@ -410,18 +413,39 @@ class EmbeddingIndexManager:
             logger.warning("retire dense generation failed id=%s", generation_id, exc_info=True)
 
     def search(self, query: str, *, owner_user_id: str, limit: int) -> list[VectorHit]:
-        state = self.state()
-        if state.status != "ready" or state.active_generation != self.generation_id:
-            return []
-        vector = self._provider.embed([QUERY_INSTRUCTION_ZH + query])[0]
-        return self._index.search(
-            vector,
-            filters=VectorFilters(
-                generation_id=self.generation_id,
-                owner_user_id=owner_user_id,
-            ),
-            limit=limit,
-        )
+        return self.prepare_search(query, owner_user_id=owner_user_id)(limit)
+
+    def prepare_search(
+        self,
+        query: str,
+        *,
+        owner_user_id: str,
+        cancel_check: Callable[[], None] | None = None,
+    ) -> Callable[[int], list[VectorHit]]:
+        """Reuse one query embedding across this request's expanding limits."""
+        vector: list[float] | None = None
+
+        def search(limit: int) -> list[VectorHit]:
+            nonlocal vector
+            check_cancel(cancel_check)
+            state = self.state()
+            if state.status != "ready" or state.active_generation != self.generation_id:
+                return []
+            if vector is None:
+                vector = self._provider.embed([QUERY_INSTRUCTION_ZH + query])[0]
+            check_cancel(cancel_check)
+            result = self._index.search(
+                vector,
+                filters=VectorFilters(
+                    generation_id=self.generation_id,
+                    owner_user_id=owner_user_id,
+                ),
+                limit=limit,
+            )
+            check_cancel(cancel_check)
+            return result
+
+        return search
 
     def state(self) -> DenseIndexState:
         row = self._store.embedding_generation(self.generation_id)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime
 
+import pytest
 from memory.search import (
     AnalyzedQuery,
     CurrentSessionRecallScope,
@@ -650,3 +651,78 @@ def test_structured_source_expands_legacy_episodic_provenance_without_migration(
         ] == "current_session_at_or_before_boundary"
     finally:
         store.close()
+
+
+def test_cancel_during_source_failure_is_not_downgraded_and_stops_next_source() -> None:
+    cancelled = False
+
+    def check() -> None:
+        if cancelled:
+            raise InterruptedError("cancelled")
+
+    class CancellingSource(_Source):
+        def search(self, query, *, request, limit):  # type: ignore[no-untyped-def]
+            nonlocal cancelled
+            cancelled = True
+            raise RuntimeError("read interrupted")
+
+    class NeverRun(_Source):
+        def search(self, query, *, request, limit):  # type: ignore[no-untyped-def]
+            raise AssertionError("next source must not start")
+
+    service = MemorySearchService([CancellingSource("a", []), NeverRun("b", [])])
+    with pytest.raises(InterruptedError, match="cancelled"):
+        service.search(_request(), cancel_check=check)
+
+
+def test_cancel_during_source_order_read_is_not_treated_as_unavailable() -> None:
+    cancelled = False
+
+    def check() -> None:
+        if cancelled:
+            raise InterruptedError("cancelled")
+
+    class Order:
+        def active_conversation_event_uuids(self, session_id: str) -> tuple[str, ...]:
+            nonlocal cancelled
+            cancelled = True
+            raise OSError("interrupted read")
+
+    service = MemorySearchService([], source_order_provider=Order())
+    with pytest.raises(InterruptedError):
+        service.search(
+            _request(mode="automatic", automatic_recall_scope=_scope("D")),
+            cancel_check=check,
+        )
+
+
+def test_source_preparation_is_reused_only_within_one_scope_expansion_request() -> None:
+    from memory.search.execution import CancelCheck, PreparedSearch
+
+    recent = [
+        replace(_candidate(f"recent-{i}", "structured_memory", i + 1), provenance=("current#F",))
+        for i in range(30)
+    ]
+    old = replace(_candidate("old", "structured_memory", 31), provenance=("current#D",))
+
+    class PreparedSource(_Source):
+        preparations = 0
+
+        def prepare_search(
+            self,
+            query: AnalyzedQuery,
+            *,
+            request: SearchRequest,
+            cancel_check: CancelCheck | None = None,
+        ) -> PreparedSearch:
+            self.preparations += 1
+            return lambda limit: self.search(query, request=request, limit=limit)
+
+    source = PreparedSource("structured_memory", [*recent, old])
+    service = MemorySearchService([source], source_order_provider=_Order(("D", "F")))
+    request = _request(mode="automatic", automatic_recall_scope=_scope("D"))
+    first = service.search(request)
+    assert first.source_runs[0].scope_scan_attempts >= 2
+    assert source.preparations == 1
+    assert service.search(request) == first
+    assert source.preparations == 2

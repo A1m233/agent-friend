@@ -34,6 +34,7 @@ from .host_episodes import (
 )
 from .retrieval import Renderer, ScoreWeights, rank
 from .search import CurrentSessionRecallScope, MemorySearchService, SearchRequest
+from .search.execution import CancelCheck, check_cancel
 from .store import EpisodicRow, SemanticRow
 
 logger = logging.getLogger(__name__)
@@ -214,12 +215,14 @@ class Memory:
         top_k: int | None = None,
         source: Literal["natural", "probe"] = "natural",
         automatic_recall_scope: CurrentSessionRecallScope | None = None,
+        cancel_check: CancelCheck | None = None,
     ) -> MemoryContext:
         """召回与 ``query`` 相关的记忆，渲染成可注入的 :class:`MemoryContext`。
 
         空召回（含无 pinned 无命中）返回 :meth:`MemoryContext.empty`，调用方据
         :meth:`MemoryContext.is_empty` 决定是否注入（如实反馈，R-4.5.3）。
         """
+        check_cancel(cancel_check)
         owner = owner_user_id or self._owner
         if source == "probe" and automatic_recall_scope is not None:
             raise ValueError("probe retrieve 不接受 automatic_recall_scope")
@@ -245,6 +248,7 @@ class Memory:
                 source=source,
                 now=now,
                 automatic_recall_scope=automatic_recall_scope,
+                cancel_check=cancel_check,
             )
 
         # v5 no longer has a pinned Semantic tier. Core is a separate, complete
@@ -256,9 +260,11 @@ class Memory:
         recalled: list[tuple[Candidate, float]] = []
         candidates_count = 0
         if automatic_recall_scope is None and self._retrieval is not None and query.strip():
+            check_cancel(cancel_check)
             cands = self._retrieval.search(
                 query, owner_user_id=owner, persona_id=persona_id, limit=effective_top_k
             )
+            check_cancel(cancel_check)
             candidates_count = len(cands)
             recalled = rank(cands, now=now, top_k=effective_top_k, weights=self._weights)
             logger.info(
@@ -270,6 +276,7 @@ class Memory:
         else:
             logger.info("retrieve skipped ranking (no strategy or empty query)")
 
+        check_cancel(cancel_check)
         ctx = self._renderer.render(pinned=pinned, recalled=recalled, now=now)
         if source == "natural":
             ctx = self._with_core_profile(ctx, owner=owner, persona_id=persona_id)
@@ -307,6 +314,7 @@ class Memory:
             except Exception:
                 logger.exception("on_retrieved callback failed; dropping trace")
 
+        check_cancel(cancel_check)
         return ctx
 
     def _retrieve_with_search(
@@ -320,6 +328,7 @@ class Memory:
         source: Literal["natural", "probe"],
         now: datetime,
         automatic_recall_scope: CurrentSessionRecallScope | None,
+        cancel_check: CancelCheck | None = None,
     ) -> MemoryContext:
         assert self._search_service is not None
         mode: Literal["automatic", "probe"] = "probe" if source == "probe" else "automatic"
@@ -332,8 +341,10 @@ class Memory:
                 session_id=session_id,
                 top_k=top_k,
                 automatic_recall_scope=automatic_recall_scope,
-            )
+            ),
+            cancel_check=cancel_check,
         )
+        check_cancel(cancel_check)
         ctx = self._renderer.render_search(result.evidence, now=now)
         if source == "natural":
             ctx = self._with_core_profile(ctx, owner=owner, persona_id=persona_id)
@@ -454,7 +465,9 @@ class Memory:
             try:
                 self._on_retrieved(trace)
             except Exception:
+                check_cancel(cancel_check)
                 logger.exception("on_retrieved callback failed; dropping trace")
+        check_cancel(cancel_check)
         return ctx
 
     def _with_core_profile(

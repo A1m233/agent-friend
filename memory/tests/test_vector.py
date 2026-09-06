@@ -142,3 +142,49 @@ def test_sqlite_vec_index_round_trip(tmp_path: Path) -> None:
         == []
     )
     index.close()
+
+
+def test_expanding_dense_limits_reuses_embedding_but_keeps_each_limit_view() -> None:
+    store = SqliteMemoryStore(":memory:")
+    for i in range(5):
+        store.add_semantic(_row(str(i), f"item {i}"))
+    provider = FakeProvider()
+    manager = EmbeddingIndexManager(store, provider, FakeIndex())
+    try:
+        manager.backfill_once()
+        before = provider.calls
+        prepared = manager.prepare_search("query", owner_user_id="local")
+        first = prepared(2)
+        expanded = prepared(5)
+        assert len(first) == 2
+        assert len(expanded) == 5
+        assert expanded[:2] == first
+        assert provider.calls == before + 1
+        assert manager.search("query", owner_user_id="local", limit=5) == expanded
+        assert provider.calls == before + 2
+    finally:
+        manager.close()
+        store.close()
+
+
+def test_dense_cancel_after_embedding_prevents_index_search() -> None:
+    import pytest
+
+    store = SqliteMemoryStore(":memory:")
+    store.add_semantic(_row("one", "item"))
+    provider = FakeProvider()
+    index = FakeIndex()
+    manager = EmbeddingIndexManager(store, provider, index)
+    try:
+        manager.backfill_once()
+        before = provider.calls
+
+        def check() -> None:
+            if provider.calls > before:
+                raise InterruptedError("cancelled after embedding")
+
+        with pytest.raises(InterruptedError):
+            manager.prepare_search("query", owner_user_id="local", cancel_check=check)(2)
+    finally:
+        manager.close()
+        store.close()

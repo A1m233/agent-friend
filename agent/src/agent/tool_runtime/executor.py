@@ -82,31 +82,46 @@ class ToolBatchExecutor:
     ) -> list[ExecutedToolCall]:
         results: list[ExecutedToolCall] = []
         for batch in self._batches(calls, registry, force_serial=legacy_hook_invoker is not None):
-            pending = [
-                self._prepare(
-                    call,
-                    registry=registry,
-                    default_timeout_seconds=default_timeout_seconds,
-                    invocation_args=invocation_args,
-                    legacy_hook_invoker=legacy_hook_invoker,
-                    pre_hook=pre_hook,
-                )
-                for call in batch
-            ]
-            # All PreToolUse hooks for this batch finish in model-call order before
-            # any permitted read body starts.
-            for item in pending:
-                if item.immediate_result is None:
-                    assert item.invoke is not None
-                    item.started_at = time.monotonic()
-                    invoke = item.invoke
-                    item.future = self._pool.submit(self._invoke_completed, invoke)
-                    item.invoke = None
-            for item in pending:
-                result = self._finish(item, cancel_check)
-                if post_hook is not None and legacy_hook_invoker is None:
-                    post_hook(item.call["name"], item.public_args, result.result)
-                results.append(result)
+            pending: list[_Pending] = []
+            try:
+                for call in batch:
+                    if cancel_check is not None:
+                        cancel_check()
+                    pending.append(
+                        self._prepare(
+                            call,
+                            registry=registry,
+                            default_timeout_seconds=default_timeout_seconds,
+                            invocation_args=invocation_args,
+                            legacy_hook_invoker=legacy_hook_invoker,
+                            pre_hook=pre_hook,
+                        )
+                    )
+                # Hooks can outlive a cancel request. Recheck before submitting
+                # each body, not only later while waiting for its result.
+                for item in pending:
+                    if cancel_check is not None:
+                        cancel_check()
+                    if item.immediate_result is None:
+                        assert item.invoke is not None
+                        item.started_at = time.monotonic()
+                        invoke = item.invoke
+                        item.future = self._pool.submit(self._invoke_completed, invoke)
+                        item.invoke = None
+                for item in pending:
+                    result = self._finish(item, cancel_check)
+                    if post_hook is not None and legacy_hook_invoker is None:
+                        post_hook(item.call["name"], item.public_args, result.result)
+                    results.append(result)
+            except BaseException:
+                # Cancel every in-flight sibling, including reads whose result
+                # has not yet reached the ordered result collector.
+                for item in pending:
+                    if item.control is not None:
+                        item.control.cancel("run_cancelled")
+                    if item.future is not None:
+                        item.future.cancel()
+                raise
         return results
 
     def _prepare(

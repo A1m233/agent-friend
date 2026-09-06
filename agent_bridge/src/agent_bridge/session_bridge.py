@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -195,6 +195,8 @@ class SessionBridge:
         boot: PersistentBootstrap,
         *,
         post_turn_external: bool = False,
+        cancel_check: Callable[[], None] | None = None,
+        existing_session: Session | None = None,
     ) -> Conversation:
         """AG-UI 持久化分支：``thread_id`` ↔ ``session_id`` 一对一。
 
@@ -223,9 +225,17 @@ class SessionBridge:
         mgr = self._runtime.persistent_session_manager
         created = False
 
+        if cancel_check is not None:
+            cancel_check()
         try:
-            session = mgr.open(boot.thread_id)
+            session = existing_session or (
+                mgr.open(boot.thread_id, cancel_check=cancel_check)
+                if cancel_check is not None
+                else mgr.open(boot.thread_id)
+            )
         except SessionNotFoundError:
+            if cancel_check is not None:
+                cancel_check()
             persona_info = self._runtime.catalog.find_by_name(boot.default_persona)
             session = mgr.create(
                 persona=persona_info.name,
@@ -246,10 +256,11 @@ class SessionBridge:
                 expected_version=0,
             )
 
-        return mgr.start_conversation(
-            session,
-            post_turn_external=post_turn_external,
-        )
+        if cancel_check is not None:
+            return mgr.start_conversation(
+                session, post_turn_external=post_turn_external, cancel_check=cancel_check
+            )
+        return mgr.start_conversation(session, post_turn_external=post_turn_external)
 
     @staticmethod
     def _append_history_message_in_memory(session: Session, msg: Message) -> None:

@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
@@ -25,10 +26,15 @@ from agent.system_prompt import DESKTOP_CHAT_SURFACE
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from agent import Conversation
+from agent import AttachmentRef, Conversation, SessionNotFoundError
 
 from ...assembly import BridgeRuntime
-from ...attachment_inputs import DraftAttachmentInput, prepare_attachment_input
+from ...attachment_inputs import (
+    AttachmentInputPlan,
+    DraftAttachmentInput,
+    prepare_attachment_input,
+    prepare_run_attachment_input,
+)
 from ...errors import map_exception
 from ...routes.runs import DESKTOP_TEXT_CONTROL_SCOPE
 from ...session_bridge import PersistentBootstrap, SessionBridge
@@ -67,19 +73,44 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             initial_approval_mode=decoded.initial_approval_mode,
         )
 
-        effective_model = boot.default_model
-        if bridge.session_exists(decoded.thread_id):
-            effective_model = runtime.persistent_session_manager.open(
-                decoded.thread_id
-            ).current_model
-        attachment_plan = prepare_attachment_input(
-            [
-                DraftAttachmentInput(draft_id=item.draft_id, kind=item.kind)
-                for item in decoded.draft_attachments
-            ],
-            model_id=effective_model,
-            store=runtime.attachment_store,
-        )
+        attachment_plan: AttachmentInputPlan | None = None
+        resolved_attachments: list[AttachmentRef] | None = None
+
+        def _prepare(cancel_check: Callable[[], None]) -> Conversation:
+            nonlocal attachment_plan, resolved_attachments
+            cancel_check()
+            try:
+                session = runtime.persistent_session_manager.open(
+                    decoded.thread_id, cancel_check=cancel_check
+                )
+            except SessionNotFoundError:
+                session = None
+            cancel_check()
+            attachment_plan = prepare_run_attachment_input(
+                [
+                    DraftAttachmentInput(draft_id=item.draft_id, kind=item.kind)
+                    for item in decoded.draft_attachments
+                ],
+                model_id=session.current_model if session is not None else boot.default_model,
+                store=runtime.attachment_store,
+                cancel_check=cancel_check,
+            )
+            conv = bridge.bind_persistent(
+                boot,
+                post_turn_external=True,
+                cancel_check=cancel_check,
+                existing_session=session,
+            )
+            cancel_check()
+            resolved_attachments = attachment_plan.resolve()
+            cancel_check()
+            return conv
+
+        def _attachments() -> list[AttachmentRef]:
+            if resolved_attachments is not None:
+                return resolved_attachments
+            assert attachment_plan is not None
+            return attachment_plan.resolve()
 
         accept = request.headers.get("accept") or ""
         handle = None
@@ -108,17 +139,15 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 run_id=decoded.run_id,
                 channel="text",
                 surface=DESKTOP_CHAT_SURFACE,
-                conversation_factory=lambda: bridge.bind_persistent(
-                    boot,
-                    post_turn_external=True,
-                ),
+                conversation_preparer=_prepare,
                 metadata={"protocol": "ag_ui"},
                 consumer_abandon_policy=ConsumerAbandonPolicy.DETACH,
                 interactive_busy_policy=InteractiveBusyPolicy.REJECT_IF_INTERACTIVE_BUSY,
                 control_scope=DESKTOP_TEXT_CONTROL_SCOPE,
+                input_accepted=False,
                 conversation_runner=lambda conv, run_request, token: conv.stream(
                     decoded.new_user_input,
-                    attachments=attachment_plan.resolve(),
+                    attachments=_attachments(),
                     references=list(decoded.references),
                     user_event_id=decoded.user_message_id,
                     channel=run_request.channel,
@@ -128,6 +157,15 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     skill_selections=decoded.skills,
                 ),
                 error_callback=_persist_error,
+            )
+        else:
+            attachment_plan = prepare_attachment_input(
+                [
+                    DraftAttachmentInput(draft_id=item.draft_id, kind=item.kind)
+                    for item in decoded.draft_attachments
+                ],
+                model_id=bridge.persistent_model(decoded.thread_id, default=boot.default_model),
+                store=runtime.attachment_store,
             )
 
         return StreamingResponse(
@@ -144,7 +182,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 run_handle=handle,
                 run_conversation=lambda conv, text: conv.stream(
                     text,
-                    attachments=attachment_plan.resolve(),
+                    attachments=_attachments(),
                     references=list(decoded.references),
                     user_event_id=decoded.user_message_id,
                     channel="text",

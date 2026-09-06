@@ -62,6 +62,7 @@ import type { CancelRunResponse, RunSnapshot } from "@/types/run";
 import type { SessionMessageSearchResult } from "@/types/search";
 import {
   useConversationStore,
+  resetConversationCoordinatorsForTests,
   type SendStartResult,
 } from "./conversation";
 import { HOME_DRAFT_KEY, useDraftStore } from "./drafts";
@@ -207,11 +208,13 @@ function messageTexts() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetConversationCoordinatorsForTests();
   isTauriMock.mockReturnValue(false);
   mockGet.mockReset();
   mockGetApprovalMode.mockReset();
   mockUpdateApprovalMode.mockReset();
   mockRunCancel.mockReset();
+  mockRunList.mockReset().mockResolvedValue({ runs: [] });
   vi.stubGlobal("window", {
     __AGENT_FRIEND_SETTINGS__: {
       chatModel: { provider: "kimi", model: "kimi/kimi-k2.5" },
@@ -233,6 +236,7 @@ beforeEach(() => {
     editingMessage: null,
     sessionViews: {},
     runSnapshots: {},
+    runtimeInstanceId: null,
     runCalibrationPhase: "ready",
     runFence: emptySnapshotFence(),
     viewAccessedAt: {},
@@ -571,7 +575,7 @@ describe("conversation store · cancel lifecycle", () => {
     expect(lastMessage().error).toBeUndefined();
   });
 
-  it("取消 API 失败时撤销取消中状态并触发权威状态校准", async () => {
+  it("取消 API 失败时保留意图，缺失的校准列表不代表拒绝", async () => {
     useConversationStore.setState({
       currentSessionId: "sid-cancel-failed",
       runSnapshots: {
@@ -585,8 +589,27 @@ describe("conversation store · cancel lifecycle", () => {
     });
     mockRunCancel.mockRejectedValueOnce(new Error("bridge offline"));
 
-    await expect(useConversationStore.getState().stop()).resolves.toBe("failed");
+    await expect(useConversationStore.getState().stop()).resolves.toBe("pending");
 
+    expect(useConversationStore.getState().stopRequestsByRun).toEqual({ "run-cancel-failed": "requesting" });
+    mockRunCancel.mockRejectedValueOnce({ code: "run_not_found" });
+    await useConversationStore.getState().calibrateRuns();
+    expect(mockRunList).toHaveBeenCalledWith(true);
+    expect(useConversationStore.getState().runSnapshots["run-cancel-failed"].status).toBe("running");
+  });
+
+  it("明确 runtime 身份失效后不再声称取消意图仍被保留", async () => {
+    useConversationStore.setState({
+      currentSessionId: "sid-old-runtime",
+      runSnapshots: {
+        "run-old-runtime": {
+          ...runSnapshot("run-old-runtime", "sid-old-runtime", "running", 2),
+          runtime_instance_id: "runtime-old",
+        },
+      },
+    });
+    mockRunCancel.mockRejectedValueOnce({ code: "run_runtime_mismatch" });
+    await expect(useConversationStore.getState().stop()).resolves.toBe("noop");
     expect(useConversationStore.getState().stopRequestsByRun).toEqual({});
     expect(mockRunList).toHaveBeenCalledWith(true);
   });
@@ -1823,7 +1846,7 @@ describe("conversation store · background detail refresh", () => {
     await vi.waitFor(() => expect(firstText()).toBe("recovered"));
   });
 
-  it("反序返回时旧 refresh 不覆盖新结果", async () => {
+  it("同会话 refresh 合并读取，内容失效后只应用尾随的新结果", async () => {
     mockGet.mockResolvedValueOnce(sessionDetail("sid-1", "initial"));
     await useConversationStore.getState().openSession("sid-1");
 
@@ -1831,11 +1854,15 @@ describe("conversation store · background detail refresh", () => {
     const newer = deferred<SessionDetail>();
     mockGet.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
     const olderRun = useConversationStore.getState().refreshCurrentSession("sid-1");
+    useConversationStore.getState().invalidateSessionDetail("sid-1");
     const newerRun = useConversationStore.getState().refreshCurrentSession("sid-1");
+    expect(mockGet).toHaveBeenCalledTimes(2);
+    older.resolve(sessionDetail("sid-1", "old"));
+    await Promise.resolve();
     newer.resolve(sessionDetail("sid-1", "newest"));
     expect(await newerRun).toBe("applied");
-    older.resolve(sessionDetail("sid-1", "old"));
     expect(await olderRun).toBe("stale");
+    expect(mockGet).toHaveBeenCalledTimes(3);
     expect(firstText()).toBe("newest");
   });
 
@@ -1850,6 +1877,37 @@ describe("conversation store · background detail refresh", () => {
     expect(await refresh).toBe("stale");
     expect(useConversationStore.getState().currentSessionId).toBe("sid-2");
     expect(firstText()).toBe("two");
+  });
+
+  it("open 的旧 revision 保留较新缓存并结束本次 history loading", async () => {
+    mockGet.mockResolvedValueOnce({ ...sessionDetail("sid-1", "new cached"), revision: 5 });
+    await useConversationStore.getState().openSession("sid-1");
+    const older = deferred<SessionDetail>();
+    mockGet.mockReturnValueOnce(older.promise);
+    const reopening = useConversationStore.getState().openSession("sid-1");
+    expect(useConversationStore.getState().historyLoading).toBe(true);
+    older.resolve({ ...sessionDetail("sid-1", "old response"), revision: 4 });
+    await expect(reopening).resolves.toBe(true);
+    expect(firstText()).toBe("new cached");
+    expect(useConversationStore.getState().historyLoading).toBe(false);
+    expect(useConversationStore.getState().sessionViews["sid-1"].revision).toBe(5);
+  });
+
+  it("迟到的旧 open 不能结束另一会话导航的 loading", async () => {
+    mockGet.mockResolvedValueOnce({ ...sessionDetail("sid-1", "cached"), revision: 5 });
+    await useConversationStore.getState().openSession("sid-1");
+    const older = deferred<SessionDetail>();
+    const other = deferred<SessionDetail>();
+    mockGet.mockReturnValueOnce(older.promise).mockReturnValueOnce(other.promise);
+    const oldOpen = useConversationStore.getState().openSession("sid-1");
+    const newOpen = useConversationStore.getState().openSession("sid-2");
+    older.resolve({ ...sessionDetail("sid-1", "old response"), revision: 4 });
+    await expect(oldOpen).resolves.toBe(false);
+    expect(useConversationStore.getState()).toMatchObject({ currentSessionId: "sid-2", historyLoading: true });
+    other.resolve(sessionDetail("sid-2", "current"));
+    await expect(newOpen).resolves.toBe(true);
+    expect(useConversationStore.getState().historyLoading).toBe(false);
+    expect(firstText()).toBe("current");
   });
 
   it("streaming 时拒绝后台 detail 替换", async () => {

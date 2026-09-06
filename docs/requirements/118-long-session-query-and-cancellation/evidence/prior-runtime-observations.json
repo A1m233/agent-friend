@@ -1,0 +1,40 @@
+{
+  "artifact_kind": "derived_existing_observation_summary_not_raw_runtime_log",
+  "evidence_id": "E-001",
+  "archived_on": "2026-09-06",
+  "provenance": "Previously completed investigation observations supplied by the coordinating task; this archival pass did not reopen production logs, JSONL, databases or APIs.",
+  "local_time_window_approximate": "2026-09-06 01:56:31 to 01:58:47 Asia/Shanghai",
+  "memory_total_ms": 136628,
+  "preceding_same_process_observation": {
+    "memory_total_ms": 1683,
+    "session_history": "skipped"
+  },
+  "source_runs": [
+    {
+      "source": "structured_memory",
+      "raw_candidate_count": 126,
+      "suppressed_count": 89,
+      "candidate_count": 24,
+      "scope_scan_attempts": 2
+    },
+    {
+      "source": "session_history",
+      "raw_candidate_count": 18,
+      "suppressed_count": 2,
+      "candidate_count": 8,
+      "scope_scan_attempts": 2
+    }
+  ],
+  "original_scope": {
+    "current_session_boundary": "absent",
+    "current_session_eligible": false
+  },
+  "run_cancellation_observation": "Cancellation returned 404 before runtime registration; processing subsequently continued.",
+  "coverage": "One incident and one preceding same-process observation; no frequency or latency-distribution claim.",
+  "artifact_limitations": [
+    "The original runtime trace/log with these timings is not in this repository archive. The profile reports retain source-count summaries but not this online memory_total duration.",
+    "Source-count agreement with offline reports is not timing reproduction or proof of identical whole-process state.",
+    "The retained offline report source_head identifies profiling imports; it does not independently establish the original live runtime build/source freshness.",
+    "The archive preserves the supplied observation without re-performing diagnosis."
+  ]
+}

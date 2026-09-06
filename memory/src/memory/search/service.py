@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, replace
 from datetime import UTC
 
@@ -23,6 +24,7 @@ from .contracts import (
     SourceFailure,
     SourceRun,
 )
+from .execution import CancelCheck, PreparedSearch, check_cancel, prepare_source_search
 
 _FINAL_LIMITS = {"automatic": 8, "explicit": 20, "probe": 20}
 _SOURCE_LIMITS = {"automatic": 24, "explicit": 64, "probe": 64}
@@ -86,7 +88,11 @@ class MemorySearchService:
             raise ValueError(f"重复注册 memory search source: {source.name!r}")
         self._sources[source.name] = source
 
-    def search(self, request: SearchRequest) -> SearchResult:
+    def search(
+        self, request: SearchRequest, *, cancel_check: CancelCheck | None = None
+    ) -> SearchResult:
+        started = time.monotonic()
+        check_cancel(cancel_check)
         query = self._analyzer.analyze(request)
         final_limit = request.top_k or _FINAL_LIMITS[request.mode]
         source_limit = _SOURCE_LIMITS[request.mode]
@@ -95,9 +101,16 @@ class MemorySearchService:
         scope_decisions: list[RecallScopeDecision] = []
         failures: list[SourceFailure] = []
         source_runs: list[SourceRun] = []
-        scope_context = self._prepare_scope_context(request)
+        scope_context = self._prepare_scope_context(request, cancel_check=cancel_check)
+        logger.info(
+            "search prepared mode=%s duration_ms=%.2f sources=%d",
+            request.mode,
+            (time.monotonic() - started) * 1000,
+            len(self._sources),
+        )
 
         for source in self._ordered_sources():
+            check_cancel(cancel_check)
             if request.source_scope is not None and source.name not in request.source_scope:
                 continue
             if source.name == "session_history" and not self._should_search_history(
@@ -119,13 +132,13 @@ class MemorySearchService:
                 if request.mode == "automatic" and source.name == "session_history"
                 else source_limit
             )
+            source_started = time.monotonic()
             try:
+                search = prepare_source_search(
+                    source, query, request=request, cancel_check=cancel_check
+                )
                 if scope_context is None:
-                    raw_found = source.search(
-                        query,
-                        request=request,
-                        limit=effective_source_limit + 1,
-                    )
+                    raw_found = search(effective_source_limit + 1)
                     source_truncated = len(raw_found) > effective_source_limit
                     found = raw_found[:effective_source_limit]
                     considered_candidates.extend(found)
@@ -143,11 +156,10 @@ class MemorySearchService:
                         scan_attempts,
                         scope_scan_truncated,
                     ) = self._search_source_with_scope(
-                        source,
-                        query=query,
-                        request=request,
+                        search,
                         effective_source_limit=effective_source_limit,
                         scope_context=scope_context,
+                        cancel_check=cancel_check,
                     )
                     considered_candidates.extend(raw_found)
                     scope_decisions.extend(found_scope_decisions)
@@ -169,6 +181,7 @@ class MemorySearchService:
                     )
                 )
             except Exception as exc:
+                check_cancel(cancel_check)
                 failures.append(SourceFailure(source_name=source.name, message=str(exc)))
                 source_runs.append(
                     SourceRun(
@@ -178,8 +191,23 @@ class MemorySearchService:
                         status="failed",
                     )
                 )
+            finally:
+                logger.info(
+                    "search source finished name=%s duration_ms=%.2f",
+                    source.name,
+                    (time.monotonic() - source_started) * 1000,
+                )
 
+        check_cancel(cancel_check)
         ranked, decisions = _fuse(candidates, request=request, ordinary_limit=final_limit)
+        logger.info(
+            "search finished mode=%s duration_ms=%.2f candidates=%d evidence=%d attempts=%d",
+            request.mode,
+            (time.monotonic() - started) * 1000,
+            len(considered_candidates),
+            len(ranked),
+            sum(run.scope_scan_attempts for run in source_runs if run.status == "ok"),
+        )
         return SearchResult(
             request=request,
             query=query,
@@ -203,7 +231,10 @@ class MemorySearchService:
             ),
         )
 
-    def _prepare_scope_context(self, request: SearchRequest) -> _ScopeContext | None:
+    def _prepare_scope_context(
+        self, request: SearchRequest, *, cancel_check: CancelCheck | None = None
+    ) -> _ScopeContext | None:
+        check_cancel(cancel_check)
         scope = request.automatic_recall_scope
         if scope is None:
             return None
@@ -222,10 +253,19 @@ class MemorySearchService:
                 order_status="unavailable",
             )
         try:
-            event_uuids = self._source_order_provider.active_conversation_event_uuids(
-                scope.current_session_id
+            cancellable = getattr(
+                self._source_order_provider, "active_conversation_event_uuids_cancellable", None
             )
+            event_uuids = (
+                cancellable(scope.current_session_id, cancel_check=cancel_check)
+                if callable(cancellable)
+                else self._source_order_provider.active_conversation_event_uuids(
+                    scope.current_session_id
+                )
+            )
+            check_cancel(cancel_check)
         except Exception:
+            check_cancel(cancel_check)
             logger.warning(
                 "automatic recall source order unavailable session=%s",
                 scope.current_session_id,
@@ -250,12 +290,11 @@ class MemorySearchService:
 
     def _search_source_with_scope(
         self,
-        source: EvidenceSource,
+        search: PreparedSearch,
         *,
-        query: AnalyzedQuery,
-        request: SearchRequest,
         effective_source_limit: int,
         scope_context: _ScopeContext,
+        cancel_check: CancelCheck | None = None,
     ) -> tuple[
         list[EvidenceCandidate],
         list[EvidenceCandidate],
@@ -270,14 +309,12 @@ class MemorySearchService:
         scope_scan_truncated = False
 
         while True:
+            check_cancel(cancel_check)
             attempts += 1
-            fetched = source.search(
-                query,
-                request=request,
-                limit=requested_limit,
-            )
+            fetched = search(requested_limit)
             previous_count = len(raw_by_id)
             for candidate in fetched:
+                check_cancel(cancel_check)
                 if candidate.evidence_id not in raw_by_id:
                     raw_by_id[candidate.evidence_id] = candidate
                 if len(raw_by_id) >= _SCOPE_SCAN_LIMIT:

@@ -9,12 +9,17 @@ JSONL append-only 实现。
 from __future__ import annotations
 
 import base64
+import io
 import os
 import stat
-from collections.abc import Iterator
-from dataclasses import dataclass
+from collections import OrderedDict
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
+from time import monotonic
 from typing import BinaryIO, Protocol, cast
 
 import portalocker
@@ -33,8 +38,24 @@ from .errors import (
     SessionPersistError,
     SessionWriterConflictError,
 )
-from .events import Event
+from .events import ROLLOUT_EVENT_TYPES, Event
 from .file_observation import observe_session_file
+from .query import (
+    CancelCheck,
+    SessionActivity,
+    SessionQueryCache,
+    SessionQuerySnapshot,
+    SourceVersion,
+    check_cancel,
+    list_session_activity,
+    load_session,
+    query_session,
+)
+from .query_observation import (
+    SessionQueryObservation,
+    observe_query_maintenance_failure,
+    observe_session_query,
+)
 from .session import Session
 from .store_types import SessionLoadDiagnostics
 
@@ -70,13 +91,14 @@ class _PortalockerWriterLease:
             self._handle = None
 
 
-def _iter_lines_reverse(path: Path) -> Iterator[str]:
+def _iter_lines_reverse(path: Path, cancel_check: CancelCheck = None) -> Iterator[str]:
     """Yield non-empty UTF-8 lines from a file in reverse order."""
     with path.open("rb") as file:
         file.seek(0, 2)
         position = file.tell()
         pending = b""
         while position > 0:
+            check_cancel(cancel_check)
             read_size = min(_REVERSE_READ_CHUNK_BYTES, position)
             position -= read_size
             file.seek(position)
@@ -224,12 +246,26 @@ class JsonlSessionStore:
     docs/requirements/002-engine-session-management/design.md §4.3。
     """
 
-    def __init__(self, base_dir: Path | str) -> None:
+    def __init__(
+        self,
+        base_dir: Path | str,
+        *,
+        query_cache_entries: int = 64,
+        query_cache_bytes: int = 64 * 1024 * 1024,
+    ) -> None:
         """
         Args:
             base_dir: 会话文件根目录；不存在会自动创建。
         """
         self._base_dir = Path(base_dir)
+        self._query_cache = SessionQueryCache(
+            max_entries=query_cache_entries, max_bytes=query_cache_bytes
+        )
+        self._summary_cache: OrderedDict[Path, tuple[SourceVersion, SessionSummary]] = OrderedDict()
+        self._activity_cache: OrderedDict[Path, tuple[SourceVersion, SessionActivity]] = (
+            OrderedDict()
+        )
+        self._summary_lock = Lock()
         try:
             self._base_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
@@ -338,10 +374,13 @@ class JsonlSessionStore:
                 ) as f,
             ):
                 binary = cast(BinaryIO, f)
+                before = self._handle_version(binary, path)
                 binary.seek(0, os.SEEK_END)
+                clean_boundary = True
                 if binary.tell():
                     binary.seek(-1, os.SEEK_END)
                     if binary.read(1) != b"\n":
+                        clean_boundary = False
                         binary.seek(0, os.SEEK_END)
                         observation.byte_count += binary.write(b"\n")
                 binary.seek(0, os.SEEK_END)
@@ -350,12 +389,62 @@ class JsonlSessionStore:
                     observation.byte_count += binary.write(b"\n")
                 binary.flush()
                 os.fsync(binary.fileno())
+                after = self._handle_version(binary, path)
         except LockException as e:
             raise SessionPersistError(
                 f"获取会话文件写锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {session_id}: {e}"
             ) from e
         except OSError as e:
             raise SessionPersistError(f"追加事件失败: {path}: {e}") from e
+        try:
+            self._advance_read_caches(path, session_id, before, after, events, clean_boundary)
+        except Exception as exc:
+            # Persistence already succeeded. A disposable projection must never
+            # report a failed append (which could make its caller append twice).
+            self._query_cache.discard(session_id)
+            with self._summary_lock:
+                self._summary_cache.pop(path, None)
+                self._activity_cache.pop(path, None)
+            observe_query_maintenance_failure(session_id, exc)
+
+    def _advance_read_caches(
+        self,
+        path: Path,
+        session_id: str,
+        before: SourceVersion,
+        after: SourceVersion,
+        events: list[Event],
+        clean_boundary: bool,
+    ) -> None:
+        # Never hold the file lock while updating an in-process projection.
+        cached = self._query_cache.get(session_id, before)
+        if clean_boundary and cached is not None and not cached.load_diagnostics.parse_error_count:
+            updated = cached.appended(events, after)
+            self._query_cache.put(updated, is_current=lambda: self._source_version(path) == after)
+        else:
+            self._query_cache.discard(session_id)
+        with self._summary_lock:
+            summary_entry = self._summary_cache.get(path)
+            if clean_boundary and summary_entry is not None and summary_entry[0] == before:
+                summary = summary_entry[1]
+                for event in events:
+                    if event.type in {"user_message", "assistant_message"}:
+                        summary = replace(summary, updated_at=event.ts)
+                    config = self._event_model_config(event)
+                    if config is not None:
+                        summary = replace(
+                            summary, model=config.model_id, reasoning_preset=config.reasoning_preset
+                        )
+                if self._source_version(path) == after:
+                    self._summary_cache[path] = (after, summary)
+            activity_entry = self._activity_cache.get(path)
+            if clean_boundary and activity_entry is not None and activity_entry[0] == before:
+                activity = activity_entry[1]
+                for event in events:
+                    if event.type in {"user_message", "assistant_message"}:
+                        activity = replace(activity, updated_at=event.ts)
+                if self._source_version(path) == after:
+                    self._activity_cache[path] = (after, activity)
 
     def acquire_writer_lease(self, session_id: str) -> SessionWriterLease:
         if self._existing_path(session_id) is None:
@@ -383,27 +472,105 @@ class JsonlSessionStore:
         except OSError as exc:
             raise SessionPersistError(f"删除 session writer lease 失败: {path}: {exc}") from exc
 
-    def load(self, session_id: str) -> Session:
+    def load(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
+        records, diagnostics, _version, _count = self._read_records(
+            session_id, cancel_check=cancel_check
+        )
+        session = Session.from_events([event for _, event in records])
+        session.load_diagnostics = diagnostics
+        return session
+
+    def cancellable_load(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
+        return self.load(session_id, cancel_check=cancel_check)
+
+    @staticmethod
+    def _version(info: os.stat_result) -> SourceVersion:
+        # Windows stat reports legacy creation-time ctime, while fstat reports
+        # change time on current Python. birthtime has identical semantics in both.
+        identity_time = getattr(info, "st_birthtime_ns", info.st_ctime_ns)
+        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, identity_time)
+
+    def _source_version(self, path: Path) -> SourceVersion:
+        try:
+            return self._version(path.stat())
+        except FileNotFoundError as exc:
+            raise SessionNotFoundError("会话文件已删除") from exc
+        except OSError as exc:
+            raise SessionPersistError("读取会话文件属性失败") from exc
+
+    def _handle_version(self, handle: BinaryIO, path: Path) -> SourceVersion:
+        try:
+            return self._version(os.fstat(handle.fileno()))
+        except io.UnsupportedOperation:
+            # File-like test adapters have no OS descriptor.
+            return self._source_version(path)
+
+    @contextmanager
+    def _read_lock(self, path: Path, cancel_check: CancelCheck) -> Iterator[BinaryIO]:
+        if cancel_check is None:
+            with portalocker.Lock(
+                path,
+                "rb",
+                flags=portalocker.LOCK_SH | portalocker.LOCK_NB,
+                timeout=_LOCK_TIMEOUT_SECONDS,
+            ) as handle:
+                yield cast(BinaryIO, handle)
+            return
+        # Short acquisition attempts let cancellation interrupt a contended writer.
+        deadline = monotonic() + _LOCK_TIMEOUT_SECONDS
+        lock = portalocker.Lock(
+            path,
+            "rb",
+            flags=portalocker.LOCK_SH | portalocker.LOCK_NB,
+            timeout=0.05,
+            check_interval=0.01,
+        )
+        while True:
+            check_cancel(cancel_check)
+            try:
+                handle = lock.acquire()
+                break
+            except LockException:
+                if monotonic() >= deadline:
+                    raise
+        try:
+            check_cancel(cancel_check)
+            yield cast(BinaryIO, handle)
+        finally:
+            lock.release()
+
+    def _read_records(
+        self,
+        session_id: str,
+        *,
+        query_only: bool = False,
+        cancel_check: CancelCheck = None,
+    ) -> tuple[list[tuple[int, Event]], SessionLoadDiagnostics, SourceVersion, int]:
         path = self._existing_path(session_id)
         if path is None:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
-        events: list[Event] = []
+        records: list[tuple[int, Event]] = []
         parsed_records: list[tuple[int, Event]] = []
         parse_errors: list[tuple[int, int]] = []
+        event_count = 0
         try:
             with observe_session_file("load", session_id) as observation:
-                with observation.locked(
-                    portalocker.Lock(
-                        path,
-                        "rb",
-                        flags=portalocker.LOCK_SH | portalocker.LOCK_NB,
-                        timeout=_LOCK_TIMEOUT_SECONDS,
-                    )
-                ) as f:
-                    raw = cast(BinaryIO, f).read()
+                with observation.locked(self._read_lock(path, cancel_check)) as f:
+                    binary = cast(BinaryIO, f)
+                    version = self._handle_version(binary, path)
+                    chunks: list[bytes] = []
+                    while True:
+                        check_cancel(cancel_check)
+                        chunk = binary.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                    raw = b"".join(chunks)
+                    del chunks
                     observation.byte_count = len(raw)
                 with observation.parsing():
                     for lineno, line in enumerate(raw.splitlines(keepends=True), start=1):
+                        check_cancel(cancel_check)
                         if not line.strip():
                             continue
                         try:
@@ -411,20 +578,92 @@ class JsonlSessionStore:
                         except (UnicodeDecodeError, SessionCorruptError):
                             parse_errors.append((lineno, len(line)))
                             continue
-                        parsed_records.append((lineno, event))
-                        events.append(event)
+                        # Corruption recovery only needs record type and segment marker.
+                        parsed_records.append(
+                            (
+                                lineno,
+                                event
+                                if not query_only
+                                else Event(
+                                    type=event.type,
+                                    uuid=event.uuid,
+                                    ts=event.ts,
+                                    payload={
+                                        "starts_after_corruption": event.payload.get(
+                                            "starts_after_corruption"
+                                        )
+                                    },
+                                ),
+                            )
+                        )
+                        if not query_only or event.type not in ROLLOUT_EVENT_TYPES:
+                            records.append((event_count, event))
+                        event_count += 1
                     diagnostics = self._validate_recoverable_errors(
                         path, parsed_records, parse_errors
                     )
-                    session = Session.from_events(events)
-                    session.load_diagnostics = diagnostics
+                    Session.from_events([records[0][1]] if records else [])
         except LockException as e:
             raise SessionPersistError(
                 f"获取会话文件读锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {path}: {e}"
             ) from e
         except OSError as e:
             raise SessionPersistError(f"读取会话文件失败: {path}: {e}") from e
-        return session
+        check_cancel(cancel_check)
+        return records, diagnostics, version, event_count
+
+    def query(self, session_id: str, *, cancel_check: CancelCheck = None) -> SessionQuerySnapshot:
+        with observe_session_query(session_id) as observation:
+            return self._query_snapshot(session_id, cancel_check, observation)
+
+    def _query_snapshot(
+        self,
+        session_id: str,
+        cancel_check: CancelCheck,
+        observation: SessionQueryObservation,
+    ) -> SessionQuerySnapshot:
+        check_cancel(cancel_check)
+        path = self._existing_path(session_id)
+        if path is None:
+            observation.miss_reason = "missing"
+            self._query_cache.discard(session_id)
+            raise SessionNotFoundError(f"会话不存在: {session_id}")
+        cached = self._query_cache.get(
+            session_id, self._source_version(path), observation=observation
+        )
+        if cached is not None:
+            observation.action = "hit"
+            check_cancel(cancel_check)
+            return cached
+        observation.action = "waiting"
+        with self._query_cache.building(session_id, cancel_check, observation=observation):
+            cached = self._query_cache.get(
+                session_id, self._source_version(path), observation=observation
+            )
+            if cached is not None:
+                observation.action = "coalesced"
+                check_cancel(cancel_check)
+                return cached
+            observation.action = "rebuilt"
+            records, diagnostics, version, count = self._read_records(
+                session_id, query_only=True, cancel_check=cancel_check
+            )
+            snapshot = SessionQuerySnapshot.build(
+                records,
+                raw_event_count=count,
+                diagnostics=diagnostics,
+                source_version=version,
+                cancel_check=cancel_check,
+            )
+            check_cancel(cancel_check)
+            self._query_cache.put(
+                snapshot,
+                is_current=lambda: self._source_version(path) == version,
+                observation=observation,
+            )
+            # The caller receives one consistent version even when an append won
+            # the race. The next query validates the source and reads the new one.
+            return snapshot
 
     @staticmethod
     def _validate_recoverable_errors(
@@ -482,6 +721,10 @@ class JsonlSessionStore:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
         try:
             path.unlink()
+            self._query_cache.discard(session_id)
+            with self._summary_lock:
+                self._summary_cache.pop(path, None)
+                self._activity_cache.pop(path, None)
         except OSError as e:
             raise SessionPersistError(f"删除会话文件失败: {path}: {e}") from e
 
@@ -490,6 +733,102 @@ class JsonlSessionStore:
         return summaries[0] if summaries else None
 
     def _read_summary(self, path: Path) -> SessionSummary | None:
+        try:
+            version = self._source_version(path)
+        except (SessionNotFoundError, SessionPersistError):
+            return None
+        with self._summary_lock:
+            cached = self._summary_cache.get(path)
+            if cached is not None and cached[0] == version:
+                self._summary_cache.move_to_end(path)
+                return cached[1]
+        summary = self._read_uncached_summary(path)
+        if summary is not None:
+            with self._summary_lock:
+                try:
+                    current = self._source_version(path)
+                except (SessionNotFoundError, SessionPersistError):
+                    return None
+                if current == version:
+                    self._summary_cache[path] = (version, summary)
+                    while len(self._summary_cache) > 512:
+                        self._summary_cache.popitem(last=False)
+        return summary
+
+    def list_activity(
+        self,
+        *,
+        session_ids: Iterable[str] | None = None,
+        exclude_session_ids: Iterable[str] = (),
+        cancel_check: CancelCheck = None,
+    ) -> tuple[SessionActivity, ...]:
+        selected = set(session_ids) if session_ids is not None else None
+        excluded = set(exclude_session_ids)
+        excluded_paths = {path for sid in excluded for path in self._candidate_paths(sid)}
+        try:
+            if selected is None:
+                paths = sorted(self._base_dir.glob("*.jsonl"))
+            else:
+                paths = []
+                for sid in sorted(selected - excluded):
+                    check_cancel(cancel_check)
+                    path = self._existing_path(sid)
+                    if path is not None:
+                        paths.append(path)
+            result: list[SessionActivity] = []
+            for path in paths:
+                check_cancel(cancel_check)
+                if path in excluded_paths:
+                    continue
+                try:
+                    version = self._source_version(path)
+                except (SessionNotFoundError, SessionPersistError):
+                    continue
+                with self._summary_lock:
+                    cached = self._activity_cache.get(path)
+                if cached is not None and cached[0] == version:
+                    activity = cached[1]
+                else:
+                    try:
+                        with path.open("r", encoding="utf-8") as handle:
+                            head = Event.from_jsonl(handle.readline())
+                    except (OSError, UnicodeDecodeError, SessionCorruptError):
+                        continue
+                    if head.type != "session_meta" or any(
+                        not isinstance(head.payload.get(key), str)
+                        for key in ("initial_title", "initial_persona", "initial_model")
+                    ):
+                        continue
+                    if head.uuid in excluded or (
+                        selected is not None and head.uuid not in selected
+                    ):
+                        continue
+                    activity = SessionActivity(
+                        head.uuid,
+                        head.ts,
+                        self._last_conversation_event_at(
+                            path, fallback=head.ts, cancel_check=cancel_check
+                        ),
+                    )
+                    with self._summary_lock:
+                        try:
+                            current = self._source_version(path)
+                        except (SessionNotFoundError, SessionPersistError):
+                            continue
+                        if current == version:
+                            self._activity_cache[path] = (version, activity)
+                            while len(self._activity_cache) > 512:
+                                self._activity_cache.popitem(last=False)
+                if activity.session_id not in excluded and (
+                    selected is None or activity.session_id in selected
+                ):
+                    result.append(activity)
+            check_cancel(cancel_check)
+            return tuple(sorted(result, key=lambda item: item.updated_at, reverse=True))
+        except OSError as exc:
+            raise SessionPersistError("枚举会话活动失败") from exc
+
+    def _read_uncached_summary(self, path: Path) -> SessionSummary | None:
         """读取首行与最后会话消息构造摘要；首行损坏则跳过返回 ``None``。"""
         try:
             with path.open("r", encoding="utf-8") as f:
@@ -543,7 +882,9 @@ class JsonlSessionStore:
         )
 
     @staticmethod
-    def _last_conversation_event_at(path: Path, *, fallback: datetime) -> datetime:
+    def _last_conversation_event_at(
+        path: Path, *, fallback: datetime, cancel_check: CancelCheck = None
+    ) -> datetime:
         """Return the newest raw user/assistant timestamp without loading the session.
 
         JSONL is scanned backwards in chunks and stops at the first conversational
@@ -551,7 +892,7 @@ class JsonlSessionStore:
         ignored for summary projection; full ``load()`` remains strict.
         """
         try:
-            for line in _iter_lines_reverse(path):
+            for line in _iter_lines_reverse(path, cancel_check):
                 try:
                     event = Event.from_jsonl(line)
                 except SessionCorruptError:
@@ -561,6 +902,31 @@ class JsonlSessionStore:
         except OSError:
             return fallback
         return fallback
+
+    @staticmethod
+    def _event_model_config(event: Event) -> ModelRuntimeConfig | None:
+        if event.type == "model_config_change":
+            target = event.payload.get("to")
+            if not isinstance(target, dict):
+                return None
+            model, preset = target.get("model"), target.get("reasoningPreset")
+            if not isinstance(model, str) or not isinstance(preset, str):
+                return None
+            try:
+                return validate_model_runtime_config(ModelRuntimeConfig(model, preset))
+            except ValueError:
+                try:
+                    return default_model_runtime_config(model)
+                except ValueError:
+                    return None
+        if event.type == "model_change":
+            target = event.payload.get("to")
+            if isinstance(target, str):
+                try:
+                    return default_model_runtime_config(target)
+                except ValueError:
+                    return None
+        return None
 
     @staticmethod
     def _latest_model_runtime_config(
@@ -707,6 +1073,26 @@ class NotifyingSessionStore:
 
     def load(self, session_id: str) -> Session:
         return self._inner.load(session_id)
+
+    def cancellable_load(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
+        return load_session(self._inner, session_id, cancel_check=cancel_check)
+
+    def query(self, session_id: str, *, cancel_check: CancelCheck = None) -> SessionQuerySnapshot:
+        return query_session(self._inner, session_id, cancel_check=cancel_check)
+
+    def list_activity(
+        self,
+        *,
+        session_ids: Iterable[str] | None = None,
+        exclude_session_ids: Iterable[str] = (),
+        cancel_check: CancelCheck = None,
+    ) -> tuple[SessionActivity, ...]:
+        return list_session_activity(
+            self._inner,
+            session_ids=session_ids,
+            exclude_session_ids=exclude_session_ids,
+            cancel_check=cancel_check,
+        )
 
     def list(self) -> list[SessionSummary]:
         return self._inner.list()

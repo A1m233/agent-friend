@@ -113,6 +113,24 @@ def encode_stream(
     encoder = EventEncoder(accept=accept or "")
 
     def _encode(event: Any) -> bytes:
+        if run_handle is not None and isinstance(
+            event, (RunStartedEvent, RunFinishedEvent, RunErrorEvent)
+        ):
+            snapshot = run_handle.snapshot()
+            accepted = (
+                run_handle.request.input_accepted
+                if isinstance(event, RunStartedEvent)
+                else snapshot.input_accepted
+            )
+            fields: dict[str, Any] = {
+                "inputAccepted": accepted,
+                "runtimeInstanceId": snapshot.runtime_instance_id,
+            }
+            if isinstance(event, RunErrorEvent):
+                fields.update(threadId=snapshot.session_id, runId=snapshot.run_id)
+            if isinstance(event, RunFinishedEvent):
+                fields["result"] = {**(event.result or {}), "inputAccepted": accepted}
+            event = event.model_copy(update=fields)
         return encoder.encode(event).encode("utf-8")
 
     open_message_id: str | None = None

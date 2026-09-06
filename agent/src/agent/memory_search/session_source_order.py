@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from ..sessions import SessionError, SessionStore
+from memory.search.execution import CancelCheck, check_cancel
+
+from ..sessions import SessionError, SessionStore, query_session
 
 
 class SessionStoreSourceOrderProvider:
@@ -15,15 +17,23 @@ class SessionStoreSourceOrderProvider:
         self,
         session_id: str,
     ) -> tuple[str, ...] | None:
+        return self.active_conversation_event_uuids_cancellable(session_id)
+
+    def active_conversation_event_uuids_cancellable(
+        self, session_id: str, *, cancel_check: CancelCheck | None = None
+    ) -> tuple[str, ...] | None:
+        check_cancel(cancel_check)
         try:
-            session = self._store.load(session_id)
+            session = query_session(self._store, session_id, cancel_check=cancel_check)
         except SessionError:
+            check_cancel(cancel_check)
             return None
-        return tuple(
-            event.uuid
-            for event in session.active_events
-            if _is_completed_conversation_event(event.type, event.payload)
-        )
+        result: list[str] = []
+        for event in session.active_events:
+            check_cancel(cancel_check)
+            if _is_completed_conversation_event(event.type, event.payload):
+                result.append(event.uuid)
+        return tuple(result)
 
 
 def _is_completed_conversation_event(event_type: str, payload: dict[str, object]) -> bool:

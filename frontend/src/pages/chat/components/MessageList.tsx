@@ -80,9 +80,8 @@ import { ReminderCard } from "./ReminderCard";
 import { ToolActivity } from "./ToolActivity";
 import { ToolCard } from "./ToolCard";
 import { buildMessagePresentationSegments } from "./toolActivityPresentation";
-import { executionSections } from "./executionDisclosurePolicy";
+import { executionDisclosurePolicy, executionSections } from "./executionDisclosurePolicy";
 import { ExecutionDisclosureStateProvider } from "./ExecutionDisclosure";
-import { shouldCollapseExecution } from "@/stores/assistantPhase";
 import { CHAT_MARKDOWN_CONTENT_PROPS } from "./chatMarkdownConfig";
 import { useExternalLinkOpener } from "./useExternalLinkOpener";
 import { ReferenceSummaryPopover } from "./ReferenceSummaryPopover";
@@ -480,7 +479,8 @@ function MessageContent({
       }
       return null;
     });
-  const sections = executionSections(message, segments);
+  const disclosurePolicy = executionDisclosurePolicy(message);
+  const sections = executionSections(message, segments, disclosurePolicy);
   const hasProcess = sections.some((section) => section.execution
     && section.indexes.some((index) => Boolean(segmentNodes[index])));
   const revealTarget = searchAnchorEventUuid && sections.some((section) => section.execution
@@ -498,9 +498,9 @@ function MessageContent({
   const hasContent = segmentNodes.some(Boolean);
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2" data-execution-disclosure-source={disclosurePolicy.source}>
       <RunExecutionDisclosure key={message.runId ?? message.id} message={message} enabled={hasProcess}
-        collapse={shouldCollapseExecution(message)} disclosureId={message.runId ?? message.id}
+        collapse={disclosurePolicy.collapse} disclosureId={message.runId ?? message.id}
         revealTarget={revealTarget} onDisclosureChange={onToolDisclosureChange}>
         {rendered}
       </RunExecutionDisclosure>

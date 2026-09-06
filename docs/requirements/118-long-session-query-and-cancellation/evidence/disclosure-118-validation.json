@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "evidence_id": "E-022",
+  "recorded_date": "2026-09-06",
+  "artifact_kind": "derived_deterministic_validation_record",
+  "status": "active",
+  "basis": [
+    "code-supported",
+    "deterministic-validation",
+    "human-reviewed-scope"
+  ],
+  "confidence": "confirmed for the final implemented display policy and completed deterministic frontend gate; real desktop validation remains not_verified",
+  "provenance": {
+    "validation_source": "The implementation owner reported the final frozen candidate and the completed formal frontend runner; results are also recorded in progress.md. The archiver did not rerun tests or builds.",
+    "raw_command_output_archived": false,
+    "exact_execution_timestamps_archived": false,
+    "source_hash_capture": "Current file bytes captured after the final frozen-candidate validation report; this is not a measurement-time before/after source manifest.",
+    "candidate_head": "f563938bd3f63c88a5e7a5b59825e3da33f06303",
+    "candidate_state": "HEAD plus uncommitted implementation; not a clean commit or full dependency closure",
+    "files_sha256": {
+      "frontend/src/pages/chat/components/executionDisclosurePolicy.ts": "0bedb6439c6267d124a16c01617c938e7a466ae38077e3890a8e6478dc94a453",
+      "frontend/src/pages/chat/components/MessageList.tsx": "b626ebc20317ebcb0d244db6382c57b31e1501efff4239149a8f64fea17d0d48",
+      "frontend/src/pages/chat/components/executionDisclosurePolicy.test.ts": "643c2d7f23bc753c6bb52ec898a49db83369d2dbcb9ba71434277f37f40c155e",
+      "scripts/frontend/lint.ps1": "6a398de829697d46cab840eab36826449d72badfdcbb60f01349117a894df73a",
+      "scripts/frontend/test.ps1": "3e33e1d9a3c5ba55b0c0ce102881d2341b285b6601fb228c60c14011cccd1bef",
+      "scripts/frontend/build.ps1": "d23e0099469d991593948db0c5fbf939e0355e95d6c1ba5c33c8d1569990c23d",
+      "scripts/check/run.py": "1554cc91872e9a1f7616b0accf386bf4357a85cde442b912dd74666a949b2a37",
+      "scripts/check/run.ps1": "2b7753b8159dffed86e163f83ee6ea751bb3b0135916dbd1d1e394a65b2f0f39"
+    }
+  },
+  "approved_scope": {
+    "display_fallback_adopted": true,
+    "native_and_inferred_sources_separate": true,
+    "real_tauri_validation_authorized": true,
+    "k3_native_capability_enabled": false,
+    "raw_phase_or_model_history_modified_by_this_increment": false
+  },
+  "implementation": {
+    "policy_sources": [
+      "native",
+      "inferred",
+      "none"
+    ],
+    "inferred_preconditions": [
+      "Assistant message has a run ID, complete status and completed run outcome.",
+      "No visible run error or still-running tool remains.",
+      "Native mode is not reclassified as inferred, including native pending, missing_final and conflict.",
+      "Any persisted validation=conflict, including legacy mode, prevents inferred fallback.",
+      "All text blocks have logical message IDs and only unknown or absent phase values.",
+      "The final nonempty logical text item is chosen by first-appearance order of distinct message IDs.",
+      "No tool block occurs after the first fragment of that final logical text item."
+    ],
+    "inferred_presentation": "Keep every fragment of the final logical text item visible; collect earlier text and eligible ordinary tools into existing execution sections without changing block order, IDs or source phase fields.",
+    "protected_content": [
+      "request tools",
+      "tool warnings and errors",
+      "reminders",
+      "compaction and activity boundaries"
+    ],
+    "message_list_binding": "One derived policy drives both section membership and default collapse; data-execution-disclosure-source exposes the presentation source for diagnostics.",
+    "persistence": "No new persistent phase facts or model-history transformations are introduced by this display increment."
+  },
+  "gate_scope": {
+    "frontend_stage_steps_completed_for_final_candidate": true,
+    "equivalence_anchor": "scripts/check/run.py:_run_frontend calls frontend/lint, frontend/test and frontend/build in that order.",
+    "backend_rerun_for_this_display_increment": false,
+    "rust_rerun_for_this_display_increment": false,
+    "reason": "This increment changes frontend presentation and tests only; existing backend and Rust evidence is retained in progress.md.",
+    "formal_frontend_runner_executed": true,
+    "prior_separate_entrypoint_checks": "Earlier 31-regression / 911-test results predate the final conflict guard and are superseded for final-candidate validation by the formal runner recorded here."
+  },
+  "test_coverage_summary": [
+    "Source text, phases and identities remain unchanged; native and inferred policies stay separate.",
+    "Fragmented logical messages, late fragments, blank items and tools after the last logical message are handled conservatively.",
+    "Running, cancelled, failed, untrusted old terminal and any persisted conflict, including legacy conflict, do not become inferred success.",
+    "Request tools, warnings, errors and fixed visible facts stay outside inferred process sections.",
+    "Trusted durable and AG-UI completion agree; push done alone does not prove run success."
+  ],
+  "desktop_validation": {
+    "status": "not_verified",
+    "authorized": true,
+    "probe_preparation_in_progress": false,
+    "reported_runtime_constraint": "The single available dev lease belongs to the user's requirement 116 runtime.",
+    "existing_user_runtime_stopped_or_taken_over": false,
+    "requirement_118_runtime_validated": false,
+    "limitation": "Automated unit tests and a production web build do not prove real Tauri rendering or interaction; no desktop pass is recorded here.",
+    "probe_syntax_check_passed": true,
+    "probe_execution_status": "not_executed",
+    "remaining_boundary": "Authorization to switch away from the existing user-owned requirement 116 dev instance is still pending; the instance has not been stopped or taken over."
+  },
+  "relationships": {
+    "supersedes": [
+      {
+        "evidence_id": "E-021",
+        "scope": "Its baseline behavior as the current display policy; the original investigation remains valid historical evidence."
+      }
+    ],
+    "preserves": [
+      "E-016 phase observations",
+      "E-017 official-document boundary",
+      "E-020 public-source reference boundary"
+    ],
+    "does_not_replace": [
+      "E-012 historical performance candidate",
+      "Real summary and cancellation acceptance",
+      "Real Tauri acceptance"
+    ]
+  },
+  "archive_boundary": {
+    "new_llm_requests": 0,
+    "new_runtime_launches": 0,
+    "new_user_session_or_log_reads": 0,
+    "private_user_data_archived": false,
+    "absolute_machine_paths_archived": false
+  },
+  "completed_checks": [
+    {
+      "kind": "formal-frontend-stage",
+      "entrypoint": "scripts/check/run.ps1",
+      "arguments": [
+        "--stage",
+        "frontend"
+      ],
+      "exit_code": 0,
+      "reported_total_duration_seconds": 64.6,
+      "includes_final_persisted_conflict_guard": true
+    },
+    {
+      "kind": "full-frontend-lint-and-typecheck",
+      "entrypoint": "scripts/frontend/lint.ps1",
+      "invoked_by_formal_runner": true,
+      "exit_code": 0,
+      "reported_stage_duration_seconds": 16.4,
+      "steps": [
+        "ESLint",
+        "color guard",
+        "UI provenance guard",
+        "design token guard",
+        "TypeScript typecheck"
+      ]
+    },
+    {
+      "kind": "full-frontend-tests",
+      "entrypoint": "scripts/frontend/test.ps1",
+      "invoked_by_formal_runner": true,
+      "exit_code": 0,
+      "test_files": 135,
+      "passed": 912,
+      "reported_vitest_duration_seconds": 12.15,
+      "reported_stage_duration_seconds": 13.8,
+      "new_regression_file": "frontend/src/pages/chat/components/executionDisclosurePolicy.test.ts",
+      "new_regression_file_tests": 32,
+      "new_regressions_included_in_full_count": true
+    },
+    {
+      "kind": "production-frontend-build",
+      "entrypoint": "scripts/frontend/build.ps1",
+      "invoked_by_formal_runner": true,
+      "exit_code": 0,
+      "reported_vite_build_duration_seconds": 32.44,
+      "reported_stage_duration_seconds": 34.4,
+      "nonblocking_notices": [
+        "Existing highlight selector notice",
+        "Existing large chunk notice"
+      ]
+    },
+    {
+      "kind": "diff-whitespace-check",
+      "entrypoint": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "kind": "desktop-probe-syntax-only",
+      "repository_relative_path": ".tmp/disclosure-118/probe.mjs",
+      "exit_code": 0,
+      "probe_executed": false,
+      "case_added": "legacy validation=conflict"
+    }
+  ]
+}

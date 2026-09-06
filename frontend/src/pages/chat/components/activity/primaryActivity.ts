@@ -142,9 +142,11 @@ function messageRunLabel(
   presentation: SessionRunPresentation,
 ): string | undefined {
   if (presentation.phase === "stopping") {
+    if (presentation.stopPhase === "requesting") return "正在请求停止，等待服务确认…";
     return "正在取消当前任务，任务尚未结束…";
   }
   if (presentation.phase === "queued") return "任务正在等待处理…";
+  if (presentation.phase === "preparing") return "正在准备这轮对话…";
   if (presentation.phase === "recovering") return "正在恢复这段对话的运行状态…";
   if (presentation.run?.control_scope !== "desktop_text") {
     return "这段对话正在其他入口处理中…";
@@ -201,7 +203,7 @@ export function resolvePrimaryActivity(
         toolCallId: tool.toolCallId,
       };
     }
-    if (message.runStatus && !["queued", "stopping"].includes(input.runPresentation.phase)) {
+    if (message.runStatus && !["queued", "preparing", "stopping"].includes(input.runPresentation.phase)) {
       return {
         surface: "message",
         kind: "model",

@@ -55,6 +55,8 @@ import {
   useDraftStore,
 } from "./drafts";
 import { createStreamUpdateScheduler } from "./streamUpdateScheduler";
+import { createSessionDetailReads } from "./sessionDetailReads";
+import { createRunCancellation, type StopRequestPhase } from "./runCancellation";
 import {
   createApprovalModeRefresher,
   type ApprovalModeRefreshOptions,
@@ -120,6 +122,19 @@ const MAX_IDLE_SESSION_VIEWS = 20;
 const MAX_RUN_SNAPSHOTS = 512;
 let openSessionToken = 0;
 let detailRefreshSeq = 0;
+let runtimeGeneration = 0;
+const detailReads = createSessionDetailReads(
+  (sessionId) => sessionsApi.get(sessionId),
+  (sessionId) => { void useConversationStore.getState().refreshCurrentSession(sessionId); },
+);
+let appliedDetails = new WeakSet<SessionDetail>();
+interface PendingInput {
+  sessionId: string;
+  runtimeId: string | null;
+  userMessageId: string;
+  assistantId: string;
+}
+const pendingInputs = new Map<string, PendingInput>();
 let modelMutationSeq = 0;
 let approvalModeMutationSeq = 0;
 
@@ -174,6 +189,7 @@ export interface ConversationState {
   syncRefreshSeq: number;
   sessionViews: Record<string, SessionConversationView>;
   runSnapshots: Record<string, RunSnapshot>;
+  runtimeInstanceId: string | null;
   runCalibrationPhase: RunCalibrationPhase;
   runFence: SnapshotFenceState;
   viewAccessedAt: Record<string, number>;
@@ -190,6 +206,8 @@ export interface ConversationState {
   clearSearchTarget: (token: number) => void;
   refreshCurrentSession: (sessionId: string) => Promise<"applied" | "stale" | "failed">;
   invalidateBackgroundRefreshes: () => void;
+  invalidateSessionDetail: (sessionId: string) => void;
+  observeRuntimeIdentity: (runtimeId: string) => void;
   applyRunEvents: (sessionId: string, runId: string, events: PushEvent[]) => void;
   applyRunSnapshot: (snapshot: RunSnapshot) => void;
   calibrateRuns: () => Promise<void>;
@@ -241,9 +259,9 @@ interface SessionConversationView {
 
 export type SendOutcome = "completed" | "failed" | "interrupted" | "rejected";
 
-export type StopRequestPhase = "requesting" | "accepted";
+export type { StopRequestPhase } from "./runCancellation";
 
-export type StopOutcome = "accepted" | "already-pending" | "noop" | "failed";
+export type StopOutcome = "accepted" | "pending" | "already-pending" | "noop" | "failed";
 
 export type SendStartResult =
   | {
@@ -317,6 +335,7 @@ function optimisticRunSnapshot(
     started_at: null,
     finished_at: null,
     version: 0,
+    input_accepted: null,
   };
 }
 
@@ -430,11 +449,12 @@ function hasVisibleRunMessage(messages: ChatMessage[], runId: string): boolean {
 async function markCompletedRunUnread(snapshot: RunSnapshot): Promise<void> {
   if (snapshot.outcome !== "completed") return;
   const initial = useConversationStore.getState();
+  const epoch = runtimeGeneration;
   if (initial.currentSessionId === snapshot.session_id) return;
   let messages = initial.sessionViews[snapshot.session_id]?.messages;
   if (!messages || !hasVisibleRunMessage(messages, snapshot.run_id)) {
     try {
-      messages = projectSessionDetail(await sessionsApi.get(snapshot.session_id));
+      messages = projectSessionDetail(await detailReads.read(snapshot.session_id));
     } catch {
       return;
     }
@@ -443,6 +463,7 @@ async function markCompletedRunUnread(snapshot: RunSnapshot): Promise<void> {
   const latest = state.runSnapshots[snapshot.run_id];
   if (
     state.currentSessionId === snapshot.session_id
+    || epoch !== runtimeGeneration
     || latest?.status !== "terminal"
     || latest.version !== snapshot.version
     || !hasVisibleRunMessage(messages, snapshot.run_id)
@@ -456,6 +477,7 @@ async function markCompletedRunUnread(snapshot: RunSnapshot): Promise<void> {
 }
 
 function dropOptimisticRun(runId: string): void {
+  cancellations.forget(runId);
   useConversationStore.setState((state) => {
     if (state.runSnapshots[runId]?.version !== 0) return state;
     const runSnapshots = { ...state.runSnapshots };
@@ -468,6 +490,108 @@ function dropOptimisticRun(runId: string): void {
       runFence: pruneSnapshotFence(state.runFence, new Set(Object.keys(runSnapshots))),
     };
   });
+}
+
+function settleSubmittedInput(runId: string, restore: boolean): void {
+  const pending = pendingInputs.get(runId);
+  if (!pending) return;
+  pendingInputs.delete(runId);
+  useDraftStore.getState().finishSubmission(runId, restore);
+  if (!restore) return;
+  useConversationStore.setState((state) => {
+    const view = state.sessionViews[pending.sessionId];
+    if (!view) return state;
+    const messages = view.messages.filter((message) => message.id !== pending.userMessageId
+      && (message.id !== pending.assistantId || messageHasConversationContent(message)));
+    return {
+      sessionViews: { ...state.sessionViews, [pending.sessionId]: { ...view, messages } },
+      ...(state.currentSessionId === pending.sessionId ? { messages } : {}),
+    };
+  });
+}
+
+function observeInputAcceptance(snapshot: RunSnapshot): void {
+  const pending = pendingInputs.get(snapshot.run_id);
+  if (!pending || pending.sessionId !== snapshot.session_id) return;
+  if (pending.runtimeId && snapshot.runtime_instance_id && pending.runtimeId !== snapshot.runtime_instance_id) return;
+  if (snapshot.runtime_instance_id) pending.runtimeId = snapshot.runtime_instance_id;
+  if (snapshot.input_accepted === true) settleSubmittedInput(snapshot.run_id, false);
+  else if (snapshot.status === "terminal") {
+    settleSubmittedInput(snapshot.run_id, snapshot.input_accepted === false || snapshot.outcome === "rejected");
+  }
+}
+
+const cancellations = createRunCancellation({
+  cancel: (sessionId, runId, runtimeId) => runtimeId
+    ? runsApi.cancel(sessionId, runId, runtimeId) : runsApi.cancel(sessionId, runId),
+  snapshot: (snapshot) => useConversationStore.getState().applyRunSnapshot(snapshot),
+  accepted: (sessionId, runId) => {
+    const transport = activeTransports.get(runId);
+    if (transport?.sessionId === sessionId) transport.controller.abort();
+  },
+  changed: (stopRequestsByRun) => useConversationStore.setState({ stopRequestsByRun }),
+  runtimeMismatch: () => { void useConversationStore.getState().calibrateRuns(); },
+});
+
+function observeSendLifecycle(event: BaseEvent, sessionId: string, runId: string): void {
+  const fields = event as unknown as Record<string, unknown>;
+  if (fields.threadId !== sessionId || fields.runId !== runId) return;
+  const result = fields.result && typeof fields.result === "object"
+    ? fields.result as Record<string, unknown> : fields;
+  const inputAccepted = result.inputAccepted ?? fields.inputAccepted;
+  const runtimeId = typeof fields.runtimeInstanceId === "string" ? fields.runtimeInstanceId : null;
+  const state = useConversationStore.getState();
+  const previous = state.runSnapshots[runId];
+  if (!previous || previous.session_id !== sessionId) return;
+  if (state.runtimeInstanceId && runtimeId && state.runtimeInstanceId !== runtimeId) {
+    if (event.type === EventType.RUN_STARTED) void state.calibrateRuns();
+    return;
+  }
+  if (runtimeId && !state.runtimeInstanceId) state.observeRuntimeIdentity(runtimeId);
+  const terminal = event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR;
+  const lifecycle = {
+    ...previous,
+    runtime_instance_id: runtimeId ?? previous.runtime_instance_id,
+    input_accepted: typeof inputAccepted === "boolean" ? inputAccepted : terminal ? null : previous.input_accepted,
+  };
+  if (event.type === EventType.RUN_STARTED) {
+    useConversationStore.setState((current) => {
+      const run = current.runSnapshots[runId];
+      if (!run || run.version !== 0) return current;
+      return { runSnapshots: { ...current.runSnapshots, [runId]: lifecycle } };
+    });
+    cancellations.observe(lifecycle);
+  }
+  if (terminal) {
+    const outcome: RunOutcome = ["completed", "failed", "cancelled", "skipped", "expired", "rejected"]
+      .includes(String(result.outcome)) ? result.outcome as RunOutcome
+      : event.type === EventType.RUN_ERROR ? "failed" : "completed";
+    const completed: RunSnapshot = {
+      ...lifecycle, status: "terminal", outcome,
+      finished_at: new Date(typeof event.timestamp === "number" ? event.timestamp : Date.now()).toISOString(),
+    };
+    useConversationStore.setState((current) => {
+      const run = current.runSnapshots[runId];
+      if (!run || run.status === "terminal") return current;
+      const view = current.sessionViews[sessionId];
+      const messages = view ? terminalizeRunMessages(view.messages, completed) : undefined;
+      return {
+        runSnapshots: { ...current.runSnapshots, [runId]: completed },
+        ...(view && messages ? {
+          sessionViews: { ...current.sessionViews, [sessionId]: { ...view, messages } },
+          ...(current.currentSessionId === sessionId ? { messages } : {}),
+        } : {}),
+      };
+    });
+    cancellations.forget(runId);
+    observeInputAcceptance(completed);
+  } else observeInputAcceptance(lifecycle);
+}
+
+/** Reset module-owned async coordinators as well as Zustand state between isolated tests. */
+export function resetConversationCoordinatorsForTests(): void {
+  detailReads.reset(); appliedDetails = new WeakSet(); cancellations.reset(); pendingInputs.clear();
+  activeTransports.clear(); runtimeGeneration += 1;
 }
 
 function hasErrorMessage(messages: ChatMessage[], error: string): boolean {
@@ -591,6 +715,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   syncRefreshSeq: 0,
   sessionViews: { [HOME_VIEW_KEY]: initialHomeView },
   runSnapshots: {},
+  runtimeInstanceId: null,
   runCalibrationPhase: "calibrating",
   runFence: emptySnapshotFence(),
   viewAccessedAt: {},
@@ -603,6 +728,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (get().editingMessage?.phase === "submitting") return;
     get().cancelEditing();
     openSessionToken += 1;
+    detailReads.invalidateLifecycle();
     detailRefreshSeq += 1;
     modelMutationSeq += 1;
     approvalModeMutationSeq += 1;
@@ -666,11 +792,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const previousDetachedSessionId = get().detachedSessionId;
     const token = openSessionToken + 1;
     openSessionToken = token;
+    detailReads.invalidateLifecycle();
     detailRefreshSeq += 1;
     modelMutationSeq += 1;
     approvalModeMutationSeq += 1;
     if (remember) rememberLastChatSession(sessionId);
     const cached = get().sessionViews[sessionId];
+    const epoch = runtimeGeneration;
     const activeRun = sessionActiveRun(get(), sessionId);
     set((state) => ({
       ...viewFields(
@@ -701,8 +829,24 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       return true;
     }
     try {
-      const detail = await sessionsApi.get(sessionId);
-      if (token !== openSessionToken || get().currentSessionId !== sessionId) return false;
+      const detail = await detailReads.read(sessionId);
+      if (token !== openSessionToken || get().currentSessionId !== sessionId || epoch !== runtimeGeneration) return false;
+      if ((get().sessionViews[sessionId]?.revision ?? 0) > (detail.revision ?? 0)) {
+        set((state) => {
+          if (token !== openSessionToken || state.currentSessionId !== sessionId
+            || epoch !== runtimeGeneration) return state;
+          const newer = state.sessionViews[sessionId];
+          if (!newer) return state;
+          const view = { ...newer, historyLoading: false, historyLoadSeq: state.historyLoadSeq + 1 };
+          return { ...viewFields(view), sessionViews: { ...state.sessionViews, [sessionId]: view } };
+        });
+        if (token !== openSessionToken || get().currentSessionId !== sessionId
+          || epoch !== runtimeGeneration) return false;
+        get().markSessionViewed(sessionId);
+        get().pruneCaches();
+        return true;
+      }
+      appliedDetails.add(detail);
       set((s) => {
         const view = {
           messages: projectSessionDetail(detail),
@@ -724,7 +868,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       get().pruneCaches();
       return true;
     } catch {
-      if (token !== openSessionToken || get().currentSessionId !== sessionId) return false;
+      if (token !== openSessionToken || get().currentSessionId !== sessionId || epoch !== runtimeGeneration) return false;
       if (failureMode === "home") {
         set((s) => {
           const home = s.sessionViews[HOME_VIEW_KEY] ?? newConversationDraftView();
@@ -836,12 +980,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const seq = detailRefreshSeq + 1;
     detailRefreshSeq = seq;
     const openToken = openSessionToken;
+    const epoch = runtimeGeneration;
     if (get().currentSessionId !== sessionId || isSessionBusy(get(), sessionId)) return "stale";
     try {
-      const detail = await sessionsApi.get(sessionId);
+      const detail = await detailReads.read(sessionId);
       if (
         seq !== detailRefreshSeq ||
         openToken !== openSessionToken ||
+        epoch !== runtimeGeneration ||
         get().currentSessionId !== sessionId ||
         isSessionBusy(get(), sessionId)
       ) {
@@ -849,6 +995,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       }
       const revision = detail.revision ?? 0;
       if ((get().sessionViews[sessionId]?.revision ?? 0) > revision) return "stale";
+      if (appliedDetails.has(detail)) return "stale";
+      appliedDetails.add(detail);
       set((state) => {
         const view: SessionConversationView = {
           messages: projectSessionDetail(detail),
@@ -868,13 +1016,34 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       });
       return "applied";
     } catch {
-      return seq === detailRefreshSeq ? "failed" : "stale";
+      return seq === detailRefreshSeq && epoch === runtimeGeneration ? "failed" : "stale";
     }
   },
 
   invalidateBackgroundRefreshes() {
     detailRefreshSeq += 1;
+    detailReads.invalidateLifecycle();
     approvalModeRefresher.invalidate();
+  },
+
+  invalidateSessionDetail(sessionId) {
+    detailReads.invalidate(sessionId);
+  },
+
+  observeRuntimeIdentity(runtimeId) {
+    const previous = get().runtimeInstanceId;
+    if (previous === runtimeId) return;
+    if (previous !== null) {
+      runtimeGeneration += 1;
+      detailReads.invalidateLifecycle();
+      appliedDetails = new WeakSet();
+    }
+    cancellations.setRuntime(runtimeId);
+    set((state) => ({
+      runtimeInstanceId: runtimeId,
+      runSnapshots: Object.fromEntries(Object.entries(state.runSnapshots).filter(([, run]) =>
+        !run.runtime_instance_id || run.runtime_instance_id === runtimeId)),
+    }));
   },
 
   applyApprovalModeState(state) {
@@ -907,8 +1076,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   applyRunEvents(sessionId, runId, events) {
     if (events.length === 0) return;
+    detailReads.invalidate(sessionId);
     set((state) => {
       const knownRun = state.runSnapshots[runId];
+      if (knownRun && knownRun.session_id !== sessionId) return state;
       if (knownRun?.status === "terminal") return state;
       const activeRun = sessionActiveRun(state, sessionId);
       if (!knownRun && activeRun && activeRun.run_id !== runId) return state;
@@ -953,9 +1124,16 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   applyRunSnapshot(snapshot) {
+    if (snapshot.runtime_instance_id && !get().runtimeInstanceId) {
+      get().observeRuntimeIdentity(snapshot.runtime_instance_id);
+    }
     let accepted = false;
     set((state) => {
       const previous = state.runSnapshots[snapshot.run_id];
+      if (previous && previous.session_id !== snapshot.session_id) return state;
+      if (state.runtimeInstanceId && snapshot.runtime_instance_id
+        && state.runtimeInstanceId !== snapshot.runtime_instance_id) return state;
+      if (previous?.status === "terminal" && snapshot.status !== "terminal") return state;
       if (previous && previous.version >= snapshot.version) return state;
       accepted = true;
       const terminal = snapshot.status === "terminal";
@@ -1000,7 +1178,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       };
     });
     if (!accepted) return;
+    observeInputAcceptance(snapshot);
+    cancellations.observe(snapshot);
     if (snapshot.status === "terminal") {
+      detailReads.invalidate(snapshot.session_id);
       activeTransports.delete(snapshot.run_id);
       void markCompletedRunUnread(snapshot);
     }
@@ -1008,13 +1189,27 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   async calibrateRuns() {
+    cancellations.restore();
+    for (const intent of cancellations.identities()) {
+      if (get().runSnapshots[intent.runId]) continue;
+      set((state) => ({ runSnapshots: {
+        ...state.runSnapshots,
+        [intent.runId]: {
+          ...optimisticRunSnapshot(intent.runId, intent.sessionId, new Date().toISOString()),
+          runtime_instance_id: intent.runtimeId,
+        },
+      } }));
+    }
     const calibrationSeq = runCalibrationSeq + 1;
     runCalibrationSeq = calibrationSeq;
     const requestStartEpoch = get().runFence.mutationEpoch;
+    const requestRuntimeGeneration = runtimeGeneration;
     set({ runCalibrationPhase: "calibrating" });
     try {
       const response = await runsApi.list(true);
-      if (calibrationSeq !== runCalibrationSeq) return;
+      if (calibrationSeq !== runCalibrationSeq || requestRuntimeGeneration !== runtimeGeneration) return;
+      const incomingRuntimeId = response.runs.find((run) => run.runtime_instance_id)?.runtime_instance_id;
+      if (incomingRuntimeId) get().observeRuntimeIdentity(incomingRuntimeId);
       for (const snapshot of response.runs) get().applyRunSnapshot(snapshot);
       const returnedRunIds = new Set(response.runs.map((snapshot) => snapshot.run_id));
       const sessionsToRefresh = new Set<string>();
@@ -1024,6 +1219,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         for (const [runId, run] of Object.entries(runSnapshots)) {
           if (
             run.status === "terminal"
+            || cancellations.has(runId)
+            || (run.version === 0 && (activeTransports.has(runId) || pendingInputs.has(runId)))
             || returnedRunIds.has(runId)
             || !canReconcileSnapshotAbsence(state.runFence, runId, requestStartEpoch)
           ) continue;
@@ -1038,6 +1235,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           runFence: pruneSnapshotFence(state.runFence, new Set(Object.keys(runSnapshots))),
         };
       });
+      void cancellations.retry();
       const currentSessionId = get().currentSessionId;
       if (currentSessionId && sessionsToRefresh.has(currentSessionId)) {
         void get().refreshCurrentSession(currentSessionId);
@@ -1328,6 +1526,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const assistantId = newId();
     const sentAt = new Date().toISOString();
     const userMessageId = newId();
+    const sendEpoch = runtimeGeneration;
     const chatAttachments: ChatAttachment[] = attachments.map((draft) => ({
       assetId: draft.attachment.assetId,
       displayName: draft.attachment.displayName,
@@ -1377,13 +1576,22 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         sessionViews,
         runSnapshots: {
           ...s.runSnapshots,
-          [runId]: optimisticRunSnapshot(runId, sessionId, sentAt),
+          [runId]: {
+            ...optimisticRunSnapshot(runId, sessionId, sentAt),
+            runtime_instance_id: runtimeState.runtimeInstanceId,
+            input_accepted: false,
+          },
         },
         runFence: touchSnapshotKey(s.runFence, runId),
         viewAccessedAt: { ...s.viewAccessedAt, [sessionId]: Date.now() },
       };
     });
     rememberLastChatSession(sessionId);
+    pendingInputs.set(runId, {
+      // Bind the input to the first authoritative lifecycle response, not an optimistic owner.
+      sessionId, runtimeId: null, userMessageId, assistantId,
+    });
+    detailReads.invalidate(sessionId);
 
     const controller = new AbortController();
     activeTransports.set(runId, { sessionId, controller });
@@ -1391,6 +1599,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
     const patch = (fn: (m: ChatMessage) => ChatMessage) =>
       set((s) => {
+        if (sendEpoch !== runtimeGeneration) return s;
         const existing = s.sessionViews[sessionId];
         if (!existing) return s;
         const messages = existing.messages.map((m) => (m.id === assistantId ? fn(m) : m));
@@ -1430,6 +1639,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           { signal: controller.signal },
         )) {
           sawStreamEvent = true;
+          observeSendLifecycle(evt, sessionId, runId);
           if (evt.type === EventType.RUN_FINISHED || evt.type === EventType.RUN_ERROR) {
             sawTerminalEvent = true;
           }
@@ -1473,18 +1683,23 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         try {
           const snapshot = await runsApi.get(runId);
           get().applyRunSnapshot(snapshot);
-          runStillActive = (get().runSnapshots[runId] ?? snapshot).status !== "terminal";
+          const latest = get().runSnapshots[runId] ?? snapshot;
+          runStillActive = latest.status !== "terminal";
           if (snapshot.status === "terminal" && get().currentSessionId === sessionId) {
             void get().refreshCurrentSession(sessionId);
           }
-          if (snapshot.outcome === "cancelled") outcome = "interrupted";
-          else if (snapshot.outcome === "rejected") outcome = "rejected";
+          if (latest.outcome === "cancelled") outcome = "interrupted";
+          else if (latest.outcome === "rejected") {
+            outcome = latest.input_accepted === true ? "failed" : "rejected";
+          } else if (latest.outcome === "failed") outcome = "failed";
         } catch {
           // push/reconnect calibration remains the fallback when the transport vanished early.
           if (!sawStreamEvent && admissionFailed) outcome = "rejected";
           runStillActive = !sawTerminalEvent && !admissionFailed;
           if (!runStillActive) dropOptimisticRun(runId);
         }
+        if (outcome === "rejected") settleSubmittedInput(runId, true);
+        else if (!runStillActive) settleSubmittedInput(runId, false);
         set((s) => {
           const existing = s.sessionViews[sessionId];
           if (!existing) return s;
@@ -1728,10 +1943,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         });
         if (!runStillActive) {
           try {
-            const detail = await sessionsApi.get(sessionId);
+            const epoch = runtimeGeneration;
+            const detail = await detailReads.read(sessionId);
             const projected = projectSessionDetail(detail);
             set((s) => {
               const view = s.sessionViews[sessionId] ?? emptyView();
+              if (epoch !== runtimeGeneration || isSessionBusy(s, sessionId)
+                || view.revision > (detail.revision ?? view.revision)) return s;
+              appliedDetails.add(detail);
               const nextMessages = failedError
                 ? hasErrorMessage(projected, failedError)
                   ? projected
@@ -1898,44 +2117,12 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (initial.stopRequestsByRun[runId]) return "already-pending";
     if (!presentation.canStop) return "noop";
 
-    set((state) => ({
-      stopRequestsByRun: {
-        ...state.stopRequestsByRun,
-        [runId]: "requesting",
-      },
-    }));
-    const transport = activeTransports.get(runId);
-    try {
-      const { run } = await runsApi.cancel(sessionId, runId);
-      get().applyRunSnapshot(run);
-      if (run.status === "terminal" && get().currentSessionId === sessionId) {
-        void get().refreshCurrentSession(sessionId);
-      }
-      if (run.status !== "terminal") {
-        set((state) => {
-          if (
-            sessionActiveRun(state, sessionId)?.run_id !== runId
-            || !state.stopRequestsByRun[runId]
-          ) return state;
-          return {
-            stopRequestsByRun: {
-              ...state.stopRequestsByRun,
-              [runId]: "accepted",
-            },
-          };
-        });
-      }
-      if (transport?.sessionId === sessionId) transport.controller.abort();
-      return "accepted";
-    } catch {
-      set((state) => {
-        if (!state.stopRequestsByRun[runId]) return state;
-        const stopRequestsByRun = { ...state.stopRequestsByRun };
-        delete stopRequestsByRun[runId];
-        return { stopRequestsByRun };
-      });
-      void get().calibrateRuns();
-      return "failed";
+    const outcome = await cancellations.request(presentation.run!);
+    if (outcome === "pending" && !cancellations.has(runId)) return "noop";
+    const run = get().runSnapshots[runId];
+    if (run?.status === "terminal" && get().currentSessionId === sessionId) {
+      void get().refreshCurrentSession(sessionId);
     }
+    return outcome;
   },
 }));

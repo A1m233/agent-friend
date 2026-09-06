@@ -25,7 +25,8 @@ from typing import Any, cast
 
 import litellm
 
-from .deepseek_vision_compat import is_deepseek_vision_spec, prepare_litellm_request
+from .chat_request import prepare_litellm_request
+from .deepseek_vision_compat import is_deepseek_vision_spec
 from .error_normalization import map_provider_error as _normalize_provider_error
 from .errors import (
     LLMEmptyResponseError,
@@ -43,6 +44,7 @@ from .kimi_transport import (
     uses_kimi_stream_transport,
 )
 from .litellm_transport import (
+    complete_cancellable_litellm,
     complete_litellm,
     open_cancellable_litellm_stream,
     open_litellm_stream,
@@ -351,6 +353,7 @@ class LLMClient:
         """Execute one provider-neutral non-streaming model request."""
 
         started = time.perf_counter()
+        cancel_check = request.control.cancel_check
         max_retries = (
             max(self._network_retries, self._engine_overload_retries)
             if request.control.allow_retries
@@ -359,16 +362,21 @@ class LLMClient:
         try:
             for attempt in range(max_retries + 1):
                 try:
+                    if cancel_check is not None:
+                        cancel_check()
                     settings = dict(request.settings)
                     if request.tools:
                         settings["tools"] = request.tools
                     response = self._call_once(
                         self.spec,
                         request.messages,
+                        cancel_check=cancel_check,
                         previous_request_witness=request.control.previous_request_witness,
                         transcript_item_domains=request.control.transcript_item_domains,
                         **settings,
                     )
+                    if cancel_check is not None:
+                        cancel_check()
                     return self._observe_response(
                         response,
                         request=request,
@@ -379,7 +387,9 @@ class LLMClient:
                     if attempt >= retry_limit:
                         raise
                     delay = self._retry_delay(exc, attempt)
-                    self._wait_before_retry(exc, attempt, retry_limit, delay)
+                    self._wait_before_retry(
+                        exc, attempt, retry_limit, delay, cancel_check=cancel_check
+                    )
         except BaseException as exc:
             try:
                 failed_diagnostics: LLMResponseDiagnostics | None = None
@@ -768,6 +778,7 @@ class LLMClient:
         spec: ProviderSpec,
         messages: list[dict[str, Any]],
         *,
+        cancel_check: Callable[[], None] | None = None,
         previous_request_witness: ProviderRequestWitness | None = None,
         transcript_item_domains: tuple[str, ...] | None = None,
         **overrides: Any,
@@ -792,14 +803,37 @@ class LLMClient:
             else None
         )
         try:
-            completion = complete_litellm(
-                spec,
-                request_messages,
-                kwargs,
-                completion_call=litellm.completion,
-                transcript_item_domains=prepared_item_domains,
+            if cancel_check is not None:
+                cancel_check()
+            completion = (
+                complete_cancellable_litellm(
+                    spec,
+                    request_messages,
+                    kwargs,
+                    cancel_check,
+                    transcript_item_domains=prepared_item_domains,
+                )
+                if cancel_check is not None
+                else complete_litellm(
+                    spec,
+                    request_messages,
+                    kwargs,
+                    completion_call=litellm.completion,
+                    transcript_item_domains=prepared_item_domains,
+                )
             )
-        except Exception as e:
+        except BaseException as e:
+            if cancel_check is not None:
+                try:
+                    cancel_check()
+                except BaseException as cancelled:
+                    failed_witness = getattr(e, "request_witness", None)
+                    if isinstance(failed_witness, ProviderRequestWitness):
+                        with suppress(Exception):
+                            cancelled.request_witness = failed_witness  # type: ignore[attr-defined]
+                    raise
+            if not isinstance(e, Exception):
+                raise
             mapped = _map_exception(e, provider_id=_provider_id_for_spec(spec))
             failed_witness = getattr(e, "request_witness", None)
             if isinstance(failed_witness, ProviderRequestWitness):
@@ -807,6 +841,8 @@ class LLMClient:
                     mapped.request_witness = failed_witness  # type: ignore[attr-defined]
             raise mapped from e
 
+        if cancel_check is not None:
+            cancel_check()
         response = completion.response
         request_witness = completion.request_witness
         request_relation = "unavailable"

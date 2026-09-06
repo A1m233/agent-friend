@@ -1,0 +1,273 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "f563938bd3f63c88a5e7a5b59825e3da33f06303",
+  "baseline_adapter_sha256": "e573b4515abaab4b395958427ac76d36f3e9cc1881c49fccdbc52d6f3f01bcaf",
+  "candidate_head": "f563938bd3f63c88a5e7a5b59825e3da33f06303",
+  "candidate_source_sha256": {
+    "agent/src/agent/memory_search/session_history_source.py": "718329a15610545474f410f25edfa36c6622e6fa45902905b32f14e24fa62400",
+    "agent/src/agent/sessions/__init__.py": "864b28109f701d6615d7651b4554b0f3a69921cb110156d8351b12d98e64b417",
+    "agent/src/agent/sessions/cache_epoch.py": "36dae725b80ab0d42be1f95cbfedda2c8c87e90f0d3244a3836b3afac604b78e",
+    "agent/src/agent/sessions/catalog.py": "9b5df940c47bff8bd14154a49a631e8479ff333d41b0ac638d2635b3b1603728",
+    "agent/src/agent/sessions/changes.py": "0c72ba9fcd7991aa423c217a315981ecb271979e01b1112ebbfcf932e95c0533",
+    "agent/src/agent/sessions/errors.py": "6333ca28ea98d09cb985d10628635379d9c17c134320ca813dabdb2fdc2813d1",
+    "agent/src/agent/sessions/events.py": "4943f8c7d9198a8607ca36ec0d635fbac05853dcbe18140261d2aad4eea9b6c8",
+    "agent/src/agent/sessions/file_observation.py": "bd835614f4a7672c7f88f13324507d8d4db0b77e40e85a7ae50b5f85426c157e",
+    "agent/src/agent/sessions/manager.py": "413ae6b4c6fa6729c1538e3a1974cd84f61ad5b342f9df8bc136bab5590d30d4",
+    "agent/src/agent/sessions/metadata.py": "affee9c5ebc498184dea0f7ef9fdc5ccfa58b3daac93d3f44385aeacae34b8af",
+    "agent/src/agent/sessions/model_context.py": "bb45b4355d91943fd09eb680ec66dc02262544dd7eb98a4b636547d7f7d38a9a",
+    "agent/src/agent/sessions/model_history.py": "453f90ceb4b4d8198cccaace0044e053c73ccf61146fdaa76c3c403a57e018b8",
+    "agent/src/agent/sessions/query.py": "e4bf77a920bbfed26ed0b8c5bc340840f67fc0c75ab3324ceabae6da841efb71",
+    "agent/src/agent/sessions/recovery.py": "d2507585a6b088427717931b1c14a9ad9334a7b3a18af828ceab98f95e8afddc",
+    "agent/src/agent/sessions/rollout.py": "b08292f724463ebe226fa3af17b2e84570ff0f9f7654134e9db62071fc10b90a",
+    "agent/src/agent/sessions/search.py": "ac6b7a9dd75551425e60106cf15bc56e24fbcf038800875fb2439344cc1d0978",
+    "agent/src/agent/sessions/session.py": "1eab920bdabccf60a225a3b05ace452626ab0aa0222aa821053727d46c011bed",
+    "agent/src/agent/sessions/store.py": "7bbb344d1baa95fd4dce662012ec8f1e8b4c3b29d86b1f0c1987dbde245c7514",
+    "agent/src/agent/sessions/store_types.py": "31b963ed103e883b9beb48f546ef8ccba0c2095e91cf5ee9ca227f53e14e2b87",
+    "agent/src/agent/sessions/tool_execution_evidence.py": "0079a8898979d8d32d0a37383f046cea7b5bf9b203f80e021cd998d48a085179",
+    "memory/src/memory/search/execution.py": "ca896bd1a4ee48d9e7f6e765643953ab8ab687c3b1ae3b59cc11f4eced6f131d",
+    "memory/src/memory/search/service.py": "cae6e4c5c3366a6e1e6f37839a0fac6b1c8333fc399727457d283eb4452aec70"
+  },
+  "candidate_sources_unchanged": true,
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.6"
+  },
+  "fixture": {
+    "kind": "synthetic",
+    "sessions": 17,
+    "bytes": 335720327
+  },
+  "repeats": 3,
+  "results_equal": true,
+  "detail_events_equal": true,
+  "signature_sha256": "64f596db9bde5f5c1fffb3e255597c9cf09728be67cf31bbe8db8ecb9569c6c0",
+  "measurements": [
+    {
+      "path": "baseline",
+      "repeat": 0,
+      "duration_ms": 4153.295199999775,
+      "source_runs": [
+        {
+          "source_name": "session_history",
+          "candidate_count": 8,
+          "limit": 8,
+          "status": "ok",
+          "truncated": true,
+          "raw_candidate_count": 17,
+          "suppressed_count": 1,
+          "scope_scan_attempts": 2,
+          "scope_scan_truncated": false
+        }
+      ],
+      "operations": {
+        "load": 34
+      },
+      "bytes": 671440654,
+      "wait_ms": 9.72,
+      "hold_ms": 415.217,
+      "parse_ms": 964.821
+    },
+    {
+      "path": "candidate",
+      "repeat": 0,
+      "duration_ms": 15.773000000081083,
+      "source_runs": [
+        {
+          "source_name": "session_history",
+          "candidate_count": 8,
+          "limit": 8,
+          "status": "ok",
+          "truncated": true,
+          "raw_candidate_count": 9,
+          "suppressed_count": 0,
+          "scope_scan_attempts": 1,
+          "scope_scan_truncated": false
+        }
+      ],
+      "operations": {
+        "load": 16
+      },
+      "bytes": 8261,
+      "wait_ms": 0.893,
+      "hold_ms": 6.861,
+      "parse_ms": 0.406
+    },
+    {
+      "path": "candidate",
+      "repeat": 1,
+      "duration_ms": 1.7805000006774208,
+      "source_runs": [
+        {
+          "source_name": "session_history",
+          "candidate_count": 8,
+          "limit": 8,
+          "status": "ok",
+          "truncated": true,
+          "raw_candidate_count": 9,
+          "suppressed_count": 0,
+          "scope_scan_attempts": 1,
+          "scope_scan_truncated": false
+        }
+      ],
+      "operations": {},
+      "bytes": 0,
+      "wait_ms": 0,
+      "hold_ms": 0,
+      "parse_ms": 0
+    },
+    {
+      "path": "baseline",
+      "repeat": 1,
+      "duration_ms": 1500.1204999998663,
+      "source_runs": [
+        {
+          "source_name": "session_history",
+          "candidate_count": 8,
+          "limit": 8,
+          "status": "ok",
+          "truncated": true,
+          "raw_candidate_count": 17,
+          "suppressed_count": 1,
+          "scope_scan_attempts": 2,
+          "scope_scan_truncated": false
+        }
+      ],
+      "operations": {
+        "load": 34
+      },
+      "bytes": 671440654,
+      "wait_ms": 2.439,
+      "hold_ms": 423.749,
+      "parse_ms": 983.4540000000001
+    },
+    {
+      "path": "baseline",
+      "repeat": 2,
+      "duration_ms": 1475.7378000003882,
+      "source_runs": [
+        {
+          "source_name": "session_history",
+          "candidate_count": 8,
+          "limit": 8,
+          "status": "ok",
+          "truncated": true,
+          "raw_candidate_count": 17,
+          "suppressed_count": 1,
+          "scope_scan_attempts": 2,
+          "scope_scan_truncated": false
+        }
+      ],
+      "operations": {
+        "load": 34
+      },
+      "bytes": 671440654,
+      "wait_ms": 2.834,
+      "hold_ms": 417.781,
+      "parse_ms": 966.683
+    },
+    {
+      "path": "candidate",
+      "repeat": 2,
+      "duration_ms": 2.064299999801733,
+      "source_runs": [
+        {
+          "source_name": "session_history",
+          "candidate_count": 8,
+          "limit": 8,
+          "status": "ok",
+          "truncated": true,
+          "raw_candidate_count": 9,
+          "suppressed_count": 0,
+          "scope_scan_attempts": 1,
+          "scope_scan_truncated": false
+        }
+      ],
+      "operations": {},
+      "bytes": 0,
+      "wait_ms": 0,
+      "hold_ms": 0,
+      "parse_ms": 0
+    },
+    {
+      "path": "baseline_detail",
+      "repeat": 0,
+      "duration_ms": 727.5743999998667,
+      "event_count": 3,
+      "operations": {
+        "load": 1
+      },
+      "bytes": 335712066,
+      "wait_ms": 0.082,
+      "hold_ms": 201.887,
+      "parse_ms": 483.729
+    },
+    {
+      "path": "candidate_detail",
+      "repeat": 0,
+      "duration_ms": 593.2122000003801,
+      "event_count": 3,
+      "operations": {
+        "load": 1
+      },
+      "bytes": 335712066,
+      "wait_ms": 0.135,
+      "hold_ms": 199.831,
+      "parse_ms": 381.759
+    },
+    {
+      "path": "baseline_detail",
+      "repeat": 1,
+      "duration_ms": 755.6337999994867,
+      "event_count": 3,
+      "operations": {
+        "load": 1
+      },
+      "bytes": 335712066,
+      "wait_ms": 0.184,
+      "hold_ms": 211.076,
+      "parse_ms": 501.626
+    },
+    {
+      "path": "candidate_detail",
+      "repeat": 1,
+      "duration_ms": 0.24809999922581483,
+      "event_count": 3,
+      "operations": {},
+      "bytes": 0,
+      "wait_ms": 0,
+      "hold_ms": 0,
+      "parse_ms": 0
+    },
+    {
+      "path": "baseline_detail",
+      "repeat": 2,
+      "duration_ms": 744.9549000002662,
+      "event_count": 3,
+      "operations": {
+        "load": 1
+      },
+      "bytes": 335712066,
+      "wait_ms": 0.128,
+      "hold_ms": 202.136,
+      "parse_ms": 497.887
+    },
+    {
+      "path": "candidate_detail",
+      "repeat": 2,
+      "duration_ms": 0.2060999995592283,
+      "event_count": 3,
+      "operations": {},
+      "bytes": 0,
+      "wait_ms": 0,
+      "hold_ms": 0,
+      "parse_ms": 0
+    }
+  ],
+  "limitations": [
+    "Synthetic data; not a reproduction of the historical 136.628-second run.",
+    "OS page cache is uncontrolled; repeat 0 is process-query-cache cold, not disk cold.",
+    "Both paths use the current store including summary optimizations; baseline only pins the old history adapter, understating the original baseline cost.",
+    "File-operation bytes exclude summary reverse scans and are a lower bound.",
+    "Result comparison covers ordered IDs/body/provenance/excerpts/scope/truncation; scores may change after eligibility removes rank gaps."
+  ]
+}

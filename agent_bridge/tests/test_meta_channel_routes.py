@@ -23,7 +23,6 @@ from agent import (
     MarkdownPromptBuilder,
     NaiveContextManager,
     PersonaCatalog,
-    Session,
     SessionManager,
     SessionMetadataStore,
     SessionNotFoundError,
@@ -158,14 +157,15 @@ class TestGetSessionEndpoint:
         sid = client.post("/v1/sessions", json={}).json()["session_id"]
         metadata = SessionMetadataStore(runtime.settings.sessions_dir / "metadata.json")
         metadata.compare_and_set_approval_mode(sid, expected_version=0, mode="session_auto")
-        original_load = runtime.persistent_store.load
+        manager = runtime.persistent_session_manager
+        original_read = manager.query if view == "active" else manager.open
         reads = 0
         revision = 0
 
-        def load(session_id: str) -> Session:
+        def read(session_id: str) -> object:
             nonlocal reads, revision
             reads += 1
-            snapshot = original_load(session_id)
+            snapshot = original_read(session_id)
             if changed_during_read and reads == 1:
                 runtime.persistent_store.append_event(
                     session_id,
@@ -179,7 +179,7 @@ class TestGetSessionEndpoint:
                 revision += 1
             return snapshot
 
-        monkeypatch.setattr(runtime.persistent_store, "load", load)
+        monkeypatch.setattr(manager, "query" if view == "active" else "open", read)
         monkeypatch.setattr(
             runtime.persistent_session_manager, "current_revision", lambda _id: revision
         )

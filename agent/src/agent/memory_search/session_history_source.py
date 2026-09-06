@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC
 
@@ -13,11 +14,14 @@ from memory.search import (
     SearchRequest,
     TimeRange,
 )
+from memory.search.execution import CancelCheck, PreparedSearch, check_cancel
 
+from ..sessions import list_session_activity, query_session
 from ..sessions.events import Event
 from ..sessions.store import SessionStore
 
 _EXCERPT_CHARS = 240
+_RankedCandidate = tuple[tuple[int, int, float, str], EvidenceCandidate]
 
 
 class SessionHistorySource:
@@ -35,14 +39,71 @@ class SessionHistorySource:
         request: SearchRequest,
         limit: int,
     ) -> list[EvidenceCandidate]:
+        return self.prepare_search(query, request=request)(limit)
+
+    def prepare_search(
+        self,
+        query: AnalyzedQuery,
+        *,
+        request: SearchRequest,
+        cancel_check: CancelCheck | None = None,
+    ) -> PreparedSearch:
+        # This cache belongs to one service.search invocation, never the source.
+        # Expanding a limit re-selects from the same complete ordered candidates.
+        ranked: list[_RankedCandidate] | None = None
+
+        def search(limit: int) -> list[EvidenceCandidate]:
+            nonlocal ranked
+            check_cancel(cancel_check)
+            if ranked is None:
+                ranked = self._rank(query, request=request, cancel_check=cancel_check)
+            selected = _select_with_session_coverage(
+                ranked, limit=limit, scoped=bool(request.target_session_ids)
+            )
+            query_terms = _source_query_terms(query, request)
+            result = [
+                replace(
+                    candidate,
+                    keyword_rank=(
+                        rank
+                        if query_terms
+                        or (request.mode == "explicit" and request.retrieval_goal == "summary")
+                        else None
+                    ),
+                )
+                for rank, candidate in enumerate(selected, start=1)
+            ]
+            check_cancel(cancel_check)
+            return result
+
+        return search
+
+    def _rank(
+        self,
+        query: AnalyzedQuery,
+        *,
+        request: SearchRequest,
+        cancel_check: CancelCheck | None,
+    ) -> list[_RankedCandidate]:
+        check_cancel(cancel_check)
         time_range = query.time_range
         query_terms = _source_query_terms(query, request)
         target_ids = set(request.target_session_ids)
+        scope = request.automatic_recall_scope
+        excluded_ids = (
+            (scope.current_session_id,)
+            if scope is not None and scope.recall_through_event_uuid is None
+            else ()
+        )
         summaries = [
             summary
-            for summary in self._store.list()
-            if (not target_ids or summary.session_id in target_ids)
-            and not (
+            for summary in list_session_activity(
+                self._store,
+                session_ids=target_ids or None,
+                exclude_session_ids=excluded_ids,
+                cancel_check=cancel_check,
+            )
+            if not (
                 time_range is not None
                 and time_range.until is not None
                 and summary.created_at >= time_range.until
@@ -54,18 +115,24 @@ class SessionHistorySource:
             )
         ]
 
-        ranked: list[tuple[tuple[int, int, float, str], EvidenceCandidate]] = []
+        ranked: list[_RankedCandidate] = []
         for summary in summaries:
-            session = self._store.load(summary.session_id)
-            excluded_uuids = _current_turn_uuids(session.events, summary.session_id, request)
-            active_conversation = [
-                event
-                for event in session.active_events
-                if event.uuid not in excluded_uuids
-                and event.type in ("user_message", "assistant_message")
-                and _recall_content(event) is not None
-            ]
+            check_cancel(cancel_check)
+            session = query_session(self._store, summary.session_id, cancel_check=cancel_check)
+            excluded_uuids = _current_turn_uuids(
+                session.events, summary.session_id, request, session.raw_event_indices
+            )
+            active_conversation: list[Event] = []
+            for event in session.active_events:
+                check_cancel(cancel_check)
+                if (
+                    event.uuid not in excluded_uuids
+                    and event.type in ("user_message", "assistant_message")
+                    and _recall_content(event) is not None
+                ):
+                    active_conversation.append(event)
             for turn in _conversation_turns(active_conversation):
+                check_cancel(cancel_check)
                 visible_events = tuple(
                     event
                     for event in turn
@@ -140,29 +207,23 @@ class SessionHistorySource:
                 )
 
         ranked.sort(key=lambda item: item[0], reverse=True)
-        selected = _select_with_session_coverage(ranked, limit=limit, scoped=bool(target_ids))
-        return [
-            replace(
-                candidate,
-                keyword_rank=(
-                    rank
-                    if query_terms
-                    or (request.mode == "explicit" and request.retrieval_goal == "summary")
-                    else None
-                ),
-            )
-            for rank, candidate in enumerate(selected, start=1)
-        ]
+        check_cancel(cancel_check)
+        return ranked
 
 
 def _current_turn_uuids(
-    raw_events: list[Event],
+    raw_events: Sequence[Event],
     session_id: str,
     request: SearchRequest,
+    raw_event_indices: Mapping[str, int],
 ) -> set[str]:
     if request.session_id != session_id or request.current_turn_start_index is None:
         return set()
-    return {event.uuid for event in raw_events[request.current_turn_start_index :]}
+    return {
+        event.uuid
+        for event in raw_events
+        if raw_event_indices[event.uuid] >= request.current_turn_start_index
+    }
 
 
 def _recall_content(event: Event) -> str | None:

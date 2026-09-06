@@ -87,7 +87,7 @@ def _async_client(spec: ProviderSpec, capture: ProviderRequestCapture) -> tuple[
 
 @dataclass(frozen=True)
 class LiteLLMCompletion:
-    """One completed synchronous call plus its final-request witness."""
+    """One completed non-streaming call plus its final-request witness."""
 
     response: Any
     request_witness: ProviderRequestWitness | None
@@ -190,13 +190,14 @@ def open_litellm_stream(
 
 
 @dataclass
-class LiteLLMAsyncStreamSource:
-    """Adapt ``litellm.acompletion`` to the provider-neutral stream contract."""
+class LiteLLMAsyncSource:
+    """Own one async call, exposing chunks or a single completed response."""
 
     spec: ProviderSpec
     messages: list[dict[str, Any]]
     request_options: dict[str, Any]
     transcript_item_domains: tuple[str, ...] | None = None
+    stream: bool = True
     request_id: str | None = field(default=None, init=False)
     request_witness: ProviderRequestWitness | None = field(default=None, init=False)
     _capture: ProviderRequestCapture = field(init=False, repr=False)
@@ -222,7 +223,7 @@ class LiteLLMAsyncStreamSource:
                 api_key=self.spec.api_key,
                 api_base=self.spec.api_base,
                 messages=self.messages,
-                stream=True,
+                stream=self.stream,
                 client=self._client,
                 **options,
             )
@@ -231,7 +232,14 @@ class LiteLLMAsyncStreamSource:
             raise
         self.request_witness = self._capture.witness
         self.request_id = getattr(self._response, "request_id", None)
+        if not self.stream:
+            return self._completed_response()
         return cast(AsyncIterator[Any], self._response)
+
+    async def _completed_response(self) -> AsyncIterator[Any]:
+        # This is only the synchronous-runtime bridge; the wire request remains
+        # one ordinary Chat completion, with no streaming response conversion.
+        yield self._response
 
     async def close(self) -> None:
         response = self._response
@@ -268,7 +276,7 @@ def open_cancellable_litellm_stream(
 ) -> CancellableAsyncStream:
     """Open any LiteLLM-backed provider with interruptible header waiting."""
     return open_cancellable_stream(
-        LiteLLMAsyncStreamSource(
+        LiteLLMAsyncSource(
             spec,
             messages,
             dict(request_options),
@@ -278,3 +286,43 @@ def open_cancellable_litellm_stream(
         timeout_seconds=timeout_seconds,
         thread_name="litellm-cancellable-stream",
     )
+
+
+def complete_cancellable_litellm(
+    spec: ProviderSpec,
+    messages: list[dict[str, Any]],
+    request_options: dict[str, Any],
+    cancel_check: Callable[[], None],
+    *,
+    transcript_item_domains: tuple[str, ...] | None = None,
+) -> LiteLLMCompletion:
+    """Await one Chat completion with cancellable HTTP and per-call cleanup.
+
+    Cancellation targets the actual async request task and closes its owned
+    client; it does not leave a synchronous HTTP worker running in the background.
+    Keep the ordinary completion timeout rather than applying stream-idle limits.
+    """
+    cancel_check()
+    source = LiteLLMAsyncSource(
+        spec,
+        messages,
+        dict(request_options),
+        transcript_item_domains,
+        stream=False,
+    )
+    stream: CancellableAsyncStream | None = None
+    try:
+        stream = open_cancellable_stream(
+            source,
+            cancel_check,
+            thread_name="litellm-cancellable-completion",
+        )
+        response = next(stream)
+        cancel_check()
+        return LiteLLMCompletion(response=response, request_witness=source.request_witness)
+    except BaseException as exc:
+        _attach_request_witness(exc, source._capture.witness)
+        raise
+    finally:
+        if stream is not None:
+            stream.close()

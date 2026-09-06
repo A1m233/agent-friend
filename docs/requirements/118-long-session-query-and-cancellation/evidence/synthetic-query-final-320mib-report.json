@@ -1,0 +1,278 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-09-06T03:47:01.236771+00:00",
+  "harness_sha256": "3c435840b805b82e03a8cd2b15584a0a0fcc38cca14798e33a9137d9cef657c6",
+  "baseline_commit": "f563938bd3f63c88a5e7a5b59825e3da33f06303",
+  "baseline_adapter_sha256": "e573b4515abaab4b395958427ac76d36f3e9cc1881c49fccdbc52d6f3f01bcaf",
+  "candidate_head": "f563938bd3f63c88a5e7a5b59825e3da33f06303",
+  "candidate_source_sha256": {
+    "agent/src/agent/memory_search/session_history_source.py": "718329a15610545474f410f25edfa36c6622e6fa45902905b32f14e24fa62400",
+    "agent/src/agent/sessions/__init__.py": "864b28109f701d6615d7651b4554b0f3a69921cb110156d8351b12d98e64b417",
+    "agent/src/agent/sessions/cache_epoch.py": "36dae725b80ab0d42be1f95cbfedda2c8c87e90f0d3244a3836b3afac604b78e",
+    "agent/src/agent/sessions/catalog.py": "9b5df940c47bff8bd14154a49a631e8479ff333d41b0ac638d2635b3b1603728",
+    "agent/src/agent/sessions/changes.py": "0c72ba9fcd7991aa423c217a315981ecb271979e01b1112ebbfcf932e95c0533",
+    "agent/src/agent/sessions/errors.py": "6333ca28ea98d09cb985d10628635379d9c17c134320ca813dabdb2fdc2813d1",
+    "agent/src/agent/sessions/events.py": "4943f8c7d9198a8607ca36ec0d635fbac05853dcbe18140261d2aad4eea9b6c8",
+    "agent/src/agent/sessions/file_observation.py": "bd835614f4a7672c7f88f13324507d8d4db0b77e40e85a7ae50b5f85426c157e",
+    "agent/src/agent/sessions/manager.py": "413ae6b4c6fa6729c1538e3a1974cd84f61ad5b342f9df8bc136bab5590d30d4",
+    "agent/src/agent/sessions/metadata.py": "affee9c5ebc498184dea0f7ef9fdc5ccfa58b3daac93d3f44385aeacae34b8af",
+    "agent/src/agent/sessions/model_context.py": "bb45b4355d91943fd09eb680ec66dc02262544dd7eb98a4b636547d7f7d38a9a",
+    "agent/src/agent/sessions/model_history.py": "453f90ceb4b4d8198cccaace0044e053c73ccf61146fdaa76c3c403a57e018b8",
+    "agent/src/agent/sessions/query.py": "6986ad616f8720f5ac89287ecc4e9a359a8e3633b83d232fddb5b7005c18b22d",
+    "agent/src/agent/sessions/query_observation.py": "78c37d047a8fe050914baff5eb458e8ad0fcabfa8b03b966ece6f11d0ad467dc",
+    "agent/src/agent/sessions/recovery.py": "d2507585a6b088427717931b1c14a9ad9334a7b3a18af828ceab98f95e8afddc",
+    "agent/src/agent/sessions/rollout.py": "b08292f724463ebe226fa3af17b2e84570ff0f9f7654134e9db62071fc10b90a",
+    "agent/src/agent/sessions/search.py": "ac6b7a9dd75551425e60106cf15bc56e24fbcf038800875fb2439344cc1d0978",
+    "agent/src/agent/sessions/session.py": "1eab920bdabccf60a225a3b05ace452626ab0aa0222aa821053727d46c011bed",
+    "agent/src/agent/sessions/store.py": "bfaaa461cd138851ba6b6d493ce80f5c86a2eedce1c00d8ac3d808aeb56758c7",
+    "agent/src/agent/sessions/store_types.py": "31b963ed103e883b9beb48f546ef8ccba0c2095e91cf5ee9ca227f53e14e2b87",
+    "agent/src/agent/sessions/tool_execution_evidence.py": "0079a8898979d8d32d0a37383f046cea7b5bf9b203f80e021cd998d48a085179",
+    "memory/src/memory/search/execution.py": "ca896bd1a4ee48d9e7f6e765643953ab8ab687c3b1ae3b59cc11f4eced6f131d",
+    "memory/src/memory/search/service.py": "cae6e4c5c3366a6e1e6f37839a0fac6b1c8333fc399727457d283eb4452aec70"
+  },
+  "candidate_sources_unchanged": true,
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.6",
+    "processor": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+    "logical_cpus": 20
+  },
+  "fixture": {
+    "kind": "synthetic",
+    "sessions": 17,
+    "bytes": 335720327
+  },
+  "repeats": 3,
+  "results_equal": true,
+  "detail_events_equal": true,
+  "signature_sha256": "64f596db9bde5f5c1fffb3e255597c9cf09728be67cf31bbe8db8ecb9569c6c0",
+  "measurements": [
+    {
+      "path": "baseline",
+      "repeat": 0,
+      "duration_ms": 4560.892499999682,
+      "source_runs": [
+        {
+          "source_name": "session_history",
+          "candidate_count": 8,
+          "limit": 8,
+          "status": "ok",
+          "truncated": true,
+          "raw_candidate_count": 17,
+          "suppressed_count": 1,
+          "scope_scan_attempts": 2,
+          "scope_scan_truncated": false
+        }
+      ],
+      "operations": {
+        "load": 34
+      },
+      "bytes": 671440654,
+      "wait_ms": 11.346,
+      "hold_ms": 497.151,
+      "parse_ms": 1054.7839999999999
+    },
+    {
+      "path": "candidate",
+      "repeat": 0,
+      "duration_ms": 20.33060000030673,
+      "source_runs": [
+        {
+          "source_name": "session_history",
+          "candidate_count": 8,
+          "limit": 8,
+          "status": "ok",
+          "truncated": true,
+          "raw_candidate_count": 9,
+          "suppressed_count": 0,
+          "scope_scan_attempts": 1,
+          "scope_scan_truncated": false
+        }
+      ],
+      "operations": {
+        "load": 16
+      },
+      "bytes": 8261,
+      "wait_ms": 1.285,
+      "hold_ms": 8.638,
+      "parse_ms": 0.513
+    },
+    {
+      "path": "candidate",
+      "repeat": 1,
+      "duration_ms": 2.4038999999902444,
+      "source_runs": [
+        {
+          "source_name": "session_history",
+          "candidate_count": 8,
+          "limit": 8,
+          "status": "ok",
+          "truncated": true,
+          "raw_candidate_count": 9,
+          "suppressed_count": 0,
+          "scope_scan_attempts": 1,
+          "scope_scan_truncated": false
+        }
+      ],
+      "operations": {},
+      "bytes": 0,
+      "wait_ms": 0,
+      "hold_ms": 0,
+      "parse_ms": 0
+    },
+    {
+      "path": "baseline",
+      "repeat": 1,
+      "duration_ms": 1664.2087000000174,
+      "source_runs": [
+        {
+          "source_name": "session_history",
+          "candidate_count": 8,
+          "limit": 8,
+          "status": "ok",
+          "truncated": true,
+          "raw_candidate_count": 17,
+          "suppressed_count": 1,
+          "scope_scan_attempts": 2,
+          "scope_scan_truncated": false
+        }
+      ],
+      "operations": {
+        "load": 34
+      },
+      "bytes": 671440654,
+      "wait_ms": 2.838,
+      "hold_ms": 481.738,
+      "parse_ms": 1062.976
+    },
+    {
+      "path": "baseline",
+      "repeat": 2,
+      "duration_ms": 1675.045400000272,
+      "source_runs": [
+        {
+          "source_name": "session_history",
+          "candidate_count": 8,
+          "limit": 8,
+          "status": "ok",
+          "truncated": true,
+          "raw_candidate_count": 17,
+          "suppressed_count": 1,
+          "scope_scan_attempts": 2,
+          "scope_scan_truncated": false
+        }
+      ],
+      "operations": {
+        "load": 34
+      },
+      "bytes": 671440654,
+      "wait_ms": 3.066,
+      "hold_ms": 481.195,
+      "parse_ms": 1089.737
+    },
+    {
+      "path": "candidate",
+      "repeat": 2,
+      "duration_ms": 3.3029999995051185,
+      "source_runs": [
+        {
+          "source_name": "session_history",
+          "candidate_count": 8,
+          "limit": 8,
+          "status": "ok",
+          "truncated": true,
+          "raw_candidate_count": 9,
+          "suppressed_count": 0,
+          "scope_scan_attempts": 1,
+          "scope_scan_truncated": false
+        }
+      ],
+      "operations": {},
+      "bytes": 0,
+      "wait_ms": 0,
+      "hold_ms": 0,
+      "parse_ms": 0
+    },
+    {
+      "path": "baseline_detail",
+      "repeat": 0,
+      "duration_ms": 801.8192999998064,
+      "event_count": 3,
+      "operations": {
+        "load": 1
+      },
+      "bytes": 335712066,
+      "wait_ms": 0.112,
+      "hold_ms": 224.493,
+      "parse_ms": 531.424
+    },
+    {
+      "path": "candidate_detail",
+      "repeat": 0,
+      "duration_ms": 652.1599999996397,
+      "event_count": 3,
+      "operations": {
+        "load": 1
+      },
+      "bytes": 335712066,
+      "wait_ms": 0.137,
+      "hold_ms": 216.934,
+      "parse_ms": 419.805
+    },
+    {
+      "path": "baseline_detail",
+      "repeat": 1,
+      "duration_ms": 795.1199999997698,
+      "event_count": 3,
+      "operations": {
+        "load": 1
+      },
+      "bytes": 335712066,
+      "wait_ms": 0.171,
+      "hold_ms": 235.339,
+      "parse_ms": 520.374
+    },
+    {
+      "path": "candidate_detail",
+      "repeat": 1,
+      "duration_ms": 0.3606000000218046,
+      "event_count": 3,
+      "operations": {},
+      "bytes": 0,
+      "wait_ms": 0,
+      "hold_ms": 0,
+      "parse_ms": 0
+    },
+    {
+      "path": "baseline_detail",
+      "repeat": 2,
+      "duration_ms": 745.7538999997269,
+      "event_count": 3,
+      "operations": {
+        "load": 1
+      },
+      "bytes": 335712066,
+      "wait_ms": 0.158,
+      "hold_ms": 208.922,
+      "parse_ms": 495.614
+    },
+    {
+      "path": "candidate_detail",
+      "repeat": 2,
+      "duration_ms": 0.30609999976149993,
+      "event_count": 3,
+      "operations": {},
+      "bytes": 0,
+      "wait_ms": 0,
+      "hold_ms": 0,
+      "parse_ms": 0
+    }
+  ],
+  "limitations": [
+    "Synthetic data; not a reproduction of the historical 136.628-second run.",
+    "OS page cache is uncontrolled; repeat 0 is process-query-cache cold, not disk cold.",
+    "Both paths use the current store including summary optimizations; baseline only pins the old history adapter, understating the original baseline cost.",
+    "File-operation bytes exclude summary reverse scans and are a lower bound.",
+    "Result comparison covers ordered IDs/body/provenance/excerpts/scope/truncation; scores may change after eligibility removes rank gaps."
+  ]
+}

@@ -12,6 +12,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from .events import Event
+from .query import CancelCheck, check_cancel, load_session
 from .session import Session
 from .store import SessionStore
 from .tool_execution_evidence import (
@@ -91,9 +92,18 @@ class ToolTransactionReconciler:
     def add_terminal_observer(self, observer: Callable[[Session, Event], None]) -> None:
         self._terminal_observers.append(observer)
 
-    def reconcile_session(self, session_id: str) -> ReconciliationReport:
-        with self._session_lock(session_id):
-            return self._reconcile_session_once(session_id)
+    def reconcile_session(
+        self, session_id: str, *, cancel_check: CancelCheck = None
+    ) -> ReconciliationReport:
+        lock = self._session_lock(session_id)
+        while True:
+            check_cancel(cancel_check)
+            if lock.acquire(timeout=0.05):
+                break
+        try:
+            return self._reconcile_session_once(session_id, cancel_check=cancel_check)
+        finally:
+            lock.release()
 
     def reconcile_known_sessions(self) -> tuple[ReconciliationReport, ...]:
         """Best-effort startup scan sharing the same per-session idempotency guard."""
@@ -113,8 +123,10 @@ class ToolTransactionReconciler:
         with self._locks_guard:
             return self._session_locks.setdefault(session_id, Lock())
 
-    def _reconcile_session_once(self, session_id: str) -> ReconciliationReport:
-        session = self._store.load(session_id)
+    def _reconcile_session_once(
+        self, session_id: str, *, cancel_check: CancelCheck = None
+    ) -> ReconciliationReport:
+        session = load_session(self._store, session_id, cancel_check=cancel_check)
         requests: dict[tuple[str, str], Event] = {}
         results: set[tuple[str, str]] = set()
         checkpoints: dict[tuple[str, str], Event] = {}
@@ -122,6 +134,7 @@ class ToolTransactionReconciler:
         request_aliases: dict[tuple[str, str], tuple[str, str]] = {}
 
         for event in session.active_events:
+            check_cancel(cancel_check)
             run_id = self._run_id(event)
             if event.type == "run_terminal":
                 payload_run_id = event.payload.get("run_id")
@@ -141,6 +154,7 @@ class ToolTransactionReconciler:
                 request_aliases[(run_id, provider_call_id)] = key
 
         for event in session.active_events:
+            check_cancel(cancel_check)
             if event.type not in {"tool_call_result", "tool_execution_checkpoint"}:
                 continue
             run_id = self._run_id(event)
@@ -181,6 +195,7 @@ class ToolTransactionReconciler:
         )
 
         for key, request in requests.items():
+            check_cancel(cancel_check)
             if key in results:
                 continue
             run_id, _tool_call_id = key
@@ -196,6 +211,7 @@ class ToolTransactionReconciler:
                 if adapter is not None
                 else self._default_probe(request, checkpoint)
             )
+            check_cancel(cancel_check)
             if probe.outcome is RecoveryProbeOutcome.RUNNING:
                 reattachable += 1
                 continue

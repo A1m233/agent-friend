@@ -8,10 +8,8 @@ from typing import Any
 import httpx
 import openai
 import pytest
-from llm_providers.deepseek_vision_compat import (
-    flatten_deepseek_file_blocks,
-    prepare_litellm_request,
-)
+from llm_providers.chat_request import prepare_litellm_request
+from llm_providers.deepseek_vision_compat import flatten_deepseek_file_blocks
 
 from llm_providers import LLMBadRequestError, LLMClient, LLMTextDelta, LLMTurnDone, ProviderSpec
 

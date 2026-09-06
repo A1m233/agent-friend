@@ -19,7 +19,7 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -1023,11 +1023,19 @@ def test_cancelled_command_restores_persisted_partial_output_before_followup(
 
     worker = threading.Thread(target=consume)
     worker.start()
-    assert tool.started.wait(1)
-    assert handle.cancel(CancelReason.EXPLICIT_REQUEST)
-    worker.join(timeout=1)
-
-    assert not worker.is_alive()
+    try:
+        # Wait for the durable evidence checkpoint, not a one-second machine
+        # performance budget. The full suite may be doing concurrent disk work.
+        assert tool.started.wait(5), errors
+        assert handle.cancel(CancelReason.EXPLICIT_REQUEST)
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+    finally:
+        # A failed handshake must not leave a tool/consumer running into the
+        # next test and turn the original failure into unrelated follow-ups.
+        handle.cancel(CancelReason.EXPLICIT_REQUEST)
+        tool.release.set()
+        worker.join(timeout=5)
     assert len(errors) == 1
     assert isinstance(errors[0], RunCancelled)
     result = next(event for event in conv.session.events if event.type == "tool_call_result")
@@ -1337,5 +1345,123 @@ def test_user_visible_runner_without_turn_done_fails_with_stable_reason(tmp_path
         assert terminal.outcome is RunOutcome.FAILED
         assert terminal.reason_code == "missing_turn_terminal"
         assert terminal.turn_status == "failed"
+    finally:
+        runtime.stop()
+
+
+def test_cancel_during_registered_preparation_does_not_accept_input_or_run_hooks(
+    tmp_path: Path,
+) -> None:
+    from agent.runtime import RunCancelResult
+    from agent.runtime.hooks import PRE_TURN_PROCEED, HookKind, PreTurnDecision
+
+    llm = _ScriptedLLMClient(script=[])
+    conv = _make_conversation(tmp_path, fake_llm=llm)
+    runtime = AgentRuntime(conversation_factory=lambda _sid: conv)
+    entered, release = threading.Event(), threading.Event()
+    hooks: list[str] = []
+
+    def prepare(check: Callable[[], None]) -> Conversation:
+        entered.set()
+        assert release.wait(5)
+        check()
+        return conv
+
+    def pre_turn(_event: object) -> PreTurnDecision:
+        hooks.append("called")
+        return PRE_TURN_PROCEED
+
+    runtime.register_hook(HookKind.PRE_TURN, pre_turn)
+    runtime.start()
+    try:
+        handle = runtime.submit(
+            UserEvent(session_id=conv.session.session_id, user_input="cancelled preparation"),
+            conversation_preparer=prepare,
+            input_accepted=False,
+            control_scope="desktop_text",
+        )
+        assert entered.wait(5)
+        result, snapshot = runtime.cancel_run(
+            handle.run_id,
+            expected_session_id=conv.session.session_id,
+            required_control_scope="desktop_text",
+        )
+        assert result is RunCancelResult.ACCEPTED
+        assert snapshot is not None and snapshot.input_accepted is False
+        assert snapshot.status == "running"
+        release.set()
+        list(handle.events())
+        assert handle.snapshot().outcome is RunOutcome.CANCELLED
+        assert handle.snapshot().input_accepted is False
+        assert hooks == [] and llm.turn_idx == 0
+        assert not any(
+            event.type in {"user_message", "assistant_message"} for event in conv.session.events
+        )
+    finally:
+        release.set()
+        runtime.stop()
+
+
+def test_registered_run_accepts_input_only_after_durable_append(tmp_path: Path) -> None:
+    llm = _ScriptedLLMClient(script=[[LLMTextDelta(text="ok"), LLMTurnDone()]])
+    conv = _make_conversation(tmp_path, fake_llm=llm)
+    runtime = AgentRuntime(conversation_factory=lambda _sid: conv)
+
+    def prepare(check: Callable[[], None]) -> Conversation:
+        check()
+        return conv
+
+    runtime.start()
+    try:
+        handle = runtime.submit(
+            UserEvent(session_id=conv.session.session_id, user_input="durable input"),
+            conversation_preparer=prepare,
+            input_accepted=False,
+        )
+        list(handle.events())
+        assert handle.snapshot().input_accepted is True
+        assert handle.snapshot().outcome is RunOutcome.COMPLETED
+        assert any(event.type == "user_message" for event in conv.session.events)
+    finally:
+        runtime.stop()
+
+
+def test_memory_preparation_cancel_keeps_accepted_input_without_starting_model(
+    tmp_path: Path,
+) -> None:
+    from agent.runtime import RunCancelResult
+
+    llm = _ScriptedLLMClient(script=[])
+    conv = _make_conversation(tmp_path, fake_llm=llm)
+    runtime = AgentRuntime(conversation_factory=lambda _sid: conv)
+
+    class CancellingMemory:
+        def retrieve(self, _query: str, *, cancel_check: Callable[[], None], **_kwargs: Any) -> Any:
+            snapshot = runtime.get_run_snapshot("memory-cancel")
+            assert snapshot is not None and snapshot.input_accepted is True
+            result, _ = runtime.cancel_run(
+                "memory-cancel",
+                expected_session_id=conv.session.session_id,
+                required_control_scope="desktop_text",
+            )
+            assert result is RunCancelResult.ACCEPTED
+            cancel_check()
+            raise AssertionError("memory cancellation must escape")
+
+    conv._memory = cast(Any, CancellingMemory())
+    runtime.start()
+    try:
+        handle = runtime.submit(
+            UserEvent(session_id=conv.session.session_id, user_input="keep accepted input"),
+            run_id="memory-cancel",
+            input_accepted=False,
+            control_scope="desktop_text",
+        )
+        list(handle.events())
+        assert handle.snapshot().outcome is RunOutcome.CANCELLED
+        assert handle.snapshot().input_accepted is True
+        assert llm.turn_idx == 0
+        assert sum(event.type == "user_message" for event in conv.session.events) == 1
+        assert sum(event.type == "run_terminal" for event in conv.session.events) == 1
     finally:
         runtime.stop()

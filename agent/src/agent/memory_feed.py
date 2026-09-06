@@ -107,7 +107,7 @@ def project_post_turn_observation(
         )
         return target
 
-    resolution = resolve_prior_summary(active_events, session.llm_messages)
+    resolution = resolve_prior_summary(active_events, session.llm_messages, scope="business")
     covered_uuid = (
         resolution.prior_summary.covered_through_uuid
         if resolution.prior_summary is not None

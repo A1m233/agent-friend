@@ -35,6 +35,7 @@ from .errors import SessionCorruptError
 from .metadata import SessionMetadataStore
 from .model_context import SessionModelContext
 from .model_history import SessionModelHistory
+from .query import CancelCheck, SessionQuerySnapshot, check_cancel, load_session, query_session
 from .recovery import ToolTransactionReconciler
 from .rollout import SessionRolloutRecorder, restore_rollout
 from .session import Session
@@ -193,7 +194,9 @@ class SessionManager:
             return 0
         return self._session_change_broker.current_revision(session_id)
 
-    def approval_mode_state(self, session: Session) -> SessionApprovalModeState:
+    def approval_mode_state(
+        self, session: Session | SessionQuerySnapshot
+    ) -> SessionApprovalModeState:
         """Read optional metadata for an already-bound persistent or transient session."""
 
         if self._metadata_store is None:
@@ -286,14 +289,17 @@ class SessionManager:
         """Check persistence without loading or validating conversation history."""
         return self._store.exists(session_id)
 
-    def open(self, session_id: str) -> Session:
+    def open(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
         """完整加载指定会话。
 
         Raises:
             SessionNotFoundError: 不存在。
             SessionCorruptError: 文件损坏。
         """
-        return self._store.load(session_id)
+        return load_session(self._store, session_id, cancel_check=cancel_check)
+
+    def query(self, session_id: str, *, cancel_check: CancelCheck = None) -> SessionQuerySnapshot:
+        return query_session(self._store, session_id, cancel_check=cancel_check)
 
     def list(
         self,
@@ -308,7 +314,21 @@ class SessionManager:
             archived: ``False`` 返回普通列表，``True`` 返回已归档列表。
             query: 可选标题搜索。搜索在合成后的展示标题上执行。
         """
-        summaries = [self._apply_metadata(summary) for summary in self._store.list()]
+        metadata = self._metadata_store.load_all() if self._metadata_store is not None else {}
+        summaries = []
+        for summary in self._store.list():
+            item = metadata.get(summary.session_id)
+            summaries.append(
+                dataclasses.replace(
+                    summary,
+                    title=item.display_title or summary.title,
+                    archived_at=item.archived_at,
+                    approval_mode=item.approval_mode,
+                    approval_mode_version=item.approval_mode_version,
+                )
+                if item is not None
+                else summary
+            )
         query_text = query.strip().casefold() if query else ""
         result: list[SessionSummary] = []
         for summary in summaries:
@@ -456,6 +476,7 @@ class SessionManager:
         tool_run_policy: ToolRunPolicy | None = None,
         tool_run_context_factory: Callable[[str], ToolRunContext] | None = None,
         post_turn_external: bool = False,
+        cancel_check: CancelCheck = None,
     ) -> Conversation:
         """根据 ``session.current_persona_id / current_model`` 装配 :class:`Conversation`。
 
@@ -480,6 +501,7 @@ class SessionManager:
             PersonaNotFoundError: 当前 persona id（或老 session name fallback）
                 在 catalog 找不到。
         """
+        check_cancel(cancel_check)
         if (
             self._llm_client_factory is None
             or self._prompt_builder_factory is None
@@ -517,6 +539,7 @@ class SessionManager:
                 )
                 persona_id = BUILTIN_DEFAULT_PERSONA_ID
 
+        check_cancel(cancel_check)
         llm_client = self._llm_client_factory(session.current_model_config)
 
         # 007 起：把 factory 包一层，让返回的 PromptBuilder 实例绑当前 session。
@@ -533,11 +556,15 @@ class SessionManager:
             return builder
 
         prompt_builder = _session_aware_factory(persona_id)
+        check_cancel(cancel_check)
         runtime_state = self._runtime_states.get(session.session_id)
         if runtime_state is None:
             writer_lease = acquire_session_writer_lease(self._store, session.session_id)
             try:
-                session, runtime_state = self._restore_runtime_state(session, writer_lease)
+                session, runtime_state = self._restore_runtime_state(
+                    session, writer_lease, cancel_check=cancel_check
+                )
+                check_cancel(cancel_check)
             except BaseException:
                 writer_lease.release()
                 raise
@@ -577,13 +604,20 @@ class SessionManager:
         self,
         session: Session,
         writer_lease: SessionWriterLease,
+        *,
+        cancel_check: CancelCheck = None,
     ) -> tuple[Session, _SessionRuntimeState]:
         context_manager_factory = self._context_manager_factory
+        check_cancel(cancel_check)
         if context_manager_factory is None:  # guarded by start_conversation
             raise AgentError("context_manager_factory 未配置")
         if self._transaction_reconciler is not None and session.business_llm_messages:
-            session = self._transaction_reconciler.reconcile_session(session.session_id).session
-        restored = restore_rollout(session)
+            session = self._transaction_reconciler.reconcile_session(
+                session.session_id, cancel_check=cancel_check
+            ).session
+        check_cancel(cancel_check)
+        restored = restore_rollout(session, cancel_check=cancel_check)
+        check_cancel(cancel_check)
         if restored.runtime_blocked:
             raise SessionCorruptError(
                 f"会话 {session.session_id} 的 rollout 无有效提交点，"

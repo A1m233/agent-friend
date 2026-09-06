@@ -23,6 +23,8 @@ export interface RunSnapshot {
   version: number;
   /** Process-local Bridge runtime that owns this run. */
   runtime_instance_id?: string | null;
+  /** True only after the submitted input is durable; null/absent is legacy or not applicable. */
+  input_accepted?: boolean | null;
   turn_status?: TurnStatus | null;
   total_tool_calls?: number;
   tool_call_items?: number;

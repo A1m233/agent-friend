@@ -10,7 +10,8 @@ export interface RunPresentationSource {
 }
 
 export interface SessionRunPresentation {
-  phase: "recovering" | "queued" | "running" | "stopping" | "idle";
+  phase: "recovering" | "queued" | "preparing" | "running" | "stopping" | "idle";
+  stopPhase?: "requesting" | "accepted";
   run: RunSnapshot | null;
   busy: boolean;
   canStop: boolean;
@@ -42,7 +43,10 @@ export function sessionRunPresentation(
   if (run) {
     const stopping = Boolean(source.stopRequestsByRun[run.run_id]);
     return {
-      phase: stopping ? "stopping" : run.status === "queued" ? "queued" : "running",
+      phase: stopping ? "stopping" : run.status === "queued" ? "queued"
+        : run.input_accepted === false ? "preparing" : "running",
+      ...(stopping ? { stopPhase: source.stopRequestsByRun[run.run_id] === "requesting"
+        ? "requesting" as const : "accepted" as const } : {}),
       run,
       busy: true,
       canStop: run.control_scope === "desktop_text" && !stopping,

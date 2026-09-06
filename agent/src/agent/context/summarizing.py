@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Generator
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ from uuid import uuid4
 
 from llm_providers import (
     LLMContextWindowError,
+    LLMUnsupportedParameterError,
     ModelCallControl,
     ModelCallTraceContext,
     ModelRequest,
@@ -37,6 +39,7 @@ from llm_providers import (
 from ..attachments import AttachmentError, AttachmentRef
 from ..messages import Message
 from .budget import estimate_request_tokens, estimate_tokens
+from .checkpoints import checkpoint_prefix_digest, summary_message
 from .fifo import FifoContextManager
 from .protocol import (
     BuildResult,
@@ -51,7 +54,6 @@ from .protocol import (
 from .summary_prompt import (
     SUMMARY_SYSTEM_PROMPT,
     build_summary_messages,
-    render_summary_as_context,
     render_transcript,
     strip_analysis,
 )
@@ -69,6 +71,7 @@ POST_COMPACTION_TARGET_RATIO = 0.7
 
 SUMMARY_PROMPT_VERSION = 1
 MAX_SUMMARY_CONTEXT_RETRIES = 2
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -119,6 +122,7 @@ class SummarizingContextManager:
         self._max_failures = max_failures
         self._consecutive_failures = 0
         self._tripped = False
+        self._unsupported_scope: tuple[str | None, str, str] | None = None
         self._prompt_cache_lineage = OperationRequestLineageTracker(max_entries=8)
 
     def build_messages(
@@ -179,6 +183,7 @@ class SummarizingContextManager:
         # runtime=None → 退化 Naive（不做预算判断，不变量 6）
         if runtime is None:
             return BuildResult(messages=parts.assemble(history))
+        runtime.check_cancelled()
 
         # 已跳闸：直接走 FIFO 兜底
         if self._tripped:
@@ -223,6 +228,14 @@ class SummarizingContextManager:
                     "tool_result_cleared_tokens": projection.cleared_tokens,
                     "final_strategy": "summary" if prior is not None else "full",
                 },
+            )
+
+        blocked_scope = (
+            (runtime.session_id, runtime.run_id, runtime.model_id) if runtime.run_id else None
+        )
+        if blocked_scope is not None and blocked_scope == self._unsupported_scope:
+            return self._fallback_result(
+                history, parts, runtime, reason="unsupported_model_parameter"
             )
 
         # 超阈值：重新蒸馏较旧部分
@@ -277,6 +290,7 @@ class SummarizingContextManager:
         attempts = 0
         input_kind = "bounded_full"
         for attempt in range(MAX_SUMMARY_CONTEXT_RETRIES + 1):
+            runtime.check_cancelled()
             attempts = attempt + 1
             ratio = 0.75**attempt
             summary_source = self._bounded_summary_source(
@@ -296,11 +310,13 @@ class SummarizingContextManager:
                 prompt_contract_revision=str(SUMMARY_PROMPT_VERSION),
             )
             try:
+                runtime.check_cancelled()
                 response = runtime.llm_client.generate(
                     ModelRequest(
                         messages=build_summary_messages(summary_text),
                         settings={"max_tokens": summary_output_budget},
                         control=ModelCallControl(
+                            cancel_check=runtime.cancel_check,
                             previous_request_witness=lineage.previous_witness,
                             trace_context=ModelCallTraceContext(
                                 operation="context_compaction",
@@ -317,15 +333,35 @@ class SummarizingContextManager:
                         ),
                     )
                 )
+                runtime.check_cancelled()
                 self._prompt_cache_lineage.complete(lineage, response)
                 raw = response.text
                 break
             except LLMContextWindowError:
+                runtime.check_cancelled()
                 if attempt >= MAX_SUMMARY_CONTEXT_RETRIES:
                     return self._on_failure(
                         history, parts, runtime, reason="summary_context_window_exceeded"
                     )
+            except LLMUnsupportedParameterError as exc:
+                runtime.check_cancelled()
+                if runtime.run_id:
+                    self._unsupported_scope = (runtime.session_id, runtime.run_id, runtime.model_id)
+                logger.warning(
+                    "context_compaction_rejected session=%s run=%s model=%s "
+                    "error_type=%s source=%s reason=%s",
+                    runtime.session_id,
+                    runtime.run_id,
+                    runtime.model_id,
+                    type(exc).__name__,
+                    exc.error_source,
+                    exc.reason_code,
+                )
+                return self._fallback_result(
+                    history, parts, runtime, reason="unsupported_model_parameter"
+                )
             except Exception:
+                runtime.check_cancelled()
                 return self._on_failure(history, parts, runtime, reason="llm_error")
 
         summary = strip_analysis(raw).strip()
@@ -334,7 +370,8 @@ class SummarizingContextManager:
 
         # 摘要成功
         self._consecutive_failures = 0
-        summary_msg = Message(role="system", content=render_summary_as_context(summary))
+        summary_uuid = str(uuid4())
+        summary_msg = summary_message(summary, summary_uuid, activity_id)
         retained_tail = preserve_latest_skill_catalog(history, tail)
         msgs = parts.assemble([summary_msg, *retained_tail])
         tokens_after = estimate_request_tokens(msgs, runtime)
@@ -344,6 +381,8 @@ class SummarizingContextManager:
             )
         record = CompactionRecord(
             summary=summary,
+            checkpoint_version=3,
+            scope="model",
             covered_through_uuid=older[-1].uuid,
             tokens_before=estimate_request_tokens(parts.assemble(history), runtime),
             tokens_after=tokens_after,
@@ -353,8 +392,9 @@ class SummarizingContextManager:
             retained_from_uuid=tail[0].uuid if tail else "",
             omitted_before_count=sum(
                 1
-                for message in older[: max(0, len(older) - len(summary_source))]
+                for message in older
                 if message.role == "user"
+                and message.uuid not in {item.uuid for item in summary_source}
             ),
             effective_window=runtime.budget.effective_window,
             calibration_factor=runtime.calibration_factor,
@@ -362,6 +402,8 @@ class SummarizingContextManager:
             summary_attempts=attempts,
             tool_results_truncated=projection.truncated,
             activity_id=activity_id,
+            summary_message_uuid=summary_uuid,
+            model_prefix_sha256=checkpoint_prefix_digest(message.uuid for message in older),
         )
         return BuildResult(
             messages=msgs,
@@ -438,10 +480,15 @@ class SummarizingContextManager:
         """
         if prior is None:
             return list(history)
+        if getattr(prior, "materialized", False):
+            return list(history)
         idx = self._index_of_uuid(history, prior.covered_through_uuid)
         if idx is None:
             return list(history)
-        summary_msg = Message(role="system", content=render_summary_as_context(prior.summary))
+        message_uuid = getattr(prior, "summary_message_uuid", "") or str(uuid4())
+        summary_msg = summary_message(
+            prior.summary, message_uuid, getattr(prior, "checkpoint_id", "")
+        )
         return [
             summary_msg,
             *preserve_latest_skill_catalog(history, history[idx + 1 :]),
@@ -461,8 +508,24 @@ class SummarizingContextManager:
             candidates = candidates[:-1]
         if not candidates and older:
             candidates = [0]
+        first_user = next(
+            (index for index, message in enumerate(older) if message.role == "user"), len(older)
+        )
         for start in candidates:
-            source = older[start:]
+            runtime.check_cancelled()
+            # The current model view can already contain a prior summary. Preserve
+            # it even when a bounded recent source omits intervening raw turns.
+            pinned = [
+                message
+                for index, message in enumerate(older[:start])
+                if message.meta.get("synthetic") == "context_summary"
+                or (
+                    index < first_user
+                    and message.role == "system"
+                    and message.meta.get("synthetic") != "skill_catalog_state"
+                )
+            ]
+            source = [*pinned, *older[start:]]
             transcript = render_transcript(source)
             request = build_summary_messages(transcript)
             summary_messages = [
@@ -492,6 +555,7 @@ class SummarizingContextManager:
         placeholder = Message(role="system", content="S" * placeholder_chars)
         target = int(runtime.budget.trigger_threshold * POST_COMPACTION_TARGET_RATIO)
         for cut in user_indices[1:]:
+            runtime.check_cancelled()
             candidate = parts.assemble([placeholder, *history[cut:]])
             if estimate_request_tokens(candidate, runtime) <= target:
                 return cut

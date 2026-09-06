@@ -104,8 +104,24 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         }
 
     @router.post("/sessions/{session_id}/runs/{run_id}/cancel")
-    def cancel_run(session_id: str, run_id: str) -> dict[str, Any]:
-        result, snapshot = _agent_runtime().cancel_run(
+    def cancel_run(
+        session_id: str,
+        run_id: str,
+        expected_runtime_instance_id: str | None = Query(None, alias="expectedRuntimeInstanceId"),
+    ) -> dict[str, Any]:
+        agent_runtime = _agent_runtime()
+        if (
+            expected_runtime_instance_id is not None
+            and expected_runtime_instance_id != agent_runtime.runtime_identity.bridge_instance_id
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "run_runtime_mismatch",
+                    "message": "运行服务已变化，请刷新运行状态。",
+                },
+            )
+        result, snapshot = agent_runtime.cancel_run(
             run_id,
             expected_session_id=session_id,
             required_control_scope=DESKTOP_TEXT_CONTROL_SCOPE,

@@ -41,3 +41,31 @@ def test_stream_idle_timeout_is_measured_from_last_provider_event() -> None:
         next(stream)
 
     assert source.closed.wait(1)
+
+
+def test_close_does_not_cancel_cleanup_after_request_has_completed() -> None:
+    cleanup_started = threading.Event()
+    cleaned_up = threading.Event()
+
+    class CompletedSource:
+        request_id: str | None = None
+
+        async def open(self) -> AsyncIterator[object]:
+            async def chunks() -> AsyncIterator[object]:
+                yield "completed"
+
+            return chunks()
+
+        async def close(self) -> None:
+            cleanup_started.set()
+            await asyncio.sleep(0.1)
+            cleaned_up.set()
+
+    stream = open_cancellable_stream(CompletedSource(), lambda: None)
+    assert next(stream) == "completed"
+    assert cleanup_started.wait(1)
+
+    stream.close()
+
+    assert cleaned_up.is_set()
+    assert not stream._thread.is_alive()

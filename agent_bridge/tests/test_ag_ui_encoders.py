@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 from threading import Event, Thread
@@ -38,6 +39,38 @@ class _ConversationStub:
 
     def stream(self, _user_input: str, **_kwargs: Any) -> Iterator[ConversationEvent]:
         yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
+
+
+def test_run_error_serializes_input_acceptance_and_exact_identity() -> None:
+    for accepted in (False, True):
+        handle = RunHandle(
+            RunRequest(
+                event=UserEvent(session_id="session-input", user_input="input"),
+                run_id="run-input",
+                runtime_instance_id="bridge-input",
+                input_accepted=False,
+            )
+        )
+        if accepted:
+            handle.mark_input_accepted()
+        handle.finish_once(RunOutcome.FAILED, error=RuntimeError("test failure"))
+        body = b"".join(
+            encode_stream(
+                lambda: cast(Conversation, _ConversationStub()),
+                "input",
+                thread_id="session-input",
+                run_id="run-input",
+                run_handle=handle,
+            )
+        ).decode()
+        events = [json.loads(line[5:]) for line in body.splitlines() if line.startswith("data:")]
+        assert events[0]["type"] == "RUN_STARTED"
+        assert events[0]["inputAccepted"] is False
+        assert events[-1]["type"] == "RUN_ERROR"
+        assert events[-1]["inputAccepted"] is accepted
+        assert events[-1]["threadId"] == "session-input"
+        assert events[-1]["runId"] == "run-input"
+        assert events[-1]["runtimeInstanceId"] == "bridge-input"
 
 
 def test_item_identity_and_phase_survive_agui_without_provider_decisions() -> None:
