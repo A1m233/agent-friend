@@ -1,6 +1,11 @@
 import type { ChatMessage } from "@/types/chat";
 import { canDiscloseExecution, shouldCollapseExecution } from "@/stores/assistantPhase";
-import { toolPresentation, type MessagePresentationSegment } from "./toolActivityPresentation";
+import type { MessagePresentationSegment } from "./toolActivityPresentation";
+import type { SocialAuthRequestStatus } from "@/services";
+
+export function socialAuthNeedsUserAction(status: SocialAuthRequestStatus | undefined): boolean {
+  return status === "pending" || status === "login_in_progress";
+}
 
 export interface ExecutionSection {
   id: string;
@@ -51,6 +56,7 @@ export function executionSections(
   message: ChatMessage,
   segments: MessagePresentationSegment[],
   policy = executionDisclosurePolicy(message),
+  actionableToolCallIds: readonly string[] = [],
 ): ExecutionSection[] {
   const enabled = policy.source !== "none";
   const sections: ExecutionSection[] = [];
@@ -59,9 +65,10 @@ export function executionSections(
     const processText = text && (policy.source === "native"
       ? text.phase === "commentary"
       : policy.source === "inferred" && text.mid !== policy.finalTextId);
-    const execution = enabled && (processText
-      || (segment.kind === "toolActivity" && segment.blocks.every((block) =>
-        !block.name.startsWith("request_") && !["warning", "error"].includes(toolPresentation(block).status))));
+    // File/command approvals remain reachable in the dock. Only live social
+    // login actions need their message card outside the execution disclosure.
+    const execution = enabled && (processText || segment.kind === "toolActivity"
+      || (segment.kind === "interactiveTool" && !actionableToolCallIds.includes(segment.block.toolCallId)));
     const previous = sections.at(-1);
     if (execution && previous?.execution) {
       previous.indexes.push(index);
