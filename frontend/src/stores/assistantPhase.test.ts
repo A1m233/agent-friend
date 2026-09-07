@@ -99,7 +99,7 @@ describe("per-run assistant phases", () => {
     ]);
   });
 
-  it("keeps unknown, errors and interaction cards outside contiguous execution sections", () => {
+  it("keeps unknown text and actionable cards visible while folding historical tool errors", () => {
     const message: ChatMessage = { ...empty(), assistantPhase: { mode: "native", validation: "valid" },
       status: "complete", runOutcome: "completed", blocks: [
         { kind: "text", mid: "a", text: "progress", phase: "commentary" },
@@ -108,8 +108,8 @@ describe("per-run assistant phases", () => {
         { kind: "tool", toolCallId: "error", name: "web_search", args: "{}", status: "error" },
         { kind: "text", mid: "f", text: "answer", phase: "final_answer" },
       ] };
-    expect(executionSections(message, buildMessagePresentationSegments(message.blocks)).map((s) => s.execution))
-      .toEqual([true, false, false, false, false]);
+    expect(executionSections(message, buildMessagePresentationSegments(message.blocks), undefined, ["auth"]).map((s) => s.execution))
+      .toEqual([true, false, false, true, false]);
     for (const status of ["streaming", "interrupted", "error"] as const) {
       expect(shouldCollapseExecution({ ...message, status })).toBe(false);
     }

@@ -4,6 +4,8 @@ import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConversationStore } from "@/stores";
+import { useSocialAuthRequestsStore } from "@/stores/socialAuthRequests";
+import type { SocialAuthRequestSnapshot, SocialAuthRequestStatus } from "@/services";
 import type { ChatMessage } from "@/types/chat";
 import { MessageList, MessageTimeline } from "./MessageList";
 
@@ -238,6 +240,51 @@ describe("MessageTimeline disclosure scrolling", () => {
     expect(element.scrollHeight).toBeGreaterThan(element.clientHeight);
     expect(element.scrollTop).toBe(element.scrollHeight - element.clientHeight);
   }
+
+  it("reveals live login actions and folds them again without reopening adjacent tools", async () => {
+    const initialAuthStore = useSocialAuthRequestsStore.getState();
+    const snapshot: SocialAuthRequestSnapshot = {
+      requestId: "auth", sessionId: "session", platform: "bilibili", missingCapabilities: [],
+      reason: "Login", originSurface: "chat", status: "pending", createdAt: "t", expiresAt: "t",
+      continuationRunId: null, errorKind: null, challengeKind: "qr_image",
+    };
+    const updateAuth = (status?: SocialAuthRequestStatus) => act(async () => {
+      useSocialAuthRequestsStore.setState({ entries: status ? {
+        auth: { snapshot: { ...snapshot, status }, loading: false, submitting: false, error: null },
+      } : {} });
+    });
+    const message: ChatMessage = {
+      id: "login-message", role: "assistant", runId: "run", status: "complete", runOutcome: "completed",
+      assistantPhase: { mode: "native", validation: "valid" }, createdAt: "2026-09-06T00:00:00Z",
+      blocks: [
+        { kind: "tool", toolCallId: "before", name: "calculate", args: "{}", status: "error" },
+        { kind: "tool", toolCallId: "auth-tool", name: "request_social_auth", args: "{}", status: "done", result: '{"request_id":"auth","platform":"bilibili"}' },
+        { kind: "tool", toolCallId: "after", name: "calculate", args: "{}", status: "done" },
+        { kind: "text", mid: "answer", text: "Answer", phase: "final_answer" },
+      ],
+    };
+    try {
+      await updateAuth();
+      await renderTimeline([message]);
+      const visibleLoginButton = () => [...container.querySelectorAll("button")]
+        .find((button) => button.textContent?.includes("开始登录") && !button.closest("[hidden]"));
+      expect(visibleLoginButton()).toBeUndefined();
+      await updateAuth("pending");
+      expect(visibleLoginButton()).toBeDefined();
+      expect(container.querySelector('button[aria-label="展开执行过程"]')).not.toBeNull();
+      await updateAuth("login_in_progress");
+      expect(container.querySelector('img[alt="Bilibili 登录二维码"]')?.closest("[hidden]")).toBeNull();
+      for (const status of ["authenticated", "continuing", "completed", "cancelled", "expired"] as const) {
+        await updateAuth(status);
+        expect(visibleLoginButton()).toBeUndefined();
+        expect([...container.querySelectorAll("button")].filter((button) => !button.closest("[hidden]") && button.getAttribute("aria-label") === "收起执行过程")).toHaveLength(0);
+      }
+      await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="展开执行过程"]')!.click());
+      expect(container.textContent).toContain("已过期");
+    } finally {
+      await act(async () => useSocialAuthRequestsStore.setState(initialAuthStore, true));
+    }
+  });
 
   it.each([false, true])("keeps the bottom visible when a tool expands and collapses (overlayComposer=%s)", async (overlayComposer) => {
     const id = await mountTimeline(messages(), overlayComposer);
