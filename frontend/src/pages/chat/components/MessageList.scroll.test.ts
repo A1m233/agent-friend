@@ -315,6 +315,29 @@ describe("MessageTimeline disclosure scrolling", () => {
     expect(container.querySelector('[aria-label="滚到底部"]')).not.toBeNull();
   });
 
+  it("commits row positions before a compensated resize callback returns", async () => {
+    const items = messages();
+    await mountTimeline(items);
+    await scrollUp(100);
+    await act(async () => { vi.advanceTimersByTime(200); });
+    await flushFrames();
+    const position = viewport().scrollTop;
+    const readingRow = row(items[3].id);
+    const rowStart = Number.parseFloat(readingRow.style.transform.replace("translateY(", ""));
+    const growth = 80;
+    rowHeights.set(items[0].id, ROW_HEIGHT + growth);
+
+    await act(async () => {
+      ResizeObserverHarness.notify(row(items[0].id));
+      // Assert inside the observer delivery, before act/RAF can hide a stale-layout frame.
+      expect(viewport().scrollTop).toBe(position + growth);
+      const nextStart = Number.parseFloat(readingRow.style.transform.replace("translateY(", ""));
+      expect(nextStart).toBe(rowStart + growth);
+      expect(nextStart - viewport().scrollTop).toBe(rowStart - position);
+    });
+    await flushFrames();
+  });
+
   it.each(["before measurement", "before animation frame"])(
     "lets an upward scroll take priority %s after disclosure",
     async (timing) => {
@@ -396,6 +419,27 @@ describe("MessageTimeline disclosure scrolling", () => {
     const readingPosition = viewport().scrollTop;
     await act(async () => { vi.advanceTimersByTime(1_100); });
     await flushFrames();
+    expect(viewport().scrollTop).toBe(readingPosition);
+  });
+
+  it("preserves upward reading when a cached history refresh finishes", async () => {
+    await act(async () => {
+      useConversationStore.setState({
+        currentSessionId: "session-a", messages: messages(), historyLoading: false,
+        historyLoadSeq: 0, syncRefreshSeq: 0, editingMessage: null, searchTarget: null,
+      });
+      root.render(createElement(MessageList, { primaryActivity: { surface: "none", kind: "none" } }));
+    });
+    await measureMountedRows();
+    await flushFrames();
+    expectAtBottom();
+    await act(async () => useConversationStore.setState({ historyLoading: true }));
+    await scrollUp(100);
+    const readingViewport = viewport();
+    const readingPosition = readingViewport.scrollTop;
+    await act(async () => useConversationStore.setState({ historyLoading: false, historyLoadSeq: 1 }));
+    await flushFrames();
+    expect(viewport()).toBe(readingViewport);
     expect(viewport().scrollTop).toBe(readingPosition);
   });
 });

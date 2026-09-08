@@ -1109,7 +1109,7 @@ export function MessageTimeline({
     handledHistoryLoadSeqRef.current = historyLoadSeq;
     if (historyLoading || messages.length === 0) return;
     if (searchTargetRef.current) return;
-    scheduleScrollToBottom({ force: true });
+    scheduleScrollToBottom();
   }, [historyLoadSeq, historyLoading, messages.length, scheduleScrollToBottom]);
 
   useLayoutEffect(() => {
@@ -1220,7 +1220,7 @@ export function MessageTimeline({
     [clearSearchFeedback, handlePointerScrollEnd],
   );
 
-  if (historyLoading) {
+  if (historyLoading && messages.length === 0) {
     return <HistoryLoadingState />;
   }
 

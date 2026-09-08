@@ -22,12 +22,12 @@ from .events import ROLLOUT_EVENT_TYPES, Event
 from .query_observation import SessionQueryObservation
 from .session import Channel, Session
 from .store_types import SessionLoadDiagnostics
+from .store_types import SourceVersion as SourceVersion
 
 if TYPE_CHECKING:
     from .store import SessionStore
 
 CancelCheck = Callable[[], None] | None
-SourceVersion = tuple[int, int, int, int, int]
 
 
 def check_cancel(cancel_check: CancelCheck) -> None:

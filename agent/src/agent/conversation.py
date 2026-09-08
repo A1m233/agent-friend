@@ -3410,6 +3410,9 @@ class Conversation:
 
     def _restore_context_usage(self) -> None:
         """从 active assistant event 恢复各模型最近的 usage 校准。"""
+        # This projection scans the session. Resolve it once, not for every
+        # historical usage record (which makes cold recovery quadratic).
+        current_model = self._session.current_model
         for event in reversed(self._session.active_events):
             if event.type != "assistant_message":
                 continue
@@ -3431,7 +3434,7 @@ class Conversation:
             ):
                 self._calibration_by_model[model] = min(4.0, max(1.0, float(factor)))
             if (
-                model == self._session.current_model
+                model == current_model
                 and self._last_input_tokens is None
                 and isinstance(prompt_tokens, int)
                 and prompt_tokens > 0

@@ -1,5 +1,9 @@
 # scripts/
 
+> `session-latency/run.* prepare --session-id ID --directory PATH` 在新建的项目外副本中剖析 `manager.open` 与 `start_conversation`，保存不含消息正文的 cProfile 和分阶段耗时；关闭 memory/IM，不启动回合或应用后台任务，禁止 HTTPX 请求及非 loopback 连接。仅复制 JSONL/persona，不能替代真实执行验收；两个平台入口参数一致。
+
+> `session-latency/run.* isolated serve` 默认仍限制4次；另行获得本次授权时才可显式传 `--max-requests 6`，输入保守上界仍为100万，重启不能重置计数。`long-runtime` 在匹配本次 run 的 `llm_stream_start` 后才开始切换，并检查运行期间切换及唯一 calculate=391 结果；不再将冷准备阶段的切换冒充执行期间验收。需求120此前两轮真实调用额度均已结束，以上能力不自动授予新额度。
+
 > `responses-smoke` 通过公共 `LanguageModel.stream()` 验证 DeepSeek V4 Flash（默认思考档位）和 Kimi K3（low）的合成工具闭环；DeepSeek 额外断言 native reasoning_tokens=0 且无推理 state，防止“请求成功但关闭思考未生效”。每模型最多 2 次请求，总计最多 4 次；HTTP 护栏拒绝重试及其它 endpoint。需单次授权和 `--allow-llm --output <新文件路径>`，不覆盖已有证据、不读用户会话。它与 `prompt-cache-smoke` 的 completed-assistant 回放均保留原生多 item 与 phase。
 
 > 离线 HTTPX 护栏：测试前设置 `PYTHONPATH` 指向 `scripts/test`，再给 `test/run.*` 或 `check/run.* --stage backend` 传 `-p no_external_http`。它禁止 HTTPX 的非 loopback 真实网络发送，允许 MockTransport；不替代其它网络库的 mock 或真实 LLM 授权。
@@ -18,7 +22,24 @@
 
 | 验收入口 | 用途 | mac / linux | windows |
 | --- | --- | --- | --- |
+| `session-latency/` | 经授权附着真实 Tauri dev CDP，交替点击两个已有会话，记录首次内容与就绪时间、请求时间；不发送模型消息，报告拒绝覆盖 | `./scripts/session-latency/run.sh --title-a A --title-b B --output PATH` | `.\scripts\session-latency\run.ps1 --title-a A --title-b B --output PATH` |
 | `notification-visual/` | 经授权连接已有 Tauri WebView2/CDP，检查通知几何、点击 ActionBar 调试按钮、拖动与截图；不启动/关闭桌面主程序、不调用 LLM。显式 `restart-bridge` 可经既有supervisor重载Python。Windows 额外同步系统光标以匹配桌宠穿透；其它平台只使用 CDP 输入，未提供原生光标适配。 | `./scripts/notification-visual/run.sh inspect\|hover\|action short\|action long\|action stack\|action clear\|drag X Y\|restart-bridge` | `.\scripts\notification-visual\run.ps1 inspect\|hover\|action short\|action long\|action stack\|action clear\|drag X Y\|restart-bridge` |
+
+`session-latency/run.* restore --session-id ID --baseline-ref HEAD --output PATH` 只读加载一次本机会话，在同一输入上比较 Git 基线与当前 rollout 恢复，报告时间和完整恢复结果摘要；不执行回合、不调用模型。基线先跑且加载器统一使用当前版本，不能冒充独立随机实验；仅从可信项目 Git revision 加载基线代码。原始会话不写入报告。
+
+`session-latency/run.* config PATH` 经授权在当前已选的 kimi-k3/max 会话中点击切换推理与模型，最终恢复原配置；报告完成上界和 HTTP 关联 ID，不调用模型。`session-latency/run.* locks --session-id ID --output PATH` 在临时副本中并发读取大会话、追加合成事件、读写合成通知库，校验追加完整性和锁计时；不修改原会话、不调用模型。两者均支持同参数的 `.sh` / `.ps1` 入口；执行前避免其它测试负载，真实模型授权由调用方另行管理。
+
+`session-latency/run.* scroll PATH` 通过真实 Tauri CDP 切换固定短／长会话并上翻 15 次，记录逐帧位置、消息锚点、scrollTo 调用和实际加载的虚拟列表版本。`geometryFlashes` 只标记偏移先改变超过 150px、容器高度未变、锚点错位并在 50ms 内恢复的已知特征；不是所有视觉抽动的检测器，正常高度补偿不算失败。报告及截图含私有会话标识，应输出到项目外；两个平台入口语义一致，不调用模型。
+
+`session-latency/run.* real SESSION_ID PATH cancel|continue --background-calls-authorized` 仅用于单独授权的真实模型验收：固定选中的独立测试会话为 DeepSeek V4 Flash/off，发送一次且不重试，分别测试输出后取消或单次calculate后续聊。**包括取消在内的动作可能触发后台记忆抽取与通知模型调用，授权和预算必须包含这些调用；标志只确认调用方已取得授权，不是运行时额度限制。** 缺少标志在发送前拒绝。不能使用run终态的model_calls作为总API计数（取消时可能为0）；必须对账provider调用日志。报告保存测试文本和私有标识，不提交。需求120的真实调用额度已停止使用，不能直接复用当时授权运行。
+
+CDP等待条件使用先await加载状态模块、再同步waitForFunction的方式。当前Playwright环境中异步谓词即使最终返回false也可提前通过；不得用它证明配置完成、首输出或终态。逐帧采样的Promise由page.evaluate明确等待，不依赖该谓词。
+
+`session-latency/run.* lock-compare --session-id ID --baseline-ref HEAD --output PATH` 在同一大会话的两个临时副本中加载实际Git基线和当前store，用相同二进制读取暂停检验写锁隔离。保留原10秒写锁超时，检查新增结果和固定读快照；没有模型请求，不能冒充原事故自然复现或历史线程归属。
+
+`session-latency/run.* isolated prepare|serve --session-id ID --directory PATH` 是本需求独立后端实验入口：prepare复制长会话、固定短会话和persona到项目外；serve在18820启动独立bridge，保留memory与notifications，关闭IM/bedtime/idle。它不是完整用户profile克隆（不复制附件、原记忆库与IM凭据）。serve必须另获覆盖后台调用的授权，不能自动续用需求120既有额度。HTTPX同步/异步transport统一限制4次外部POST，文本JSON按wire字节保守预留至多100万输入token上界，拒绝多模态，未使用部分不按估计实际消耗宣称；budget.json存在时拒绝重启重置额度。该上界与真实usage分别对账。
+
+`session-latency/run.* long-runtime DIRECTORY [REPORT_NAME]` 必须在上述独立后端已授权且尚未消耗预算时使用。临时重定向当前真实Tauri chat WebView的REST/SSE至18820，核对runtime身份后发送一次calculate任务、切换长短会话并检查通知；结束恢复原路由并重载。检查报告terminal/outcome，失败不得算通过；测试结束显式清理仅属于本次启动的独立后端进程树，保留用户要求保留的原dev。两个平台wrapper参数一致，Windows后台启动应隐藏窗口。
 
 `notification-visual` 先用 `dev/run.* status` 核对当前 worktree、源码新鲜度与 CDP 9222 运行态。`settings inspect/off/on` 进入“设置 → 通知”操作真实声音开关；`reload-pet`、`reload-bubble`、`reload-chat` 刷新指定 WebView；`expand ID`、`close ID` 通过真实按钮检查展开/关闭；`tooltip '按钮名称'` 悬停并记录朝向、边界及桌宠 WebView 截图，不点击该按钮。使用 `--help` 查看完整命令。报告和气泡截图默认位于系统临时目录的 `agent-friend-notification-visual-117/`，可用 `--output=<私有目录>` 指定；可能包含用户通知正文，不应提交。ActionBar 的四个调试按钮仅在 dev 提供，固定文案不调用模型、不写记忆，清空仅作用于调试来源。
 

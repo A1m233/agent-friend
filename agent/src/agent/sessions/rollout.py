@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any, Literal, cast
@@ -453,6 +453,9 @@ def _degraded_restore(
             cache_epoch=SessionCacheEpoch(reason=reason),
             runtime_blocked=True,
         )
+    committed = replace(
+        committed, serialized_messages=tuple(copy.deepcopy(committed.serialized_messages))
+    )
     history = SessionModelHistory.from_persisted(
         committed.messages,
         active_event_uuids=committed.active_event_uuids,
@@ -477,6 +480,10 @@ def restore_rollout(session: Session, *, cancel_check: CancelCheck = None) -> Ro
 
     item_events: dict[str, tuple[Event, dict[str, Any], Message]] = {}
     committed: RolloutCommitState | None = None
+    # Same v1 canonical JSON digest, retained before the list's closing bracket.
+    # Appends extend that prefix; rewrites start a new one. Every commit is still checked.
+    transcript_prefix = sha256(b"agent-friend:model-transcript:v1\0[")
+    transcript_items = 0
     for event in session.events:
         check_cancel(cancel_check)
         if event.type == "rollout_segment":
@@ -524,7 +531,18 @@ def restore_rollout(session: Session, *, cancel_check: CancelCheck = None) -> Ro
         )
         if payload.get("item_count") != len(messages):
             return _degraded_restore(session, committed, "corrupt_committed_history")
-        if payload.get("transcript_sha256") != _digest("model-transcript", serialized):
+        if relation == "rewrite":
+            transcript_prefix = sha256(b"agent-friend:model-transcript:v1\0[")
+            transcript_items = 0
+        for _, raw, _ in selected:
+            check_cancel(cancel_check)
+            if transcript_items:
+                transcript_prefix.update(b",")
+            transcript_prefix.update(_canonical(raw).encode("utf-8"))
+            transcript_items += 1
+        transcript_digest = transcript_prefix.copy()
+        transcript_digest.update(b"]")
+        if payload.get("transcript_sha256") != transcript_digest.hexdigest():
             return _degraded_restore(session, committed, "corrupt_committed_history")
         raw_active = payload.get("active_event_uuids", [])
         if not isinstance(raw_active, list) or any(
@@ -543,7 +561,9 @@ def restore_rollout(session: Session, *, cancel_check: CancelCheck = None) -> Ro
             segment_id=str(payload.get("segment_id", "")),
             commit_id=str(payload.get("commit_id", "")),
             messages=tuple(messages),
-            serialized_messages=tuple(copy.deepcopy(serialized)),
+            # Replay only reads these values. Isolate once at the return boundary,
+            # rather than copying every cumulative historical prefix.
+            serialized_messages=tuple(serialized),
             active_event_uuids=tuple(raw_active),
             history_generation=int(payload.get("history_generation", 0)),
             provider_request_count=int(payload.get("provider_request_count", 0)),
@@ -567,6 +587,9 @@ def restore_rollout(session: Session, *, cancel_check: CancelCheck = None) -> Ro
     if committed is None:
         return _no_rollout_baseline(session)
 
+    committed = replace(
+        committed, serialized_messages=tuple(copy.deepcopy(committed.serialized_messages))
+    )
     history = SessionModelHistory.from_persisted(
         committed.messages,
         active_event_uuids=committed.active_event_uuids,
