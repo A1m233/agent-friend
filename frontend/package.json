@@ -30,7 +30,7 @@
     "@pixi/mesh": "7.4.3",
     "@pixi/mesh-extras": "7.4.3",
     "@pixi/sprite": "7.4.3",
-    "@tanstack/react-virtual": "^3.14.3",
+    "@tanstack/react-virtual": "3.14.9",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "~2.7.1",
     "@tauri-apps/plugin-log": "^2",

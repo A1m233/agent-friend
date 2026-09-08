@@ -88,17 +88,13 @@ class SessionBridge:
 
     def session_exists(self, session_id: str) -> bool:
         """检查 ``session_id`` 是否已在持久化 store 中存在。"""
-        try:
-            self._runtime.persistent_session_manager.open(session_id)
-        except SessionNotFoundError:
-            return False
-        return True
+        return self._runtime.persistent_session_manager.exists(session_id)
 
     def persistent_model(self, session_id: str, *, default: str) -> str:
         """Return the frozen model for an existing session, or its creation default."""
 
         try:
-            return self._runtime.persistent_session_manager.open(session_id).current_model
+            return self._runtime.persistent_session_manager.query(session_id).current_model
         except SessionNotFoundError:
             return default
 
@@ -106,7 +102,7 @@ class SessionBridge:
         """Read one active durable event for IM alias registration."""
 
         try:
-            session = self._runtime.persistent_session_manager.open(session_id)
+            session = self._runtime.persistent_session_manager.query(session_id)
         except SessionNotFoundError:
             return None
         return next((event for event in session.active_events if event.uuid == event_uuid), None)
@@ -121,7 +117,7 @@ class SessionBridge:
         """All complete text sources of one outbound answer, in product order."""
 
         try:
-            session = self._runtime.persistent_session_manager.open(session_id)
+            session = self._runtime.persistent_session_manager.query(session_id)
         except SessionNotFoundError:
             return ()
         started = False

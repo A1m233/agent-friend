@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import builtins
 import json
+import logging
 import sqlite3
+import sys
+import threading
+import time
 from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import closing, contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -14,6 +18,8 @@ from typing import Any
 from memory.host_episodes.presentation import format_notification_time
 
 from .models import NotificationFact, NotificationRecord, fallback_text
+
+logger = logging.getLogger(__name__)
 
 
 class NotificationConflict(ValueError):
@@ -28,6 +34,9 @@ class NotificationStore:
     def __init__(self, path: Path) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
+        # Readers retain a consistent snapshot without delaying a writer's commit.
+        with closing(sqlite3.connect(self.path, timeout=5.0)) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
         with self._transaction() as conn:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS notifications (
@@ -44,19 +53,49 @@ class NotificationStore:
             """)
 
     @contextmanager
-    def _transaction(self) -> Iterator[sqlite3.Connection]:
+    def _transaction(
+        self, *, write: bool = True, operation: str = "write"
+    ) -> Iterator[sqlite3.Connection]:
+        started = time.perf_counter()
+        if operation == "write":
+            with suppress(Exception):
+                operation = sys._getframe(2).f_code.co_name
+        acquired: float | None = None
+        outcome = "success"
         conn = sqlite3.connect(self.path, timeout=5.0)
         conn.row_factory = sqlite3.Row
         try:
             conn.execute("PRAGMA foreign_keys=ON")
-            conn.execute("BEGIN IMMEDIATE")
+            if not write:
+                conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+            acquired = time.perf_counter()
             yield conn
             conn.commit()
-        except BaseException:
+        except BaseException as exc:
+            outcome = type(exc).__name__
             conn.rollback()
             raise
         finally:
             conn.close()
+            finished = time.perf_counter()
+            with suppress(Exception):
+                logger.log(
+                    logging.INFO
+                    if outcome != "success" or finished - started >= 0.1
+                    else logging.DEBUG,
+                    "notification_transaction operation=%s write=%s thread=%s "
+                    "started=%.6f acquired=%s finished=%.6f wait_ms=%.3f hold_ms=%.3f outcome=%s",
+                    operation,
+                    write,
+                    threading.get_native_id(),
+                    started,
+                    acquired,
+                    finished,
+                    ((acquired or finished) - started) * 1000,
+                    (finished - acquired) * 1000 if acquired is not None else 0.0,
+                    outcome,
+                )
 
     @staticmethod
     def _record(conn: sqlite3.Connection, notification_id: str) -> NotificationRecord:
@@ -79,11 +118,11 @@ class NotificationStore:
         )
 
     def get(self, notification_id: str) -> NotificationRecord:
-        with self._transaction() as conn:
+        with self._transaction(write=False, operation="get") as conn:
             return self._record(conn, notification_id)
 
     def list(self, *, limit: int | None = None) -> list[NotificationRecord]:
-        with self._transaction() as conn:
+        with self._transaction(write=False, operation="list") as conn:
             query = "SELECT notification_id FROM notifications ORDER BY created_at DESC"
             ids = (
                 conn.execute(query + " LIMIT ?", (limit,)).fetchall()

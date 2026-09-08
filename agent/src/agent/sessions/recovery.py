@@ -93,7 +93,11 @@ class ToolTransactionReconciler:
         self._terminal_observers.append(observer)
 
     def reconcile_session(
-        self, session_id: str, *, cancel_check: CancelCheck = None
+        self,
+        session_id: str,
+        *,
+        cancel_check: CancelCheck = None,
+        loaded_session: Session | None = None,
     ) -> ReconciliationReport:
         lock = self._session_lock(session_id)
         while True:
@@ -101,7 +105,9 @@ class ToolTransactionReconciler:
             if lock.acquire(timeout=0.05):
                 break
         try:
-            return self._reconcile_session_once(session_id, cancel_check=cancel_check)
+            return self._reconcile_session_once(
+                session_id, cancel_check=cancel_check, loaded_session=loaded_session
+            )
         finally:
             lock.release()
 
@@ -124,9 +130,24 @@ class ToolTransactionReconciler:
             return self._session_locks.setdefault(session_id, Lock())
 
     def _reconcile_session_once(
-        self, session_id: str, *, cancel_check: CancelCheck = None
+        self,
+        session_id: str,
+        *,
+        cancel_check: CancelCheck = None,
+        loaded_session: Session | None = None,
     ) -> ReconciliationReport:
-        session = load_session(self._store, session_id, cancel_check=cancel_check)
+        can_reuse = getattr(self._store, "can_reuse_loaded", None)
+        # Check inside the reconciliation guard, after the manager's writer lease.
+        # Unknown stores and changed files retain the full-load fallback.
+        if (
+            loaded_session is not None
+            and loaded_session.session_id == session_id
+            and callable(can_reuse)
+            and can_reuse(loaded_session)
+        ):
+            session = loaded_session
+        else:
+            session = load_session(self._store, session_id, cancel_check=cancel_check)
         requests: dict[tuple[str, str], Event] = {}
         results: set[tuple[str, str]] = set()
         checkpoints: dict[tuple[str, str], Event] = {}

@@ -4,7 +4,7 @@ import type { ChatMessage, MessageBlock, TextBlock, ToolBlock } from "@/types/ch
 import type { SessionEvent } from "@/types/meta";
 import { applyAguiEvent, applyPushConversationEvent } from "@/stores/conversationReducer";
 import { projectSessionEvents } from "@/stores/sessionProjection";
-import { executionDisclosurePolicy, executionSections } from "./executionDisclosurePolicy";
+import { executionDisclosurePolicy, executionSections, socialAuthNeedsUserAction } from "./executionDisclosurePolicy";
 import { buildMessagePresentationSegments } from "./toolActivityPresentation";
 
 const text = (mid: string, value: string, phase?: TextBlock["phase"]): TextBlock => ({
@@ -121,7 +121,7 @@ describe("execution disclosure without native assistant phases", () => {
     expect(message.blocks[0]).toMatchObject({ phase });
   });
 
-  it("keeps request tools, warnings, errors and fixed facts outside inferred process sections", () => {
+  it("folds finished request tools, warnings and errors while preserving fixed facts", () => {
     const protectedBlocks: MessageBlock[] = [
       tool("auth", { name: "request_social_auth" }),
       tool("access", { name: "request_filesystem_access", result: '{"status":"granted"}' }),
@@ -135,9 +135,36 @@ describe("execution disclosure without native assistant phases", () => {
     const message = completed([...blocks, text("answer", "Answer")]);
     expect(executionDisclosurePolicy(message).source).toBe("inferred");
     const { process, visible } = partition(message);
-    expect(process.every((segment) => segment.kind === "block" && segment.block.kind === "text")).toBe(true);
-    expect(visible).toHaveLength(protectedBlocks.length + 1);
+    expect(process.filter((segment) => segment.kind !== "block")).toHaveLength(4);
+    expect(visible).toHaveLength(3);
     expect(visible.at(-1)).toMatchObject({ kind: "block", block: { mid: "answer" } });
+  });
+});
+
+describe("only current user actions remain outside execution", () => {
+  it.each(["native", "legacy"] as const)("folds an entire mixed tool group in %s runs", (mode) => {
+    const message = completed([
+      tool("failed", { name: "exec_command", status: "error" }),
+      tool("authorized", { name: "request_filesystem_access", result: '{"status":"granted"}' }),
+      tool("retry", { name: "exec_command", result: '{"status":"exited","exit_code":0}' }),
+      text("answer", "Recovered and finished", mode === "native" ? "final_answer" : undefined),
+    ], { assistantPhase: { mode, validation: mode === "native" ? "valid" : "missing_final" } });
+    expect(executionDisclosurePolicy(message).collapse).toBe(true);
+    expect(partition(message).visible).toMatchObject([{ kind: "block", block: { mid: "answer" } }]);
+    expect(partition(message).process).toMatchObject([{ kind: "toolActivity", blocks: [{ toolCallId: "failed" }, { toolCallId: "authorized" }, { toolCallId: "retry" }] }]);
+  });
+
+  it.each([
+    "pending", "login_in_progress", "authenticated", "continuing", "completed",
+    "declined", "cancelled", "expired", "login_failed", "continuation_failed", undefined,
+  ] as const)("uses live social authorization status %s without exposing adjacent tools", (status) => {
+    const message = completed([tool("before"), tool("auth", { name: "request_social_auth" }), tool("after"), text("answer", "Answer")]);
+    const actionable = socialAuthNeedsUserAction(status);
+    expect(actionable).toBe(status === "pending" || status === "login_in_progress");
+    const segments = buildMessagePresentationSegments(message.blocks);
+    const sections = executionSections(message, segments, executionDisclosurePolicy(message), actionable ? ["auth"] : []);
+    const visible = sections.filter((section) => !section.execution).flatMap((section) => section.indexes);
+    expect(visible).toEqual(actionable ? [1, 3] : [3]);
   });
 });
 

@@ -43,6 +43,7 @@ from .protocols.ag_ui import register_routes as register_ag_ui_routes
 from .protocols.im import register_routes as register_im_routes
 from .protocols.openai import register_routes as register_openai_routes
 from .push import register_routes as register_push_routes
+from .request_observation import RequestObservationMiddleware
 from .routes.approvals import register_routes as register_approval_routes
 from .routes.attachments import register_routes as register_attachment_routes
 from .routes.filesystem import register_routes as register_filesystem_routes
@@ -145,6 +146,7 @@ def create_app_with_runtime(
         minimum_size=JSON_COMPRESSION_MINIMUM_SIZE,
         compresslevel=JSON_COMPRESSION_LEVEL,
     )
+    app.add_middleware(RequestObservationMiddleware)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

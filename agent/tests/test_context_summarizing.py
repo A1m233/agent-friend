@@ -1100,6 +1100,53 @@ def test_invalid_checkpoint_boundary_is_ignored_and_rebuilt(tmp_path: Path) -> N
     assert latest.payload["checkpoint_version"] == 3
 
 
+def test_usage_restore_projects_model_once_and_keeps_latest_active_usage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conv, session, _store = _make_conversation(
+        tmp_path, fake_llm=_FakeLLM(), context_manager=SummarizingContextManager()
+    )
+    current_model = session.current_model
+    for index in range(200):
+        session.append(
+            Event(
+                type="assistant_message",
+                uuid=f"usage-{index}",
+                ts=datetime.now(UTC),
+                payload={"content": "ok"},
+                meta={
+                    "context_usage": {
+                        "model": current_model if index % 2 == 0 else "other-model",
+                        "calibration_factor": 1.5 if index % 2 == 0 else 2.0,
+                        "prompt_tokens": 1000 + index,
+                    }
+                },
+            )
+        )
+    session.append(
+        Event(
+            type="turn_rewrite",
+            uuid="rewrite",
+            ts=datetime.now(UTC),
+            payload={"inactive_event_uuids": ["usage-198"]},
+        )
+    )
+    reads = 0
+    original = cast(property, Session.__dict__["current_model"]).fget
+    assert original is not None
+
+    def counted(instance: Session) -> str:
+        nonlocal reads
+        reads += 1
+        return cast(str, original(instance))
+
+    monkeypatch.setattr(Session, "current_model", property(counted))
+    conv._restore_context_usage()
+    assert reads == 1
+    assert conv._last_input_tokens == 1196
+    assert conv._calibration_by_model == {current_model: 1.5, "other-model": 2.0}
+
+
 def test_usage_calibration_persists_and_restores_per_model(tmp_path: Path) -> None:
     llm = _FakeLLM(
         context_window=100_000,

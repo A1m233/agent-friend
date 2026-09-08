@@ -7,8 +7,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import Barrier, current_thread
 from threading import Event as ThreadEvent
+from typing import BinaryIO
 
 import pytest
+from agent.sessions.query import CancelCheck
 
 from agent import Event, JsonlSessionStore, Session
 
@@ -20,6 +22,72 @@ def _event(event_id: str, text: str) -> Event:
         ts=datetime.now(UTC),
         payload={"content": text},
     )
+
+
+def test_writer_commits_before_snapshot_bytes_are_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = JsonlSessionStore(tmp_path)
+    session = Session.new("synthetic", "default", "test/model")
+    store.create(session)
+    ready, release = ThreadEvent(), ThreadEvent()
+    read = store._read_snapshot_bytes
+
+    def paused_read(binary: BinaryIO, length: int, cancel_check: CancelCheck) -> list[bytes]:
+        if current_thread().name.startswith("pinned-reader"):
+            ready.set()
+            assert release.wait(timeout=5)
+        return read(binary, length, cancel_check)
+
+    monkeypatch.setattr(store, "_read_snapshot_bytes", paused_read)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="pinned-reader") as pool:
+        reader = pool.submit(store.load, session.session_id)
+        try:
+            assert ready.wait(timeout=5)
+            store.append_event(session.session_id, _event("later", "committed after snapshot"))
+        finally:
+            release.set()
+        old = reader.result(timeout=5)
+    assert len(old.events) == 1
+    assert not store.can_reuse_loaded(old)
+    assert store.load(session.session_id).events[-1].uuid == "later"
+
+
+def test_readers_and_other_appends_progress_while_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = JsonlSessionStore(tmp_path)
+    session = Session.new("synthetic", "default", "test/model")
+    store.create(session)
+    encoding = ThreadEvent()
+    release = ThreadEvent()
+    original = Event.to_jsonl
+
+    def encode(event: Event) -> str:
+        if event.uuid == "slow":
+            encoding.set()
+            assert release.wait(timeout=5)
+        return original(event)
+
+    monkeypatch.setattr(Event, "to_jsonl", encode)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        slow = executor.submit(
+            store.append_event, session.session_id, _event("slow", "large payload")
+        )
+        try:
+            assert encoding.wait(timeout=5)
+            # Both operations must finish before encoding can finish, not just
+            # eventually succeed after a lock timeout or retry.
+            reader = executor.submit(store.load, session.session_id)
+            assert len(reader.result(timeout=2).events) == 1
+            writer = executor.submit(
+                store.append_event, session.session_id, _event("fast", "result")
+            )
+            writer.result(timeout=2)
+        finally:
+            release.set()
+        slow.result(timeout=5)
+    assert [e.uuid for e in store.load(session.session_id).events[1:]] == ["fast", "slow"]
 
 
 @pytest.mark.parametrize("reader_count", [1, 4])

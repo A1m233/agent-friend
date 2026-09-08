@@ -4,6 +4,8 @@ import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConversationStore } from "@/stores";
+import { useSocialAuthRequestsStore } from "@/stores/socialAuthRequests";
+import type { SocialAuthRequestSnapshot, SocialAuthRequestStatus } from "@/services";
 import type { ChatMessage } from "@/types/chat";
 import { MessageList, MessageTimeline } from "./MessageList";
 
@@ -239,6 +241,51 @@ describe("MessageTimeline disclosure scrolling", () => {
     expect(element.scrollTop).toBe(element.scrollHeight - element.clientHeight);
   }
 
+  it("reveals live login actions and folds them again without reopening adjacent tools", async () => {
+    const initialAuthStore = useSocialAuthRequestsStore.getState();
+    const snapshot: SocialAuthRequestSnapshot = {
+      requestId: "auth", sessionId: "session", platform: "bilibili", missingCapabilities: [],
+      reason: "Login", originSurface: "chat", status: "pending", createdAt: "t", expiresAt: "t",
+      continuationRunId: null, errorKind: null, challengeKind: "qr_image",
+    };
+    const updateAuth = (status?: SocialAuthRequestStatus) => act(async () => {
+      useSocialAuthRequestsStore.setState({ entries: status ? {
+        auth: { snapshot: { ...snapshot, status }, loading: false, submitting: false, error: null },
+      } : {} });
+    });
+    const message: ChatMessage = {
+      id: "login-message", role: "assistant", runId: "run", status: "complete", runOutcome: "completed",
+      assistantPhase: { mode: "native", validation: "valid" }, createdAt: "2026-09-06T00:00:00Z",
+      blocks: [
+        { kind: "tool", toolCallId: "before", name: "calculate", args: "{}", status: "error" },
+        { kind: "tool", toolCallId: "auth-tool", name: "request_social_auth", args: "{}", status: "done", result: '{"request_id":"auth","platform":"bilibili"}' },
+        { kind: "tool", toolCallId: "after", name: "calculate", args: "{}", status: "done" },
+        { kind: "text", mid: "answer", text: "Answer", phase: "final_answer" },
+      ],
+    };
+    try {
+      await updateAuth();
+      await renderTimeline([message]);
+      const visibleLoginButton = () => [...container.querySelectorAll("button")]
+        .find((button) => button.textContent?.includes("开始登录") && !button.closest("[hidden]"));
+      expect(visibleLoginButton()).toBeUndefined();
+      await updateAuth("pending");
+      expect(visibleLoginButton()).toBeDefined();
+      expect(container.querySelector('button[aria-label="展开执行过程"]')).not.toBeNull();
+      await updateAuth("login_in_progress");
+      expect(container.querySelector('img[alt="Bilibili 登录二维码"]')?.closest("[hidden]")).toBeNull();
+      for (const status of ["authenticated", "continuing", "completed", "cancelled", "expired"] as const) {
+        await updateAuth(status);
+        expect(visibleLoginButton()).toBeUndefined();
+        expect([...container.querySelectorAll("button")].filter((button) => !button.closest("[hidden]") && button.getAttribute("aria-label") === "收起执行过程")).toHaveLength(0);
+      }
+      await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="展开执行过程"]')!.click());
+      expect(container.textContent).toContain("已过期");
+    } finally {
+      await act(async () => useSocialAuthRequestsStore.setState(initialAuthStore, true));
+    }
+  });
+
   it.each([false, true])("keeps the bottom visible when a tool expands and collapses (overlayComposer=%s)", async (overlayComposer) => {
     const id = await mountTimeline(messages(), overlayComposer);
     const collapsedBottom = viewport().scrollTop;
@@ -266,6 +313,29 @@ describe("MessageTimeline disclosure scrolling", () => {
     await flushFrames();
     expect(viewport().scrollTop).toBe(readingPosition);
     expect(container.querySelector('[aria-label="滚到底部"]')).not.toBeNull();
+  });
+
+  it("commits row positions before a compensated resize callback returns", async () => {
+    const items = messages();
+    await mountTimeline(items);
+    await scrollUp(100);
+    await act(async () => { vi.advanceTimersByTime(200); });
+    await flushFrames();
+    const position = viewport().scrollTop;
+    const readingRow = row(items[3].id);
+    const rowStart = Number.parseFloat(readingRow.style.transform.replace("translateY(", ""));
+    const growth = 80;
+    rowHeights.set(items[0].id, ROW_HEIGHT + growth);
+
+    await act(async () => {
+      ResizeObserverHarness.notify(row(items[0].id));
+      // Assert inside the observer delivery, before act/RAF can hide a stale-layout frame.
+      expect(viewport().scrollTop).toBe(position + growth);
+      const nextStart = Number.parseFloat(readingRow.style.transform.replace("translateY(", ""));
+      expect(nextStart).toBe(rowStart + growth);
+      expect(nextStart - viewport().scrollTop).toBe(rowStart - position);
+    });
+    await flushFrames();
   });
 
   it.each(["before measurement", "before animation frame"])(
@@ -349,6 +419,27 @@ describe("MessageTimeline disclosure scrolling", () => {
     const readingPosition = viewport().scrollTop;
     await act(async () => { vi.advanceTimersByTime(1_100); });
     await flushFrames();
+    expect(viewport().scrollTop).toBe(readingPosition);
+  });
+
+  it("preserves upward reading when a cached history refresh finishes", async () => {
+    await act(async () => {
+      useConversationStore.setState({
+        currentSessionId: "session-a", messages: messages(), historyLoading: false,
+        historyLoadSeq: 0, syncRefreshSeq: 0, editingMessage: null, searchTarget: null,
+      });
+      root.render(createElement(MessageList, { primaryActivity: { surface: "none", kind: "none" } }));
+    });
+    await measureMountedRows();
+    await flushFrames();
+    expectAtBottom();
+    await act(async () => useConversationStore.setState({ historyLoading: true }));
+    await scrollUp(100);
+    const readingViewport = viewport();
+    const readingPosition = readingViewport.scrollTop;
+    await act(async () => useConversationStore.setState({ historyLoading: false, historyLoadSeq: 1 }));
+    await flushFrames();
+    expect(viewport()).toBe(readingViewport);
     expect(viewport().scrollTop).toBe(readingPosition);
   });
 });

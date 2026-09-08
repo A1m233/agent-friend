@@ -10,8 +10,6 @@ from agent import SessionManager
 from llm_providers import (
     ModelRuntimeConfig,
     all_model_ids,
-    default_model_runtime_config,
-    validate_model_runtime_config,
 )
 
 from .errors import (
@@ -50,24 +48,12 @@ class SessionModelService:
             if self._runtime is not None:
                 stack.enter_context(self._runtime.try_reserve_session_mutation(session_id))
             stack.enter_context(self._turns.try_hold(session_id))
-            session = self._sessions.open(session_id)
-            current = session.current_model_config
-            if model is not None:
-                target = (
-                    ModelRuntimeConfig(model, reasoning_preset)
-                    if reasoning_preset is not None
-                    else default_model_runtime_config(model)
-                )
-            else:
-                assert reasoning_preset is not None
-                target = ModelRuntimeConfig(current.model_id, reasoning_preset)
             try:
-                target = validate_model_runtime_config(target)
+                return self._sessions.update_model_config(
+                    session_id, model=model, reasoning_preset=reasoning_preset
+                )
             except ValueError as exc:
                 raise UnsupportedReasoningPresetError(str(exc)) from exc
-            conversation = self._sessions.start_conversation(session)
-            conversation.switch_model_config(target)
-            return session.current_model_config
 
     def switch(self, session_id: str, model: str) -> str:
         return self.update(session_id, model=model).model_id

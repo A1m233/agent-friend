@@ -19,6 +19,35 @@ from memory.host_episodes import presentation
 NOW = datetime(2026, 9, 6, tzinfo=UTC)
 
 
+def test_readers_do_not_reserve_writer_and_writer_can_commit_during_read(tmp_path: Path) -> None:
+    store = NotificationStore(tmp_path / "notifications.db")
+    item = store.accept(fact(), provided_text="ready")
+    with store._transaction(write=False, operation="test_snapshot") as reader:
+        assert reader.execute("SELECT COUNT(*) FROM notifications").fetchone()[0] == 1
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            assert pool.submit(store.get, item.notification_id).result(timeout=2) == item
+            added = pool.submit(store.accept, fact("second"), provided_text="second").result(
+                timeout=2
+            )
+        # A reader sees one stable snapshot while another connection commits.
+        assert reader.execute("SELECT COUNT(*) FROM notifications").fetchone()[0] == 1
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            reader.execute("DELETE FROM notifications")
+    assert store.get(added.notification_id) == added
+    assert len(store.list()) == 2
+
+
+def test_read_does_not_wait_for_pending_writer(tmp_path: Path) -> None:
+    store = NotificationStore(tmp_path / "notifications.db")
+    item = store.accept(fact(), provided_text="ready")
+    with store._transaction() as writer:
+        writer.execute("UPDATE notifications SET text='uncommitted'")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            assert pool.submit(store.get, item.notification_id).result(timeout=2).text == "ready"
+            assert pool.submit(store.list).result(timeout=2)[0].text == "ready"
+    assert store.get(item.notification_id).text == "uncommitted"
+
+
 def fact(event_key: str = "run:s:r", *, owner_user_id: str = "local") -> NotificationFact:
     return NotificationFact(
         event_key=event_key,

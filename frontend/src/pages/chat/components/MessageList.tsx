@@ -24,6 +24,8 @@ import {
   useConversationStore,
 } from "@/stores";
 import { runtimeCredentialGroupForModel } from "@/stores/conversation";
+import { useSocialAuthRequestsStore } from "@/stores/socialAuthRequests";
+import { socialAuthRequestRefs } from "./activity/primaryActivity";
 import {
   sessionRunPresentation,
   shouldShowMessageActionBar,
@@ -80,7 +82,7 @@ import { ReminderCard } from "./ReminderCard";
 import { ToolActivity } from "./ToolActivity";
 import { ToolCard } from "./ToolCard";
 import { buildMessagePresentationSegments } from "./toolActivityPresentation";
-import { executionDisclosurePolicy, executionSections } from "./executionDisclosurePolicy";
+import { executionDisclosurePolicy, executionSections, socialAuthNeedsUserAction } from "./executionDisclosurePolicy";
 import { ExecutionDisclosureStateProvider } from "./ExecutionDisclosure";
 import { CHAT_MARKDOWN_CONTENT_PROPS } from "./chatMarkdownConfig";
 import { useExternalLinkOpener } from "./useExternalLinkOpener";
@@ -353,6 +355,11 @@ function MessageContent({
   onReferenceSelect?: (reference: ChatTextReference) => void;
   onToolDisclosureChange?: () => void;
 }) {
+  const actionableToolCallIds = useSocialAuthRequestsStore(useShallow((state) =>
+    socialAuthRequestRefs([message])
+      .filter((ref) => socialAuthNeedsUserAction(state.entries[ref.requestId]?.snapshot?.status))
+      .map((ref) => ref.toolCallId),
+  ));
   if (message.role === "user") {
     const text = message.blocks
       .filter((b) => b.kind === "text")
@@ -480,7 +487,7 @@ function MessageContent({
       return null;
     });
   const disclosurePolicy = executionDisclosurePolicy(message);
-  const sections = executionSections(message, segments, disclosurePolicy);
+  const sections = executionSections(message, segments, disclosurePolicy, actionableToolCallIds);
   const hasProcess = sections.some((section) => section.execution
     && section.indexes.some((index) => Boolean(segmentNodes[index])));
   const revealTarget = searchAnchorEventUuid && sections.some((section) => section.execution
@@ -1102,7 +1109,7 @@ export function MessageTimeline({
     handledHistoryLoadSeqRef.current = historyLoadSeq;
     if (historyLoading || messages.length === 0) return;
     if (searchTargetRef.current) return;
-    scheduleScrollToBottom({ force: true });
+    scheduleScrollToBottom();
   }, [historyLoadSeq, historyLoading, messages.length, scheduleScrollToBottom]);
 
   useLayoutEffect(() => {
@@ -1213,7 +1220,7 @@ export function MessageTimeline({
     [clearSearchFeedback, handlePointerScrollEnd],
   );
 
-  if (historyLoading) {
+  if (historyLoading && messages.length === 0) {
     return <HistoryLoadingState />;
   }
 

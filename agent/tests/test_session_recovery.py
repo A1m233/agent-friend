@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from agent.sessions import (
     RecoveredToolResult,
     RecoveryProbe,
@@ -17,6 +18,41 @@ from agent.sessions import (
 )
 
 from agent import Event, JsonlSessionStore, Session
+
+
+def test_reconcile_reuses_unchanged_loaded_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, session_id = _store_with_request(tmp_path, checkpoint_mode="resident_only")
+    loaded = store.load(session_id)
+
+    def unexpected_load(*args: object, **kwargs: object) -> Session:
+        raise AssertionError("unchanged input must not be parsed twice")
+
+    monkeypatch.setattr(store, "load", unexpected_load)
+    report = ToolTransactionReconciler(store, runtime_instance_id="new").reconcile_session(
+        session_id, loaded_session=loaded
+    )
+    assert report.session is loaded
+    assert report.interrupted_tool_calls == 1
+    assert loaded.loaded_source_version is None
+
+
+@pytest.mark.parametrize("changed_on_disk", [True, False])
+def test_reconcile_reloads_changed_input(tmp_path: Path, changed_on_disk: bool) -> None:
+    store, session_id = _store_with_request(tmp_path)
+    loaded = store.load(session_id)
+    extra = _event("user_message", "new-message", {"content": "next"})
+    if changed_on_disk:
+        # An independent writer changed the file after the initial read.
+        JsonlSessionStore(tmp_path / "sessions").append_event(session_id, extra)
+    else:
+        loaded.append(extra)
+    report = ToolTransactionReconciler(store, runtime_instance_id="new").reconcile_session(
+        session_id, loaded_session=loaded
+    )
+    assert report.session is not loaded
+    assert any(e.uuid == "new-message" for e in report.session.events) is changed_on_disk
 
 
 def _event(

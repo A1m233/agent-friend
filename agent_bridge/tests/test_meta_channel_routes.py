@@ -827,6 +827,22 @@ class TestAgUiRunChannelBoundary:
 
 
 class TestSwitchModelEndpoint:
+    def test_switch_does_not_open_or_restore_conversation(
+        self, client: TestClient, runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        manager = runtime.persistent_session_manager
+
+        def forbidden(*args: object, **kwargs: object) -> None:
+            raise AssertionError("configuration update must not cold-restore a conversation")
+
+        monkeypatch.setattr(manager, "open", forbidden)
+        monkeypatch.setattr(manager, "start_conversation", forbidden)
+        response = client.post(f"/v1/sessions/{sid}/model", json={"model": "kimi/kimi-k2.6"})
+        assert response.status_code == 200
+        assert manager.query(sid).current_model == "kimi/kimi-k2.6"
+        assert manager.runtime_state_diagnostics(sid) is None
+
     def test_switch_model_persists_event(self, client: TestClient, runtime: BridgeRuntime) -> None:
         sid = client.post("/v1/sessions", json={}).json()["session_id"]
 

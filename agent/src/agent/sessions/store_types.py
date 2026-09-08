@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+SourceVersion = tuple[int, int, int, int, int]
+
 
 @dataclass(frozen=True)
 class SessionLoadDiagnostics:
