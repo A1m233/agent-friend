@@ -37,6 +37,7 @@ CAPABILITY_HANDLERS = {
     "desktop-instance-governance-v1": "desktopInstance",
     "managed-execution-environment-v1": "executionEnvironments",
     "pet-input-evidence-v1": "petInputEvidence",
+    "pet-render-evidence-v1": "petRenderEvidence",
 }
 
 PET_INPUT_PREFIX = "diagnostics/pet-input/"
@@ -1554,8 +1555,150 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 collected=execution_environments_collected,
             ),
             "petInputEvidence": summarize_pet_input(archive, manifest, warnings),
+            "petRenderEvidence": summarize_pet_render(archive, manifest, warnings),
             "warnings": warnings,
         }
+
+
+def summarize_pet_render(
+    archive: zipfile.ZipFile, manifest: dict[str, Any], warnings: list[str]
+) -> dict[str, Any]:
+    prefix = "diagnostics/pet-render/"
+    entry = prefix + "coverage.json"
+    names = set(archive.namelist())
+    declared = "pet-render-evidence-v1" in manifest.get("capabilities", [])
+    if entry not in names:
+        if declared:
+            warnings.append("pet render missing coverage")
+        return {"evidence": "missing" if declared else "not-collected"}
+    result: dict[str, Any] = {
+        "evidence": "collected",
+        "historyRecords": 0,
+        "incidentCount": 0,
+        "signals": {},
+        "processCount": 0,
+        "presentation": "unknown",
+        "gaps": [],
+    }
+    processes: set[str] = set()
+    first_at: int | None = None
+    last_at: int | None = None
+    signals: Counter[str] = Counter()
+    try:
+        if archive.getinfo(entry).file_size > 16384:
+            raise BundleError("pet render oversized coverage")
+        coverage = read_json(archive, entry)
+        if not isinstance(coverage, dict) or coverage.get("schemaVersion") != 1:
+            raise BundleError("pet render invalid coverage")
+        current = coverage.get("current", {})
+        if isinstance(current, dict):
+            result["currentWriteFailed"] = _safe_int(current.get("writeFailed"))
+            if current.get("writerStopped") is True or result["currentWriteFailed"] > 0:
+                warnings.append("pet render writer reported incomplete coverage")
+        artifacts = coverage.get("artifacts")
+        if not isinstance(artifacts, list) or len(artifacts) > 96:
+            raise BundleError("pet render invalid artifact list")
+        known_gaps = {
+            "truncated",
+            "incomplete-tail",
+            "not-covered",
+            "corrupt-status",
+            "status-unavailable",
+            "read-failed",
+            "dropped",
+            "invalid",
+            "writeFailed",
+            "evicted",
+        }
+        result["gaps"] = [
+            g for g in coverage.get("gaps", []) if isinstance(g, str) and g in known_gaps
+        ]
+        for key in ("dropped", "invalid", "writeFailed", "evicted"):
+            result[key] = _safe_int(coverage.get(key))
+        total = 0
+        seen: set[str] = set()
+        for artifact in artifacts:
+            if not isinstance(artifact, dict):
+                raise BundleError("pet render invalid artifact")
+            name = artifact.get("entry", "")
+            if (
+                not isinstance(name, str)
+                or not re.fullmatch(
+                    r"diagnostics/pet-render/(history-\d+\.jsonl|incident-\d+\.json)", name
+                )
+                or name in seen
+            ):
+                raise BundleError("pet render invalid artifact name")
+            seen.add(name)
+            if name not in names:
+                warnings.append("pet render missing artifact")
+                continue
+            size = archive.getinfo(name).file_size
+            limit = 1024 * 1024 if name.endswith("jsonl") else 512 * 1024
+            total += size
+            if size > limit or total > 24 * 1024 * 1024:
+                raise BundleError("pet render artifact budget exceeded")
+            if size != artifact.get("bytes"):
+                warnings.append("pet render artifact size mismatch")
+            if name.endswith("jsonl"):
+                with archive.open(name) as stream:
+                    rows = []
+                    for line in stream:
+                        if len(line) > 16384:
+                            raise BundleError("pet render oversized record")
+                        if not line.endswith(b"\n"):
+                            warnings.append("pet render incomplete tail")
+                            continue
+                        rows.append(json.loads(line))
+                result["historyRecords"] += len(rows)
+            else:
+                incident = read_json(archive, name)
+                if not isinstance(incident, dict) or incident.get("schemaVersion") != 1:
+                    raise BundleError("pet render invalid incident")
+                rows = incident.get("records")
+                if not isinstance(rows, list):
+                    raise BundleError("pet render invalid incident context")
+                signal = incident.get("signal")
+                if signal in {
+                    "user-reported",
+                    "context-lost",
+                    "observer-failed",
+                    "render-progress-missing",
+                    "observation-gap",
+                    "window-operation-failed",
+                }:
+                    signals[signal] += 1
+                else:
+                    warnings.append("pet render unknown signal")
+                if _safe_int(incident.get("omittedRecords")) > 0:
+                    result["gaps"].append("truncated")
+                result["incidentCount"] += 1
+            for row in rows:
+                if not isinstance(row, dict) or row.get("schemaVersion") != 1:
+                    raise BundleError("pet render invalid record")
+                session = row.get("processSessionId")
+                if not isinstance(session, str) or len(session) > 96:
+                    raise BundleError("pet render invalid process identity")
+                if not isinstance(row.get("recordedAt"), int) or not isinstance(
+                    row.get("recordSeq"), int
+                ):
+                    raise BundleError("pet render invalid record ordering")
+                at = row["recordedAt"]
+                first_at = at if first_at is None else min(first_at, at)
+                last_at = at if last_at is None else max(last_at, at)
+                processes.add(session)
+        unlisted = {n for n in names if n.startswith(prefix) and n != entry} - seen
+        if unlisted:
+            warnings.append("pet render unlisted artifacts")
+    except (BundleError, ValueError, TypeError, KeyError) as error:
+        # Never echo exception text: malformed JSON may contain private data.
+        warnings.append("pet render invalid evidence: " + type(error).__name__)
+        result["evidence"] = "partial"
+    result["signals"] = dict(signals)
+    result["processCount"] = len(processes)
+    result["firstRecordedAtUnixMs"] = first_at
+    result["lastRecordedAtUnixMs"] = last_at
+    return result
 
 
 def print_human(summary: dict[str, Any]) -> None:
@@ -1671,6 +1814,12 @@ def print_human(summary: dict[str, Any]) -> None:
         f"activeOverlays={execution_environments.get('activeOverlayCount')} "
         f"inactiveOverlays={execution_environments.get('inactiveOverlayCount')} "
         f"payloadValidated={execution_environments.get('validatedPayloadCount')}"
+    )
+    render = summary["petRenderEvidence"]
+    print(
+        f"Pet render evidence: evidence={render.get('evidence')} "
+        f"records={render.get('historyRecords')} incidents={render.get('incidentCount')} "
+        f"processes={render.get('processCount')} presentation=unknown"
     )
     pet_input = summary["petInputEvidence"]
     print(

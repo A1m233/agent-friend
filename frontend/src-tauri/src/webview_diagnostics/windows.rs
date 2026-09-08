@@ -61,7 +61,7 @@ fn install_window(
             closure_manager.mark_window_registered(&closure_label);
 
             if closure_manager.claim_environment_registration() {
-                install_environment_handler(&core, &closure_label, &closure_manager)?;
+                install_environment_handler(&core, &closure_label, &closure_manager, &closure_app)?;
             }
             Ok(())
         })();
@@ -127,10 +127,12 @@ fn install_environment_handler(
     core: &ICoreWebView2,
     registration_window: &str,
     manager: &Arc<WebViewDiagnosticsManager>,
+    app: &AppHandle,
 ) -> webview2_com::Result<()> {
     let core2 = core.cast::<ICoreWebView2_2>()?;
     let environment = unsafe { core2.Environment()? };
     manager.set_runtime(read_runtime_info(&environment, registration_window)?);
+    install_render_process_observer(&environment, app);
 
     let environment5 = environment.cast::<ICoreWebView2Environment5>()?;
     let callback_manager = manager.clone();
@@ -275,4 +277,57 @@ fn browser_exit_kind_name(kind: COREWEBVIEW2_BROWSER_PROCESS_EXIT_KIND) -> Strin
     } else {
         format!("unknown({})", kind.0)
     }
+}
+
+fn install_render_process_observer(environment: &ICoreWebView2Environment, app: &AppHandle) {
+    use webview2_com::{
+        Microsoft::Web::WebView2::Win32::ICoreWebView2Environment8, ProcessInfosChangedEventHandler,
+    };
+    record_render_processes(environment, app);
+    if let Ok(environment8) = environment.cast::<ICoreWebView2Environment8>() {
+        let app = app.clone();
+        let handler = ProcessInfosChangedEventHandler::create(Box::new(move |sender, _| {
+            if let Some(environment) = sender {
+                record_render_processes(&environment, &app);
+            }
+            Ok(())
+        }));
+        let mut token = 0;
+        if unsafe { environment8.add_ProcessInfosChanged(&handler, &mut token) }.is_err() {
+            log::warn!("pet render process observer registration failed");
+        }
+    }
+}
+fn record_render_processes(environment: &ICoreWebView2Environment, app: &AppHandle) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2Environment8, COREWEBVIEW2_PROCESS_KIND,
+    };
+    let read = || -> webview2_com::Result<Vec<serde_json::Value>> {
+        let env = environment.cast::<ICoreWebView2Environment8>()?;
+        let infos = unsafe { env.GetProcessInfos()? };
+        let mut count = 0;
+        unsafe {
+            infos.Count(&mut count)?;
+        }
+        let mut rows = Vec::new();
+        for index in 0..count.min(64) {
+            let info = unsafe { infos.GetValueAtIndex(index)? };
+            let mut pid = 0;
+            let mut kind = COREWEBVIEW2_PROCESS_KIND::default();
+            unsafe {
+                info.ProcessId(&mut pid)?;
+                info.Kind(&mut kind)?;
+            }
+            if pid > 0 {
+                rows.push(serde_json::json!({"pid":pid,"kind":kind.0}));
+            }
+        }
+        Ok(rows)
+    };
+    let result = read();
+    crate::pet_render_evidence::record(
+        app,
+        serde_json::json!({"kind":"webview-processes",
+        "scope":"environment","available":result.is_ok(),"processes":result.unwrap_or_default()}),
+    );
 }

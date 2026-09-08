@@ -377,13 +377,16 @@ fn apply_visibility_command(
     let Some(pet) = app.get_webview_window("pet") else {
         return Ok(());
     };
-    match command {
+    let before = crate::pet_render_evidence::window_state(&pet);
+    let result = match command {
         VisibilityCommand::Show => {
             crate::reconcile_pet_overlay(app, reason, true);
             pet.show().map_err(|error| error.to_string())
         }
         VisibilityCommand::Hide => pet.hide().map_err(|error| error.to_string()),
-    }
+    };
+    crate::pet_render_evidence::operation(&pet, "visibility", reason, before, result.is_ok());
+    result
 }
 
 fn suppress_recovery(
@@ -403,8 +406,10 @@ fn suppress_recovery(
                 .map(|mut guard| guard.display_recovery.timeout(generation))
         })
         .unwrap_or(false);
-    if let Some(pet) = app.get_webview_window("pet") {
-        if let Err(error) = pet.hide() {
+    if app.get_webview_window("pet").is_some() {
+        if let Err(error) =
+            apply_visibility_command(app, VisibilityCommand::Hide, "recovery-suppressed")
+        {
             log::error!(
                 "pet display recovery: safety hide failed generation={} stage={} error={}",
                 generation,
@@ -702,10 +707,10 @@ pub(crate) fn disable_protection(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 fn schedule(app: &tauri::AppHandle, generation: u64, cause: RecoveryCause) {
-    let Some(pet) = app.get_webview_window("pet") else {
+    if app.get_webview_window("pet").is_none() {
         return;
-    };
-    if let Err(error) = pet.hide() {
+    }
+    if let Err(error) = apply_visibility_command(app, VisibilityCommand::Hide, cause.label()) {
         log::warn!(
             "pet render recovery: temporary hide failed cause={} generation={} error={}",
             cause.label(),
@@ -1014,8 +1019,12 @@ pub(crate) fn handle_gpu_process_failure(
                 .map(|mut guard| guard.display_recovery.begin_gpu_process_recovery())
         });
     let Some(generation) = generation else {
-        if let Some(pet) = app.get_webview_window("pet") {
-            if let Err(error) = pet.hide() {
+        if app.get_webview_window("pet").is_some() {
+            if let Err(error) = apply_visibility_command(
+                app,
+                VisibilityCommand::Hide,
+                "gpu-recovery-state-unavailable",
+            ) {
                 log::error!(
                     "webview2 GPU process failure fallback hide failed before recovery state was available: {error}"
                 );
@@ -1038,6 +1047,7 @@ pub(crate) fn handle_gpu_process_failure(
 
 pub(crate) fn handle_session_display_state(app: &tauri::AppHandle, raw_state: u32) {
     let state = SessionDisplayState::from_raw(raw_state);
+    crate::pet_render_evidence::record(app, json!({"kind":"display-state","state":state.label()}));
     let protection_enabled = app
         .try_state::<std::sync::Arc<std::sync::Mutex<crate::settings::Settings>>>()
         .and_then(|settings| {

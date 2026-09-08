@@ -25,6 +25,7 @@ mod pet_cursor_passthrough;
 mod pet_display_recovery;
 mod pet_display_topology;
 mod pet_input_evidence;
+mod pet_render_evidence;
 mod power_policy;
 mod presence;
 mod push_subscriber;
@@ -495,18 +496,23 @@ fn reconcile_pet_overlay(app: &tauri::AppHandle, reason: &'static str, force: bo
         bounds.width,
         bounds.height
     );
+    let render_before = pet_render_evidence::window_state(&pet);
+    let mut render_bounds_ok = true;
     if let Err(e) = pet.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
         bounds.x, bounds.y,
     ))) {
+        render_bounds_ok = false;
         log::warn!("pet overlay reconcile: set_position failed: {e}");
     }
     if let Err(e) = pet.set_size(tauri::Size::Physical(tauri::PhysicalSize::new(
         bounds.width,
         bounds.height,
     ))) {
+        render_bounds_ok = false;
         log::warn!("pet overlay reconcile: set_size failed: {e}");
     }
 
+    pet_render_evidence::operation(&pet, "bounds", reason, render_before, render_bounds_ok);
     let Some(generation) = decision.generation else {
         return;
     };
@@ -1316,6 +1322,11 @@ pub fn run() {
     let pet_evidence = pet_input_evidence::PetInputEvidence::start(
         paths::pet_input_evidence_dir(),
         runtime_observer.process_session_id().to_string(),
+        pet_evidence_identity.clone(),
+    );
+    let render_evidence = pet_render_evidence::RenderEvidence::start(
+        paths::pet_render_evidence_dir(),
+        runtime_observer.process_session_id().to_string(),
         pet_evidence_identity,
     );
     let runtime_service_supervisor =
@@ -1392,6 +1403,7 @@ pub fn run() {
         .manage(PetOverlayState::default())
         .manage(PetWebviewState::default())
         .manage(pet_evidence)
+        .manage(render_evidence)
         .manage(VoiceLaunchState::default())
         .manage(WorkspaceNavigationState::default())
         .manage(window_placement::WindowPlacementState::default())
@@ -1466,6 +1478,9 @@ pub fn run() {
         pet_cursor_passthrough::set_pet_cursor_passthrough,
         set_pet_webview_dpr,
         record_pet_input_evidence,
+        pet_render_evidence::record_pet_render_sample,
+        pet_render_evidence::mark_pet_render_incident,
+        pet_render_evidence::get_pet_render_evidence_status,
         settings::get_setting,
         settings::set_setting,
         runtime_config::get_runtime_config_status,
@@ -1553,6 +1568,9 @@ pub fn run() {
         pet_cursor_passthrough::set_pet_cursor_passthrough,
         set_pet_webview_dpr,
         record_pet_input_evidence,
+        pet_render_evidence::record_pet_render_sample,
+        pet_render_evidence::mark_pet_render_incident,
+        pet_render_evidence::get_pet_render_evidence_status,
         settings::get_setting,
         settings::set_setting,
         runtime_config::get_runtime_config_status,
@@ -1602,6 +1620,7 @@ pub fn run() {
     builder
         .on_window_event(|window, event| {
             pet_input_evidence::integration::record_window_event(window, event);
+            pet_render_evidence::window_event(window, event);
             if let Some(manager) = window
                 .app_handle()
                 .try_state::<Arc<shell_diagnostics::ShellDiagnosticsManager>>()
@@ -1878,11 +1897,29 @@ pub fn run() {
                 // desktop. React later enables hit regions for the avatar/action bar. If the
                 // webview is slow or fails to mount, the invisible overlay must never eat all
                 // desktop clicks.
-                if let Err(error) = pet.set_ignore_cursor_events(true) {
+                let before = pet_render_evidence::window_state(&pet);
+                let result = pet.set_ignore_cursor_events(true);
+                pet_render_evidence::operation(
+                    &pet,
+                    "passthrough",
+                    "startup-fail-open",
+                    before,
+                    result.is_ok(),
+                );
+                if let Err(error) = result {
                     log::error!("pet overlay startup fail-open failed: {error}");
                 }
                 reconcile_pet_overlay(app.handle(), "setup", true);
-                if let Err(error) = pet.show() {
+                let before = pet_render_evidence::window_state(&pet);
+                let result = pet.show();
+                pet_render_evidence::operation(
+                    &pet,
+                    "visibility",
+                    "startup-show",
+                    before,
+                    result.is_ok(),
+                );
+                if let Err(error) = result {
                     log::warn!("pet overlay startup show failed: {error}");
                 }
                 #[cfg(target_os = "macos")]
@@ -1934,6 +1971,10 @@ pub fn run() {
                 {
                     manager.shutdown();
                 }
+                if let Some(manager) = app_handle.try_state::<pet_render_evidence::RenderEvidence>()
+                {
+                    manager.shutdown();
+                }
                 exit_runtime_observer.record(
                     "lifecycle",
                     "process-exit-started",
@@ -1970,6 +2011,10 @@ pub fn run() {
                 {
                     // Only exit may wait briefly; input commands never wait for disk or this worker.
                     let _ = manager.wait_for_shutdown(std::time::Duration::from_millis(150));
+                }
+                if let Some(manager) = app_handle.try_state::<pet_render_evidence::RenderEvidence>()
+                {
+                    let _ = manager.wait_for_shutdown(Duration::from_millis(150));
                 }
                 if let Some(owner) = exit_desktop_owner
                     .lock()

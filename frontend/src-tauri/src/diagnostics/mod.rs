@@ -369,6 +369,38 @@ pub async fn generate_diagnostic_bundle(
     }
     let pet_summary = append_pet_input_export(pet_export, &mut entries, &mut failures);
 
+    let mut render_export = tauri::async_runtime::spawn_blocking(|| {
+        crate::pet_render_evidence::journal::export(&paths::pet_render_evidence_dir())
+    })
+    .await
+    .unwrap_or_else(|_| crate::pet_render_evidence::journal::Export::failed());
+    if let Some(manager) = app.try_state::<crate::pet_render_evidence::RenderEvidence>() {
+        let health = manager.snapshot();
+        if health["writerStopped"] == true || health["writeFailed"].as_u64().unwrap_or(0) > 0 {
+            render_export
+                .failures
+                .push("writer-reported-failure".into());
+        }
+        render_export.coverage["current"] = health;
+    }
+    entries.push(json_entry(
+        "diagnostics/pet-render/coverage.json",
+        &render_export.coverage,
+    )?);
+    for (name, bytes) in render_export.entries {
+        entries.push(ArchiveEntry {
+            name,
+            source: ArchiveEntrySource::Bytes(bytes),
+        });
+    }
+    for message in render_export.failures {
+        failures.push(CollectionFailure {
+            collection: "pet-render".into(),
+            item: None,
+            message,
+        });
+    }
+
     let outcome = if failures.is_empty() {
         "complete"
     } else {
@@ -1319,6 +1351,7 @@ mod tests {
                     "diagnostics/attachments.json",
                     "diagnostics/windows-shell/current.json",
                     "diagnostics/pet-input/coverage.json",
+                    "diagnostics/pet-render/coverage.json",
                 ],
             )
             .expect("current manifest should satisfy bundle contract");
@@ -1362,6 +1395,30 @@ mod tests {
             "pet input export must succeed: {failures:?}"
         );
         let contract = contract::BundleContract::load().unwrap();
+        let render_disk = root.join("pet-render-evidence");
+        let render_manager = crate::pet_render_evidence::RenderEvidence::start(
+            render_disk.clone(),
+            "render-producer-test".into(),
+            json!({"buildMode":"debug"}),
+        );
+        tauri::async_runtime::block_on(render_manager.mark()).unwrap();
+        render_manager.shutdown();
+        assert!(render_manager.wait_for_shutdown(Duration::from_secs(2)));
+        let render_export = crate::pet_render_evidence::journal::export(&render_disk);
+        assert!(render_export.failures.is_empty());
+        entries.push(
+            json_entry(
+                "diagnostics/pet-render/coverage.json",
+                &render_export.coverage,
+            )
+            .unwrap(),
+        );
+        for (name, bytes) in render_export.entries {
+            entries.push(ArchiveEntry {
+                name,
+                source: ArchiveEntrySource::Bytes(bytes),
+            });
+        }
         // Other evidence families are unrelated fixtures; the pet files above come from the
         // real queue/journal/export producer, not hand-built idealized JSON.
         let definition: Value =
@@ -1433,6 +1490,28 @@ mod tests {
         );
         let summary: Value = serde_json::from_slice(&output.stdout).expect("consumer JSON");
         assert_eq!(summary["manifest"]["unhandledCapabilities"], json!([]));
+        assert!(
+            summary["petRenderEvidence"]["incidentCount"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
+        assert!(
+            summary["petRenderEvidence"]["historyRecords"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
+        assert!(
+            !summary["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|w| w.as_str().unwrap_or("").contains("pet render")),
+            "{}",
+            summary["warnings"]
+        );
+
         assert!(!summary["petInputEvidence"]["retainedIncidents"]
             .as_array()
             .unwrap()

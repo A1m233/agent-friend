@@ -1,3 +1,4 @@
+import { observePetRenderer } from "@/pet/renderEvidence/observe";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as PIXI7 from "pixi7";
 import type { Spine as Spine38 } from "pixi-spine";
@@ -500,6 +501,7 @@ export function Spine38AvatarSurface({
     let app: PIXI7.Application<HTMLCanvasElement> | null = null;
     let nullScanCount = 0;
     let tickerElapsed = 0;
+    let stopEvidence = () => {};
 
     const setup = async () => {
       setReady(false);
@@ -529,6 +531,7 @@ export function Spine38AvatarSurface({
         preserveDrawingBuffer: true,
       });
       appRef.current = app;
+      stopEvidence = observePetRenderer(app.renderer, app.ticker, app.view, "pixi7");
       stage.appendChild(app.view);
 
       const slot = new PIXI7.Container();
@@ -814,6 +817,7 @@ export function Spine38AvatarSurface({
 
     return () => {
       cancelled = true;
+      stopEvidence();
       setReady(false);
       setIsDragging(false);
       setSpriteScreen(null);
