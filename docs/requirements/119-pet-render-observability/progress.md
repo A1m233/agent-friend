@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-COMPLETED — 用户在了解验证范围和残余限制后确认合入主干；版本控制与本地测试包交付进行中。
+COMPLETED — 用户在了解验证范围和残余限制后确认合入主干；版本控制和制品身份以本次交付输出为准。
 
 ## 任务列表
 
@@ -95,3 +95,12 @@ COMPLETED — 用户在了解验证范围和残余限制后确认合入主干；
 ## 交付确认
 
 2026-09-08：用户明确要求“合入主干推送远端。然后去打一个本地测试包”，作为本需求验收及本次 Git / local-test 交付授权。真实异常与 PresentMon 不再作为本轮验收前置；严格性能预算证明仍作为已披露限制保留，不改写为通过。
+
+### 最新主干整合与发布准备
+
+- 已整合 origin/main `7acee59d1bc3e1a4b4c1759806858c4dcb73123d`，无冲突；产品代码验证锚点 `c0feacd39c2fcc3d1553989f88e58c65ad1ddff7`。
+- 整合后重新执行三个完整 check stage：backend lint/mypy 654 files、2903 passed/5 skipped；frontend 148 files/1233 tests、lint/typecheck/build 通过；Rust 275+6 passed/1 ignored、release check 通过。已有第三方退出清理/编译警告保留，不是测试失败。
+- 使用 main 与 origin/main 一致的独立交付 checkout 复核 installer-contract，结果 standard、packageRequired=false；之前的二级判断来自旧本地主干差异。此次用户明确索要本地测试包，因此仍执行完整 local-test 构建。
+- 公开 Guide 已按用户可见入口补充操作、隐私及故障留存边界；validator/verify 通过，提交 `4b68bbdc4af6e0e1120b84db5731944d4d6a4510` 已推送，发布 immutable `agent-friend-guide-r36`，兼容范围 0.3.0 ≤ version < 0.4.0。
+- 本地测试包使用上述 Guide 的临时 baseline，不持久修改 builtin。项目版本保持 0.3.0，不创建 stable/trusted-beta 制品，不执行 production 安装。
+- 默认 C 盘空间不足 40 GiB 构建门槛，使用标准 `--state-dir D:/agent-friend-packaging`；D 盘预检通过，不清理用户数据或降低门禁。
