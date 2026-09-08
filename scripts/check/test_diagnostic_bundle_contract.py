@@ -295,6 +295,11 @@ def _build_bundle(
     json_entries = {
         "manifest.json": manifest,
         "diagnostics/pet-input/coverage.json": pet_coverage,
+        "diagnostics/pet-render/coverage.json": {
+            "schemaVersion": 1,
+            "artifacts": [],
+            "gaps": ["not-covered"],
+        },
         "diagnostics/application.json": {
             "product": "agent-friend",
             "version": "0.0.0-test",
@@ -1280,3 +1285,65 @@ def test_pet_input_rejects_invalid_export_time_snapshot_fields(
     assert summary["petInputEvidence"]["current"] == {"evidence": "invalid"}
     assert summary["petInputEvidence"]["historyRecordCount"] == 1
     assert "secret" not in json.dumps(summary)
+
+
+def test_pet_render_inventory_counts_cross_process_incident_without_printing_body(
+    tmp_path: Path,
+) -> None:
+    bundle = tmp_path / "render.zip"
+    name = "diagnostics/pet-render/incident-001.json"
+    records = [
+        {
+            "schemaVersion": 1,
+            "processSessionId": session,
+            "recordedAt": 1000,
+            "recordSeq": 1,
+            "event": {"private": "DO_NOT_PRINT"},
+        }
+        for session in ["old", "new"]
+    ]
+    incident = json.dumps({"schemaVersion": 1, "signal": "user-reported", "records": records})
+    coverage = {
+        "schemaVersion": 1,
+        "gaps": ["dropped"],
+        "dropped": 2,
+        "artifacts": [{"entry": name, "bytes": len(incident.encode())}],
+    }
+    with zipfile.ZipFile(bundle, "w") as archive:
+        archive.writestr(name, incident)
+        archive.writestr("diagnostics/pet-render/coverage.json", json.dumps(coverage))
+    with zipfile.ZipFile(bundle) as archive:
+        warnings: list[str] = []
+        result = INSPECTOR.summarize_pet_render(
+            archive, {"capabilities": ["pet-render-evidence-v1"]}, warnings
+        )
+    assert result["processCount"] == 2
+    assert result["signals"] == {"user-reported": 1}
+    assert result["presentation"] == "unknown"
+    assert "DO_NOT_PRINT" not in json.dumps(result)
+    assert warnings == []
+
+
+def test_pet_render_missing_artifact_and_older_bundle(tmp_path: Path) -> None:
+    bundle = tmp_path / "render.zip"
+    with zipfile.ZipFile(bundle, "w") as archive:
+        archive.writestr(
+            "diagnostics/pet-render/coverage.json",
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "artifacts": [
+                        {"entry": "diagnostics/pet-render/history-001.jsonl", "bytes": 100}
+                    ],
+                    "gaps": [],
+                }
+            ),
+        )
+    with zipfile.ZipFile(bundle) as archive:
+        warnings: list[str] = []
+        INSPECTOR.summarize_pet_render(archive, {}, warnings)
+        assert "pet render missing artifact" in warnings
+    with zipfile.ZipFile(bundle, "w"):
+        pass
+    with zipfile.ZipFile(bundle) as archive:
+        assert INSPECTOR.summarize_pet_render(archive, {}, []) == {"evidence": "not-collected"}

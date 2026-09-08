@@ -1,0 +1,35 @@
+{
+  "oldProcessSessionId": "38148-1788876986345",
+  "newProcessSessionId": "42980-1788877739296",
+  "retainedIncidentId": "1788877392245-38148-85",
+  "oldProcessEndPresent": true,
+  "newRendererAndPageProgressPresent": true,
+  "newBackend": "pixi7",
+  "recordCount": 233,
+  "bundleSha256": "31a06c89c3909b5f5572b88a717c0b00cdda403f4c794b5a719a5bc3c38cd488",
+  "selectedSessionCount": 0,
+  "bundleOutcome": "partial",
+  "petRenderEvidence": {
+    "currentWriteFailed": 0,
+    "dropped": 0,
+    "evicted": 0,
+    "evidence": "collected",
+    "firstRecordedAtUnixMs": 1788876986375,
+    "gaps": [],
+    "historyRecords": 233,
+    "incidentCount": 2,
+    "invalid": 0,
+    "lastRecordedAtUnixMs": 1788877918903,
+    "presentation": "unknown",
+    "processCount": 2,
+    "signals": {
+      "context-lost": 1,
+      "user-reported": 1
+    },
+    "writeFailed": 0
+  },
+  "otherFailedCollectors": [
+    "webview2-render-evidence"
+  ],
+  "inspectorWarnings": []
+}

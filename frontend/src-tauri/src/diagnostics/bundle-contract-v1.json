@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 10,
+  "schemaRevision": 11,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -148,6 +148,18 @@
         "diagnostics/pet-input/current.json",
         "diagnostics/pet-input/history-*.jsonl",
         "diagnostics/pet-input/incident-*.json"
+      ]
+    },
+    {
+      "id": "pet-render-evidence-v1",
+      "manifestFields": [],
+      "requiredEntries": [
+        "diagnostics/pet-render/coverage.json"
+      ],
+      "entryPatterns": [
+        "diagnostics/pet-render/coverage.json",
+        "diagnostics/pet-render/history-*.jsonl",
+        "diagnostics/pet-render/incident-*.json"
       ]
     }
   ]

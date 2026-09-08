@@ -1,3 +1,4 @@
+import { PetRenderEvidencePanel } from "./PetRenderEvidencePanel";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
@@ -268,6 +269,8 @@ export function FeedbackDiagnosticsPanel({
         </ScrollArea>
         <p className="text-xs text-muted">已选择 {selectedIds.size} 个会话，最多 20 个。</p>
       </SettingsGroup>
+
+      <PetRenderEvidencePanel />
 
       <SettingsGroup title="生成本地诊断包">
         {renderEvidenceStatus?.supported ? (

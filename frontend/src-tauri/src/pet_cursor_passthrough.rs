@@ -52,7 +52,16 @@ pub async fn set_pet_cursor_passthrough(
         json!({"kind":"passthrough-request","stage":"request","ignore":ignore}),
         diagnostic.as_ref(),
     );
-    set_ignore_cursor_events(&window, ignore, manager, diagnostic).await
+    let before = crate::pet_render_evidence::window_state(&window);
+    let result = set_ignore_cursor_events(&window, ignore, manager, diagnostic).await;
+    crate::pet_render_evidence::operation(
+        &window,
+        "passthrough",
+        if ignore { "ignore" } else { "interactive" },
+        before,
+        result.is_ok(),
+    );
+    result
 }
 
 #[cfg(target_os = "windows")]

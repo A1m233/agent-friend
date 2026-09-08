@@ -1,0 +1,277 @@
+{
+  "scope": "same-real-Spine-WebView-frontend-observer-toggle; native-writer-active-in-all-phases",
+  "results": [
+    {
+      "enabled": false,
+      "seconds": 45.40022599999793,
+      "render": {
+        "backend": "pixi7",
+        "visible": "visible",
+        "frames": 13662,
+        "p50Ms": 0.9000000059604645,
+        "p95Ms": 1.2000000029802322,
+        "p99Ms": 1.4000000059604645
+      },
+      "pageCpuPercentOneCore": 38.28828076759088,
+      "jsHeapBefore": 21423840,
+      "jsHeapAfter": 25966848,
+      "nativeBefore": {
+        "time": 1788877105.895396,
+        "pid": 38148,
+        "created": 1788876986.1749375,
+        "hostCpuSeconds": 22.84375,
+        "hostPrivateBytes": 13799424,
+        "writerThreads": [
+          {
+            "id": 43592,
+            "cpuSeconds": 0.453125
+          }
+        ],
+        "historyBytes": 24747,
+        "statusBytes": 153,
+        "status": {
+          "dropped": 0,
+          "evicted": 0,
+          "invalid": 0,
+          "normalEnd": false,
+          "presentation": "unknown",
+          "schemaVersion": 1,
+          "supported": true,
+          "writeFailed": 0,
+          "writerStopped": false
+        }
+      },
+      "nativeAfter": {
+        "time": 1788877151.2056804,
+        "pid": 38148,
+        "created": 1788876986.1749375,
+        "hostCpuSeconds": 33.28125,
+        "hostPrivateBytes": 13811712,
+        "writerThreads": [
+          {
+            "id": 43592,
+            "cpuSeconds": 0.6875
+          }
+        ],
+        "historyBytes": 25872,
+        "statusBytes": 153,
+        "status": {
+          "dropped": 0,
+          "evicted": 0,
+          "invalid": 0,
+          "normalEnd": false,
+          "presentation": "unknown",
+          "schemaVersion": 1,
+          "supported": true,
+          "writeFailed": 0,
+          "writerStopped": false
+        }
+      },
+      "historyBytesPerSecond": 24.8288002489851
+    },
+    {
+      "enabled": true,
+      "seconds": 45.382167999996454,
+      "render": {
+        "backend": "pixi7",
+        "visible": "visible",
+        "frames": 13696,
+        "p50Ms": 0.9000000059604645,
+        "p95Ms": 1.2000000029802322,
+        "p99Ms": 1.4000000059604645
+      },
+      "pageCpuPercentOneCore": 38.14208259068044,
+      "jsHeapBefore": 21658828,
+      "jsHeapAfter": 27277368,
+      "nativeBefore": {
+        "time": 1788877158.6377385,
+        "pid": 38148,
+        "created": 1788876986.1749375,
+        "hostCpuSeconds": 35,
+        "hostPrivateBytes": 13811712,
+        "writerThreads": [
+          {
+            "id": 43592,
+            "cpuSeconds": 0.734375
+          }
+        ],
+        "historyBytes": 27243,
+        "statusBytes": 153,
+        "status": {
+          "dropped": 0,
+          "evicted": 0,
+          "invalid": 0,
+          "normalEnd": false,
+          "presentation": "unknown",
+          "schemaVersion": 1,
+          "supported": true,
+          "writeFailed": 0,
+          "writerStopped": false
+        }
+      },
+      "nativeAfter": {
+        "time": 1788877204.0140853,
+        "pid": 38148,
+        "created": 1788876986.1749375,
+        "hostCpuSeconds": 44.28125,
+        "hostPrivateBytes": 13737984,
+        "writerThreads": [
+          {
+            "id": 43592,
+            "cpuSeconds": 0.90625
+          }
+        ],
+        "historyBytes": 32811,
+        "statusBytes": 153,
+        "status": {
+          "dropped": 0,
+          "evicted": 0,
+          "invalid": 0,
+          "normalEnd": false,
+          "presentation": "unknown",
+          "schemaVersion": 1,
+          "supported": true,
+          "writeFailed": 0,
+          "writerStopped": false
+        }
+      },
+      "historyBytesPerSecond": 122.70710159376947
+    },
+    {
+      "enabled": false,
+      "seconds": 45.374700999993365,
+      "render": {
+        "backend": "pixi7",
+        "visible": "visible",
+        "frames": 13644,
+        "p50Ms": 0.9000000059604645,
+        "p95Ms": 1.2000000029802322,
+        "p99Ms": 1.4000000059604645
+      },
+      "pageCpuPercentOneCore": 38.66948456586538,
+      "jsHeapBefore": 21961728,
+      "jsHeapAfter": 25979588,
+      "nativeBefore": {
+        "time": 1788877211.4202898,
+        "pid": 38148,
+        "created": 1788876986.1749375,
+        "hostCpuSeconds": 45.546875,
+        "hostPrivateBytes": 13742080,
+        "writerThreads": [
+          {
+            "id": 43592,
+            "cpuSeconds": 0.90625
+          }
+        ],
+        "historyBytes": 33511,
+        "statusBytes": 153,
+        "status": {
+          "dropped": 0,
+          "evicted": 0,
+          "invalid": 0,
+          "normalEnd": false,
+          "presentation": "unknown",
+          "schemaVersion": 1,
+          "supported": true,
+          "writeFailed": 0,
+          "writerStopped": false
+        }
+      },
+      "nativeAfter": {
+        "time": 1788877256.782131,
+        "pid": 38148,
+        "created": 1788876986.1749375,
+        "hostCpuSeconds": 55.8125,
+        "hostPrivateBytes": 14733312,
+        "writerThreads": [
+          {
+            "id": 43592,
+            "cpuSeconds": 1.078125
+          }
+        ],
+        "historyBytes": 33511,
+        "statusBytes": 153,
+        "status": {
+          "dropped": 0,
+          "evicted": 0,
+          "invalid": 0,
+          "normalEnd": false,
+          "presentation": "unknown",
+          "schemaVersion": 1,
+          "supported": true,
+          "writeFailed": 0,
+          "writerStopped": false
+        }
+      },
+      "historyBytesPerSecond": 0
+    },
+    {
+      "enabled": true,
+      "seconds": 45.36571399999957,
+      "render": {
+        "backend": "pixi7",
+        "visible": "visible",
+        "frames": 13575,
+        "p50Ms": 0.9000000059604645,
+        "p95Ms": 1.300000011920929,
+        "p99Ms": 1.7999999970197678
+      },
+      "pageCpuPercentOneCore": 38.41264793054984,
+      "jsHeapBefore": 22105736,
+      "jsHeapAfter": 26790792,
+      "nativeBefore": {
+        "time": 1788877264.1774933,
+        "pid": 38148,
+        "created": 1788876986.1749375,
+        "hostCpuSeconds": 57.1875,
+        "hostPrivateBytes": 14741504,
+        "writerThreads": [
+          {
+            "id": 43592,
+            "cpuSeconds": 1.109375
+          }
+        ],
+        "historyBytes": 34846,
+        "statusBytes": 153,
+        "status": {
+          "dropped": 0,
+          "evicted": 0,
+          "invalid": 0,
+          "normalEnd": false,
+          "presentation": "unknown",
+          "schemaVersion": 1,
+          "supported": true,
+          "writeFailed": 0,
+          "writerStopped": false
+        }
+      },
+      "nativeAfter": {
+        "time": 1788877309.5839577,
+        "pid": 38148,
+        "created": 1788876986.1749375,
+        "hostCpuSeconds": 66.234375,
+        "hostPrivateBytes": 14835712,
+        "writerThreads": [
+          {
+            "id": 43592,
+            "cpuSeconds": 1.28125
+          }
+        ],
+        "historyBytes": 40300,
+        "statusBytes": 153,
+        "status": {
+          "dropped": 0,
+          "evicted": 0,
+          "invalid": 0,
+          "normalEnd": false,
+          "presentation": "unknown",
+          "schemaVersion": 1,
+          "supported": true,
+          "writeFailed": 0,
+          "writerStopped": false
+        }
+      },
+      "historyBytesPerSecond": 120.11505585118371
+    }
+  ]
+}

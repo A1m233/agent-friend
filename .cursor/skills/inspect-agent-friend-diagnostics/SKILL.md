@@ -51,6 +51,7 @@ Before diagnosing, establish:
 - Windows Shell current snapshot and journal coverage, including dropped/truncated event counts and referenced-artifact gaps;
 - pet input evidence coverage, retained occurrence identities, independent incident retention and durability gaps; never print coordinate samples or input-event bodies in an inventory;
 - WebView2 render-evidence consent, manual/display/GPU recovery trigger and timing, internal-versus-desktop black/white pixel metrics, included/missing screenshot artifacts, and capture/recovery errors;
+- pet render evidence coverage, independent incident retention, per-record process/build identity and CPU-render versus actual-presentation limits; see the v1 reference;
 - explicit exclusions.
 - managed execution environment provider status, runtime/version identity, overlay/cache size buckets, payload validation and recent stable error codes; never expect session ids, paths, package names, scripts or command output in this evidence family.
 

@@ -1,3 +1,4 @@
+import { observePetRenderer } from "@/pet/renderEvidence/observe";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import * as PIXI from "pixi.js";
 import type { PetInteractionCallbacks } from "./usePetInteractions";
@@ -121,6 +122,7 @@ export function usePixiAvatarSlot(
 
     let cancelled = false;
     let appInstance: PIXI.Application | null = null;
+    let stopEvidence = () => {};
     const initialAnchorPoint = options.initialAnchorPoint ?? null;
 
     void (async () => {
@@ -143,6 +145,7 @@ export function usePixiAvatarSlot(
         return;
       }
       appInstance = pixi;
+      stopEvidence = observePetRenderer(pixi.renderer, pixi.ticker, pixi.canvas, "pixi8");
       stage.appendChild(pixi.canvas);
 
       // —— avatar slot Container：启动阶段不绘制可见占位，避免真模型 ready 前闪一下 ——
@@ -475,6 +478,7 @@ export function usePixiAvatarSlot(
 
     return () => {
       cancelled = true;
+      stopEvidence();
       if (appInstance) {
         try {
           if (stage.contains(appInstance.canvas)) stage.removeChild(appInstance.canvas);

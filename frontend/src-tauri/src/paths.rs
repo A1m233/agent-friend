@@ -344,3 +344,8 @@ mod tests {
         assert!(!path.starts_with(local_appdata));
     }
 }
+
+/// Structured pet renderer observations, independent from image capture.
+pub fn pet_render_evidence_dir() -> PathBuf {
+    log_dir().join("pet-render-evidence")
+}
