@@ -14,7 +14,7 @@ import os
 import stat
 from collections import OrderedDict
 from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -367,6 +367,8 @@ class JsonlSessionStore:
         if path is None:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
         try:
+            # Encode before the OS lock; preserve missing-session/error semantics.
+            encoded = [(item.to_jsonl().encode("utf-8") + b"\n") for item in events]
             with (
                 observe_session_file("append", session_id) as observation,
                 observation.locked(
@@ -374,22 +376,25 @@ class JsonlSessionStore:
                 ) as f,
             ):
                 binary = cast(BinaryIO, f)
-                before = self._handle_version(binary, path)
-                binary.seek(0, os.SEEK_END)
-                clean_boundary = True
-                if binary.tell():
-                    binary.seek(-1, os.SEEK_END)
-                    if binary.read(1) != b"\n":
-                        clean_boundary = False
-                        binary.seek(0, os.SEEK_END)
-                        observation.byte_count += binary.write(b"\n")
-                binary.seek(0, os.SEEK_END)
-                for item in events:
-                    observation.byte_count += binary.write(item.to_jsonl().encode("utf-8"))
-                    observation.byte_count += binary.write(b"\n")
-                binary.flush()
-                os.fsync(binary.fileno())
-                after = self._handle_version(binary, path)
+                with observation.phase("boundary"):
+                    before = self._handle_version(binary, path)
+                    binary.seek(0, os.SEEK_END)
+                    clean_boundary = True
+                    if binary.tell():
+                        binary.seek(-1, os.SEEK_END)
+                        if binary.read(1) != b"\n":
+                            clean_boundary = False
+                            binary.seek(0, os.SEEK_END)
+                            observation.byte_count += binary.write(b"\n")
+                    binary.seek(0, os.SEEK_END)
+                with observation.phase("write_flush"):
+                    for data in encoded:
+                        observation.byte_count += binary.write(data)
+                    binary.flush()
+                with observation.phase("fsync"):
+                    os.fsync(binary.fileno())
+                with observation.phase("version"):
+                    after = self._handle_version(binary, path)
         except LockException as e:
             raise SessionPersistError(
                 f"获取会话文件写锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {session_id}: {e}"
@@ -473,12 +478,21 @@ class JsonlSessionStore:
             raise SessionPersistError(f"删除 session writer lease 失败: {path}: {exc}") from exc
 
     def load(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
-        records, diagnostics, _version, _count = self._read_records(
+        records, diagnostics, version, _count = self._read_records(
             session_id, cancel_check=cancel_check
         )
         session = Session.from_events([event for _, event in records])
         session.load_diagnostics = diagnostics
+        session.loaded_source_version = version
         return session
+
+    def can_reuse_loaded(self, session: Session) -> bool:
+        path = self._existing_path(session.session_id)
+        return (
+            session.loaded_source_version is not None
+            and path is not None
+            and session.loaded_source_version == self._source_version(path)
+        )
 
     def cancellable_load(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
         return self.load(session_id, cancel_check=cancel_check)
@@ -555,20 +569,35 @@ class JsonlSessionStore:
         event_count = 0
         try:
             with observe_session_file("load", session_id) as observation:
-                with observation.locked(self._read_lock(path, cancel_check)) as f:
-                    binary = cast(BinaryIO, f)
-                    version = self._handle_version(binary, path)
-                    chunks: list[bytes] = []
-                    while True:
-                        check_cancel(cancel_check)
-                        chunk = binary.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        chunks.append(chunk)
+                with ExitStack() as snapshot_handles:
+                    with observation.locked(self._read_lock(path, cancel_check)) as f:
+                        binary = cast(BinaryIO, f)
+                        version = self._handle_version(binary, path)
+                        try:
+                            descriptor = os.dup(binary.fileno())
+                        except io.UnsupportedOperation:
+                            # File-like adapters cannot pin a descriptor: retain
+                            # the original locked snapshot behavior for them.
+                            snapshot = None
+                            chunks = self._read_snapshot_bytes(binary, version[2], cancel_check)
+                        else:
+                            try:
+                                snapshot = os.fdopen(descriptor, "rb")
+                            except BaseException:
+                                os.close(descriptor)
+                                raise
+                            snapshot_handles.enter_context(snapshot)
+                    if snapshot is not None:
+                        # Canonical JSONL is append-only. Pin the opened file and
+                        # its committed length under the lock, then read exactly
+                        # that immutable prefix without delaying later appends.
+                        # A rename/replacement cannot redirect this descriptor.
+                        with observation.phase("snapshot_read"):
+                            chunks = self._read_snapshot_bytes(snapshot, version[2], cancel_check)
+                with observation.parsing():
                     raw = b"".join(chunks)
                     del chunks
                     observation.byte_count = len(raw)
-                with observation.parsing():
                     for lineno, line in enumerate(raw.splitlines(keepends=True), start=1):
                         check_cancel(cancel_check)
                         if not line.strip():
@@ -611,6 +640,21 @@ class JsonlSessionStore:
             raise SessionPersistError(f"读取会话文件失败: {path}: {e}") from e
         check_cancel(cancel_check)
         return records, diagnostics, version, event_count
+
+    @staticmethod
+    def _read_snapshot_bytes(
+        binary: BinaryIO, length: int, cancel_check: CancelCheck
+    ) -> list[bytes]:
+        chunks: list[bytes] = []
+        remaining = length
+        while remaining:
+            check_cancel(cancel_check)
+            chunk = binary.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise SessionPersistError("会话快照在读取完成前被截断")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return chunks
 
     def query(self, session_id: str, *, cancel_check: CancelCheck = None) -> SessionQuerySnapshot:
         with observe_session_query(session_id) as observation:
@@ -1076,6 +1120,10 @@ class NotifyingSessionStore:
 
     def cancellable_load(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
         return load_session(self._inner, session_id, cancel_check=cancel_check)
+
+    def can_reuse_loaded(self, session: Session) -> bool:
+        method = getattr(self._inner, "can_reuse_loaded", None)
+        return bool(method(session)) if callable(method) else False
 
     def query(self, session_id: str, *, cancel_check: CancelCheck = None) -> SessionQuerySnapshot:
         return query_session(self._inner, session_id, cancel_check=cancel_check)

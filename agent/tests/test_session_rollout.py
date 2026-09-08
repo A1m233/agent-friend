@@ -190,6 +190,36 @@ def _run(manager: SessionManager, session_id: str, text: str) -> None:
     list(conversation.stream(text, surface=DESKTOP_CHAT_SURFACE))
 
 
+@pytest.mark.parametrize("corrupt_tail", [False, True])
+def test_restore_serialized_result_is_isolated_from_source_and_other_restores(
+    tmp_path: Path, corrupt_tail: bool
+) -> None:
+    manager = _manager(tmp_path, _RecordingLLM())
+    sid = _create(manager)
+    _run(manager, sid, "one")
+    _run(manager, sid, "two")
+    session = manager.open(sid)
+    manager.close()
+    if corrupt_tail:
+        last = next(e for e in reversed(session.events) if e.type == "rollout_commit")
+        session.events.append(
+            Event(
+                type="rollout_commit",
+                uuid="invalid-tail",
+                ts=last.ts,
+                payload={**last.payload, "transcript_sha256": "bad"},
+            )
+        )
+    first = restore_rollout(session)
+    assert first.commit is not None
+    before = copy.deepcopy(first.commit.serialized_messages)
+    first.commit.serialized_messages[0]["content"] = "changed only by consumer"
+    second = restore_rollout(session)
+    assert second.commit is not None
+    assert second.commit.serialized_messages == before
+    assert first.disposition == second.disposition
+
+
 def _create_legacy_session(store: JsonlSessionStore) -> Session:
     session = Session.new(
         title="legacy",

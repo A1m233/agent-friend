@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 from collections.abc import Mapping
 from typing import Any
 
@@ -65,6 +66,13 @@ def _content(value: Any, *, assistant: bool = False) -> list[dict[str, Any]]:
 
 def convert_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
+    # Chat providers may reuse an ID after its result, whereas Responses needs
+    # request-wide unique call IDs. Rewrite only the wire projection, in order,
+    # so appending history cannot change an already converted prefix.
+    used_call_ids: set[str] = set()
+    pending_calls: dict[str, str] = {}
+    completed_calls: set[str] = set()
+    next_suffix: dict[str, int] = {}
     allowed = {
         "role",
         "content",
@@ -89,13 +97,21 @@ def convert_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if role != "tool" and message.get("tool_call_id") is not None:
             raise _invalid("tool_call_id requires a tool result")
         if role == "tool":
+            source_id = _string(message.get("tool_call_id"), "tool_call_id")
+            if source_id not in pending_calls and (
+                source_id in completed_calls or source_id in used_call_ids
+            ):
+                raise _invalid("tool result has no pending call for an already used id")
+            call_id = pending_calls.pop(source_id, source_id)
+            completed_calls.add(source_id)
+            used_call_ids.add(call_id)
             output = message.get("content")
             if not isinstance(output, str):
                 output = _content(output)
             items.append(
                 {
                     "type": "function_call_output",
-                    "call_id": _string(message.get("tool_call_id"), "tool_call_id"),
+                    "call_id": call_id,
                     "output": output,
                 }
             )
@@ -142,10 +158,22 @@ def convert_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             function = call["function"]
             if set(function) - {"name", "arguments"}:
                 raise _invalid("unsupported function call fields")
+            source_id = _string(call.get("id"), "call id")
+            if source_id in pending_calls:
+                raise _invalid("ambiguous repeated tool call id before its result")
+            call_id = source_id
+            suffix = next_suffix.get(source_id, 1)
+            while call_id in used_call_ids:
+                digest = hashlib.sha256(f"{source_id}:{suffix}".encode()).hexdigest()
+                call_id = f"call_{digest[:32]}"
+                suffix += 1
+            next_suffix[source_id] = suffix
+            used_call_ids.add(call_id)
+            pending_calls[source_id] = call_id
             items.append(
                 {
                     "type": "function_call",
-                    "call_id": _string(call.get("id"), "call id"),
+                    "call_id": call_id,
                     "name": _string(function.get("name"), "function name"),
                     "arguments": _string(function.get("arguments"), "arguments"),
                 }

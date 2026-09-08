@@ -32,7 +32,7 @@ from .events import (
     _parse_ts,
     _serialize_ts,
 )
-from .store_types import SessionLoadDiagnostics
+from .store_types import SessionLoadDiagnostics, SourceVersion
 
 Channel = Literal["voice", "text"]
 """会话与用户的交流模态。
@@ -157,6 +157,8 @@ class Session:
     initial_reasoning_preset: str | None = None
     events: list[Event] = field(default_factory=list)
     load_diagnostics: SessionLoadDiagnostics = field(default_factory=SessionLoadDiagnostics)
+    # Transient read identity, never exported or persisted. append invalidates it.
+    loaded_source_version: SourceVersion | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def new(
@@ -992,6 +994,7 @@ class Session:
         ``store.append_event`` 成功后再调本方法）。
         """
         self.events.append(event)
+        self.loaded_source_version = None
 
     def to_dict(self) -> dict[str, Any]:
         """完整快照导出。

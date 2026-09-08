@@ -78,6 +78,22 @@ def fact() -> NotificationFact:
     )
 
 
+def test_snapshot_existence_check_does_not_load_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    svc, _ = service(tmp_path)
+    item = svc.accept(fact())
+
+    def unexpected_load(*args: object, **kwargs: object) -> None:
+        raise AssertionError("existence validation must not parse conversation history")
+
+    monkeypatch.setattr(svc.sessions, "load", unexpected_load)
+    assert svc.snapshot()[0]["delivery"]["status"] != "invalidated"
+    svc.sessions.delete("s")
+    assert svc.snapshot()[0]["delivery"]["status"] == "invalidated"
+    assert svc.store.get(item.notification_id).generation_status == "suppressed"
+
+
 def desktop(current: str = "s", state: str = "active") -> DesktopPresenceSnapshot:
     return DesktopPresenceSnapshot(NOW, current, True, True, False, 0, cast(Any, state), NOW)
 

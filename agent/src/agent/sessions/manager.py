@@ -21,8 +21,14 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
-from llm_providers import LanguageModelFactory, ModelRuntimeConfig, default_model_runtime_config
+from llm_providers import (
+    LanguageModelFactory,
+    ModelRuntimeConfig,
+    default_model_runtime_config,
+    validate_model_runtime_config,
+)
 
 from ..approvals.models import SessionApprovalModeState
 from ..command_runtime.workspace import session_workspace_path
@@ -32,6 +38,7 @@ from ..time_provider import SystemTimeProvider, TimeProvider
 from .cache_epoch import SessionCacheEpoch
 from .changes import SessionChangeBroker
 from .errors import SessionCorruptError
+from .events import Event
 from .metadata import SessionMetadataStore
 from .model_context import SessionModelContext
 from .model_history import SessionModelHistory
@@ -300,6 +307,53 @@ class SessionManager:
 
     def query(self, session_id: str, *, cancel_check: CancelCheck = None) -> SessionQuerySnapshot:
         return query_session(self._store, session_id, cancel_check=cancel_check)
+
+    def update_model_config(
+        self, session_id: str, *, model: str | None, reasoning_preset: str | None
+    ) -> ModelRuntimeConfig:
+        """Persist next-turn settings without constructing or restoring a Conversation.
+
+        The caller owns the session mutation reservation. A cold session also needs
+        the cross-process writer lease; resident state already owns that lease.
+        """
+        state = self._runtime_states.get(session_id)
+        lease = acquire_session_writer_lease(self._store, session_id) if state is None else None
+        try:
+            session = state.rollout_recorder.session if state is not None else None
+            current = (
+                session.current_model_config
+                if session is not None
+                else self.query(session_id).current_model_config
+            )
+            target = validate_model_runtime_config(
+                ModelRuntimeConfig(model or current.model_id, reasoning_preset)
+                if reasoning_preset is not None
+                else default_model_runtime_config(model or current.model_id)
+            )
+            if current == target:
+                return current
+            if self._llm_client_factory is None:
+                raise AgentError("model configuration requires llm_client_factory")
+            self._llm_client_factory(target)
+            event = Event(
+                type="model_config_change",
+                uuid=str(uuid4()),
+                ts=datetime.now(UTC),
+                payload={
+                    "from": {
+                        "model": current.model_id,
+                        "reasoningPreset": current.reasoning_preset,
+                    },
+                    "to": {"model": target.model_id, "reasoningPreset": target.reasoning_preset},
+                },
+            )
+            self._store.append_event(session_id, event)
+            if session is not None:
+                session.append(event)
+            return target
+        finally:
+            if lease is not None:
+                lease.release()
 
     def list(
         self,
@@ -613,7 +667,7 @@ class SessionManager:
             raise AgentError("context_manager_factory 未配置")
         if self._transaction_reconciler is not None and session.business_llm_messages:
             session = self._transaction_reconciler.reconcile_session(
-                session.session_id, cancel_check=cancel_check
+                session.session_id, cancel_check=cancel_check, loaded_session=session
             ).session
         check_cancel(cancel_check)
         restored = restore_rollout(session, cancel_check=cancel_check)

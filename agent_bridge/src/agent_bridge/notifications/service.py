@@ -152,7 +152,8 @@ class NotificationService:
                 return False
         if fact.session_id:
             try:
-                self.sessions.load(fact.session_id)
+                if not self.sessions.exists(fact.session_id):
+                    return False
             except Exception:
                 return False
         return True
