@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,7 +34,7 @@ def test_writer_commits_before_snapshot_bytes_are_read(
     ready, release = ThreadEvent(), ThreadEvent()
     read = store._read_snapshot_bytes
 
-    def paused_read(binary: BinaryIO, length: int, cancel_check: CancelCheck) -> list[bytes]:
+    def paused_read(binary: BinaryIO, length: int, cancel_check: CancelCheck) -> Iterable[bytes]:
         if current_thread().name.startswith("pinned-reader"):
             ready.set()
             assert release.wait(timeout=5)

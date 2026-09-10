@@ -683,6 +683,9 @@ interface MessageTimelineProps {
   onContinueToolResult?: (messageId: string) => void | Promise<void>;
   searchTarget?: SearchNavigationTarget | null;
   onSearchTargetHandled?: (token: number, found: boolean) => void;
+  hasOlderHistory?: boolean;
+  onLoadOlderHistory?: () => Promise<boolean>;
+  onLoadReferenceHistory?: () => Promise<boolean>;
 }
 
 /**
@@ -706,8 +709,18 @@ export function MessageTimeline({
   onContinueToolResult,
   searchTarget = null,
   onSearchTargetHandled,
+  hasOlderHistory = false,
+  onLoadOlderHistory,
+  onLoadReferenceHistory,
 }: MessageTimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const prependingRef = useRef(false);
+  const [historyControlVisible, setHistoryControlVisible] = useState(hasOlderHistory);
+  const [olderLoading, setOlderLoading] = useState(false);
+  const [pendingReference, setPendingReference] = useState<ChatTextReference | null>(null);
+  useEffect(() => {
+    if (hasOlderHistory) setHistoryControlVisible(true);
+  }, [hasOlderHistory]);
   const followingRef = useRef(true);
   const userScrollSessionRef = useRef(false);
   const userScrollTopRef = useRef<number | null>(null);
@@ -812,6 +825,15 @@ export function MessageTimeline({
     }
     const index = findReferenceMessageIndex(messages, reference);
     if (index < 0) {
+      if (hasOlderHistory && onLoadReferenceHistory) {
+        followingRef.current = false;
+        prependingRef.current = true;
+        void onLoadReferenceHistory().then((loaded) => {
+          if (loaded) setPendingReference(reference);
+          else { prependingRef.current = false; toast.error("引用来源暂时无法加载"); }
+        });
+        return;
+      }
       toast.error("引用来源已经不可访问");
       return;
     }
@@ -853,7 +875,13 @@ export function MessageTimeline({
       );
     };
     searchScrollRafRef.current = window.requestAnimationFrame(locate);
-  }, [applyFollowEvent, cancelUserLayoutMutation, clearSearchFeedback, composerInset, messages, virtualizer]);
+  }, [applyFollowEvent, cancelUserLayoutMutation, clearSearchFeedback, composerInset, messages, virtualizer, hasOlderHistory, onLoadReferenceHistory]);
+
+  useEffect(() => {
+    if (!pendingReference) return;
+    setPendingReference(null);
+    handleReferenceSelect(pendingReference);
+  }, [pendingReference, handleReferenceSelect]);
 
   const endUserScrollSession = useCallback(() => {
     userScrollSessionRef.current = false;
@@ -1069,6 +1097,13 @@ export function MessageTimeline({
 
   useLayoutEffect(() => {
     const prevMessages = prevMessagesRef.current;
+    if (prependingRef.current && messages !== prevMessages) {
+      // The installed virtualizer anchors prepends by item key. Only suppress
+      // our send-follow rule; do not add a second pixel correction.
+      prependingRef.current = false;
+      prevMessagesRef.current = messages;
+      return;
+    }
     const addedMessages = messages.slice(prevMessages.length);
     const userSentMessage = addedMessages.some((m) => m.role === "user");
     const isBackgroundSync = syncRefreshSeq !== prevSyncRefreshSeqRef.current;
@@ -1095,7 +1130,7 @@ export function MessageTimeline({
     }
 
     prevMessagesRef.current = messages;
-  }, [messages, scheduleScrollToBottom, syncRefreshSeq]);
+  }, [messages, scheduleScrollToBottom, syncRefreshSeq, virtualizer]);
 
   useLayoutEffect(() => {
     if (searchTargetRef.current) return;
@@ -1233,7 +1268,25 @@ export function MessageTimeline({
   }
 
   return (
-    <div className="relative min-h-0 flex-1">
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {(hasOlderHistory || historyControlVisible) && onLoadOlderHistory && (
+        <Button variant="ghost" size="sm" disabled={!hasOlderHistory || olderLoading || streaming || historyLoading}
+          onClick={async () => {
+            prependingRef.current = true;
+            followingRef.current = false;
+            setOlderLoading(true);
+            try {
+              if (!await onLoadOlderHistory()) {
+                prependingRef.current = false;
+                toast.error("更早的消息暂时未能加载，请重试。");
+              }
+            } finally {
+              setOlderLoading(false);
+            }
+          }}>
+          {olderLoading ? "正在加载…" : hasOlderHistory ? "加载更早的消息" : "已到最早的消息"}
+        </Button>
+      )}
       <ScrollArea
         viewportRef={scrollRef}
         onViewportScroll={handleViewportScroll}
@@ -1242,7 +1295,7 @@ export function MessageTimeline({
         onPointerUpCapture={handlePointerScrollEnd}
         onPointerCancelCapture={handlePointerScrollEnd}
         onKeyDownCapture={handleKeyDownCapture}
-        className="h-full"
+        className="min-h-0 flex-1"
         viewportClassName={CHAT_SCROLL_VIEWPORT_CLASS}
       >
         <div
@@ -1365,6 +1418,9 @@ export function MessageList({
   primaryActivity,
 }: MessageListProps) {
   const messages = useConversationStore((s) => s.messages);
+  const hasOlderHistory = useConversationStore((s) => s.hasOlderHistory());
+  const loadOlderHistory = useConversationStore((s) => s.loadOlderHistory);
+  const loadReferenceHistory = useConversationStore((s) => s.loadReferenceHistory);
   const runPresentation = useConversationStore(useShallow((s) => (
     sessionRunPresentation(s, s.currentSessionId)
   )));
@@ -1421,6 +1477,9 @@ export function MessageList({
     <ExecutionDisclosureStateProvider key={currentSessionId}>
       <MessageTimeline
         messages={messages}
+        hasOlderHistory={hasOlderHistory}
+        onLoadOlderHistory={loadOlderHistory}
+        onLoadReferenceHistory={loadReferenceHistory}
         activeRunId={activeRunId}
         primaryActivity={primaryActivity}
         streaming={streaming}

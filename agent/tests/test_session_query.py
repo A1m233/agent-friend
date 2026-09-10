@@ -27,6 +27,54 @@ def _store(tmp_path: Path) -> tuple[JsonlSessionStore, str]:
     return store, session.session_id
 
 
+def test_pages_keep_turns_together_without_rereading_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, sid = _store(tmp_path)
+    for i in range(5):
+        store.append_events(
+            sid,
+            [
+                _event("user_message", f"u{i}", content="hello"),
+                _event("assistant_message", f"a{i}", content="answer"),
+            ],
+        )
+    snapshot = store.query(sid)
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("paging an indexed snapshot must not reload history")
+
+    monkeypatch.setattr(store, "_read_records", forbidden)
+    latest, cursor = store.query(sid).page_events(turn_limit=2)
+    assert [e.uuid for e in latest] == ["u3", "a3", "u4", "a4"]
+    middle, cursor = snapshot.page_events(turn_limit=2, before=cursor)
+    assert [e.uuid for e in middle] == ["u1", "a1", "u2", "a2"]
+    oldest, cursor = snapshot.page_events(turn_limit=2, before=cursor)
+    assert [e.uuid for e in oldest] == [sid, "u0", "a0"]
+    assert cursor is None
+    with pytest.raises(ValueError):
+        snapshot.page_events(turn_limit=2, before="missing")
+    with pytest.raises(ValueError):
+        snapshot.page_events(turn_limit=2, before="a2")
+
+
+def test_page_epoch_survives_known_appends_but_not_external_changes(tmp_path: Path) -> None:
+    store, sid = _store(tmp_path)
+    before = store.query(sid).history_epoch
+    store.append_event(sid, _event("user_message", "u1", content="first"))
+    assert store.query(sid).history_epoch == before
+    with (tmp_path / f"{sid}.jsonl").open("ab") as file:
+        file.write((_event("user_message", "u2", content="external").to_jsonl() + "\n").encode())
+    assert store.query(sid).history_epoch != before
+
+
+@pytest.mark.parametrize("chunks", [[b"a\r", b"\nb\n", b"c"], [b"a\rb", b"\rc\r"], [b"", b"x\n"]])
+def test_streamed_lines_preserve_snapshot_line_boundaries(chunks: list[bytes]) -> None:
+    assert list(JsonlSessionStore._snapshot_lines(chunks)) == b"".join(chunks).splitlines(
+        keepends=True
+    )
+
+
 def test_query_reuses_frozen_business_projection_and_raw_event_positions(tmp_path: Path) -> None:
     store, sid = _store(tmp_path)
     store.append_events(

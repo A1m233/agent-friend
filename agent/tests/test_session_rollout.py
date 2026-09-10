@@ -190,6 +190,82 @@ def _run(manager: SessionManager, session_id: str, text: str) -> None:
     list(conversation.stream(text, surface=DESKTOP_CHAT_SURFACE))
 
 
+def test_warm_execution_never_loads_history_and_preserves_turns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    llm = _RecordingLLM()
+    store = JsonlSessionStore(tmp_path / "sessions")
+    manager = _manager(tmp_path, llm, store=store)
+    sid = _create(manager)
+    _run(manager, sid, "first")
+
+    def forbidden(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("resident execution must not read full history")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "load", forbidden)
+        for text in ("second", "third", "fourth"):
+            session = manager.open_for_execution(sid)
+            conv = manager.start_conversation(session)
+            list(conv.stream(text, surface=DESKTOP_CHAT_SURFACE))
+    manager.close()
+    assert len(llm.received) == 4
+    persisted = manager.open(sid)
+    assert [e.payload["content"] for e in persisted.events if e.type == "user_message"] == [
+        "first",
+        "second",
+        "third",
+        "fourth",
+    ]
+
+
+def test_resident_execution_rejects_external_append(tmp_path: Path) -> None:
+    manager = _manager(tmp_path, _RecordingLLM())
+    sid = _create(manager)
+    _run(manager, sid, "first")
+    path = tmp_path / "sessions" / f"{sid}.jsonl"
+    with path.open("ab") as file:
+        file.write(b"\n")
+    try:
+        with pytest.raises(SessionWriterConflictError, match="外部修改"):
+            manager.open_for_execution(sid)
+    finally:
+        manager.close()
+
+
+def test_deleted_resident_session_is_not_reported_as_creatable(tmp_path: Path) -> None:
+    manager = _manager(tmp_path, _RecordingLLM())
+    sid = _create(manager)
+    _run(manager, sid, "first")
+    (tmp_path / "sessions" / f"{sid}.jsonl").unlink()
+    try:
+        with pytest.raises(SessionWriterConflictError, match="不能自动重建"):
+            manager.open_for_execution(sid)
+    finally:
+        manager.close()
+
+
+def test_cold_execution_rechecks_source_after_acquiring_writer(tmp_path: Path) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    manager = _manager(tmp_path, _RecordingLLM(), store=store)
+    sid = _create(manager)
+    stale = manager.open(sid)
+    store.append_event(
+        sid,
+        Event(
+            type="user_message",
+            uuid="arrived-before-lease",
+            ts=stale.created_at,
+            payload={"content": "new history"},
+        ),
+    )
+    try:
+        manager.start_conversation(stale)
+        assert any(e.uuid == "arrived-before-lease" for e in manager.open_for_execution(sid).events)
+    finally:
+        manager.close()
+
+
 @pytest.mark.parametrize("corrupt_tail", [False, True])
 def test_restore_serialized_result_is_isolated_from_source_and_other_restores(
     tmp_path: Path, corrupt_tail: bool

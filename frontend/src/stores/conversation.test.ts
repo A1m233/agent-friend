@@ -34,6 +34,8 @@ vi.mock("@/services", () => ({
   },
   sessionsApi: {
     get: vi.fn(),
+    getFull: vi.fn(),
+    getOlder: vi.fn(),
     getApprovalMode: vi.fn(),
     switchModel: vi.fn(),
     updateRuntimeConfig: vi.fn(),
@@ -167,6 +169,31 @@ function sessionDetail(sessionId: string, content: string, model = "test"): Sess
   };
 }
 
+function historyPage(ids: string[], cursor: string | null): SessionDetail {
+  return {
+    session_id: "paged", title: "paged", persona: "default", model: "test", revision: 1,
+    history_epoch: "initial", history_cursor: cursor,
+    active_events: ids.flatMap((id) => [
+      { type: "user_message", uuid: `${id}:user`, ts: "2026-09-10T00:00:00Z", payload: { content: id } },
+      { type: "assistant_message", uuid: `${id}:assistant`, ts: "2026-09-10T00:00:01Z", payload: { content: `reply ${id}` } },
+    ]),
+  };
+}
+
+it("loads earlier complete turns and preserves them through a latest-page refresh", async () => {
+  mockGet.mockResolvedValue(historyPage(["new"], "new:user"));
+  await useConversationStore.getState().openSession("paged");
+  expect(useConversationStore.getState().hasOlderHistory()).toBe(true);
+  vi.mocked(sessionsApi.getOlder).mockResolvedValue(historyPage(["old"], null));
+  expect(await useConversationStore.getState().loadOlderHistory()).toBe(true);
+  expect(useConversationStore.getState().messages.map((m) => m.id)).toEqual([
+    "old:user", "old:assistant", "new:user", "new:assistant",
+  ]);
+  expect(useConversationStore.getState().hasOlderHistory()).toBe(false);
+  await useConversationStore.getState().refreshCurrentSession("paged");
+  expect(useConversationStore.getState().messages).toHaveLength(4);
+});
+
 function runSnapshot(
   runId: string,
   sessionId: string,
@@ -211,6 +238,8 @@ beforeEach(() => {
   resetConversationCoordinatorsForTests();
   isTauriMock.mockReturnValue(false);
   mockGet.mockReset();
+  vi.mocked(sessionsApi.getFull).mockReset();
+  vi.mocked(sessionsApi.getOlder).mockReset();
   mockGetApprovalMode.mockReset();
   mockUpdateApprovalMode.mockReset();
   mockRunCancel.mockReset();
@@ -893,7 +922,7 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
   });
 
   it("从归档搜索结果打开消息时保持 detached，并提交稳定事件锚点", async () => {
-    mockGet.mockResolvedValue(sessionDetail("sid-archived", "归档历史"));
+    vi.mocked(sessionsApi.getFull).mockResolvedValue(sessionDetail("sid-archived", "归档历史"));
     const result: SessionMessageSearchResult = {
       result_id: "message:sid-archived:a-anchor",
       kind: "message",
@@ -923,7 +952,7 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
   it("搜索结果在打开失败时恢复此前会话，不用错误页覆盖它", async () => {
     mockGet.mockResolvedValueOnce(sessionDetail("sid-current", "当前历史"));
     await useConversationStore.getState().openSession("sid-current");
-    mockGet.mockRejectedValueOnce(new Error("deleted"));
+    vi.mocked(sessionsApi.getFull).mockRejectedValueOnce(new Error("deleted"));
     const result: SessionMessageSearchResult = {
       result_id: "message:sid-deleted:u-1",
       kind: "message",

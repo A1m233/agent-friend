@@ -1,7 +1,9 @@
 # scripts/
 
-> `session-latency/run.* prepare --session-id ID --directory PATH` 在新建的项目外副本中剖析 `manager.open` 与 `start_conversation`，保存不含消息正文的 cProfile 和分阶段耗时；关闭 memory/IM，不启动回合或应用后台任务，禁止 HTTPX 请求及非 loopback 连接。仅复制 JSONL/persona，不能替代真实执行验收；两个平台入口参数一致。
+> `session-latency/run.* prepare --session-id ID --directory PATH` 在新建的项目外副本中剖析 `manager.open` 与 `start_conversation`，随后测量三次驻留准备，保存不含消息正文的 cProfile 和分阶段耗时；`--source-root DATA_PATH` 可复用固定隔离夹具。关闭 memory/IM，不启动回合或应用后台任务，禁止 HTTPX 请求及非 loopback 连接。仅复制 JSONL/persona，不能替代真实执行验收；两个平台入口参数一致。
 
+> `session-latency/run.* paging --title TITLE --output PRIVATE_FILE` 在已确认身份的真实 Tauri CDP 中打开长会话并点击加载旧页，记录消息数量及逐帧锚点位移；不发送模型请求。两个平台入口一致。
+>
 > `session-latency/run.* isolated serve` 默认仍限制4次；另行获得本次授权时才可显式传 `--max-requests 6`，输入保守上界仍为100万，重启不能重置计数。`long-runtime` 在匹配本次 run 的 `llm_stream_start` 后才开始切换，并检查运行期间切换及唯一 calculate=391 结果；不再将冷准备阶段的切换冒充执行期间验收。需求120此前两轮真实调用额度均已结束，以上能力不自动授予新额度。
 
 > `responses-smoke` 通过公共 `LanguageModel.stream()` 验证 DeepSeek V4 Flash（默认思考档位）和 Kimi K3（low）的合成工具闭环；DeepSeek 额外断言 native reasoning_tokens=0 且无推理 state，防止“请求成功但关闭思考未生效”。每模型最多 2 次请求，总计最多 4 次；HTTP 护栏拒绝重试及其它 endpoint。需单次授权和 `--allow-llm --output <新文件路径>`，不覆盖已有证据、不读用户会话。它与 `prompt-cache-smoke` 的 completed-assistant 回放均保留原生多 item 与 phase。

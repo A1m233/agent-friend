@@ -478,7 +478,8 @@ def _degraded_restore(
 def restore_rollout(session: Session, *, cancel_check: CancelCheck = None) -> RolloutRestoreResult:
     """Apply only complete, hash-valid rollout commits from the session stream."""
 
-    item_events: dict[str, tuple[Event, dict[str, Any], Message]] = {}
+    item_events: dict[str, tuple[Event, dict[str, Any], Message, bytes | None]] = {}
+    cached_canonical_bytes = 0
     committed: RolloutCommitState | None = None
     # Same v1 canonical JSON digest, retained before the list's closing bracket.
     # Appends extend that prefix; rewrites start a new one. Every commit is still checked.
@@ -498,9 +499,27 @@ def restore_rollout(session: Session, *, cancel_check: CancelCheck = None) -> Ro
                 message = deserialize_message(raw_message)
             except (KeyError, TypeError, ValueError):
                 continue
-            if event.payload.get("message_sha256") != _digest("model-message", raw_message):
+            canonical_message = _canonical(raw_message).encode("utf-8")
+            if (
+                event.payload.get("message_sha256")
+                != sha256(b"agent-friend:model-message:v1\0" + canonical_message).hexdigest()
+            ):
                 continue
-            item_events[event.uuid] = (event, cast(dict[str, Any], raw_message), message)
+            previous_item = item_events.get(event.uuid)
+            if previous_item is not None and previous_item[3] is not None:
+                cached_canonical_bytes -= len(previous_item[3])
+            cached = (
+                canonical_message
+                if cached_canonical_bytes + len(canonical_message) <= 8 * 1024 * 1024
+                else None
+            )
+            cached_canonical_bytes += len(cached) if cached is not None else 0
+            item_events[event.uuid] = (
+                event,
+                cast(dict[str, Any], raw_message),
+                message,
+                cached,
+            )
             continue
         if event.type != "rollout_commit":
             continue
@@ -517,28 +536,35 @@ def restore_rollout(session: Session, *, cancel_check: CancelCheck = None) -> Ro
         if any(not isinstance(ref, str) or ref not in item_events for ref in refs):
             return _degraded_restore(session, committed, "corrupt_committed_history")
         selected = [item_events[ref] for ref in refs]
-        previous_serialized = list(committed.serialized_messages) if committed is not None else []
-        previous_messages = list(committed.messages) if committed is not None else []
+        previous_serialized = committed.serialized_messages if committed is not None else ()
+        previous_messages = committed.messages if committed is not None else ()
         serialized = (
-            [*previous_serialized, *(raw for _, raw, _ in selected)]
+            [*previous_serialized, *(raw for _, raw, _, _ in selected)]
             if relation == "append"
-            else [raw for _, raw, _ in selected]
+            else [raw for _, raw, _, _ in selected]
         )
         messages = (
-            [*previous_messages, *(message for _, _, message in selected)]
+            [*previous_messages, *(message for _, _, message, _ in selected)]
             if relation == "append"
-            else [message for _, _, message in selected]
+            else [message for _, _, message, _ in selected]
         )
         if payload.get("item_count") != len(messages):
             return _degraded_restore(session, committed, "corrupt_committed_history")
         if relation == "rewrite":
             transcript_prefix = sha256(b"agent-friend:model-transcript:v1\0[")
             transcript_items = 0
-        for _, raw, _ in selected:
+        for item_event, raw, message, cached_message in selected:
             check_cancel(cancel_check)
             if transcript_items:
                 transcript_prefix.update(b",")
-            transcript_prefix.update(_canonical(raw).encode("utf-8"))
+            transcript_prefix.update(
+                cached_message if cached_message is not None else _canonical(raw).encode("utf-8")
+            )
+            # Do not retain a second serialized history after its first commit.
+            cached_item = item_events[item_event.uuid][3]
+            if cached_item is not None:
+                cached_canonical_bytes -= len(cached_item)
+            item_events[item_event.uuid] = (item_event, raw, message, None)
             transcript_items += 1
         transcript_digest = transcript_prefix.copy()
         transcript_digest.update(b"]")

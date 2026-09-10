@@ -6,11 +6,14 @@ it has no mutation or execution methods and omits internal rollout payloads.
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
+from functools import cached_property
+from hashlib import sha256
 from threading import Lock
 from time import perf_counter
 from types import MappingProxyType
@@ -94,6 +97,48 @@ class SessionQuerySnapshot:
     current_model_config: ModelRuntimeConfig
     current_channel: Channel
     estimated_bytes: int
+    projection_epoch: str = ""
+
+    @cached_property
+    def history_epoch(self) -> str:
+        rewrite = next(
+            (e.uuid for e in reversed(self.events) if e.type == "turn_rewrite"), "initial"
+        )
+        return f"{self.projection_epoch}:{rewrite}"
+
+    @cached_property
+    def page_positions(self) -> Mapping[str, int]:
+        return MappingProxyType({e.uuid: i for i, e in enumerate(self.active_events)})
+
+    @cached_property
+    def page_starts(self) -> tuple[int, ...]:
+        starts = [
+            i
+            for i, e in enumerate(self.active_events)
+            if e.type in {"user_message", "system_trigger"}
+        ]
+        # Metadata preceding the first turn belongs to that turn, not an extra page.
+        return (0, *starts[1:]) if starts else (0,)
+
+    def page_events(
+        self, *, turn_limit: int, before: str | None = None
+    ) -> tuple[tuple[Event, ...], str | None]:
+        """Read complete user turns; never split an assistant's tool sequence."""
+        if turn_limit < 1:
+            raise ValueError("turn_limit must be positive")
+        end = len(self.active_events)
+        if before is not None:
+            end = self.page_positions.get(before, -1)
+            if end < 0:
+                raise ValueError("history cursor is no longer available")
+        if end == 0:
+            return (), None
+        starts = self.page_starts
+        boundary = bisect_left(starts, end)
+        if before is not None and (boundary == len(starts) or starts[boundary] != end):
+            raise ValueError("history cursor must point to a complete turn boundary")
+        start = starts[max(0, boundary - turn_limit)]
+        return self.active_events[start:end], self.active_events[start].uuid if start else None
 
     @classmethod
     def build(
@@ -139,6 +184,7 @@ class SessionQuerySnapshot:
             current_model_config=session.current_model_config,
             current_channel=session.current_channel,
             estimated_bytes=estimated_bytes,
+            projection_epoch=sha256(repr(source_version).encode("utf-8")).hexdigest()[:24],
         )
 
     def appended(self, events: list[Event], version: SourceVersion) -> SessionQuerySnapshot:
@@ -192,12 +238,15 @@ class SessionQuerySnapshot:
             )
         existing = ((self.raw_event_indices[event.uuid], event) for event in self.events)
         additions = enumerate(events, start=self.raw_event_count)
-        return self.build(
+        rebuilt = self.build(
             (*existing, *additions),
             raw_event_count=self.raw_event_count + len(events),
             diagnostics=self.load_diagnostics,
             source_version=version,
         )
+        if not any(event.type == "turn_rewrite" for event in events):
+            rebuilt = replace(rebuilt, projection_epoch=self.projection_epoch)
+        return rebuilt
 
 
 class SessionQueryCache:

@@ -47,7 +47,7 @@ def build_agent_runtime(
     runtime: AgentRuntime  # forward reference for closure
 
     def conversation_factory(session_id: str) -> Conversation:
-        session = session_manager.open(session_id)
+        session = session_manager.open_for_execution(session_id)
         return session_manager.start_conversation(
             session,
             post_turn_external=True,

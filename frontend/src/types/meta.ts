@@ -36,6 +36,8 @@ interface SessionDetailBase {
   model: string;
   reasoningPreset?: string;
   revision?: number;
+  history_cursor?: string | null;
+  history_epoch?: string;
   approval_mode?: "per_request" | "session_auto";
   approval_mode_version?: number;
 }

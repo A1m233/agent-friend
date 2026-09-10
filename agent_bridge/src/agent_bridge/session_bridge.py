@@ -225,9 +225,9 @@ class SessionBridge:
             cancel_check()
         try:
             session = existing_session or (
-                mgr.open(boot.thread_id, cancel_check=cancel_check)
+                mgr.open_for_execution(boot.thread_id, cancel_check=cancel_check)
                 if cancel_check is not None
-                else mgr.open(boot.thread_id)
+                else mgr.open_for_execution(boot.thread_id)
             )
         except SessionNotFoundError:
             if cancel_check is not None:

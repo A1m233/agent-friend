@@ -13,7 +13,7 @@ import io
 import os
 import stat
 from collections import OrderedDict
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -78,9 +78,22 @@ class _NullWriterLease:
 
 
 class _PortalockerWriterLease:
-    def __init__(self, lock: portalocker.Lock, handle: object) -> None:
+    def __init__(
+        self,
+        lock: portalocker.Lock,
+        handle: object,
+        validate: Callable[[], None],
+        on_release: Callable[[], None],
+    ) -> None:
         self._lock = lock
         self._handle = handle
+        self._validate = validate
+        self._on_release = on_release
+
+    def validate(self) -> None:
+        if self._handle is None:
+            raise SessionWriterConflictError("session writer lease 已释放")
+        self._validate()
 
     def release(self) -> None:
         if self._handle is None:
@@ -89,6 +102,7 @@ class _PortalockerWriterLease:
             self._lock.release()
         finally:
             self._handle = None
+            self._on_release()
 
 
 def _iter_lines_reverse(path: Path, cancel_check: CancelCheck = None) -> Iterator[str]:
@@ -266,6 +280,7 @@ class JsonlSessionStore:
             OrderedDict()
         )
         self._summary_lock = Lock()
+        self._writer_versions: dict[str, SourceVersion] = {}
         try:
             self._base_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
@@ -378,6 +393,7 @@ class JsonlSessionStore:
                 binary = cast(BinaryIO, f)
                 with observation.phase("boundary"):
                     before = self._handle_version(binary, path)
+                    self._validate_writer_version(session_id, before)
                     binary.seek(0, os.SEEK_END)
                     clean_boundary = True
                     if binary.tell():
@@ -395,6 +411,8 @@ class JsonlSessionStore:
                     os.fsync(binary.fileno())
                 with observation.phase("version"):
                     after = self._handle_version(binary, path)
+                    if session_id in self._writer_versions:
+                        self._writer_versions[session_id] = after
         except LockException as e:
             raise SessionPersistError(
                 f"获取会话文件写锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {session_id}: {e}"
@@ -468,7 +486,35 @@ class JsonlSessionStore:
             raise SessionWriterConflictError(
                 f"session 已由另一个 Bridge 持有写入 lease: {session_id}"
             ) from exc
-        return _PortalockerWriterLease(lock, handle)
+        try:
+            source = self._existing_path(session_id)
+            if source is None:
+                raise SessionNotFoundError(f"会话不存在: {session_id}")
+            self._writer_versions[session_id] = self._source_version(source)
+        except BaseException:
+            lock.release()
+            raise
+
+        def validate() -> None:
+            try:
+                actual = self._source_version(source)
+            except SessionNotFoundError as exc:
+                # This is an invalid resident writer, not an absent cold session
+                # that an execution adapter may safely auto-create.
+                raise SessionWriterConflictError("驻留会话文件已删除，不能自动重建") from exc
+            self._validate_writer_version(session_id, actual)
+
+        def released() -> None:
+            self._writer_versions.pop(session_id, None)
+
+        return _PortalockerWriterLease(lock, handle, validate, released)
+
+    def _validate_writer_version(self, session_id: str, actual: SourceVersion) -> None:
+        expected = self._writer_versions.get(session_id)
+        if expected is not None and expected != actual:
+            raise SessionWriterConflictError(
+                f"驻留会话文件已被外部修改，拒绝继续使用旧运行态: {session_id}"
+            )
 
     def delete_writer_lease(self, session_id: str) -> None:
         path = self._writer_lease_path(session_id)
@@ -568,38 +614,36 @@ class JsonlSessionStore:
         parse_errors: list[tuple[int, int]] = []
         event_count = 0
         try:
-            with observe_session_file("load", session_id) as observation:
-                with ExitStack() as snapshot_handles:
-                    with observation.locked(self._read_lock(path, cancel_check)) as f:
-                        binary = cast(BinaryIO, f)
-                        version = self._handle_version(binary, path)
+            with (
+                observe_session_file("load", session_id) as observation,
+                ExitStack() as snapshot_handles,
+            ):
+                chunks: Iterable[bytes]
+                snapshot: BinaryIO | None = None
+                with observation.locked(self._read_lock(path, cancel_check)) as f:
+                    binary = cast(BinaryIO, f)
+                    version = self._handle_version(binary, path)
+                    try:
+                        descriptor = os.dup(binary.fileno())
+                    except io.UnsupportedOperation:
+                        # Adapters without a descriptor need an owned snapshot
+                        # while locked. Real files stream a pinned prefix.
+                        chunks = list(self._read_snapshot_bytes(binary, version[2], cancel_check))
+                    else:
                         try:
-                            descriptor = os.dup(binary.fileno())
-                        except io.UnsupportedOperation:
-                            # File-like adapters cannot pin a descriptor: retain
-                            # the original locked snapshot behavior for them.
-                            snapshot = None
-                            chunks = self._read_snapshot_bytes(binary, version[2], cancel_check)
-                        else:
-                            try:
-                                snapshot = os.fdopen(descriptor, "rb")
-                            except BaseException:
-                                os.close(descriptor)
-                                raise
-                            snapshot_handles.enter_context(snapshot)
-                    if snapshot is not None:
-                        # Canonical JSONL is append-only. Pin the opened file and
-                        # its committed length under the lock, then read exactly
-                        # that immutable prefix without delaying later appends.
-                        # A rename/replacement cannot redirect this descriptor.
-                        with observation.phase("snapshot_read"):
-                            chunks = self._read_snapshot_bytes(snapshot, version[2], cancel_check)
-                with observation.parsing():
-                    raw = b"".join(chunks)
-                    del chunks
-                    observation.byte_count = len(raw)
-                    for lineno, line in enumerate(raw.splitlines(keepends=True), start=1):
+                            snapshot = os.fdopen(descriptor, "rb")
+                        except BaseException:
+                            os.close(descriptor)
+                            raise
+                        snapshot_handles.enter_context(snapshot)
+                if snapshot is not None:
+                    chunks = self._read_snapshot_bytes(snapshot, version[2], cancel_check)
+                # Read and parse incrementally outside the file lock. Keep the
+                # descriptor alive through the last parsed record.
+                with observation.parsing(), observation.phase("stream_read_parse"):
+                    for lineno, line in enumerate(self._snapshot_lines(chunks), start=1):
                         check_cancel(cancel_check)
+                        observation.byte_count += len(line)
                         if not line.strip():
                             continue
                         try:
@@ -607,13 +651,10 @@ class JsonlSessionStore:
                         except (UnicodeDecodeError, SessionCorruptError):
                             parse_errors.append((lineno, len(line)))
                             continue
-                        # Corruption recovery only needs record type and segment marker.
                         parsed_records.append(
                             (
                                 lineno,
-                                event
-                                if not query_only
-                                else Event(
+                                Event(
                                     type=event.type,
                                     uuid=event.uuid,
                                     ts=event.ts,
@@ -644,17 +685,28 @@ class JsonlSessionStore:
     @staticmethod
     def _read_snapshot_bytes(
         binary: BinaryIO, length: int, cancel_check: CancelCheck
-    ) -> list[bytes]:
-        chunks: list[bytes] = []
+    ) -> Iterator[bytes]:
         remaining = length
         while remaining:
             check_cancel(cancel_check)
             chunk = binary.read(min(1024 * 1024, remaining))
             if not chunk:
                 raise SessionPersistError("会话快照在读取完成前被截断")
-            chunks.append(chunk)
+            yield chunk
             remaining -= len(chunk)
-        return chunks
+
+    @staticmethod
+    def _snapshot_lines(chunks: Iterable[bytes]) -> Iterator[bytes]:
+        """Preserve splitlines semantics, including CRLF across chunk boundaries."""
+        pending = b""
+        for chunk in chunks:
+            lines = (pending + chunk).splitlines(keepends=True)
+            pending = b""
+            if lines and (not lines[-1].endswith(b"\n")):
+                pending = lines.pop()
+            yield from lines
+        if pending:
+            yield pending
 
     def query(self, session_id: str, *, cancel_check: CancelCheck = None) -> SessionQuerySnapshot:
         with observe_session_query(session_id) as observation:

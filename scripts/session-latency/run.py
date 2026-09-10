@@ -43,7 +43,7 @@ def main() -> int:
             ],
             cwd=ROOT,
         )
-    if len(sys.argv) > 1 and sys.argv[1] in {"config", "scroll", "real"}:
+    if len(sys.argv) > 1 and sys.argv[1] in {"config", "scroll", "real", "paging"}:
         return subprocess.call(
             ["node", str(Path(__file__).with_name(f"{sys.argv[1]}_probe.mjs")), *sys.argv[2:]],
             cwd=ROOT,

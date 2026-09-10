@@ -56,6 +56,7 @@ import {
 } from "./drafts";
 import { createStreamUpdateScheduler } from "./streamUpdateScheduler";
 import { createSessionDetailReads } from "./sessionDetailReads";
+import { createSessionHistoryPages } from "./sessionHistoryPages";
 import { createRunCancellation, type StopRequestPhase } from "./runCancellation";
 import {
   createApprovalModeRefresher,
@@ -123,6 +124,8 @@ const MAX_RUN_SNAPSHOTS = 512;
 let openSessionToken = 0;
 let detailRefreshSeq = 0;
 let runtimeGeneration = 0;
+const historyPages = createSessionHistoryPages();
+const olderReads = new Set<string>();
 const detailReads = createSessionDetailReads(
   (sessionId) => sessionsApi.get(sessionId),
   (sessionId) => { void useConversationStore.getState().refreshCurrentSession(sessionId); },
@@ -202,6 +205,9 @@ export interface ConversationState {
   resolveNewConversationDraftRuntimeConfig: () => void;
   /** 切换到历史会话并加载其上下文。 */
   openSession: (sessionId: string, options?: OpenSessionOptions) => Promise<boolean>;
+  hasOlderHistory: () => boolean;
+  loadOlderHistory: () => Promise<boolean>;
+  loadReferenceHistory: () => Promise<boolean>;
   openSearchResult: (result: SessionSearchResult, query: string) => Promise<boolean>;
   clearSearchTarget: (token: number) => void;
   refreshCurrentSession: (sessionId: string) => Promise<"applied" | "stale" | "failed">;
@@ -377,6 +383,7 @@ function messageText(message: ChatMessage): string {
 }
 
 function projectSessionDetail(detail: SessionDetail) {
+  detail = historyPages.accept(detail);
   const events = detail.active_events ?? detail.events;
   if (!events) throw new Error("session detail is missing events");
   return projectSessionEvents(events);
@@ -590,7 +597,7 @@ function observeSendLifecycle(event: BaseEvent, sessionId: string, runId: string
 
 /** Reset module-owned async coordinators as well as Zustand state between isolated tests. */
 export function resetConversationCoordinatorsForTests(): void {
-  detailReads.reset(); appliedDetails = new WeakSet(); cancellations.reset(); pendingInputs.clear();
+  detailReads.reset(); historyPages.clear(); olderReads.clear(); appliedDetails = new WeakSet(); cancellations.reset(); pendingInputs.clear();
   activeTransports.clear(); runtimeGeneration += 1;
 }
 
@@ -829,7 +836,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       return true;
     }
     try {
-      const detail = await detailReads.read(sessionId);
+      const detail = options?.searchTarget
+        ? await sessionsApi.getFull(sessionId)
+        : await detailReads.read(sessionId);
+      if (detail.session_id !== sessionId) throw new Error("Session detail identity mismatch");
       if (token !== openSessionToken || get().currentSessionId !== sessionId || epoch !== runtimeGeneration) return false;
       if ((get().sessionViews[sessionId]?.revision ?? 0) > (detail.revision ?? 0)) {
         set((state) => {
@@ -1036,11 +1046,16 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (previous !== null) {
       runtimeGeneration += 1;
       detailReads.invalidateLifecycle();
+      historyPages.clear();
+      olderReads.clear();
       appliedDetails = new WeakSet();
     }
     cancellations.setRuntime(runtimeId);
     set((state) => ({
       runtimeInstanceId: runtimeId,
+      ...(previous !== null ? { sessionViews: Object.fromEntries(
+        Object.entries(state.sessionViews).map(([id, view]) => [id, { ...view, revision: 0 }]),
+      ) } : {}),
       runSnapshots: Object.fromEntries(Object.entries(state.runSnapshots).filter(([, run]) =>
         !run.runtime_instance_id || run.runtime_instance_id === runtimeId)),
     }));
@@ -1279,11 +1294,66 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       const sessionViews = Object.fromEntries(
         Object.entries(state.sessionViews).filter(([key]) => !evicted.has(key)),
       );
+      historyPages.prune(new Set(Object.keys(sessionViews)));
       const viewAccessedAt = Object.fromEntries(
         Object.entries(state.viewAccessedAt).filter(([key]) => !evicted.has(key)),
       );
       return { sessionViews, viewAccessedAt };
     });
+  },
+
+  hasOlderHistory() {
+    const id = get().currentSessionId;
+    return Boolean(id && historyPages.get(id)?.history_cursor);
+  },
+
+  async loadReferenceHistory() {
+    const id = get().currentSessionId;
+    if (!id) return false;
+    const epoch = runtimeGeneration;
+    try {
+      const detail = await sessionsApi.getFull(id);
+      if (detail.session_id !== id) return false;
+      if (get().currentSessionId !== id || runtimeGeneration !== epoch) return false;
+      const current = get().messages;
+      const historical = projectSessionEvents(detail.active_events ?? detail.events ?? []);
+      const boundary = historical.findIndex((message) => message.id === current[0]?.id);
+      if (boundary < 0) return false;
+      const messages = [...historical.slice(0, boundary), ...current];
+      historyPages.accept(detail);
+      set((state) => ({ messages, sessionViews: { ...state.sessionViews,
+        [id]: { ...state.sessionViews[id]!, messages } } }));
+      return true;
+    } catch { return false; }
+  },
+
+  async loadOlderHistory() {
+    const id = get().currentSessionId;
+    if (!id || olderReads.has(id) || isSessionBusy(get(), id)) return false;
+    const previous = historyPages.get(id);
+    if (!previous?.history_cursor || previous.history_epoch === undefined) return false;
+    const epoch = runtimeGeneration;
+    olderReads.add(id);
+    try {
+      const detail = await sessionsApi.getOlder(id, previous.history_cursor, previous.history_epoch);
+      if (detail.session_id !== id) return false;
+      if (get().currentSessionId !== id || runtimeGeneration !== epoch || isSessionBusy(get(), id)) return false;
+      if ((detail.revision ?? 0) !== (previous.revision ?? 0)) {
+        await get().refreshCurrentSession(id);
+        return false;
+      }
+      if (historyPages.get(id)?.history_epoch !== previous.history_epoch) return false;
+      const merged = historyPages.accept(detail, true);
+      const messages = projectSessionEvents(merged.active_events ?? merged.events ?? []);
+      set((state) => ({ messages, sessionViews: { ...state.sessionViews,
+        [id]: { ...state.sessionViews[id]!, messages } } }));
+      return true;
+    } catch {
+      // A rewritten cursor must never attach pages from another history epoch.
+      return false;
+    } finally {
+      if (runtimeGeneration === epoch) olderReads.delete(id);
+    }
   },
 
   async selectModel(modelId) {
