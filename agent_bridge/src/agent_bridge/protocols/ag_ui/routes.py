@@ -113,6 +113,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     attachment_inputs,
                     model_id=conv.current_model_config.model_id,
                     store=runtime.attachment_store,
+                    capability_resolver=runtime.attachment_capabilities,
                     cancel_check=cancel_check,
                 )
             resolved_attachments = attachment_plan.resolve()
