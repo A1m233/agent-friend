@@ -192,3 +192,9 @@ artifacts/cpa-effort-low-chain-20260910-01.json：显式 low 下 JSON、工具�
 用户明确授权将独立修复整合到本需求，并在复测通过后合入主干推送、构建本地测试包。新鲜 Tauri 开发实例完成同一合成会话重启前后续聊：原生重启耗时约25秒，旧 launcher/worker 全部退出，无手工清理；历史图片蓝/红、扫描PDF amber-583、TXT silver-917 正确读回，两次成功回合落盘并刷新可见，QQ 自动恢复 active/bound。第一次请求因本机 CPA 未启动返回 upstream_transient，恢复已有测试服务后复验成功。证据见 ../../issues/065-bridge-restart-stale-writer-lease/feature-retest.json。
 
 整合后全量检查通过：后端2961 passed/5 skipped，前端1244 passed/150文件，Rust287 passed/1 ignored；lint、typecheck、前端构建、Rust fmt/release check全绿。安装矩阵先前环境路径失败仍单列为交付缺口，未以对话复测替代安装验证。
+
+### 交付门禁结果
+
+修复提交22e78eb7，需求提交b4cbd155，最新主干同步提交112553f3，无冲突；同步后后端2961 passed/5 skipped再次通过。公开guide已发布agent-friend-guide-r37（cb528b7，immutable=true），介绍自定义连接、推理强度和附件。
+
+独立issue065候选在短路径隔离环境下安装矩阵12/14通过，首次安装目录预期和迁移开始菜单快捷方式预期仍失败；环境覆盖没有统一NSIS与测试脚本的路径来源。原case通过不替代安装矩阵。主干合入/推送及最终BYOK本地测试包因此尚未执行，issue保持open。详见issue目录installer-smoke-short-root-attempt.json。任务开发实例已停止，原安装版与QQ已恢复，CPA已恢复；未升级用户安装。

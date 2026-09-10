@@ -1,7 +1,7 @@
 {
   "recorded_at": "2026-09-10T11:43:54.670735+00:00",
   "branch": "feature/121-model-connections-and-custom-models",
-  "integration": "Issue 065 production changes applied to feature working tree; not committed or merged with a Git merge commit. Existing model_connection_operation preserved.",
+  "integration": "Committed issue fix 22e78eb7 and BYOK b4cbd155; merged origin/main into feature at 112553f3. Product main not merged or pushed.",
   "checks": {
     "command": ".\\scripts\\rust-check\\run.ps1",
     "passed": 287,
@@ -89,6 +89,28 @@
   },
   "runtime_blocker": null,
   "issue_status": "open",
-  "installer_matrix": "Existing independent fix candidate matrix has verification gaps; see verification.json",
-  "initial_attempt": "CPA port 8317 had no listener, producing upstream_transient; restored existing CPA executable/config and repeated once successfully."
+  "installer_matrix": {
+    "candidate_scope": "Independent issue 065 candidate, not final BYOK candidate",
+    "report": "installer-smoke-short-root-attempt.json",
+    "passed": 12,
+    "failed": [
+      {
+        "name": "fresh_install",
+        "reason": "RuntimeError: installed runtime is incomplete: D:\\agent-friend-smoke-env\\Local\\agent-friend-installer-smoke\\active-install.json"
+      },
+      {
+        "name": "explicit_program_root_migration",
+        "reason": "RuntimeError: explicit migration did not produce expected shortcuts"
+      }
+    ],
+    "result": "blocked",
+    "environment": "Isolated short Local/Roaming test directories. NSIS default install root and Start Menu paths did not follow environment overrides."
+  },
+  "initial_attempt": "CPA port 8317 had no listener, producing upstream_transient; restored existing CPA executable/config and repeated once successfully.",
+  "guide": {
+    "release": "agent-friend-guide-r37",
+    "commit": "cb528b7ba30f0ed708e23772ed35d0289ed034dd",
+    "immutable": true
+  },
+  "runtime_restoration": "Task development runtime stopped, original installed production app restarted, QQ verified active/bound. CPA restored."
 }
