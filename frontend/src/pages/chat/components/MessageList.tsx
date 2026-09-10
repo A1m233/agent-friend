@@ -55,6 +55,7 @@ import { MessageAttachments } from "./MessageAttachments";
 import { MessageActionBar } from "./MessageActionBar";
 import { MessageQuoteSelectionAction } from "./MessageQuoteSelectionAction";
 import { RunExecutionDisclosure } from "./RunExecutionDisclosure";
+import { RunNotice } from "./activity/RunNotice";
 import {
   getMessageVirtualItemKey,
   getScrollToBottomBehavior,
@@ -513,29 +514,31 @@ function MessageContent({
       </RunExecutionDisclosure>
       {message.status === "error" && message.error && (
         <div className="flex flex-col items-start gap-2">
-          <TextBubble role="assistant" text={message.error} actionBar={actionBar} />
-          {message.errorCode === "auth_failed" && (
-            <Button
-              type="button"
-              variant="outline"
-              size="xs"
-              onClick={() => {
-                const model = useConversationStore.getState().currentModel;
-                const groupId = model ? runtimeCredentialGroupForModel(model) : null;
-                void openSettings({
-                  target: "runtime",
-                  runtime: groupId ? { groupId } : undefined,
-                });
-              }}
-            >
-              打开凭据设置
-            </Button>
-          )}
-          {onContinueToolResult && (
-            <Button type="button" variant="outline" size="xs" onClick={onContinueToolResult}>
-              继续整理
-            </Button>
-          )}
+          <RunNotice message={message.error}>
+            {message.errorCode === "auth_failed" && (
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={() => {
+                  const model = useConversationStore.getState().currentModel;
+                  const groupId = model ? runtimeCredentialGroupForModel(model) : null;
+                  void openSettings({
+                    target: "runtime",
+                    runtime: groupId ? { groupId } : undefined,
+                  });
+                }}
+              >
+                打开凭据设置
+              </Button>
+            )}
+            {onContinueToolResult && (
+              <Button type="button" variant="outline" size="xs" onClick={onContinueToolResult}>
+                继续整理
+              </Button>
+            )}
+          </RunNotice>
+          {actionBar}
         </div>
       )}
       <MessageActivityTail message={message} activity={primaryActivity} />

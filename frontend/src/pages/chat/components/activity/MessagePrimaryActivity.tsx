@@ -2,6 +2,7 @@ import { StatusDot } from "@/components/ui";
 import type { ChatMessage, CompactionBlock } from "@/types/chat";
 import { ModelResponseStatus } from "../ModelResponseStatus";
 import type { MessagePrimaryActivity } from "./primaryActivity";
+import { RunNotice } from "./RunNotice";
 
 export function CompactionActivity({
   block,
@@ -65,10 +66,7 @@ export function MessageActivityTail({ message, activity }: {
       : outcome === "skipped" ? "本轮任务未执行"
       : outcome === "rejected" ? "本轮任务未被接纳" : "";
     return label ? (
-      <p className="flex items-center gap-2 px-1 text-xs text-muted" role="status" data-run-outcome>
-        <StatusDot tone="muted" />
-        <span>{label}</span>
-      </p>
+      <RunNotice message={label} outcome />
     ) : null;
   }
   if (activity === undefined) {
