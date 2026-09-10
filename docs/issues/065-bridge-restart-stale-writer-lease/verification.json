@@ -1,0 +1,91 @@
+{
+  "status": "implementation-tested; installer matrix blocked; user acceptance pending",
+  "branch": "fix/065-bridge-restart-stale-writer-lease",
+  "base": "cbca92570de2f5d6653120e4d58de8b0724ee56b",
+  "checks": {
+    "backend": {
+      "passed": 2903,
+      "skipped": 5,
+      "lint_typecheck": true
+    },
+    "frontend": {
+      "passed": 1233,
+      "files": 148,
+      "lint_typecheck_build": true
+    },
+    "rust": {
+      "passed": 285,
+      "ignored": 1,
+      "fmt_release_check": true
+    }
+  },
+  "regressions": [
+    "Three generations of Windows processes; tree termination releases exclusive file handle",
+    "Two successive service generations acquire same writer lock",
+    "Stopping one service leaves another service alive",
+    "Launcher exits before descendants; stop must wait for descendants",
+    "Nested packaged job ownership and service drop cleanup",
+    "Termination failure is propagated; owned process remains available for retry"
+  ],
+  "sources": {
+    "frontend/src-tauri/src/runtime_services/process.rs": "f2e8aa4c2480210eba6cb17f8bbada5631df845bd089f48b3d034286fb4c4608",
+    "frontend/src-tauri/src/runtime_services/supervisor.rs": "226b0be79cb097abc53af0db958344a5d0e87d62c9b646a86a6d93585e929f66",
+    "frontend/src-tauri/src/runtime_services/mod.rs": "a5fe64525043ff8a2c150c7a432b02377da15178155cd581dce6e7edaa4ca88e"
+  },
+  "guide": {
+    "mode": "package-baseline",
+    "release": "agent-friend-guide-r36",
+    "immutable": true,
+    "commit": "4b68bbdc4af6e0e1120b84db5731944d4d6a4510",
+    "snapshot": "df64a83f69a36172c665d166f9aa36e3c804130a0382dde8fadc4af9cae8fc0b",
+    "review": "No new public operation or capability. Repair restores existing service-exit contract. No public guide mutation."
+  },
+  "installer": {
+    "required": true,
+    "level": "full-matrix",
+    "candidate_build_id": "20260910T101759Z-cbca92570de2-cf328db6",
+    "version": "0.3.0",
+    "profile": "installer-smoke",
+    "build": "passed",
+    "frozen_doctor": "passed",
+    "matrix": "failed",
+    "best_attempt": {
+      "report": "installer-smoke-third-attempt.json",
+      "passed": 6,
+      "failed": 8,
+      "running_shell_upgrade": "passed"
+    },
+    "blocker": "Codex-host AppData path resolution changes to LocalCache after creation. Aligning Local/Roaming paths passes initial identity gates but longer absolute roots cause payload-file-missing failures (Guide arknights-avatar-models.md), rollback, and downstream fixture failures. Ordinary Shell parent reported no package identity but matrix still observed redirected install roots. Underlying host redirection mechanism not fully isolated. No path guards disabled.",
+    "attempts": [
+      {
+        "file": "installer-smoke-first-attempt.json",
+        "sha256": "4e34f85ef5ee1dbb620384b952658ba12ec7dc5825f574d635e395cffa1dd1ec"
+      },
+      {
+        "file": "installer-smoke-host-attempt.json",
+        "sha256": "7171142b1741c344b0d557d8c16daf03780b5ce250b7780b5622b4cbcf943db4"
+      },
+      {
+        "file": "installer-smoke-second-attempt.json",
+        "sha256": "ec6176fd74c10da11cf474eaa69217693208f164c6d1251f9d7c26d924bad253"
+      },
+      {
+        "file": "installer-smoke-third-attempt.json",
+        "sha256": "73f59fdac809d5ead1e4f712016a5df9677a8a887db8397859a684006d0207bd"
+      }
+    ],
+    "test_profile_cleanup": "completed using verified canonical LocalCache Local/Roaming roots and existing cleanup_smoke_state; production untouched",
+    "candidate_path": "C:\\Users\\example-user\\agent-friend-releases\\_local-test\\0.3.0\\windows-x64\\ordinary\\20260910T101759Z-cbca92570de2-cf328db6\\agent-friend_0.3.0_windows_x64-local-test-NOT-FOR-DISTRIBUTION-setup.exe"
+  },
+  "live_im": {
+    "status": "active",
+    "binding_status": "bound",
+    "scope": "Existing BYOK runtime remained online; this is not evidence of patched runtime restart"
+  },
+  "limits": [
+    "Windows process regression uses synthetic children and exclusive handles, not external IM messages",
+    "User production runtime has not been replaced",
+    "User acceptance pending; issue remains open",
+    "Full installer matrix is mandatory before merge; existing candidate is not a passing release candidate."
+  ]
+}

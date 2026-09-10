@@ -2,6 +2,7 @@ use super::model::{
     BackgroundDemandSnapshot, RuntimeServiceError, RuntimeServiceKind, RuntimeServicePhase,
     RuntimeServiceSnapshot,
 };
+use super::process::{ProcessJob as PackagedProcessJob, ServiceProcess};
 use crate::{install_contract, paths};
 use rand::{rngs::OsRng, RngCore};
 use std::{
@@ -38,99 +39,9 @@ fn validate_runtime_start_reason(reason: &str) -> Result<&str, String> {
     }
 }
 
-#[cfg(target_os = "windows")]
-struct PackagedProcessJob {
-    handle: windows::Win32::Foundation::HANDLE,
-    assigned_count: std::sync::atomic::AtomicUsize,
-}
-
-// A Job Object handle is a process-wide kernel handle. Assigning child process handles and
-// closing it are thread-safe Win32 operations; ownership remains unique in this wrapper.
-#[cfg(target_os = "windows")]
-unsafe impl Send for PackagedProcessJob {}
-#[cfg(target_os = "windows")]
-unsafe impl Sync for PackagedProcessJob {}
-
-#[cfg(target_os = "windows")]
-impl PackagedProcessJob {
-    fn new() -> Result<Self, String> {
-        use windows::{
-            core::PCWSTR,
-            Win32::System::JobObjects::{
-                CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
-                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            },
-        };
-        let handle =
-            unsafe { CreateJobObjectW(None, PCWSTR::null()) }.map_err(|error| error.to_string())?;
-        let mut information = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if let Err(error) = unsafe {
-            SetInformationJobObject(
-                handle,
-                JobObjectExtendedLimitInformation,
-                std::ptr::addr_of!(information).cast(),
-                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            )
-        } {
-            unsafe {
-                let _ = windows::Win32::Foundation::CloseHandle(handle);
-            }
-            return Err(error.to_string());
-        }
-        Ok(Self {
-            handle,
-            assigned_count: std::sync::atomic::AtomicUsize::new(0),
-        })
-    }
-
-    fn assign(&self, child: &Child) -> Result<(), String> {
-        use std::os::windows::io::AsRawHandle;
-        use windows::Win32::{Foundation::HANDLE, System::JobObjects::AssignProcessToJobObject};
-        let process = HANDLE(child.as_raw_handle());
-        unsafe { AssignProcessToJobObject(self.handle, process) }
-            .map_err(|error| error.to_string())?;
-        self.assigned_count
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Ok(())
-    }
-
-    fn assigned_count(&self) -> usize {
-        self.assigned_count
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl Drop for PackagedProcessJob {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = windows::Win32::Foundation::CloseHandle(self.handle);
-        }
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-struct PackagedProcessJob;
-
-#[cfg(not(target_os = "windows"))]
-impl PackagedProcessJob {
-    fn new() -> Result<Self, String> {
-        Ok(Self)
-    }
-
-    fn assign(&self, _child: &Child) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn assigned_count(&self) -> usize {
-        0
-    }
-}
-
 struct ServiceSlot {
     snapshot: RuntimeServiceSnapshot,
-    child: Option<Child>,
+    child: Option<ServiceProcess>,
     token: Option<String>,
 }
 
@@ -490,6 +401,11 @@ impl RuntimeServiceSupervisor {
         if matches!(slot.snapshot.phase, RuntimeServicePhase::Ready) {
             return Ok(slot.snapshot.clone());
         }
+        if slot.child.is_some() {
+            return Err(
+                "service_process_still_owned: stop the previous generation before starting".into(),
+            );
+        }
         let generation = slot.begin(RuntimeServicePhase::Starting);
         emit(app, &slot.snapshot);
 
@@ -571,7 +487,15 @@ impl RuntimeServiceSupervisor {
                 }
                 Err(error) if error.starts_with("runtime_identity_mismatch") => {
                     let mut slot = slot_ref.lock().await;
-                    terminate_child(&mut slot.child);
+                    if let Err(error) = terminate_service(&mut slot.child) {
+                        slot.fail(
+                            RuntimeServicePhase::Failed,
+                            "process_tree_stop_failed",
+                            error,
+                        );
+                        emit(app, &slot.snapshot);
+                        return Err(error_message(&slot.snapshot));
+                    }
                     slot.token = None;
                     slot.fail(
                         RuntimeServicePhase::Failed,
@@ -589,7 +513,15 @@ impl RuntimeServiceSupervisor {
         if slot.snapshot.generation != generation {
             return Err("service operation was superseded".to_string());
         }
-        terminate_child(&mut slot.child);
+        if let Err(error) = terminate_service(&mut slot.child) {
+            slot.fail(
+                RuntimeServicePhase::Failed,
+                "process_tree_stop_failed",
+                error,
+            );
+            emit(app, &slot.snapshot);
+            return Err(error_message(&slot.snapshot));
+        }
         slot.token = None;
         slot.fail(
             RuntimeServicePhase::Failed,
@@ -699,10 +631,18 @@ impl RuntimeServiceSupervisor {
         if slot.snapshot.generation != generation {
             return Err("service operation was superseded".to_string());
         }
-        terminate_child(&mut slot.child);
+        if let Err(error) = terminate_service(&mut slot.child) {
+            slot.fail(
+                RuntimeServicePhase::Failed,
+                "process_tree_stop_failed",
+                error,
+            );
+            emit(app, &slot.snapshot);
+            return Err(error_message(&slot.snapshot));
+        }
         slot.token = None;
         // The service already accepted the authenticated shutdown request and did not report
-        // blocking activity. Once the supervisor has reaped its owned child, the requested
+        // blocking activity. Once the supervisor has confirmed the entire owned tree exited, the requested
         // terminal state is reached even if graceful shutdown exceeded the deadline.
         log::warn!(
             "runtime service {} required forced termination after shutdown timeout",
@@ -738,9 +678,20 @@ impl RuntimeServiceSupervisor {
         for service in [RuntimeServiceKind::Bridge, RuntimeServiceKind::Voice] {
             let slot_ref = self.slot(service);
             let mut slot = slot_ref.lock().await;
-            terminate_child(&mut slot.child);
-            slot.token = None;
-            slot.snapshot.phase = RuntimeServicePhase::Stopped;
+            match terminate_service(&mut slot.child) {
+                Ok(()) => {
+                    slot.token = None;
+                    slot.snapshot.phase = RuntimeServicePhase::Stopped;
+                }
+                Err(error) => {
+                    log::error!("failed to stop {} process tree: {error}", service.module());
+                    slot.fail(
+                        RuntimeServicePhase::Failed,
+                        "process_tree_stop_failed",
+                        error,
+                    );
+                }
+            }
         }
         terminate_child(&mut *self.tunnel_child.lock().await);
         *self.voice_public_url.lock().await = None;
@@ -1003,7 +954,7 @@ fn spawn_service(
     process_job: Option<&PackagedProcessJob>,
     supervisor_generation: u64,
     start_reason: &str,
-) -> Result<Child, String> {
+) -> Result<ServiceProcess, String> {
     let mut command = match context {
         RuntimeLaunchContext::Source(root) => {
             let uv_executable = resolve_path_executable("uv").ok_or_else(|| {
@@ -1088,7 +1039,7 @@ fn spawn_service(
     if let Some(public_url) = voice_public_url {
         command.env("VOICE_BRIDGE_PUBLIC_URL", public_url);
     }
-    let mut child = command
+    command
         .env(
             "AGENT_FRIEND_MEMORY_INSPECTOR_ENABLED",
             if crate::owner_capabilities::local_capabilities().memory_inspector {
@@ -1105,18 +1056,9 @@ fn spawn_service(
         .env("AGENT_FRIEND_BRIDGE_START_REASON", start_reason)
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")
-        .stdin(Stdio::null())
-        .spawn()
-        .map_err(|error| format!("failed to launch {}: {error}", service.module()))?;
-    if matches!(context, RuntimeLaunchContext::Packaged { .. }) {
-        let job = process_job.ok_or_else(|| "runtime_job_unavailable".to_string())?;
-        if let Err(error) = job.assign(&child) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("runtime_job_assign_failed: {error}"));
-        }
-    }
-    Ok(child)
+        .stdin(Stdio::null());
+    ServiceProcess::spawn(&mut command, process_job)
+        .map_err(|error| format!("failed to launch {}: {error}", service.module()))
 }
 
 fn resolve_path_executable(name: &str) -> Option<PathBuf> {
@@ -1262,6 +1204,14 @@ fn generate_token() -> String {
     let mut bytes = [0_u8; 32];
     OsRng.fill_bytes(&mut bytes);
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn terminate_service(child: &mut Option<ServiceProcess>) -> Result<(), String> {
+    if let Some(owned) = child.as_mut() {
+        owned.terminate().map_err(|error| error.to_string())?;
+    }
+    *child = None;
+    Ok(())
 }
 
 fn terminate_child(child: &mut Option<Child>) {

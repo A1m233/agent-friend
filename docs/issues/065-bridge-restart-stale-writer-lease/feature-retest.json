@@ -1,0 +1,94 @@
+{
+  "recorded_at": "2026-09-10T11:43:54.670735+00:00",
+  "branch": "feature/121-model-connections-and-custom-models",
+  "integration": "Issue 065 production changes applied to feature working tree; not committed or merged with a Git merge commit. Existing model_connection_operation preserved.",
+  "checks": {
+    "command": ".\\scripts\\rust-check\\run.ps1",
+    "passed": 287,
+    "ignored": 1,
+    "fmt": true,
+    "release_check": true,
+    "backend_passed": 2961,
+    "backend_skipped": 5,
+    "frontend_passed": 1244,
+    "frontend_files": 150,
+    "all_stages_passed": true
+  },
+  "sources": {
+    "frontend/src-tauri/src/runtime_services/mod.rs": "a5fe64525043ff8a2c150c7a432b02377da15178155cd581dce6e7edaa4ca88e",
+    "frontend/src-tauri/src/runtime_services/supervisor.rs": "4f0e4a2bf23d9337f8863f13b7339b20f9095af3a3b3f8b6a5583bb42e56539d",
+    "frontend/src-tauri/src/runtime_services/process.rs": "f2e8aa4c2480210eba6cb17f8bbada5631df845bd089f48b3d034286fb4c4608"
+  },
+  "original_case": {
+    "session_id": "c893b889-48f5-4b1d-9819-896b36fa23ab",
+    "status": "passed",
+    "steps": [
+      "Open original synthetic session and complete a continuation",
+      "Restart bridge via native restart_runtime_service",
+      "Verify all old owned process identities exited without manual kill",
+      "Continue same session successfully and verify persistence",
+      "Verify QQ active/bound after restart without sending external messages"
+    ],
+    "before": {
+      "stage": "before_restart",
+      "http": 200,
+      "finished": true,
+      "error": false,
+      "pdf": false,
+      "txt": false,
+      "marker_note": "Markers split across SSE deltas; both verified in final desktop message. Initial booleans used raw SSE substring and are not semantic failures."
+    },
+    "after": {
+      "stage": "after_restart",
+      "http": 200,
+      "finished": true,
+      "error": false,
+      "pdf": true,
+      "txt": true,
+      "blue": true,
+      "red": true
+    },
+    "restart": {
+      "elapsedMs": 25325,
+      "snapshot": {
+        "service": "bridge",
+        "phase": "ready",
+        "generation": 3,
+        "operationId": "agent_bridge-3",
+        "error": null,
+        "lastError": null
+      },
+      "oldPids": [
+        14980,
+        26644
+      ]
+    },
+    "persisted_terminals": [
+      {
+        "ts": "2026-09-10T11:38:59.479923Z",
+        "status": "failed"
+      },
+      {
+        "ts": "2026-09-10T11:41:12.010324Z",
+        "status": "completed"
+      },
+      {
+        "ts": "2026-09-10T11:42:36.612769Z",
+        "status": "completed"
+      }
+    ],
+    "im": [
+      {
+        "im_type": "qq",
+        "status": "active",
+        "binding_status": "bound"
+      }
+    ],
+    "old_processes_exited": true,
+    "manual_kill_during_restart": false
+  },
+  "runtime_blocker": null,
+  "issue_status": "open",
+  "installer_matrix": "Existing independent fix candidate matrix has verification gaps; see verification.json",
+  "initial_attempt": "CPA port 8317 had no listener, producing upstream_transient; restored existing CPA executable/config and repeated once successfully."
+}

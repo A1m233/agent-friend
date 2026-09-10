@@ -1,0 +1,194 @@
+{
+  "schemaVersion": 3,
+  "kind": "installer-smoke",
+  "createdAt": "2026-09-10T10:51:25.308238+00:00",
+  "profileId": "installer-smoke",
+  "verificationInputs": {
+    "schemaVersion": 1,
+    "scope": "windows-installer-shared-behavior-v1",
+    "packageInputSha256": "a767f0e4c25a7ecf16d0f7ee6c1698ad43c5882f3de636577a02a257ddc61527",
+    "fileCount": 1126,
+    "buildEnvironment": {
+      "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+      "node": "v22.15.0",
+      "platform_machine": "AMD64",
+      "platform_release": "11",
+      "platform_system": "Windows",
+      "platform_version": "10.0.26200",
+      "pnpm": "10.15.0",
+      "pyinstaller": "6.21.0",
+      "python": "3.12.6",
+      "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+      "source_content_identity": "git-clean-filter-v1",
+      "tauri_cli": "2.11.2"
+    }
+  },
+  "environment": {
+    "platform": "windows-x64",
+    "accountCategory": "current-user"
+  },
+  "productionCollisionPreflight": "passed",
+  "baseline": {
+    "buildId": "20260910T101759Z-cbca92570de2-cf328db6",
+    "shellSha256": "9cc60bddf116ae5e44012d0ba17e811a6a91068d3575ae39c5d71f3b0bcb91f0"
+  },
+  "candidate": {
+    "buildId": "20260910T101759Z-cbca92570de2-cf328db6",
+    "installerName": "agent-friend_0.3.0_windows_x64-local-test-NOT-FOR-DISTRIBUTION-setup.exe",
+    "installerRelative": "_local-test/0.3.0/windows-x64/ordinary/20260910T101759Z-cbca92570de2-cf328db6/agent-friend_0.3.0_windows_x64-local-test-NOT-FOR-DISTRIBUTION-setup.exe",
+    "installerSha256": "0bc948b8dab5c8d96ece6f72823ef50b892d7059f940dfbaa147f9d55e03fc66",
+    "version": "0.3.0"
+  },
+  "scenarios": [
+    {
+      "name": "collision_preflight",
+      "result": "passed",
+      "startedAt": "2026-09-10T10:42:17.125756+00:00",
+      "endedAt": "2026-09-10T10:42:17.125756+00:00",
+      "details": {
+        "profileId": "installer-smoke",
+        "productionCollision": false,
+        "disk": {
+          "availableBytes": 164666478592,
+          "requiredBytes": 2408671833
+        }
+      },
+      "failureReason": null
+    },
+    {
+      "name": "fresh_install",
+      "result": "passed",
+      "startedAt": "2026-09-10T10:42:17.125756+00:00",
+      "endedAt": "2026-09-10T10:43:26.286404+00:00",
+      "details": {
+        "exitCode": 0,
+        "identity": "consistent",
+        "installKind": "first-install",
+        "diagnosticsPersisted": true
+      },
+      "failureReason": null
+    },
+    {
+      "name": "preinstall_launch_failure_diagnostics",
+      "result": "passed",
+      "startedAt": "2026-09-10T10:43:26.286404+00:00",
+      "endedAt": "2026-09-10T10:43:28.127940+00:00",
+      "details": {
+        "exitCode": 32,
+        "installKind": "first-install",
+        "helperResult": "error",
+        "helperPresentAfterRun": "0",
+        "diagnosticsPersisted": true
+      },
+      "failureReason": null
+    },
+    {
+      "name": "legacy_fixed_layout_upgrade",
+      "result": "failed",
+      "startedAt": "2026-09-10T10:43:28.127940+00:00",
+      "endedAt": "2026-09-10T10:44:10.005118+00:00",
+      "details": {},
+      "failureReason": "RuntimeError: silent installer returned 34"
+    },
+    {
+      "name": "silent_success_exit_code",
+      "result": "failed",
+      "startedAt": "2026-09-10T10:44:10.005118+00:00",
+      "endedAt": "2026-09-10T10:44:10.005118+00:00",
+      "details": {},
+      "failureReason": "RuntimeError: legacy silent install did not pass"
+    },
+    {
+      "name": "same_version_repair",
+      "result": "failed",
+      "startedAt": "2026-09-10T10:44:10.005118+00:00",
+      "endedAt": "2026-09-10T10:44:57.728502+00:00",
+      "details": {},
+      "failureReason": "RuntimeError: same-version repair returned 34"
+    },
+    {
+      "name": "newer_installed_version_rejected_without_mutation",
+      "result": "passed",
+      "startedAt": "2026-09-10T10:44:57.728502+00:00",
+      "endedAt": "2026-09-10T10:46:02.396228+00:00",
+      "details": {
+        "exitCode": 35,
+        "installedVersion": "999.0.0"
+      },
+      "failureReason": null
+    },
+    {
+      "name": "install_root_drift_rejected_without_move_intent",
+      "result": "passed",
+      "startedAt": "2026-09-10T10:46:02.396228+00:00",
+      "endedAt": "2026-09-10T10:46:50.625931+00:00",
+      "details": {
+        "exitCode": 32,
+        "target": "isolated-migration-root"
+      },
+      "failureReason": null
+    },
+    {
+      "name": "overlong_migration_target_rolls_back",
+      "result": "failed",
+      "startedAt": "2026-09-10T10:46:50.625931+00:00",
+      "endedAt": "2026-09-10T10:47:40.647522+00:00",
+      "details": {},
+      "failureReason": "RuntimeError: overlong migration failure left target program files"
+    },
+    {
+      "name": "explicit_program_root_migration",
+      "result": "failed",
+      "startedAt": "2026-09-10T10:47:40.647522+00:00",
+      "endedAt": "2026-09-10T10:48:19.804829+00:00",
+      "details": {},
+      "failureReason": "RuntimeError: explicit program-root migration returned 34"
+    },
+    {
+      "name": "running_shell_upgrade",
+      "result": "passed",
+      "startedAt": "2026-09-10T10:48:19.804829+00:00",
+      "endedAt": "2026-09-10T10:49:49.739275+00:00",
+      "details": {
+        "exitCode": 0,
+        "shellExitCode": 32
+      },
+      "failureReason": null
+    },
+    {
+      "name": "owned_orphan_runtime_upgrade",
+      "result": "failed",
+      "startedAt": "2026-09-10T10:49:49.739275+00:00",
+      "endedAt": "2026-09-10T10:50:35.621912+00:00",
+      "details": {},
+      "failureReason": "RuntimeError: orphan-runtime upgrade returned 34"
+    },
+    {
+      "name": "unconfirmed_file_lock_failure_and_retry",
+      "result": "failed",
+      "startedAt": "2026-09-10T10:50:35.621912+00:00",
+      "endedAt": "2026-09-10T10:51:25.145731+00:00",
+      "details": {},
+      "failureReason": "RuntimeError: retry returned 34"
+    },
+    {
+      "name": "identity_mismatch_rejected",
+      "result": "failed",
+      "startedAt": "2026-09-10T10:51:25.145731+00:00",
+      "endedAt": "2026-09-10T10:51:25.145731+00:00",
+      "details": {},
+      "failureReason": "FileNotFoundError: [Errno 2] No such file or directory: 'C:\\\\Users\\\\example-user\\\\AppData\\\\Local\\\\Packages\\\\OpenAI.Codex_2p2nqsd0c76g0\\\\LocalCache\\\\Local\\\\agent-friend-installer-smoke\\\\active-install.json'"
+    }
+  ],
+  "manualScenarios": [
+    {
+      "name": "interactive_chinese_english_selector",
+      "result": "not-run",
+      "reason": "requires visible installer UI observation"
+    }
+  ],
+  "productionUpgrade": {
+    "executed": false,
+    "authorized": false
+  }
+}
