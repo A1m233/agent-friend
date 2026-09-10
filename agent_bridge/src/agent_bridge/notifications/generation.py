@@ -20,6 +20,8 @@ from llm_providers import (
     ModelCallControl,
     ModelCallTraceContext,
     ModelRequest,
+    ModelRuntimeConfig,
+    final_response_text,
     minimum_model_runtime_config,
     model_belongs_to_provider,
 )
@@ -104,7 +106,11 @@ class NotificationGenerator:
             selection["provider"], model_id
         ):
             raise ValueError("default model does not belong to provider")
-        config = minimum_model_runtime_config(model_id)
+        config = (
+            ModelRuntimeConfig(model_id, selection["reasoningPreset"])
+            if isinstance(selection.get("reasoningPreset"), str)
+            else minimum_model_runtime_config(model_id)
+        )
         persona = self.persona.load()
         check()
         context = MemoryContext.empty()
@@ -161,7 +167,7 @@ class NotificationGenerator:
                 tools=None,
                 settings={
                     "timeout": max(0.01, deadline - time.monotonic()),
-                    "max_tokens": 512 if config.reasoning_preset in {"off", "none"} else 2048,
+                    "max_tokens": 512 if config.reasoning_preset == "off" else 2048,
                 },
                 control=ModelCallControl(
                     cancel_check=check,
@@ -176,6 +182,8 @@ class NotificationGenerator:
             for event in stream:
                 check()
                 if isinstance(event, LLMTextDelta):
+                    if event.phase == "commentary":
+                        continue
                     parts.append(event.text)
                     if sum(map(len, parts)) > 160:
                         raise ValueError("notification output too long")
@@ -186,7 +194,11 @@ class NotificationGenerator:
             if callable(close):
                 close()
         check()
-        text = "".join(parts).strip()
+        text = (
+            final_response_text(done)
+            if done is not None and done.assistant_turn is not None
+            else "".join(parts)
+        ).strip()
         if done is None or done.stop_reason != "end_turn" or not text or len(text) > 160:
             raise ValueError("notification model output incomplete or unusable")
         logger.info(

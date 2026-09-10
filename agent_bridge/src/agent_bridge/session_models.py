@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import ExitStack
 
 from agent.runtime import AgentRuntime
+from llm_providers.model_identity import is_custom_model_reference
 
 from agent import SessionManager
 from llm_providers import (
@@ -42,7 +43,11 @@ class SessionModelService:
     ) -> ModelRuntimeConfig:
         if model is None and reasoning_preset is None:
             raise InvalidRuntimeConfigError()
-        if model is not None and model not in all_model_ids():
+        if (
+            model is not None
+            and model not in all_model_ids()
+            and not is_custom_model_reference(model)
+        ):
             raise UnsupportedModelError(model)
         with ExitStack() as stack:
             if self._runtime is not None:

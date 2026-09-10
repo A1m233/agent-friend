@@ -1,0 +1,36 @@
+{
+  "runtime": {
+    "mode": "tauri",
+    "appPid": 54064,
+    "bridgePid": 7836
+  },
+  "saved": {
+    "chatModel": {
+      "provider": "custom",
+      "model": "custom/e460216e-71da-42cb-a252-03ecaf1aa2bd/f868c94c-6337-4526-a916-70cdd17343c5",
+      "reasoningPreset": "effort:future-tier"
+    },
+    "memoryModel": {
+      "provider": "custom",
+      "model": "custom/e460216e-71da-42cb-a252-03ecaf1aa2bd/f868c94c-6337-4526-a916-70cdd17343c5",
+      "reasoningPreset": "effort:low"
+    },
+    "capabilities": [
+      {
+        "name": "my cpa",
+        "models": [
+          {
+            "name": "gpt-5.6-luna",
+            "images": true,
+            "documents": true
+          }
+        ]
+      }
+    ]
+  },
+  "afterReload": [
+    "future-tier",
+    "low"
+  ],
+  "defaultsRestored": true
+}

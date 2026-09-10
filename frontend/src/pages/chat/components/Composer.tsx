@@ -198,7 +198,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     ?? (!catalog
       ? "模型能力尚未就绪，请稍后再添加附件"
       : !capabilities?.attachments
-        ? `当前模型 ${selectedModel} 不支持图片或文档`
+        ? selectedModel.startsWith("custom/") ? "此自定义模型尚未启用附件输入，请在连接设置中配置。" : "当前模型不支持图片或文档"
         : availableAttachmentSlots <= 0
           ? `单轮最多添加 ${capabilities.maxAttachmentsPerTurn} 个附件`
           : undefined);

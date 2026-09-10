@@ -305,6 +305,80 @@ def _smoke_skill_catalog() -> dict[str, Any]:
             service.stop()
 
 
+def _smoke_model_connections() -> dict[str, Any]:
+    from unittest.mock import patch
+    from uuid import UUID
+
+    import httpx
+    from llm_providers.connections import (
+        ConnectionDefinition,
+        CustomModel,
+        ModelDirectory,
+        model_reference,
+    )
+
+    from llm_providers import LLMClient, ModelRequest
+
+    identity, model_id = str(UUID(int=121)), str(UUID(int=122))
+    connection = ConnectionDefinition(
+        identity,
+        "Frozen fixture",
+        "https://fixture.invalid/v1",
+        "responses",
+        (CustomModel(model_id, "fixture", 8192),),
+    )
+    directory = ModelDirectory([connection])
+    reference = model_reference(identity, model_id)
+    calls = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if (
+            request.url.host != "fixture.invalid"
+            or request.url.path != "/v1/responses"
+            or body.get("stream") is not False
+            or body.get("store") is not False
+        ):
+            raise AssertionError("unexpected frozen connection request")
+        calls.append(1)
+        return httpx.Response(
+            200,
+            json={
+                "id": "frozen-response",
+                "object": "response",
+                "created_at": 1,
+                "model": "fixture",
+                "status": "completed",
+                "output": [
+                    {
+                        "id": "final",
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "phase": "final_answer",
+                        "content": [
+                            {"type": "output_text", "text": '{"ok":true}', "annotations": []}
+                        ],
+                    }
+                ],
+            },
+        )
+
+    real_client = httpx.AsyncClient
+
+    class Client(real_client):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(transport=httpx.MockTransport(handle), **kwargs)
+
+    with patch.object(httpx, "AsyncClient", Client):
+        result = LLMClient(
+            directory.build_spec(directory.default_config(reference), api_key="fixture")
+        ).generate(ModelRequest(messages=[{"role": "user", "content": "fixture"}]))
+    if json.loads(result.text) != {"ok": True} or len(calls) != 1:
+        raise AssertionError("frozen model connection failed")
+    return {"protocol": "responses", "nonstream_json": True, "external_requests": 0}
+
+
 def _smoke_tool_schema_validation() -> dict[str, Any]:
     """Exercise frozen jsonschema through the production registry boundary."""
 
@@ -1051,6 +1125,7 @@ def _doctor() -> int:
 
     try:
         schema_details = _smoke_tool_schema_validation()
+        schema_details["model_connections"] = _smoke_model_connections()
     except Exception as exc:
         checks["capability:tool_schema_validation"] = {
             "ok": False,

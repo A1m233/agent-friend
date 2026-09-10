@@ -108,6 +108,7 @@ from runtime_config import (
 
 from .agent_runtime_factory import build_agent_runtime
 from .dev.recall_buffer import RecallBuffer
+from .model_connections.runtime import ConnectionRuntime
 from .notifications import NotificationService
 from .notifications.generation import NotificationGenerator
 from .presence import PresenceRegistry
@@ -223,6 +224,7 @@ class BridgeRuntime:
     time_provider: TimeProvider = field(default_factory=SystemTimeProvider)
     attachment_store: AttachmentStore | None = None
     llm_client_factory: LanguageModelFactory | None = None
+    connection_runtime: ConnectionRuntime | None = None
     memory: Memory | None = None
     transaction_reconciler: ToolTransactionReconciler | None = None
     recall_buffer: RecallBuffer | None = None
@@ -286,6 +288,15 @@ class BridgeRuntime:
     """085：进程级 Codex exec-server 命令运行时；不可用时其它能力继续运行。"""
     execution_environment_manager: ExecutionEnvironmentManager | None = None
     """096：共享 base、session overlay 与 run snapshot 的进程级 owner。"""
+
+    def attachment_capabilities(self, model_id: str):  # type: ignore[no-untyped-def]
+        from llm_providers import model_capabilities
+
+        return (
+            self.connection_runtime.directory().model(model_id).capabilities
+            if self.connection_runtime
+            else model_capabilities(model_id)
+        )
 
     def make_transient_session_manager(self) -> SessionManager:
         """构造 OpenAI 无状态分支用的临时 :class:`SessionManager`。
@@ -752,6 +763,44 @@ def build_runtime(
         todo_service.add_wake_listener(coordinator.wake)
         return tracker, coordinator
 
+    base_runtime = BridgeRuntime(
+        connection_runtime=runtime_config.connection_runtime,
+        settings=settings,
+        persistent_store=persistent_store,
+        transient_store=transient_store,
+        persistent_session_manager=persistent_session_manager,
+        catalog=catalog,
+        tool_registry=tool_registry,
+        prompt_builder_factory=prompt_builder_factory,
+        llm_client_factory=llm_client_factory,
+        default_persona=default_persona,
+        default_model=default_model,
+        runtime_identity=runtime_identity,
+        time_provider=time_provider,
+        attachment_store=attachment_store,
+        memory=memory,
+        transaction_reconciler=transaction_reconciler,
+        recall_buffer=recall_buffer,
+        skill_service=skill_service,
+        first_party_skill_updater=first_party_skill_updater,
+        turn_coordinator=turn_coordinator,
+        agent_runtime=agent_runtime,
+        session_model_service=session_model_service,
+        session_search_service=session_search_service,
+        persona_store=persona_store,
+        persona_editor_session_manager=persona_editor_session_manager,
+        persona_editor_workspace=persona_editor_workspace,
+        todo_store=todo_store,
+        todo_service=todo_service,
+        scheduled_task_store=scheduled_task_store,
+        scheduled_task_service=scheduled_task_service,
+        presence_registry=presence_registry,
+        social_platform_service=social_platform_service,
+        approval_broker=approval_broker,
+        command_runtime=command_runtime,
+        execution_environment_manager=execution_environment_manager,
+    )
+
     # 022:IM 通道装配(SessionBridge 复用现有 persistent path,session_id 由 IMRouter 决定)
     im_runtime: IMRuntime | None = None
     im_onboard_registry: OnboardSessionRegistry | None = None
@@ -777,53 +826,8 @@ def build_runtime(
         from .session_bridge import SessionBridge as _SessionBridge
 
         credentials = CredentialStore(base_dir=settings.im_credentials_dir)
-        # SessionBridge 用 partial BridgeRuntime 在下一步装配后立即引用;此处先
-        # 构造 router/runtime,session_bridge 后续在装配 final BridgeRuntime 后注入。
-        # 但 IMRouter 只读 (default_persona, default_model, session_bridge);
-        # session_bridge 也只读 .persistent_session_manager + .catalog —— 都已就位。
-        # 所以我们可以**预先**构造 session_bridge,把它的 _runtime 指向后面 final 的 BridgeRuntime。
-        # 实现:用临时占位 BridgeRuntime 调 SessionBridge 构造,等 final 装配后,
-        # 由于 session_bridge 内部 self._runtime 永远引用最初传入的对象,我们需要让那个
-        # 对象就是 final BridgeRuntime。
-        # 简化:直接 first 构造 final BridgeRuntime(不含 IM),再装 IM,最后用
-        # dataclasses.replace 给 BridgeRuntime 加 IM 字段。
-        pre_runtime = BridgeRuntime(
-            settings=settings,
-            persistent_store=persistent_store,
-            transient_store=transient_store,
-            persistent_session_manager=persistent_session_manager,
-            catalog=catalog,
-            tool_registry=tool_registry,
-            prompt_builder_factory=prompt_builder_factory,
-            llm_client_factory=llm_client_factory,
-            default_persona=default_persona,
-            default_model=default_model,
-            runtime_identity=runtime_identity,
-            time_provider=time_provider,
-            attachment_store=attachment_store,
-            memory=memory,
-            transaction_reconciler=transaction_reconciler,
-            recall_buffer=recall_buffer,
-            skill_service=skill_service,
-            first_party_skill_updater=first_party_skill_updater,
-            turn_coordinator=turn_coordinator,
-            agent_runtime=agent_runtime,
-            session_model_service=session_model_service,
-            session_search_service=session_search_service,
-            persona_store=persona_store,
-            persona_editor_session_manager=persona_editor_session_manager,
-            persona_editor_workspace=persona_editor_workspace,
-            todo_store=todo_store,
-            todo_service=todo_service,
-            scheduled_task_store=scheduled_task_store,
-            scheduled_task_service=scheduled_task_service,
-            presence_registry=presence_registry,
-            social_platform_service=social_platform_service,
-            approval_broker=approval_broker,
-            command_runtime=command_runtime,
-            execution_environment_manager=execution_environment_manager,
-        )
-        session_bridge = _SessionBridge(pre_runtime)
+        # IM consumes the same common runtime as the desktop routes.
+        session_bridge = _SessionBridge(base_runtime)
         im_reference_aliases = IMReferenceAliasIndex(settings.im_reference_alias_path)
         im_router = IMRouter(
             session_bridge=session_bridge,
@@ -831,6 +835,7 @@ def build_runtime(
             default_model=default_model,
             agent_runtime=agent_runtime,
             reference_aliases=im_reference_aliases,
+            capability_resolver=base_runtime.attachment_capabilities,
         )
         im_state_store = IMStateStore(settings.im_state_path)
         im_binding_coordinator = IMBindingCoordinator()
@@ -874,37 +879,12 @@ def build_runtime(
             inbound_coalescer=im_inbound_coalescer,
         )
         im_onboard_registry = _OnboardSessionRegistry(im_runtime=im_runtime)
-        social_auth_orchestrator = SocialAuthOrchestrator(
-            service=social_platform_service,
-            agent_runtime=agent_runtime,
-            im_runtime=im_runtime,
-        )
-        reminder_delivery = ReminderDeliveryOrchestrator(
-            todo_store=todo_store,
-            session_store=persistent_store,
-            agent_runtime=agent_runtime,
-            presence_registry=presence_registry,
-            im_runtime=im_runtime,
-            notification_mode_provider=reminder_notification_mode_provider,
-            pet_notification=notification_service.on_todo,
-        )
-        scheduled_run_tracker, schedule_coordinator = make_schedule_runtime(reminder_delivery)
-        # final BridgeRuntime = pre_runtime + IM 字段
-        return dataclasses.replace(
-            pre_runtime,
-            im_runtime=im_runtime,
-            im_onboard_registry=im_onboard_registry,
-            scheduled_run_tracker=scheduled_run_tracker,
-            schedule_coordinator=schedule_coordinator,
-            social_auth_orchestrator=social_auth_orchestrator,
-            notification_service=notification_service,
-        )
-
     reminder_delivery = ReminderDeliveryOrchestrator(
         todo_store=todo_store,
         session_store=persistent_store,
         agent_runtime=agent_runtime,
         presence_registry=presence_registry,
+        im_runtime=im_runtime,
         notification_mode_provider=reminder_notification_mode_provider,
         pet_notification=notification_service.on_todo,
     )
@@ -912,44 +892,14 @@ def build_runtime(
     social_auth_orchestrator = SocialAuthOrchestrator(
         service=social_platform_service,
         agent_runtime=agent_runtime,
+        im_runtime=im_runtime,
     )
-    return BridgeRuntime(
-        settings=settings,
-        persistent_store=persistent_store,
-        transient_store=transient_store,
-        persistent_session_manager=persistent_session_manager,
-        catalog=catalog,
-        tool_registry=tool_registry,
-        prompt_builder_factory=prompt_builder_factory,
-        llm_client_factory=llm_client_factory,
-        default_persona=default_persona,
-        default_model=default_model,
-        runtime_identity=runtime_identity,
-        time_provider=time_provider,
-        attachment_store=attachment_store,
-        memory=memory,
-        transaction_reconciler=transaction_reconciler,
-        recall_buffer=recall_buffer,
-        skill_service=skill_service,
-        first_party_skill_updater=first_party_skill_updater,
-        turn_coordinator=turn_coordinator,
-        agent_runtime=agent_runtime,
-        session_model_service=session_model_service,
-        session_search_service=session_search_service,
-        persona_store=persona_store,
-        persona_editor_session_manager=persona_editor_session_manager,
-        persona_editor_workspace=persona_editor_workspace,
-        todo_store=todo_store,
-        todo_service=todo_service,
-        scheduled_task_store=scheduled_task_store,
-        scheduled_task_service=scheduled_task_service,
-        presence_registry=presence_registry,
+    return dataclasses.replace(
+        base_runtime,
+        im_runtime=im_runtime,
+        im_onboard_registry=im_onboard_registry,
         scheduled_run_tracker=scheduled_run_tracker,
         schedule_coordinator=schedule_coordinator,
         notification_service=notification_service,
-        social_platform_service=social_platform_service,
         social_auth_orchestrator=social_auth_orchestrator,
-        approval_broker=approval_broker,
-        command_runtime=command_runtime,
-        execution_environment_manager=execution_environment_manager,
     )

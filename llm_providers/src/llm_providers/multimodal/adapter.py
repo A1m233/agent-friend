@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -44,7 +45,7 @@ class MultimodalInputAdapter:
 
         concrete_client = self._concrete_client(client)
         model_id = self._canonical_model_id(concrete_client)
-        capabilities = model_capabilities(model_id)
+        capabilities = concrete_client.spec.attachment_capabilities or model_capabilities(model_id)
         if not capabilities.attachments:
             if getattr(message, "meta", {}).get("current_input"):
                 raise LLMBadRequestError("attachment_model_unsupported: 当前模型不支持附件。")
@@ -62,8 +63,14 @@ class MultimodalInputAdapter:
         if sum(sizes) > capabilities.max_total_attachment_bytes:
             raise LLMBadRequestError("attachment_total_limit_exceeded: 本轮附件总大小超过限制。")
 
-        processing_profile = model_processing_profile(model_id)
-        if processing_profile not in ("kimi-multimodal-v1", "deepseek-vision-files-v1"):
+        processing_profile = concrete_client.spec.attachment_profile or model_processing_profile(
+            model_id
+        )
+        if processing_profile not in (
+            "kimi-multimodal-v1",
+            "deepseek-vision-files-v1",
+            "openai-attachments-v1",
+        ):
             raise LLMBadRequestError("attachment_model_unsupported: 当前模型路由没有附件适配器。")
 
         content: list[dict[str, Any]] = []
@@ -73,6 +80,44 @@ class MultimodalInputAdapter:
         for attachment in attachments:
             if attachment.media_type not in capabilities.accepted_media_types:
                 raise LLMBadRequestError("attachment_type_unsupported: 当前模型不支持此附件类型。")
+            if processing_profile == "openai-attachments-v1":
+                with self._open_asset(attachment.asset_id) as source:
+                    data = source.read(capabilities.max_attachment_bytes + 1)
+                if len(data) > capabilities.max_attachment_bytes:
+                    raise LLMBadRequestError("attachment_size_limit_exceeded")
+                if attachment.media_type == "text/plain":
+                    try:
+                        document = data.decode("utf-8-sig")
+                    except UnicodeDecodeError:
+                        raise LLMBadRequestError(
+                            "attachment_text_encoding: TXT 需要 UTF-8 编码。"
+                        ) from None
+                    content.append(
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {"attachment": attachment.display_name, "content": document},
+                                ensure_ascii=False,
+                            ),
+                        }
+                    )
+                else:
+                    encoded = (
+                        "data:"
+                        + attachment.media_type
+                        + ";base64,"
+                        + base64.b64encode(data).decode("ascii")
+                    )
+                    if attachment.kind == "image":
+                        content.append({"type": "image_url", "image_url": {"url": encoded}})
+                    else:
+                        content.append(
+                            {
+                                "type": "file",
+                                "file": {"filename": attachment.display_name, "file_data": encoded},
+                            }
+                        )
+                continue
             if processing_profile == "deepseek-vision-files-v1":
                 if attachment.kind != "image":
                     raise LLMBadRequestError(

@@ -438,3 +438,67 @@ def test_runtime_config_builds_kimi_specs(monkeypatch: pytest.MonkeyPatch) -> No
         ("kimi", "kimi/kimi-k2.6", "memory"),
         ("kimi", "kimi/kimi-k2.7-code-highspeed", "chat"),
     ]
+
+
+@pytest.mark.parametrize("im_enabled", [False, True])
+def test_connection_routes_survive_real_runtime_assembly(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch, im_enabled: bool
+) -> None:
+    from runtime_config import EnvSource
+
+    monkeypatch.setenv("AGENT_FRIEND_DATA_DIR", str(tmp_path))
+    config = resolve_bridge_runtime_config(EnvSource({}))
+    runtime = build_runtime(
+        BridgeSettings(
+            sessions_dir=tmp_path / "sessions",
+            personas_dir=tmp_path / "personas",
+            memory_enabled=False,
+            im_enabled=im_enabled,
+            im_credentials_dir=tmp_path / "im",
+            im_resume_dir=tmp_path / "resume",
+            im_state_path=tmp_path / "im.json",
+            im_reference_alias_path=tmp_path / "aliases.json",
+        ),
+        runtime_config=config,
+    )
+    try:
+        assert runtime.connection_runtime is config.connection_runtime
+        app = create_app_with_runtime(runtime, lifecycle_token="assembly-test-token")
+        with TestClient(app, raise_server_exceptions=True) as client:
+            headers = {"X-Agent-Friend-Lifecycle-Token": "assembly-test-token"}
+            assert client.post("/internal/model-connections/inspect", json={}).status_code == 401
+            result = client.post(
+                "/internal/model-connections/inspect",
+                json={"mode": "metadata", "model": "gpt-5.6-luna"},
+                headers=headers,
+            )
+            assert result.status_code == 200
+            assert result.json()["metadata"]["id"] == "gpt-5.6-luna"
+            operation = "assembly-operation-121"
+            prepared = client.post(
+                "/internal/model-connections/prepare",
+                json={
+                    "operationId": operation,
+                    "modelConnections": {"revision": 0, "connections": []},
+                    "chatModel": {
+                        "provider": "deepseek",
+                        "model": default_model_for_provider("deepseek", "chat"),
+                    },
+                    "memoryModel": {
+                        "provider": "deepseek",
+                        "model": default_model_for_provider("deepseek", "memory"),
+                    },
+                },
+                headers=headers,
+            )
+            assert prepared.status_code == 200
+            assert (
+                client.post(
+                    "/internal/model-connections/finish",
+                    json={"operationId": operation},
+                    headers=headers,
+                ).status_code
+                == 200
+            )
+    finally:
+        runtime.close()

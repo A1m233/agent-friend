@@ -110,19 +110,22 @@ def _provider_spec(
     timeout_seconds: float | None = None,
     temperature: float | None = None,
 ) -> ProviderSpec:
-    from llm_providers import ProviderConfig
-    from runtime_config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL, optional_secret, require_secret
+    from llm_providers import build_provider_spec, infer_provider_id_from_model, provider_definition
+    from runtime_config import DEEPSEEK_MODEL, optional_secret, require_secret
 
-    spec = ProviderSpec.from_config(
-        "DEEPSEEK",
-        ProviderConfig(
-            api_key=require_secret(source, DEEPSEEK_API_KEY),
-            model=model or optional_secret(source, DEEPSEEK_MODEL),
-            api_base=optional_secret(source, "DEEPSEEK_API_BASE"),
-            context_window=_optional_int(source, "DEEPSEEK_CONTEXT_WINDOW"),
-            timeout_seconds=timeout_seconds,
-        ),
+    selected = model or optional_secret(source, DEEPSEEK_MODEL) or "deepseek/deepseek-v4-flash"
+    provider = provider_definition(infer_provider_id_from_model(selected))
+    prefix = provider.credential_name.removesuffix("_API_KEY")
+    spec = build_provider_spec(
+        provider_id=provider.provider_id,
+        model_id=selected,
+        api_key=require_secret(source, provider.credential_name),
+        context_window=_optional_int(source, f"{prefix}_CONTEXT_WINDOW"),
+        timeout_seconds=timeout_seconds,
     )
+    base = optional_secret(source, f"{prefix}_API_BASE")
+    if base:
+        spec = replace(spec, api_base=base)
     if temperature is None:
         return spec
     return replace(spec, defaults={**spec.defaults, "temperature": temperature})

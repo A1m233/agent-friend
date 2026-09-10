@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from .errors import LLMAuthError
+from .model_identity import is_custom_model_reference
 from .spec import DEFAULT_LLM_TIMEOUT_SECONDS, ProviderSpec, ResponsesRoute
 
 ModelPurpose = Literal["chat", "memory"]
@@ -73,6 +74,20 @@ UNSUPPORTED_REASONING = ModelReasoningDefinition(
     presets=(ReasoningPresetDefinition("none", "不支持"),),
     default_preset="none",
 )
+
+CUSTOM_REASONING = ModelReasoningDefinition(
+    control="effort",
+    presets=(
+        ReasoningPresetDefinition("none", "服务默认"),
+        *(
+            ReasoningPresetDefinition(f"effort:{value}", value)
+            for value in ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+        ),
+    ),
+    default_preset="none",
+    replay_scope="conversation",
+)
+
 
 DEEPSEEK_REASONING = ModelReasoningDefinition(
     control="effort",
@@ -245,7 +260,7 @@ class ProviderDefinition:
     provider_id: str
     display_name: str
     credential_name: str
-    credential_group: str
+    credential_group: str | None
     models: tuple[ProviderModel, ...]
     default_model: str
     default_memory_model: str
@@ -446,17 +461,23 @@ def default_model_for_provider(provider_id: str, purpose: ModelPurpose = "chat")
 
 
 def model_belongs_to_provider(provider_id: str, model_id: str) -> bool:
+    if provider_id == "custom":
+        return is_custom_model_reference(model_id)
     provider = provider_definition(provider_id)
     return provider.model(model_id) is not None
 
 
 def model_capabilities(model_id: str) -> ModelRouteCapabilities:
+    if is_custom_model_reference(model_id):
+        return TEXT_ONLY_CAPABILITIES
     provider = provider_definition(infer_provider_id_from_model(model_id))
     model = provider.model(model_id)
     return model.capabilities if model is not None else TEXT_ONLY_CAPABILITIES
 
 
 def model_reasoning(model_id: str) -> ModelReasoningDefinition:
+    if is_custom_model_reference(model_id):
+        return CUSTOM_REASONING
     provider = provider_definition(infer_provider_id_from_model(model_id))
     model = provider.model(model_id)
     if model is None:
@@ -479,6 +500,11 @@ def minimum_model_runtime_config(model_id: str) -> ModelRuntimeConfig:
 
 
 def validate_model_runtime_config(config: ModelRuntimeConfig) -> ModelRuntimeConfig:
+    if is_custom_model_reference(config.model_id):
+        from .custom_reasoning import custom_effort
+
+        custom_effort(config.reasoning_preset)
+        return config
     reasoning = model_reasoning(config.model_id)
     if reasoning.preset(config.reasoning_preset) is None:
         raise ValueError(f"模型 {config.model_id!r} 不支持推理档位 {config.reasoning_preset!r}")
@@ -486,6 +512,8 @@ def validate_model_runtime_config(config: ModelRuntimeConfig) -> ModelRuntimeCon
 
 
 def model_processing_profile(model_id: str) -> str:
+    if is_custom_model_reference(model_id):
+        return "text-only-v1"
     provider = provider_definition(infer_provider_id_from_model(model_id))
     model = provider.model(model_id)
     return model.processing_profile if model is not None else "text-only-v1"
@@ -601,11 +629,24 @@ def public_provider_models() -> dict[str, tuple[str, ...]]:
     }
 
 
-def public_model_catalog() -> dict[str, Any]:
+def public_model_catalog(custom_models: tuple[ProviderModel, ...] = ()) -> dict[str, Any]:
     """Return the credential-free model route catalog for public clients."""
 
     providers: list[dict[str, Any]] = []
-    for provider in PROVIDER_DEFINITIONS.values():
+    definitions = list(PROVIDER_DEFINITIONS.values())
+    if custom_models:
+        definitions.append(
+            ProviderDefinition(
+                provider_id="custom",
+                display_name="自定义连接",
+                credential_name="",
+                credential_group=None,
+                models=custom_models,
+                default_model=custom_models[0].id,
+                default_memory_model=custom_models[0].id,
+            )
+        )
+    for provider in definitions:
         if not provider.publicly_visible:
             continue
         models: list[dict[str, Any]] = []
@@ -637,6 +678,7 @@ def public_model_catalog() -> dict[str, Any]:
                     },
                     "reasoning": {
                         "control": model.reasoning.control,
+                        **({"allowCustom": True} if is_custom_model_reference(model.id) else {}),
                         "defaultPreset": model.reasoning.default_preset,
                         "presets": [
                             {"id": preset.id, "label": preset.label}

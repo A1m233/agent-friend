@@ -17,7 +17,7 @@ from .spec import ProviderSpec
 
 
 def is_deepseek_vision_spec(spec: ProviderSpec) -> bool:
-    return spec.model == DEEPSEEK_VISION_LITELLM_MODEL
+    return spec.provider_id in {None, "deepseek"} and spec.model == DEEPSEEK_VISION_LITELLM_MODEL
 
 
 def flatten_deepseek_file_blocks(

@@ -317,6 +317,7 @@ class _RunModelSnapshot:
     config: ModelRuntimeConfig
     llm_client: LanguageModel
     phase: PhaseRun
+    release: Callable[[], None] = lambda: None
 
 
 @dataclass
@@ -617,16 +618,31 @@ class Conversation:
         return self._session.current_model_config
 
     def _capture_run_model_snapshot(self) -> _RunModelSnapshot:
+        from llm_providers.binding import bind_language_model
+
+        binding = bind_language_model(self._llm_client)
+        client = binding.__enter__()
+
+        def release() -> None:
+            binding.__exit__(None, None, None)
+
         return _RunModelSnapshot(
             config=self._session.current_model_config,
-            llm_client=self._llm_client,
+            llm_client=client,
+            release=release,
             phase=PhaseRun(
                 mode="native"
-                if get_model_capabilities(self._llm_client).assistant_message_phase == "native"
+                if get_model_capabilities(client).assistant_message_phase == "native"
                 else "legacy",
                 run_id=self._run_id_override or str(uuid4()),
             ),
         )
+
+    def _restore_run_model_snapshot(self, previous: _RunModelSnapshot | None) -> None:
+        current = self._run_model_snapshot
+        self._run_model_snapshot = previous
+        if current is not None and current is not previous:
+            current.release()
 
     def _active_llm_client(self) -> LanguageModel:
         snapshot = self._run_model_snapshot
@@ -795,129 +811,143 @@ class Conversation:
         self._turn_context_override = _compose_turn_context(turn_context, turn_attachments)
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
+        try:
+            persona_name = self._session.current_persona_name
+            persona_id = self._session.current_persona_id
+            model_snapshot = self._active_model_id()
 
-        persona_name = self._session.current_persona_name
-        persona_id = self._session.current_persona_id
-        model_snapshot = self._active_model_id()
-
-        existing_user_event = next(
-            (
-                event
-                for event in self._session.events
-                if user_event_id and event.type == "user_message" and event.uuid == user_event_id
-            ),
-            None,
-        )
-        selection_history = (
-            self._session.events[: self._session.events.index(existing_user_event)]
-            if existing_user_event is not None
-            else self._session.active_events
-        )
-        turn_references = self._validate_references_for_session(
-            requested_references,
-            events=selection_history,
-        )
-        # Freeze the pre-turn model view before committing the durable user event.  The
-        # first request still receives ``new_user_input`` separately, so reading live
-        # session history after the append would send the same query twice.
-        prefix_history = self._session_model_history.snapshot()
-        prefix_prior_summary = self._derive_prior_summary_from_events(
-            selection_history, prefix_history
-        )
-        prefix_recall_boundary = (
-            self._derive_business_recall_boundary(selection_history)
-            if self._memory is not None
-            else None
-        )
-        if skill_turn_snapshot is not None:
-            effective_skill_selections = self._normalize_selections(skill_selections)
-            activated_ids = tuple(item.record.id for item in skill_turn_snapshot.activations)
-            selected_ids = tuple(item.id for item in effective_skill_selections)
-            if skill_turn_snapshot.activation_issues or activated_ids != selected_ids:
-                raise ValueError(
-                    "skill_turn_snapshot_conflict: frozen Skill snapshot 与选择不一致。"
+            existing_user_event = next(
+                (
+                    event
+                    for event in self._session.events
+                    if user_event_id
+                    and event.type == "user_message"
+                    and event.uuid == user_event_id
+                ),
+                None,
+            )
+            selection_history = (
+                self._session.events[: self._session.events.index(existing_user_event)]
+                if existing_user_event is not None
+                else self._session.active_events
+            )
+            turn_references = self._validate_references_for_session(
+                requested_references,
+                events=selection_history,
+            )
+            # Freeze the pre-turn model view before committing the durable user event.  The
+            # first request still receives ``new_user_input`` separately, so reading live
+            # session history after the append would send the same query twice.
+            prefix_history = self._session_model_history.snapshot()
+            prefix_prior_summary = self._derive_prior_summary_from_events(
+                selection_history, prefix_history
+            )
+            prefix_recall_boundary = (
+                self._derive_business_recall_boundary(selection_history)
+                if self._memory is not None
+                else None
+            )
+            if skill_turn_snapshot is not None:
+                effective_skill_selections = self._normalize_selections(skill_selections)
+                activated_ids = tuple(item.record.id for item in skill_turn_snapshot.activations)
+                selected_ids = tuple(item.id for item in effective_skill_selections)
+                if skill_turn_snapshot.activation_issues or activated_ids != selected_ids:
+                    raise ValueError(
+                        "skill_turn_snapshot_conflict: frozen Skill snapshot 与选择不一致。"
+                    )
+            else:
+                effective_skill_selections = self._resolve_turn_skill_selections(
+                    user_input,
+                    skill_selections,
+                    history_events=selection_history,
                 )
-        else:
-            effective_skill_selections = self._resolve_turn_skill_selections(
-                user_input,
-                skill_selections,
-                history_events=selection_history,
-            )
-        if existing_user_event is not None:
-            existing_attachments = existing_user_event.payload.get("attachments", [])
-            requested_attachments = [item.to_dict() for item in turn_attachments]
-            existing_references = existing_user_event.payload.get("references", [])
-            requested_reference_dicts = quoted_text_references_to_dicts(turn_references)
-            if (
-                existing_user_event.payload.get("content", "") != user_input
-                or existing_attachments != requested_attachments
-                or existing_references != requested_reference_dicts
-            ):
-                raise ValueError("user_event_id_conflict: 相同消息标识不能对应不同内容。")
-            if self._persisted_skill_selections(existing_user_event) != effective_skill_selections:
-                raise ValueError("user_event_id_conflict: 相同消息标识不能对应不同 Skill 选择。")
-        user_event_appended = existing_user_event is not None
-        completed_replay_text: str | None = None
-        completed_replay_events: list[Event] = []
-        if existing_user_event is not None:
-            replay_events = self._session.active_events
-            replay_start_index = replay_events.index(existing_user_event) + 1
-            completed_parts: list[str] = []
-            replay_incomplete = False
-            for event in replay_events[replay_start_index:]:
-                if event.type in {"user_message", "system_trigger"}:
-                    break
-                if (event.type == "assistant_message" and event.payload.get("partial") is True) or (
-                    event.type == "run_terminal" and event.payload.get("status") != "completed"
-                ):
-                    replay_incomplete = True
-                if event.type == "assistant_message" and not event.payload.get("partial", False):
-                    completed_replay_events.append(event)
-                    completed_parts.append(str(event.payload.get("content", "")))
-            if completed_parts and not replay_incomplete:
-                completed_replay_text = "".join(completed_parts)
-        self._active_skill_selections = effective_skill_selections
-        self._active_skill_turn_snapshot = (
-            skill_turn_snapshot
-            if skill_turn_snapshot is not None
-            else self._skill_service.begin_turn(
-                self._active_skill_selections,
-                model_window=self._active_llm_client().context_window,
-                semantic_activation_available=self._skill_read_available(),
-            )
-            if existing_user_event is None and self._skill_service is not None
-            else None
-        )
-        first_turn_catalog_message = self._skill_catalog_message()
-        loop_frame = _ToolLoopFrame(current_text_buf=[])
-        tool_run_context = self._make_tool_run_context(user_input)
-        previous_tool_run_context = self._active_tool_run_context
-        self._active_tool_run_context = tool_run_context
-        tool_run_state = ToolRunState(self._tool_run_policy)
-        self._active_tool_run_state = tool_run_state
-        no_progress = ToolProgressTracker(self._tool_run_policy.no_progress_advisory_threshold)
-        turn_start_idx = len(self._session.events)
-
-        def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
             if existing_user_event is not None:
+                existing_attachments = existing_user_event.payload.get("attachments", [])
+                requested_attachments = [item.to_dict() for item in turn_attachments]
+                existing_references = existing_user_event.payload.get("references", [])
+                requested_reference_dicts = quoted_text_references_to_dicts(turn_references)
+                if (
+                    existing_user_event.payload.get("content", "") != user_input
+                    or existing_attachments != requested_attachments
+                    or existing_references != requested_reference_dicts
+                ):
+                    raise ValueError("user_event_id_conflict: 相同消息标识不能对应不同内容。")
+                if (
+                    self._persisted_skill_selections(existing_user_event)
+                    != effective_skill_selections
+                ):
+                    raise ValueError(
+                        "user_event_id_conflict: 相同消息标识不能对应不同 Skill 选择。"
+                    )
+            user_event_appended = existing_user_event is not None
+            completed_replay_text: str | None = None
+            completed_replay_events: list[Event] = []
+            if existing_user_event is not None:
+                replay_events = self._session.active_events
+                replay_start_index = replay_events.index(existing_user_event) + 1
+                completed_parts: list[str] = []
+                replay_incomplete = False
+                for event in replay_events[replay_start_index:]:
+                    if event.type in {"user_message", "system_trigger"}:
+                        break
+                    if (
+                        event.type == "assistant_message" and event.payload.get("partial") is True
+                    ) or (
+                        event.type == "run_terminal" and event.payload.get("status") != "completed"
+                    ):
+                        replay_incomplete = True
+                    if event.type == "assistant_message" and not event.payload.get(
+                        "partial", False
+                    ):
+                        completed_replay_events.append(event)
+                        completed_parts.append(str(event.payload.get("content", "")))
+                if completed_parts and not replay_incomplete:
+                    completed_replay_text = "".join(completed_parts)
+            self._active_skill_selections = effective_skill_selections
+            self._active_skill_turn_snapshot = (
+                skill_turn_snapshot
+                if skill_turn_snapshot is not None
+                else self._skill_service.begin_turn(
+                    self._active_skill_selections,
+                    model_window=self._active_llm_client().context_window,
+                    semantic_activation_available=self._skill_read_available(),
+                )
+                if existing_user_event is None and self._skill_service is not None
+                else None
+            )
+            first_turn_catalog_message = self._skill_catalog_message()
+            loop_frame = _ToolLoopFrame(current_text_buf=[])
+            tool_run_context = self._make_tool_run_context(user_input)
+            previous_tool_run_context = self._active_tool_run_context
+            self._active_tool_run_context = tool_run_context
+            tool_run_state = ToolRunState(self._tool_run_policy)
+            self._active_tool_run_state = tool_run_state
+            no_progress = ToolProgressTracker(self._tool_run_policy.no_progress_advisory_threshold)
+            turn_start_idx = len(self._session.events)
+
+            def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
+                if existing_user_event is not None:
+                    return (
+                        yield from self._build_openai_messages_continuation_stream(
+                            cancel_check=cancel_check
+                        )
+                    )
                 return (
-                    yield from self._build_openai_messages_continuation_stream(
-                        cancel_check=cancel_check
+                    yield from self._build_openai_messages_first_turn_stream(
+                        user_input,
+                        attachments=turn_attachments,
+                        references=turn_references,
+                        history_override=prefix_history,
+                        prior_summary_override=prefix_prior_summary,
+                        recall_boundary_override=prefix_recall_boundary,
+                        catalog_message_override=first_turn_catalog_message,
+                        cancel_check=cancel_check,
                     )
                 )
-            return (
-                yield from self._build_openai_messages_first_turn_stream(
-                    user_input,
-                    attachments=turn_attachments,
-                    references=turn_references,
-                    history_override=prefix_history,
-                    prior_summary_override=prefix_prior_summary,
-                    recall_boundary_override=prefix_recall_boundary,
-                    catalog_message_override=first_turn_catalog_message,
-                    cancel_check=cancel_check,
-                )
-            )
 
+        except BaseException:
+            self._restore_run_model_snapshot(previous_run_model_snapshot)
+            raise
         try:
             # Once execution accepts the turn, the query is durable before cancellation,
             # memory/context assembly, or provider-specific attachment rendering can fail.
@@ -1005,7 +1035,7 @@ class Conversation:
             self._run_id_override = previous_run_id
             self._turn_context_override = previous_turn_context
             self._turn_prompt_builder = previous_turn_prompt_builder
-            self._run_model_snapshot = previous_run_model_snapshot
+            self._restore_run_model_snapshot(previous_run_model_snapshot)
             self._active_skill_turn_snapshot = previous_skill_turn_snapshot
             self._active_skill_selections = previous_skill_selections
             self._active_tool_run_state = None
@@ -1068,77 +1098,80 @@ class Conversation:
         self._turn_context_override = _compose_turn_context(None, replacement_attachments)
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
-
-        persona_name = self._session.current_persona_name
-        persona_id = self._session.current_persona_id
-        model_snapshot = self._active_model_id()
-        self._active_skill_selections = self._resolve_turn_skill_selections(
-            user_input,
-            skill_selections,
-            history_events=plan.prefix_events,
-        )
-        self._active_skill_turn_snapshot = (
-            self._skill_service.begin_turn(
-                self._active_skill_selections,
-                model_window=self._active_llm_client().context_window,
-                semantic_activation_available=self._skill_read_available(),
+        try:
+            persona_name = self._session.current_persona_name
+            persona_id = self._session.current_persona_id
+            model_snapshot = self._active_model_id()
+            self._active_skill_selections = self._resolve_turn_skill_selections(
+                user_input,
+                skill_selections,
+                history_events=plan.prefix_events,
             )
-            if self._skill_service is not None
-            else None
-        )
-        first_turn_catalog_message = self._skill_catalog_message()
-
-        self._invalidate_rewrite_memory(plan.inactive_event_uuids)
-
-        prefix_history = self._messages_from_events(plan.prefix_events)
-        prefix_prior_summary = self._derive_prior_summary_from_events(
-            plan.prefix_events, prefix_history
-        )
-        prefix_recall_boundary = (
-            self._derive_business_recall_boundary(plan.prefix_events)
-            if self._memory is not None
-            else None
-        )
-
-        rewrite_event_appended = False
-        user_event_appended = False
-        loop_frame = _ToolLoopFrame(current_text_buf=[])
-        tool_run_context = self._make_tool_run_context(user_input, events=plan.prefix_events)
-        previous_tool_run_context = self._active_tool_run_context
-        self._active_tool_run_context = tool_run_context
-        tool_run_state = ToolRunState(self._tool_run_policy)
-        self._active_tool_run_state = tool_run_state
-        no_progress = ToolProgressTracker(self._tool_run_policy.no_progress_advisory_threshold)
-        turn_start_idx = len(self._session.events)
-
-        def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
-            nonlocal rewrite_event_appended, user_event_appended
-            if not rewrite_event_appended:
-                self._append_turn_rewrite_event(plan, replacement_text=user_input)
-                rewrite_event_appended = True
-            if not user_event_appended:
-                self._append_skill_catalog_state_event()
-                appended_user_id = self._append_user_event(
-                    user_input,
-                    attachments=replacement_attachments,
-                    references=replacement_references,
+            self._active_skill_turn_snapshot = (
+                self._skill_service.begin_turn(
+                    self._active_skill_selections,
+                    model_window=self._active_llm_client().context_window,
+                    semantic_activation_available=self._skill_read_available(),
                 )
-                self._append_skill_context_events(appended_user_id)
-                user_event_appended = True
-            return (
-                yield from self._build_openai_messages_first_turn_stream(
-                    user_input,
-                    attachments=replacement_attachments,
-                    references=replacement_references,
-                    history_override=prefix_history,
-                    prior_summary_override=prefix_prior_summary,
-                    recall_boundary_override=prefix_recall_boundary,
-                    persist_compaction=False,
-                    catalog_message_override=first_turn_catalog_message,
-                    cancel_check=cancel_check,
-                )
+                if self._skill_service is not None
+                else None
+            )
+            first_turn_catalog_message = self._skill_catalog_message()
+
+            self._invalidate_rewrite_memory(plan.inactive_event_uuids)
+
+            prefix_history = self._messages_from_events(plan.prefix_events)
+            prefix_prior_summary = self._derive_prior_summary_from_events(
+                plan.prefix_events, prefix_history
+            )
+            prefix_recall_boundary = (
+                self._derive_business_recall_boundary(plan.prefix_events)
+                if self._memory is not None
+                else None
             )
 
+            rewrite_event_appended = False
+            user_event_appended = False
+            loop_frame = _ToolLoopFrame(current_text_buf=[])
+            tool_run_context = self._make_tool_run_context(user_input, events=plan.prefix_events)
+            previous_tool_run_context = self._active_tool_run_context
+            self._active_tool_run_context = tool_run_context
+            tool_run_state = ToolRunState(self._tool_run_policy)
+            self._active_tool_run_state = tool_run_state
+            no_progress = ToolProgressTracker(self._tool_run_policy.no_progress_advisory_threshold)
+            turn_start_idx = len(self._session.events)
+
+            def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
+                nonlocal rewrite_event_appended, user_event_appended
+                if not rewrite_event_appended:
+                    self._append_turn_rewrite_event(plan, replacement_text=user_input)
+                    rewrite_event_appended = True
+                if not user_event_appended:
+                    self._append_skill_catalog_state_event()
+                    appended_user_id = self._append_user_event(
+                        user_input,
+                        attachments=replacement_attachments,
+                        references=replacement_references,
+                    )
+                    self._append_skill_context_events(appended_user_id)
+                    user_event_appended = True
+                return (
+                    yield from self._build_openai_messages_first_turn_stream(
+                        user_input,
+                        attachments=replacement_attachments,
+                        references=replacement_references,
+                        history_override=prefix_history,
+                        prior_summary_override=prefix_prior_summary,
+                        recall_boundary_override=prefix_recall_boundary,
+                        persist_compaction=False,
+                        catalog_message_override=first_turn_catalog_message,
+                        cancel_check=cancel_check,
+                    )
+                )
+
+        except BaseException:
+            self._restore_run_model_snapshot(previous_run_model_snapshot)
+            raise
         try:
             self._check_cancel(cancel_check)
             yield from self._run_tool_loop(
@@ -1183,7 +1216,7 @@ class Conversation:
             self._run_id_override = previous_run_id
             self._turn_context_override = previous_turn_context
             self._turn_prompt_builder = previous_turn_prompt_builder
-            self._run_model_snapshot = previous_run_model_snapshot
+            self._restore_run_model_snapshot(previous_run_model_snapshot)
             self._active_skill_turn_snapshot = previous_skill_turn_snapshot
             self._active_skill_selections = previous_skill_selections
             self._active_tool_run_state = None
@@ -1217,15 +1250,19 @@ class Conversation:
         )
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
-        self._active_tool_run_context = self._make_tool_run_context("")
+        try:
+            self._active_tool_run_context = self._make_tool_run_context("")
 
-        persona_name = self._session.current_persona_name
-        persona_id = self._session.current_persona_id
-        model_snapshot = self._active_model_id()
-        current_text_buf: list[str] = []
-        current_text_persisted = False
-        turn_start_idx = len(self._session.events)
+            persona_name = self._session.current_persona_name
+            persona_id = self._session.current_persona_id
+            model_snapshot = self._active_model_id()
+            current_text_buf: list[str] = []
+            current_text_persisted = False
+            turn_start_idx = len(self._session.events)
 
+        except BaseException:
+            self._restore_run_model_snapshot(previous_run_model_snapshot)
+            raise
         try:
             self._check_cancel(cancel_check)
             canonical_messages = yield from self._build_openai_messages_continuation_stream(
@@ -1316,7 +1353,7 @@ class Conversation:
             self._run_id_override = previous_run_id
             self._turn_context_override = previous_turn_context
             self._turn_prompt_builder = previous_turn_prompt_builder
-            self._run_model_snapshot = previous_run_model_snapshot
+            self._restore_run_model_snapshot(previous_run_model_snapshot)
             self._active_tool_run_context = previous_tool_run_context
 
     def continue_after_external_action(
@@ -1374,38 +1411,41 @@ class Conversation:
         self._run_id_override = run_id
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
+        try:
+            persona_name = self._session.current_persona_name
+            persona_id = self._session.current_persona_id
+            model_snapshot = self._active_model_id()
+            loop_frame = _ToolLoopFrame(current_text_buf=[])
+            tool_run_context = self._make_tool_run_context(system_prompt_addendum)
+            self._active_tool_run_context = tool_run_context
+            tool_run_state = ToolRunState(self._tool_run_policy)
+            self._active_tool_run_state = tool_run_state
+            no_progress = ToolProgressTracker(self._tool_run_policy.no_progress_advisory_threshold)
+            turn_start_idx = len(self._session.events)
+            trigger_appended = False
 
-        persona_name = self._session.current_persona_name
-        persona_id = self._session.current_persona_id
-        model_snapshot = self._active_model_id()
-        loop_frame = _ToolLoopFrame(current_text_buf=[])
-        tool_run_context = self._make_tool_run_context(system_prompt_addendum)
-        self._active_tool_run_context = tool_run_context
-        tool_run_state = ToolRunState(self._tool_run_policy)
-        self._active_tool_run_state = tool_run_state
-        no_progress = ToolProgressTracker(self._tool_run_policy.no_progress_advisory_threshold)
-        turn_start_idx = len(self._session.events)
-        trigger_appended = False
-
-        def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
-            nonlocal trigger_appended
-            tool_specs = self._tool_registry.to_openai_tools() if self._tool_registry else None
-            messages = yield from self._assemble_stream(
-                trailing_user=system_prompt_addendum,
-                tool_specs=tool_specs,
-                cancel_check=cancel_check,
-            )
-            if not trigger_appended:
-                self._append_system_trigger_event(
-                    source_kind=source_kind,
-                    system_prompt_addendum=system_prompt_addendum,
-                    output_visibility="user",
-                    presentation=presentation,
-                    event_metadata=event_metadata,
+            def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
+                nonlocal trigger_appended
+                tool_specs = self._tool_registry.to_openai_tools() if self._tool_registry else None
+                messages = yield from self._assemble_stream(
+                    trailing_user=system_prompt_addendum,
+                    tool_specs=tool_specs,
+                    cancel_check=cancel_check,
                 )
-                trigger_appended = True
-            return messages
+                if not trigger_appended:
+                    self._append_system_trigger_event(
+                        source_kind=source_kind,
+                        system_prompt_addendum=system_prompt_addendum,
+                        output_visibility="user",
+                        presentation=presentation,
+                        event_metadata=event_metadata,
+                    )
+                    trigger_appended = True
+                return messages
 
+        except BaseException:
+            self._restore_run_model_snapshot(previous_run_model_snapshot)
+            raise
         try:
             self._check_cancel(cancel_check)
             yield from self._run_tool_loop(
@@ -1443,7 +1483,7 @@ class Conversation:
             self._interaction_destination_id_override = previous_interaction_destination_id
             self._run_id_override = previous_run_id
             self._turn_prompt_builder = previous_turn_prompt_builder
-            self._run_model_snapshot = previous_run_model_snapshot
+            self._restore_run_model_snapshot(previous_run_model_snapshot)
             self._active_tool_run_state = None
             tool_run_context.close_commands("run_finished")
             self._active_tool_run_context = previous_tool_run_context
@@ -1489,7 +1529,11 @@ class Conversation:
         previous_run_id = self._run_id_override
         previous_tool_run_context = self._active_tool_run_context
         self._run_model_snapshot = self._capture_run_model_snapshot()
-        self._active_tool_run_context = self._make_tool_run_context(system_prompt_addendum)
+        try:
+            self._active_tool_run_context = self._make_tool_run_context(system_prompt_addendum)
+        except BaseException:
+            self._restore_run_model_snapshot(previous_run_model_snapshot)
+            raise
         try:
             yield from self._dispatch_system_turn_impl(
                 source_kind=source_kind,
@@ -1501,7 +1545,7 @@ class Conversation:
                 cancel_check=cancel_check,
             )
         finally:
-            self._run_model_snapshot = previous_run_model_snapshot
+            self._restore_run_model_snapshot(previous_run_model_snapshot)
             self._run_id_override = previous_run_id
             self._active_tool_run_context = previous_tool_run_context
 

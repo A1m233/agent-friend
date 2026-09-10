@@ -1,0 +1,46 @@
+{
+  "passed": true,
+  "model": "kimi-k2.6",
+  "protocol": "chat_completions",
+  "custom_connection": true,
+  "text_source": "generated",
+  "text": "整理照片有新回复了，有空可以看看。",
+  "generation_status": "ready",
+  "calls": [
+    {
+      "operation": "notification",
+      "kind": "notification",
+      "transport": "litellm",
+      "response_model": "kimi-k2.6",
+      "fingerprint": "4bc9fe8b11ea99f6421d9718",
+      "usage": {
+        "prompt_tokens": 305,
+        "completion_tokens": 307,
+        "total_tokens": 612,
+        "cached_prompt_tokens": 0,
+        "cache_write_prompt_tokens": 0,
+        "input_other_prompt_tokens": 305,
+        "cache_miss_prompt_tokens": 305,
+        "usage_source": "top_level",
+        "input_total_prompt_tokens_source": "prompt_tokens",
+        "completion_tokens_source": "completion_tokens",
+        "total_tokens_source": "total_tokens",
+        "cached_prompt_tokens_source": "_cache_read_input_tokens",
+        "cache_write_prompt_tokens_source": "_cache_creation_input_tokens",
+        "input_other_prompt_tokens_source": "derived_input_total_minus_cache_read_write",
+        "cache_miss_prompt_tokens_source": "derived_prompt_minus_cached",
+        "input_token_accounting": "inclusive_total",
+        "input_other_prompt_tokens_derived": true,
+        "cache_miss_prompt_tokens_derived": true
+      }
+    }
+  ],
+  "repeated_generation": false,
+  "source_hashes": {
+    "agent_bridge\\src\\agent_bridge\\notifications\\debug.py": "ce9dd62ca97cf1254160d98e3ab288de0682b2593c758110c506099dc0e3e1c6",
+    "agent_bridge\\src\\agent_bridge\\notifications\\generation.py": "1318a5d0464c3db291be107c2c58284315a88be8dd6a9f2612932359bfbf2325",
+    "agent_bridge\\src\\agent_bridge\\notifications\\prompt.py": "3e63546703621f13d8b57890fd3c31019cdb178454c7ee086e3436cb5d3330a1",
+    "agent_bridge\\src\\agent_bridge\\notifications\\service.py": "9f1c9c2969ee4f5b0eb97ce9ac98db53abb0bfa48e65d636695be17ba19ec0c9",
+    "agent_bridge\\src\\agent_bridge\\notifications\\__init__.py": "b833914e1903b067cbad21761655bd314c0a8e0e8ec75e34dc7506e02fd86ed0"
+  }
+}

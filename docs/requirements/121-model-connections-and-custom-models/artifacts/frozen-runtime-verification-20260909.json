@@ -1,0 +1,39 @@
+{
+  "command": "scripts/package/run.ps1 runtime --local-test --verification-level package-sensitive --guide-repo <maintained-guide-checkout> --guide-commit 4b68bbdc4af6e0e1120b84db5731944d4d6a4510",
+  "exit_code": 0,
+  "identity": {
+    "buildId": "20260908T180444Z-8cf97e931cf4-1c7ae65c",
+    "buildMode": "local-test",
+    "dirty": true,
+    "distribution": "ordinary",
+    "productVersion": "0.3.0",
+    "profileId": "production",
+    "schemaVersion": 1,
+    "sourceCommit": "8cf97e931cf47188522ff3cfc44682a1eaf369fa",
+    "sourceTreeSha256": "e40f2d0f9f8e3fd207e147953ea5b0abfd0f8b454e24be458653594c1e4ac996"
+  },
+  "timings": {
+    "steps": [
+      {
+        "name": "pyinstaller",
+        "durationSeconds": 275.969
+      },
+      {
+        "name": "runtime-stage-and-smoke",
+        "durationSeconds": 265.312
+      }
+    ]
+  },
+  "checks": {
+    "staged_doctor": true,
+    "model_connections_nonstream_json": true,
+    "external_requests": 0,
+    "frozen_bridge_readiness": true,
+    "frozen_voice_readiness": true,
+    "guide_restored": true
+  },
+  "scope": "runtime only; no installer, install or release",
+  "later_standard_changes": [
+    "notification output budget now treats uncontrolled reasoning separately from explicit off; covered by source tests and real notification smoke; no packaging dependency/resource change"
+  ]
+}

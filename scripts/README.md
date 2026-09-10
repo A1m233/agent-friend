@@ -99,7 +99,8 @@ Python通知代码调整后可显式执行 `restart-bridge`，复用前端的 `r
 | `prompt-cache-report/` | 从现有 `agent_bridge.log*` 或显式日志文件聚合版本化 prompt-cache observation，输出 JSON / Markdown 的 token 加权比例、请求比例、read/write/other、coverage、时延、关键分段，以及按最早断点域互斥归因的跨用户回合 lost-prefix token 机会排序；只读，不调用 LLM | `./scripts/prompt-cache-report/run.sh [--input PATH] [--format json\|markdown] [--output PATH]` | `.\scripts\prompt-cache-report\run.ps1 [--input PATH] [--format json\|markdown] [--output PATH]` |
 | `test/` | 跑 pytest（参数透传；可选 HTTPX 离线护栏见页首） | `./scripts/test/run.sh` | `.\scripts\test\run.ps1` |
 | `session-query-benchmark/` | 118 合成长会话离线对照，比较固定旧 history adapter 与当前读取路径，检查正文/顺序/范围/截断并记录耗时及读取量；不读用户数据、不调用 LLM，输出必须为新文件 | `./scripts/session-query-benchmark/run.sh --output /tmp/query-report.json [--payload-mib 16 --repeats 3]` | `.\scripts\session-query-benchmark\run.ps1 --output .tmp/query-report.json [--payload-mib 16 --repeats 3]` |
-| `responses-smoke/` | 114 原生 Responses 公共接口合成工具闭环，默认拒绝真实请求；每 Provider 最多 2 次，不自动重试，只写脱敏证据 | `./scripts/responses-smoke/run.sh --allow-llm --provider both --output <new.json>` | `.\scripts\responses-smoke\run.ps1 --allow-llm --provider both --output <new.json>` |
+| `responses-smoke/` | 原生 Responses 合成工具闭环（默认，每供应商最多 2 次）；`--custom` 走通用 Responses，`--custom-chat` 走通用 Chat（Kimi K2.6）或 `--scenario nonstream-json`（每供应商最多 1 次）；默认拒绝真实请求，不自动重试，只写脱敏证据 | `./scripts/responses-smoke/run.sh --allow-llm --provider both --output <new.json>` | `.\scripts\responses-smoke\run.ps1 --allow-llm --provider both --output <new.json>` |
+| `model-connections-smoke/` | `--custom` 通过自定义目录装配通用协议； 隔离数据库中的真实记忆抽取/协调/落库、摘要续聊及通知；DeepSeek Responses、Kimi Responses/Chat，每路最多 10 次生成，不自动重试 | `./scripts/model-connections-smoke/run.sh --allow-llm --route all --output <new.json>` | `.\scripts\model-connections-smoke\run.ps1 --allow-llm --route all --output <new.json>` |
 | `notification-smoke/` | 117 通知生成的三次有界真实 smoke：默认模型最低档、本地 persona 与只读复制的真实记忆快照；不写生产记忆、会话或通知、不发送 IM；`--prepare-only` 零调用预检，实际执行需授权及 `--allow-llm`。`--output` 必须为 Git checkout 外的新绝对路径；旁边 `<报告名>.inputs/` 保存最终 ModelRequest 与不含 headers/凭据值的 wire JSON，仍含私有人格/记忆，禁止提交或复制进文档；拒绝覆盖 | `./scripts/notification-smoke/run.sh --allow-llm --output <new.json>` | `.\scripts\notification-smoke\run.ps1 --allow-llm --output <new.json>` |
 | `assistant-phase-smoke/` | 115 Vision → Agent → 产品事件/rollout 阶段闭环；需单次授权，最多一次合成图片上传、两次生成（各 1024 输出 token），拒绝重试；隔离数据且不覆盖证据 | `./scripts/assistant-phase-smoke/run.sh --allow-llm --output <new.json>` | `.\scripts\assistant-phase-smoke\run.ps1 --allow-llm --output <new.json>` |
 | `assistant-phase-desktop/` | 115 已授权桌面验收用合成夹具：seed 只新建可识别会话；probe 连接真实 WebView2 CDP 检查折叠/历史用时、入口文字对齐/字号/细线/hover，以及发送排队→实际开始的计时头显隐、运行/中性停止/完成摘要、尾部活动时序/几何/终态去重，不调用模型，不覆盖报告。实时状态为 UI-only 合成注入，执行前核对 dev 实例；夹具不是模型 E2E，CDP 路径只适用于支持该端点的平台 | `./scripts/assistant-phase-desktop/run.sh seed --fixture <new.json>`；`probe --fixture <json> --output-dir <new-dir>` | `.\scripts\assistant-phase-desktop\run.ps1 seed --fixture <new.json>`；`probe --fixture <json> --output-dir <new-dir>` |
@@ -152,3 +153,13 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 ## 跨平台约定
 
 每个脚本同时提供 `run.sh`（mac/linux）和 `run.ps1`（windows）两个版本，**两端语义一致、输出格式尽量一致**。新增脚本必须遵循同样规范，详见 `.cursor/rules/cross-platform-dev.mdc`。
+
+自定义后台 smoke 使用 100,000 token 夹具窗口，并将触发比例设为 0.03，以少量合成历史触发压缩，同时保留正常摘要输出预算 4,096；这不是满窗口压力测试。未传 `--custom` 时沿用 3,000 窗口、512 摘要预算的内置模型夹具。
+
+本机 CPA 验证：`scripts/model-connections-smoke/run.* cpa --allow-llm --output <new.json>`。只连接 `http://127.0.0.1:8317/v1`，从本机 CPA config.yaml 的 api-keys 安全读取访问密钥，使用精确模型 `gpt-5.6-luna`；先检查模型发现，再复用工具闭环、非流式 JSON、记忆/协调/压缩/通知场景。常规约 9 次生成，网关鉴权/网络失败立即跳过剩余场景，不自动重启 CPA。该命令不做 UI/系统 keyring 保存操作。
+
+保存前草稿验证：`scripts/model-connections-smoke/run.* inspect --allow-llm --target deepseek|kimi|cpa|all --output <new.json>`，通过 owner API 验证发现元数据、生成和工具回传，每目标最多 1 次列表 GET 与 3 次生成 POST。使用隔离设置路径，证明草稿不落盘；不操作桌面 UI，不停止 CPA。
+
+自定义能力边界验证：`scripts/model-connections-smoke/run.* capabilities --allow-llm --output <new.json>`，CPA/Luna 默认 Responses（可传 `--protocol chat_completions`）最多 3 次请求，分别验证显式 low、合成图片及原生 PDF；输出脱敏 wire 元数据，不保存密钥或用户附件。
+
+`capabilities --extended` 单独运行 5 次补充验证：服务默认不传强度、JPEG/WebP、扫描 PDF、TXT；`cpa --effort <value>` 对工具/记忆/压缩/通知矩阵使用显式自定义强度，调用数量仍约 9 次。两端 run 包装透传这些参数。

@@ -8,6 +8,11 @@
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .catalog import ModelRouteCapabilities
+
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -91,6 +96,8 @@ class ProviderSpec:
     provider_id: str | None = None
     product_model_id: str | None = None
     reasoning_preset: str | None = None
+    attachment_capabilities: ModelRouteCapabilities | None = None
+    attachment_profile: str | None = None
     reasoning_replay_scope: str = "none"
     responses: ResponsesRoute | None = None
 

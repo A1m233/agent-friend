@@ -112,3 +112,60 @@ def test_smoke_failure_keeps_redacted_provider_message() -> None:
     result = module.safe_error(error, "fixture-key")
     assert result["provider_message"] == "invalid field [REDACTED]"
     assert "do not retain raw exception" not in str(result)
+
+
+def test_loopback_budget_requires_the_exact_cpa_port() -> None:
+    module = load()
+    budget = module.WireBudget("127.0.0.1", "/v1/responses", "http", 8317)
+    with pytest.raises(module.SmokeBoundaryExceeded):
+        budget.observe(httpx.Request("POST", "http://127.0.0.1:8318/v1/responses"))
+    budget.observe(httpx.Request("POST", "http://127.0.0.1:8317/v1/responses", content=b"{}"))
+    assert budget.requests[0]["port"] == 8317
+    assert budget.requests[0]["scheme"] == "http"
+
+
+@pytest.mark.parametrize("status", [400, 503])
+def test_cpa_gateway_failure_skips_remaining_generation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, status: int
+) -> None:
+    path = Path(__file__).parents[1] / "model-connections-smoke/cpa.py"
+    spec = importlib.util.spec_from_file_location("cpa_smoke_fixture", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    config = tmp_path / "config.yaml"
+    config.write_text("api-keys: [fixture-secret]", encoding="utf-8")
+    output = tmp_path / "report.json"
+    monkeypatch.setattr(
+        sys, "argv", ["cpa", "--allow-llm", "--config", str(config), "--output", str(output)]
+    )
+    calls = []
+
+    def run_provider(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        calls.append(args)
+        return {"passed": False, "error": {"status_code": status}}
+
+    class Client:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def __enter__(self) -> Client:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            pass
+
+        def get(self, *args: Any, **kwargs: Any) -> Any:
+            return SimpleNamespace(
+                raise_for_status=lambda: None, json=lambda: {"data": [{"id": "gpt-5.6-luna"}]}
+            )
+
+    monkeypatch.setattr(module.httpx, "Client", Client)
+    monkeypatch.setattr(
+        module,
+        "load",
+        lambda name, path: SimpleNamespace(source_identity=lambda: {}, run_provider=run_provider),
+    )
+    assert module.main() == 1
+    assert len(calls) == 1
+    assert "fixture-secret" not in output.read_text(encoding="utf-8")

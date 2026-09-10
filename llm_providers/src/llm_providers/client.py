@@ -57,6 +57,7 @@ from .protocol import LanguageModelCapabilities, ModelCallControl, ModelRequest,
 from .reasoning import build_provider_reasoning_state, reasoning_detail_objects
 from .request_witness import ProviderRequestWitness
 from .responses import stream_responses
+from .responses.generate import generate_responses
 from .spec import ProviderSpec
 from .stream_events import (
     LLMActivity,
@@ -129,6 +130,8 @@ class _ProviderStreamChunkError(RuntimeError):
 
 
 def _provider_id_for_spec(spec: ProviderSpec) -> str | None:
+    if spec.provider_id is not None:
+        return spec.provider_id
     if spec.model.startswith("openrouter/"):
         return "openrouter"
     if spec.model.startswith("deepseek/"):
@@ -367,13 +370,22 @@ class LLMClient:
                     settings = dict(request.settings)
                     if request.tools:
                         settings["tools"] = request.tools
-                    response = self._call_once(
-                        self.spec,
-                        request.messages,
-                        cancel_check=cancel_check,
-                        previous_request_witness=request.control.previous_request_witness,
-                        transcript_item_domains=request.control.transcript_item_domains,
-                        **settings,
+                    response = (
+                        generate_responses(
+                            self.spec,
+                            request,
+                            timeout_seconds=float(self.spec.defaults.get("timeout", 90.0)),
+                            attempt=attempt,
+                        )
+                        if self.spec.responses is not None
+                        else self._call_once(
+                            self.spec,
+                            request.messages,
+                            cancel_check=cancel_check,
+                            previous_request_witness=request.control.previous_request_witness,
+                            transcript_item_domains=request.control.transcript_item_domains,
+                            **settings,
+                        )
                     )
                     if cancel_check is not None:
                         cancel_check()
@@ -397,7 +409,7 @@ class LLMClient:
                 previous_witness = request.control.previous_request_witness
                 if isinstance(failed_witness, ProviderRequestWitness):
                     failed_diagnostics = LLMResponseDiagnostics(
-                        transport="litellm",
+                        transport="responses" if self.spec.responses is not None else "litellm",
                         request_bytes=failed_witness.request_bytes,
                         request_fingerprint=failed_witness.request_fingerprint,
                         request_relation=failed_witness.relation_to(previous_witness),

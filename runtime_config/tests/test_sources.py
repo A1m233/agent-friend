@@ -443,3 +443,29 @@ def test_keyring_delete_also_deletes_legacy_rust_windows_target(
     store.delete(DEEPSEEK_API_KEY)
 
     assert deleted == [("agent-friend", DEEPSEEK_API_KEY)]
+
+
+def test_memory_effort_projection_preserves_arbitrary_value(tmp_path: Path) -> None:
+    import json
+
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "memoryModel": {
+                    "provider": "custom",
+                    "model": "custom/example",
+                    "reasoningPreset": "effort:vendor-next",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    source = SettingsFileSource(path)
+    value = source.get("LLM_MEMORY_REASONING_PRESET")
+    assert value is not None and value.value == "effort:vendor-next"
+    path.write_text(
+        json.dumps({"memoryModel": {"provider": "kimi", "model": "kimi/kimi-k2.6"}}),
+        encoding="utf-8",
+    )
+    assert source.get("LLM_MEMORY_REASONING_PRESET") is None

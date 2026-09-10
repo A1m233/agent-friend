@@ -1,0 +1,188 @@
+{
+  "fixture_override": {
+    "effective_window": 100000,
+    "emergency_ratio": 0.03,
+    "trigger_threshold": 2400,
+    "summary_output_budget": 4096
+  },
+  "script_sha256": "ee11a06caa97ae42eb69611859dc638c82c3cf121167268d5f8129ae85d30c0e",
+  "routes": [
+    {
+      "route": "deepseek-responses",
+      "model": "custom/00000000-0000-0000-0000-000000000079/00000000-0000-0000-0000-00000000007a",
+      "custom_connection": true,
+      "stages": {
+        "compaction": {
+          "passed": true,
+          "summary_chars": 572,
+          "continuation": "我们项目的代号是 **cobalt-73**。"
+        },
+        "notification": {
+          "passed": true,
+          "text": "有新回复，整理资料那边有回音了，方便时看一眼就好。"
+        }
+      },
+      "calls": [
+        {
+          "operation": "context_compaction",
+          "kind": "summary_generation",
+          "transport": "responses",
+          "response_model": "deepseek-v4-flash",
+          "fingerprint": "054a439264d5904baed380cf",
+          "usage": {
+            "prompt_tokens": 1643,
+            "completion_tokens": 979,
+            "total_tokens": 2622,
+            "cached_prompt_tokens": 1536,
+            "cache_write_prompt_tokens": null,
+            "input_other_prompt_tokens": null,
+            "cache_miss_prompt_tokens": 107,
+            "usage_source": "responses",
+            "input_total_prompt_tokens_source": "input_tokens",
+            "completion_tokens_source": "output_tokens",
+            "total_tokens_source": "total_tokens",
+            "cached_prompt_tokens_source": "input_tokens_details.cached_tokens",
+            "cache_write_prompt_tokens_source": null,
+            "input_other_prompt_tokens_source": null,
+            "cache_miss_prompt_tokens_source": "derived_prompt_minus_cached",
+            "input_token_accounting": "inclusive_total",
+            "input_other_prompt_tokens_derived": false,
+            "cache_miss_prompt_tokens_derived": true
+          }
+        },
+        {
+          "operation": "continuation",
+          "kind": "continuation",
+          "transport": "responses",
+          "response_model": "deepseek-v4-flash",
+          "fingerprint": "36534471dc9f03d0d2ab0a35",
+          "usage": {
+            "prompt_tokens": 691,
+            "completion_tokens": 39,
+            "total_tokens": 730,
+            "cached_prompt_tokens": 0,
+            "cache_write_prompt_tokens": null,
+            "input_other_prompt_tokens": null,
+            "cache_miss_prompt_tokens": 691,
+            "usage_source": "responses",
+            "input_total_prompt_tokens_source": "input_tokens",
+            "completion_tokens_source": "output_tokens",
+            "total_tokens_source": "total_tokens",
+            "cached_prompt_tokens_source": "input_tokens_details.cached_tokens",
+            "cache_write_prompt_tokens_source": null,
+            "input_other_prompt_tokens_source": null,
+            "cache_miss_prompt_tokens_source": "derived_prompt_minus_cached",
+            "input_token_accounting": "inclusive_total",
+            "input_other_prompt_tokens_derived": false,
+            "cache_miss_prompt_tokens_derived": true
+          }
+        },
+        {
+          "operation": "notification",
+          "kind": "notification",
+          "transport": "responses",
+          "response_model": "deepseek-v4-flash",
+          "fingerprint": "a77f3a23b6e66b2f97e791b8",
+          "usage": {
+            "prompt_tokens": 400,
+            "completion_tokens": 343,
+            "total_tokens": 743,
+            "cached_prompt_tokens": 0,
+            "cache_write_prompt_tokens": null,
+            "input_other_prompt_tokens": null,
+            "cache_miss_prompt_tokens": 400,
+            "usage_source": "responses",
+            "input_total_prompt_tokens_source": "input_tokens",
+            "completion_tokens_source": "output_tokens",
+            "total_tokens_source": "total_tokens",
+            "cached_prompt_tokens_source": "input_tokens_details.cached_tokens",
+            "cache_write_prompt_tokens_source": null,
+            "input_other_prompt_tokens_source": null,
+            "cache_miss_prompt_tokens_source": "derived_prompt_minus_cached",
+            "input_token_accounting": "inclusive_total",
+            "input_other_prompt_tokens_derived": false,
+            "cache_miss_prompt_tokens_derived": true
+          }
+        }
+      ],
+      "passed": true
+    },
+    {
+      "route": "kimi-chat",
+      "model": "custom/00000000-0000-0000-0000-000000000079/00000000-0000-0000-0000-00000000007a",
+      "custom_connection": true,
+      "stages": {
+        "compaction": {
+          "passed": true,
+          "summary_chars": 434,
+          "continuation": "你们项目的代号是 **cobalt-73**。"
+        }
+      },
+      "calls": [
+        {
+          "operation": "context_compaction",
+          "kind": "summary_generation",
+          "transport": "litellm",
+          "response_model": "kimi-k2.6",
+          "fingerprint": "3b7e7d96aeedcbeafb9ea385",
+          "usage": {
+            "prompt_tokens": 1458,
+            "completion_tokens": 1458,
+            "total_tokens": 2916,
+            "cached_prompt_tokens": 1024,
+            "cache_write_prompt_tokens": 0,
+            "input_other_prompt_tokens": 434,
+            "cache_miss_prompt_tokens": 434,
+            "usage_source": "top_level",
+            "input_total_prompt_tokens_source": "prompt_tokens",
+            "completion_tokens_source": "completion_tokens",
+            "total_tokens_source": "total_tokens",
+            "cached_prompt_tokens_source": "cached_tokens",
+            "cache_write_prompt_tokens_source": "_cache_creation_input_tokens",
+            "input_other_prompt_tokens_source": "derived_input_total_minus_cache_read_write",
+            "cache_miss_prompt_tokens_source": "derived_prompt_minus_cached",
+            "input_token_accounting": "inclusive_total",
+            "input_other_prompt_tokens_derived": true,
+            "cache_miss_prompt_tokens_derived": true
+          }
+        },
+        {
+          "operation": "continuation",
+          "kind": "continuation",
+          "transport": "litellm",
+          "response_model": "kimi-k2.6",
+          "fingerprint": "aa10e7cb34f485da085401a8",
+          "usage": {
+            "prompt_tokens": 535,
+            "completion_tokens": 138,
+            "total_tokens": 673,
+            "cached_prompt_tokens": 0,
+            "cache_write_prompt_tokens": 0,
+            "input_other_prompt_tokens": 535,
+            "cache_miss_prompt_tokens": 535,
+            "usage_source": "top_level",
+            "input_total_prompt_tokens_source": "prompt_tokens",
+            "completion_tokens_source": "completion_tokens",
+            "total_tokens_source": "total_tokens",
+            "cached_prompt_tokens_source": "_cache_read_input_tokens",
+            "cache_write_prompt_tokens_source": "_cache_creation_input_tokens",
+            "input_other_prompt_tokens_source": "derived_input_total_minus_cache_read_write",
+            "cache_miss_prompt_tokens_source": "derived_prompt_minus_cached",
+            "input_token_accounting": "inclusive_total",
+            "input_other_prompt_tokens_derived": true,
+            "cache_miss_prompt_tokens_derived": true
+          }
+        },
+        {
+          "operation": "notification",
+          "kind": "notification"
+        }
+      ],
+      "passed": false,
+      "error": {
+        "type": "TimeoutError",
+        "assertion": null
+      }
+    }
+  ]
+}

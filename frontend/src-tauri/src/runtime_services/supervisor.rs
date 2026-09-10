@@ -257,6 +257,47 @@ impl RuntimeServiceSupervisor {
             .map_err(|error| format!("credential_validation_invalid_response: {error}"))
     }
 
+    pub async fn model_connection_operation(
+        &self,
+        action: &str,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        if !matches!(action, "prepare" | "finish" | "inspect") {
+            return Err("invalid_model_connection_action".into());
+        }
+        let slot_ref = self.slot(RuntimeServiceKind::Bridge);
+        let slot = slot_ref.lock().await;
+        let token = slot
+            .token
+            .as_deref()
+            .ok_or("model_connection_bridge_not_ready")?;
+        let response = self
+            .client
+            .post(format!(
+                "{}/internal/model-connections/{action}",
+                self.launch_context.base_url(RuntimeServiceKind::Bridge)
+            ))
+            .header("X-Agent-Friend-Lifecycle-Token", token)
+            .json(&body)
+            .timeout(Duration::from_secs(120))
+            .send()
+            .await
+            .map_err(|_| "model_connection_request_failed")?;
+        let status = response.status();
+        let value: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|_| "model_connection_invalid_response")?;
+        if !status.is_success() {
+            return Err(value
+                .pointer("/detail/code")
+                .and_then(|code| code.as_str())
+                .unwrap_or("model_connection_failed")
+                .to_string());
+        }
+        Ok(value)
+    }
+
     pub async fn migration_snapshot_im_credentials(&self) -> Result<serde_json::Value, String> {
         let slot_ref = self.slot(RuntimeServiceKind::Bridge);
         let slot = slot_ref.lock().await;

@@ -14,7 +14,7 @@ import { Spinner } from "../spinner";
  * asChild 走 radix-ui 的 Slot。页面/业务禁止散写原生 <button>（ESLint 门禁强制）。
  */
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-all outline-none focus-visible:ring-[3px] focus-visible:ring-accent/50 aria-invalid:border-danger aria-invalid:ring-danger/20 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "relative inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-all outline-none focus-visible:ring-[3px] focus-visible:ring-accent/50 aria-invalid:border-danger aria-invalid:ring-danger/20 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
@@ -74,8 +74,23 @@ function Button({
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
     >
-      {!asChild && loading && <Spinner data-icon="inline-start" />}
-      {children}
+      {!asChild && loading ? (
+        <>
+          {React.Children.map(children, (child) =>
+            React.isValidElement(child) ? (
+              <Slot.Root style={{ visibility: "hidden" }} aria-hidden>
+                {child}
+              </Slot.Root>
+            ) : (
+              <span style={{ visibility: "hidden" }} aria-hidden>{child}</span>
+            ),
+          )}
+          <span className="sr-only">{children}</span>
+          <span className="absolute inset-0 flex items-center justify-center">
+            <Spinner data-icon="inline-start" />
+          </span>
+        </>
+      ) : children}
     </Comp>
   );
 }

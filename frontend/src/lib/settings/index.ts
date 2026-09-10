@@ -10,17 +10,34 @@ export type BackgroundOnlinePolicy = "followSystem" | "pluggedIn" | "always";
 export type ReminderNotificationMode = "smart" | "all";
 export type NotificationCompletionMode = "never" | "whenNotViewing" | "always";
 export type NotificationSound = { kind: "default" };
-export type DeepseekModel = "deepseek/deepseek-v4-flash" | "deepseek/deepseek-v4-pro";
-export type ModelProvider = "deepseek" | "kimi" | "openrouter";
+export type DeepseekModel =
+  | "deepseek/deepseek-v4-flash"
+  | "deepseek/deepseek-v4-pro";
+export type ModelProvider = "deepseek" | "kimi" | "openrouter" | "custom";
 export interface ModelSelection {
   provider: ModelProvider;
   model: string;
+  reasoningPreset?: string;
 }
 export type AvatarModelId = string;
 export type PetAvatarSize = "normal" | "mini";
 type LegacyPetDisplayMode = "normal" | "edgeRecall";
 
+export interface CustomConnection {
+  id: string;
+  name: string;
+  baseUrl: string;
+  protocol: "chat_completions" | "responses";
+  credentialRevision: string;
+  models: { id: string; name: string; contextWindow: number; images?: boolean; documents?: boolean }[];
+}
+export interface ModelConnections {
+  revision: number;
+  connections: CustomConnection[];
+}
+
 export interface Settings {
+  modelConnections: ModelConnections;
   theme: ThemeMode;
   backgroundOnlinePolicy: BackgroundOnlinePolicy;
   reminderNotificationMode: ReminderNotificationMode;
@@ -42,6 +59,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  modelConnections: { revision: 0, connections: [] },
   theme: "light",
   backgroundOnlinePolicy: "followSystem",
   reminderNotificationMode: "smart",
@@ -93,11 +111,17 @@ declare global {
   }
 }
 
-function normalizeSettingsSnapshot(payload?: SettingsSnapshotPayload): Settings {
+function normalizeSettingsSnapshot(
+  payload?: SettingsSnapshotPayload,
+): Settings {
   const { petDisplayMode, deepseekModel, deepseekMemoryModel, ...current } =
     payload ?? {};
   const settings = { ...DEFAULT_SETTINGS, ...current };
-  if (!Number.isInteger(settings.petActionBarPage) || settings.petActionBarPage < 0 || settings.petActionBarPage > 0xffff_ffff) {
+  if (
+    !Number.isInteger(settings.petActionBarPage) ||
+    settings.petActionBarPage < 0 ||
+    settings.petActionBarPage > 0xffff_ffff
+  ) {
     settings.petActionBarPage = DEFAULT_SETTINGS.petActionBarPage;
   }
   if (
@@ -109,15 +133,24 @@ function normalizeSettingsSnapshot(payload?: SettingsSnapshotPayload): Settings 
   if (!payload?.chatModel && deepseekModel) {
     settings.chatModel = { provider: "deepseek", model: deepseekModel };
   }
-  if (!["never", "whenNotViewing", "always"].includes(settings.notificationCompletionMode)) {
-    settings.notificationCompletionMode = DEFAULT_SETTINGS.notificationCompletionMode;
+  if (
+    !["never", "whenNotViewing", "always"].includes(
+      settings.notificationCompletionMode,
+    )
+  ) {
+    settings.notificationCompletionMode =
+      DEFAULT_SETTINGS.notificationCompletionMode;
   }
   for (const key of [
-    "notificationNeedsActionEnabled", "notificationFailureEnabled", "notificationSoundEnabled",
+    "notificationNeedsActionEnabled",
+    "notificationFailureEnabled",
+    "notificationSoundEnabled",
   ] as const) {
-    if (typeof settings[key] !== "boolean") settings[key] = DEFAULT_SETTINGS[key];
+    if (typeof settings[key] !== "boolean")
+      settings[key] = DEFAULT_SETTINGS[key];
   }
-  if (settings.notificationSound?.kind !== "default") settings.notificationSound = { kind: "default" };
+  if (settings.notificationSound?.kind !== "default")
+    settings.notificationSound = { kind: "default" };
   if (!payload?.memoryModel && deepseekMemoryModel) {
     settings.memoryModel = {
       provider: "deepseek",
@@ -133,7 +166,9 @@ function normalizeSettingsSnapshot(payload?: SettingsSnapshotPayload): Settings 
 /** Rust's initialization script seeds this cache; page bootstrap refreshes it from get_setting. */
 export function getSettingsSnapshot(): Settings {
   return normalizeSettingsSnapshot(
-    typeof window === "undefined" ? undefined : window.__AGENT_FRIEND_SETTINGS__,
+    typeof window === "undefined"
+      ? undefined
+      : window.__AGENT_FRIEND_SETTINGS__,
   );
 }
 
@@ -187,7 +222,9 @@ export async function setSetting<K extends keyof Settings>(
 export function useSetting<K extends keyof Settings>(
   key: K,
 ): [Settings[K], (next: Settings[K]) => Promise<void>] {
-  const [value, setValueState] = useState<Settings[K]>(() => getSettingsSnapshot()[key]);
+  const [value, setValueState] = useState<Settings[K]>(
+    () => getSettingsSnapshot()[key],
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -202,14 +239,18 @@ export function useSetting<K extends keyof Settings>(
     );
     // The page-level listener may receive a change between render and this
     // hook's native subscription becoming active, including StrictMode remounts.
-    void unlistenPromise.then(() => {
-      if (mounted) setValueState(getSettingsSnapshot()[key]);
-    }).catch((error) => {
-      console.warn("setting subscription unavailable", error);
-    });
+    void unlistenPromise
+      .then(() => {
+        if (mounted) setValueState(getSettingsSnapshot()[key]);
+      })
+      .catch((error) => {
+        console.warn("setting subscription unavailable", error);
+      });
     return () => {
       mounted = false;
-      void unlistenPromise.then((unlisten) => unlisten()).catch(() => undefined);
+      void unlistenPromise
+        .then((unlisten) => unlisten())
+        .catch(() => undefined);
     };
   }, [key]);
 

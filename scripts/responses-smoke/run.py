@@ -10,13 +10,20 @@ from collections import Counter
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
 import httpx
 from llm_providers.responses.stream import ResponsesState
 
-from llm_providers import LLMTextDelta, LLMTurnDone, ModelRequest, create_language_model
+from llm_providers import (
+    LLMTextDelta,
+    LLMTurnDone,
+    ModelRequest,
+    ProviderSpec,
+    create_language_model,
+)
 from runtime_config import credential_source_for_mode
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -50,19 +57,23 @@ class SmokeBoundaryExceeded(BaseException):
 
 
 class WireBudget:
-    def __init__(self, host: str, path: str) -> None:
-        self.host, self.path = host, path
+    def __init__(
+        self, host: str, path: str, scheme: str = "https", port: int | None = None, limit: int = 2
+    ) -> None:
+        self.host, self.path, self.scheme, self.port = host, path, scheme, port
+        self.limit = limit
         self.requests: list[dict[str, Any]] = []
         self.call_requests = 0
 
     def observe(self, request: httpx.Request) -> None:
         if (
             request.method != "POST"
-            or request.url.scheme != "https"
+            or request.url.scheme != self.scheme
+            or (self.port is not None and request.url.port != self.port)
             or request.url.host != self.host
             or request.url.path != self.path
             or self.call_requests >= 1
-            or len(self.requests) >= 2
+            or len(self.requests) >= self.limit
         ):
             raise SmokeBoundaryExceeded("unexpected endpoint or request budget exceeded")
         self.call_requests += 1
@@ -70,6 +81,8 @@ class WireBudget:
             {
                 "method": request.method,
                 "host": request.url.host,
+                "scheme": request.url.scheme,
+                "port": request.url.port,
                 "path": request.url.path,
                 "body_sha256": hashlib.sha256(request.content).hexdigest(),
             }
@@ -111,27 +124,87 @@ def safe_error(error: BaseException, secret: str) -> dict[str, Any]:
     return result
 
 
-def run_provider(provider: str) -> dict[str, Any]:
+def run_provider(
+    provider: str,
+    scenario: str = "tool-loop",
+    custom: bool = False,
+    custom_chat: bool = False,
+    spec_override: ProviderSpec | None = None,
+) -> dict[str, Any]:
     model_id, key_name, host, path, preset = ROUTES[provider]
-    credential = credential_source_for_mode("desktop").get(key_name)
+    custom = custom or custom_chat
+    if custom_chat:
+        path = "/chat/completions" if provider == "deepseek" else "/v1/chat/completions"
+        if provider == "kimi":
+            model_id = "kimi/kimi-k2.6"
+    endpoint = None
+    if spec_override is not None:
+        custom = True
+        model_id = spec_override.model
+        endpoint = httpx.URL(str(spec_override.api_base).rstrip("/") + "/responses")
+        host, path = endpoint.host, endpoint.path
+        credential = SimpleNamespace(value=spec_override.api_key)
+    else:
+        credential = credential_source_for_mode("desktop").get(key_name)
     report: dict[str, Any] = {
         "model": model_id,
-        "reasoning_preset": preset or "default",
+        "reasoning_preset": (
+            spec_override.reasoning_preset
+            if spec_override is not None
+            else "upstream_default"
+            if custom
+            else preset or "default"
+        ),
+        "protocol": "chat_completions" if custom_chat else "responses",
         "calls": [],
         "passed": False,
+        "scenario": scenario,
+        "custom_connection": custom,
     }
-    if not credential.value:
+    if credential is None or not credential.value:
         report["error"] = {"type": "MissingCredential", "credential": key_name}
         return report
-    model = create_language_model(
-        provider_id=provider,
-        model_id=model_id,
-        api_key=credential.value,
-        reasoning_preset=preset,
-        timeout_seconds=60,
+    if not custom:
+        model = create_language_model(
+            provider_id=provider,
+            model_id=model_id,
+            api_key=credential.value,
+            reasoning_preset=preset,
+            timeout_seconds=60,
+        )
+    if spec_override is not None:
+        from llm_providers import LLMClient
+
+        model = LLMClient(spec_override, network_retries=0, engine_overload_retries=0)
+    elif custom:
+        from uuid import UUID
+
+        from llm_providers.connections import (
+            ConnectionDefinition,
+            CustomModel,
+            ModelDirectory,
+            model_reference,
+        )
+
+        from llm_providers import LLMClient
+
+        connection = ConnectionDefinition(
+            str(UUID(int=121)),
+            "Smoke connection",
+            "https://"
+            + host
+            + path.removesuffix("/chat/completions" if custom_chat else "/responses"),
+            "chat_completions" if custom_chat else "responses",
+            (CustomModel(str(UUID(int=122)), model_id.split("/", 1)[1], 1_000_000),),
+        )
+        directory = ModelDirectory([connection])
+        config = directory.default_config(model_reference(connection.id, connection.models[0].id))
+        model = LLMClient(directory.build_spec(config, api_key=credential.value))
+    budget = WireBudget(
+        host, path, endpoint.scheme if endpoint else "https", endpoint.port if endpoint else None
     )
-    budget = WireBudget(host, path)
     send = httpx.AsyncHTTPTransport.handle_async_request
+    sync_send = httpx.HTTPTransport.handle_request
     finish = ResponsesState.finish
     terminal_usage: dict[str, Any] = {}
 
@@ -150,8 +223,11 @@ def run_provider(provider: str) -> dict[str, Any]:
         budget.observe(request)
         return await send(transport, request)
 
-    def block_sync(*_: Any, **__: Any) -> Any:
-        raise SmokeBoundaryExceeded("unexpected synchronous transport")
+    def block_sync(transport: httpx.HTTPTransport, request: httpx.Request) -> httpx.Response:
+        if not custom_chat:
+            raise SmokeBoundaryExceeded("unexpected synchronous transport")
+        budget.observe(request)
+        return sync_send(transport, request)
 
     messages: list[dict[str, Any]] = [
         {
@@ -165,7 +241,32 @@ def run_provider(provider: str) -> dict[str, Any]:
             patch.object(httpx.HTTPTransport, "handle_request", block_sync),
             patch.object(ResponsesState, "finish", observe_terminal),
         ):
-            for turn in range(2):
+            if scenario == "nonstream-json":
+                response = model.generate(
+                    ModelRequest(
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": 'Return only this JSON object, without markdown or explanation: {"code":"cobalt-73"}',
+                            }
+                        ],
+                        settings={"max_tokens": 2048},
+                    )
+                )
+                if json.loads(response.text) != {"code": "cobalt-73"}:
+                    raise AssertionError("incorrect final JSON")
+                if response.diagnostics is None or response.diagnostics.transport != "responses":
+                    raise AssertionError("missing Responses request evidence")
+                report["calls"].append(
+                    {
+                        "transport": response.diagnostics.transport,
+                        "response_model": response.diagnostics.response_model,
+                        "request_fingerprint": response.diagnostics.request_fingerprint,
+                        "json_valid": True,
+                        "usage": asdict(response.usage) if response.usage else None,
+                    }
+                )
+            for turn in range(2 if scenario == "tool-loop" else 0):
                 budget.call_requests = 0
                 kinds: Counter[str] = Counter()
                 phases: Counter[str] = Counter()
@@ -181,7 +282,7 @@ def run_provider(provider: str) -> dict[str, Any]:
                     ModelRequest(
                         messages=messages,
                         tools=[TOOL],
-                        settings={"max_tokens": 1024, "tool_choice": "auto"},
+                        settings={"max_tokens": 4096 if custom else 1024, "tool_choice": "auto"},
                     )
                 ):
                     kinds[event.type] += 1
@@ -199,8 +300,13 @@ def run_provider(provider: str) -> dict[str, Any]:
                 call["usage"] = asdict(done.usage) if done.usage else None
                 call["native_reasoning_tokens"] = terminal_usage.get("reasoning_tokens")
                 call["reasoning_state_present"] = done.reasoning_state is not None
-                if provider == "deepseek" and (
-                    terminal_usage.get("reasoning_tokens") != 0 or done.reasoning_state is not None
+                if (
+                    provider == "deepseek"
+                    and not custom
+                    and (
+                        terminal_usage.get("reasoning_tokens") != 0
+                        or done.reasoning_state is not None
+                    )
                 ):
                     raise AssertionError(
                         "default thinking-off was not verified by native usage/state"
@@ -248,7 +354,12 @@ def main() -> int:
     parser.add_argument("--allow-llm", action="store_true")
     parser.add_argument("--provider", choices=["deepseek", "kimi", "both"], default="both")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--scenario", choices=["tool-loop", "nonstream-json"], default="tool-loop")
+    parser.add_argument("--custom", action="store_true")
+    parser.add_argument("--custom-chat", action="store_true")
     args = parser.parse_args()
+    if args.custom_chat and args.scenario != "tool-loop":
+        parser.error("--custom-chat supports tool-loop only")
     if not args.allow_llm:
         parser.error(
             "requires explicit authorization and --allow-llm; up to two requests per provider"
@@ -262,7 +373,9 @@ def main() -> int:
         }
         try:
             for provider in ROUTES if args.provider == "both" else [args.provider]:
-                report["providers"].append(run_provider(provider))
+                report["providers"].append(
+                    run_provider(provider, args.scenario, args.custom, args.custom_chat)
+                )
         finally:
             report["finished_at"] = datetime.now(UTC).isoformat()
             json.dump(report, output, ensure_ascii=False, indent=2)

@@ -400,3 +400,34 @@ def test_deepseek_upload_failure_uses_safe_project_error(
 
     assert "attachment_provider_upload_failed" in str(caught.value)
     assert "secret upstream body" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "media,kind,data,block",
+    [
+        ("image/png", "image", b"image", "image_url"),
+        ("image/jpeg", "image", b"image", "image_url"),
+        ("image/webp", "image", b"image", "image_url"),
+        ("application/pdf", "document", b"%PDF-fixture", "file"),
+        ("text/plain", "document", b"code-125", "text"),
+    ],
+)
+def test_custom_attachments_use_native_blocks_without_file_upload(
+    tmp_path: Path, media: str, kind: str, data: bytes, block: str
+) -> None:
+    from llm_providers.connections.directory import custom_attachment_capabilities
+
+    spec = ProviderSpec(
+        model="openai/unknown-name",
+        api_key="fixture",
+        context_window=8192,
+        attachment_capabilities=custom_attachment_capabilities(True, True),
+        attachment_profile="openai-attachments-v1",
+    )
+    client = LLMClient(spec)
+    adapter = MultimodalInputAdapter(open_asset=lambda _: BytesIO(data), cache_dir=tmp_path)
+    message = _Message(_attachment(kind=kind, media_type=media, size_bytes=len(data)), current=True)
+    rendered = adapter.render_message(message, client)
+    assert rendered["content"][-1]["type"] == block
+    assert adapter.render_message(message, client) == rendered
+    assert not list(tmp_path.iterdir())

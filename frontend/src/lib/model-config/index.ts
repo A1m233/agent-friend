@@ -28,6 +28,7 @@ export interface ReasoningPresetOption {
 }
 
 export interface ModelReasoningDefinition {
+  allowCustom?: boolean;
   control: ReasoningControl;
   defaultPreset: string;
   presets: ReasoningPresetOption[];
@@ -51,7 +52,7 @@ export interface ProviderModelOption {
 export interface ProviderOption {
   id: ModelProvider;
   label: string;
-  credentialGroup: RuntimeConfigGroup;
+  credentialGroup: RuntimeConfigGroup | null;
   defaultChatModel: string;
   defaultMemoryModel: string;
   models: ProviderModelOption[];
@@ -67,7 +68,7 @@ interface ModelCatalogState {
   catalog: ModelCatalog | null;
   loading: boolean;
   error: string | null;
-  load: () => Promise<void>;
+  load: (force?: boolean) => Promise<void>;
 }
 
 const EMPTY_PROVIDER_OPTIONS: readonly ProviderOption[] = [];
@@ -79,8 +80,8 @@ export const useModelCatalogStore = create<ModelCatalogState>((set, get) => ({
   catalog: null,
   loading: false,
   error: null,
-  async load() {
-    if (get().catalog || loadPromise) return loadPromise ?? Promise.resolve();
+  async load(force = false) {
+    if ((!force && get().catalog) || loadPromise) return loadPromise ?? Promise.resolve();
     set({ loading: true, error: null });
     loadPromise = http
       .get<unknown, ModelCatalog>("/v1/models/catalog")
@@ -142,7 +143,7 @@ export function modelRuntimeConfigLabel(config: ModelRuntimeConfig): string {
   const presetLabel = model?.reasoning?.presets.find(
     (preset) => preset.id === config.reasoningPreset,
   )?.label;
-  return presetLabel ? `${modelLabel} · ${presetLabel}` : modelLabel;
+  return presetLabel ? `${modelLabel} · ${presetLabel}` : model?.reasoning?.allowCustom && config.reasoningPreset.startsWith("effort:") ? `${modelLabel} · ${config.reasoningPreset.slice(7)}` : modelLabel;
 }
 
 export function credentialGroupForModel(modelId: string): RuntimeConfigGroup | null {
@@ -187,7 +188,7 @@ export function resolveDefaultConversationModel(
 export function resolveDefaultConversationRuntimeConfig(
   settings: Pick<Settings, "chatModel"> = getSettingsSnapshot(),
 ): ModelRuntimeConfig {
-  return defaultModelRuntimeConfig(settings.chatModel.model);
+  return { model: settings.chatModel.model, reasoningPreset: settings.chatModel.reasoningPreset ?? defaultModelRuntimeConfig(settings.chatModel.model).reasoningPreset };
 }
 
 export function setModelCatalogForTests(catalog: ModelCatalog | null): void {

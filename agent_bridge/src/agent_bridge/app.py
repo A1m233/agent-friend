@@ -188,6 +188,10 @@ def create_app_with_runtime(
         register_lifecycle_routes(app, controller)
         register_migration_routes(app, runtime, controller)
         register_runtime_credential_routes(app, controller)
+        if runtime.connection_runtime is not None:
+            from .model_connections.routes import register_routes as register_connection_routes
+
+            register_connection_routes(app, controller, runtime.connection_runtime)
 
     return app
 

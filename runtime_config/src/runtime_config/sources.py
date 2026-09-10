@@ -297,6 +297,13 @@ class SettingsFileSource:
         return legacy_default_provider, legacy_default_model
 
     def _projected_model_value(self, name: str) -> str | None:
+        if name == "LLM_MEMORY_REASONING_PRESET":
+            selection = self._settings().get("memoryModel")
+            return (
+                _string_setting(selection, "reasoningPreset")
+                if isinstance(selection, dict)
+                else None
+            )
         memory_provider, memory_model = self._model_selection(
             "memoryModel",
             legacy_key="deepseekMemoryModel",
@@ -316,6 +323,7 @@ class SettingsFileSource:
         elif name in {
             LLM_MEMORY_PROVIDER,
             LLM_MEMORY_MODEL,
+            "LLM_MEMORY_REASONING_PRESET",
         }:
             value = self._projected_model_value(name)
         else:

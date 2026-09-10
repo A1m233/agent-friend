@@ -44,6 +44,7 @@ from agent.latency import RunLatencyContext, log_run_latency, monotonic_ms
 from agent.message_references import QuotedTextReference
 from agent.runtime import AgentRuntime, RunOutcome, RunRequest, UserEvent
 from agent.system_prompt import IM_QQ_SURFACE, InteractionSurfaceId
+from llm_providers.catalog import ModelRouteCapabilities
 
 from agent import ContextCompactionStatus, Conversation, TextDelta, ToolCallResult
 from llm_providers import model_capabilities
@@ -122,7 +123,9 @@ class IMRouter:
         default_model: str,
         agent_runtime: AgentRuntime | None = None,
         reference_aliases: IMReferenceAliasIndex | None = None,
+        capability_resolver: Callable[[str], ModelRouteCapabilities] = model_capabilities,
     ) -> None:
+        self._capability_resolver = capability_resolver
         self._bridge = session_bridge
         self._default_persona = default_persona
         self._default_model = default_model
@@ -202,7 +205,7 @@ class IMRouter:
 
         if attachments:
             model = self._bridge.persistent_model(session_id, default=self._default_model)
-            capabilities = model_capabilities(model)
+            capabilities = self._capability_resolver(model)
             unsupported = (
                 not capabilities.attachments
                 or len(attachments) > capabilities.max_attachments_per_turn

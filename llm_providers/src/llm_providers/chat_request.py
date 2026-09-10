@@ -19,6 +19,16 @@ def prepare_litellm_request(
 
     # Phase belongs to Responses history, not the Chat wire contract.
     messages = chat_replay_messages(messages)
+    if spec.provider_id is not None and spec.provider_id.startswith("custom/"):
+        # The connection declares OpenAI wire compatibility, not a LiteLLM model
+        # family. Keep arbitrary effort strings out of its model-specific mapper.
+        prepared = copy.deepcopy(options)
+        if "reasoning_effort" in prepared:
+            extra = prepared.setdefault("extra_body", {})
+            if not isinstance(extra, dict) or "reasoning_effort" in extra:
+                raise LLMBadRequestError("conflicting reasoning settings")
+            extra["reasoning_effort"] = prepared.pop("reasoning_effort")
+        return messages, prepared
     deepseek_vision = is_deepseek_vision_spec(spec)
     if not deepseek_vision and spec.model != "openai/kimi-k3":
         return messages, options

@@ -30,6 +30,7 @@ from ag_ui.core import (
 from agent.approvals import SessionApprovalMode
 from agent.message_references import QuotedTextReference, parse_quoted_text_references
 from agent.skills import SkillSelection, decode_skill_selections
+from llm_providers.model_identity import is_custom_model_reference
 
 from llm_providers import (
     ModelRuntimeConfig,
@@ -129,7 +130,7 @@ def resolve_requested_model_config(payload: RunAgentInput) -> ModelRuntimeConfig
 
     if isinstance(raw, str):
         model = raw.strip()
-        if model not in all_model_ids():
+        if model not in all_model_ids() and not is_custom_model_reference(model):
             raise DecodeError(f"不支持的桌面模型：{model}")
         return default_model_runtime_config(model)
 
@@ -138,8 +139,10 @@ def resolve_requested_model_config(payload: RunAgentInput) -> ModelRuntimeConfig
         model_raw = raw.get("model")
         if not isinstance(provider_raw, str) or not isinstance(model_raw, str):
             raise DecodeError("forwarded_props.model provider/model 必须是字符串")
-        provider_id = normalize_provider_id(provider_raw)
         model = model_raw.strip()
+        if provider_raw == "custom" and is_custom_model_reference(model):
+            return default_model_runtime_config(model)
+        provider_id = normalize_provider_id(provider_raw)
         if not model_belongs_to_provider(provider_id, model):
             raise DecodeError(f"不支持的桌面模型：{model}")
         return default_model_runtime_config(model)

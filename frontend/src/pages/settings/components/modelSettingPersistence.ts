@@ -1,4 +1,3 @@
-import { persistBridgeRuntimeSetting } from "@/lib/runtime-config";
 import { setSetting, type ModelSelection } from "@/lib/settings";
 import { modelsApi } from "@/services";
 
@@ -23,16 +22,16 @@ export async function persistModelSettingSelection(
   key: ModelSettingKey,
   selection: ModelSelection,
 ): Promise<ModelSettingPersistenceResult> {
-  await modelsApi.validate(selection.model);
+  await modelsApi.validate(selection.reasoningPreset === undefined ? selection.model : { model: selection.model, reasoningPreset: selection.reasoningPreset });
   if (key === "chatModel") {
     await setSetting(key, selection);
     return { scope: "newConversationDraft" };
   }
 
-  const result = await persistBridgeRuntimeSetting(() => setSetting(key, selection));
+  await setSetting(key, selection);
   return {
     scope: "bridge",
-    applied: result.applied,
-    applyError: result.applyError,
+    applied: true,
+    applyError: null,
   };
 }
