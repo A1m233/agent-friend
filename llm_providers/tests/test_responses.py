@@ -559,6 +559,8 @@ def test_catalog_capabilities_and_hidden_legacy_provider() -> None:
             assert (spec.responses is not None) == expected
             capability = get_model_capabilities(LLMClient(spec)).assistant_message_phase
             assert capability == ("native" if provider.provider_id == "deepseek" else "unavailable")
+            usage_scope = get_model_capabilities(LLMClient(spec)).input_usage_scope
+            assert usage_scope == ("opaque" if spec.responses is not None else "request")
     assert {item["id"] for item in public_model_catalog()["providers"]} == {"deepseek", "kimi"}
     assert build_provider_spec(provider_id="openrouter", api_key="fixture").responses is None
 
@@ -566,6 +568,7 @@ def test_catalog_capabilities_and_hidden_legacy_provider() -> None:
 def test_capability_query_preserves_old_model_contract() -> None:
     legacy = SimpleNamespace(context_window=100, generate=lambda _: None, stream=lambda _: iter(()))
     assert get_model_capabilities(legacy) == LanguageModelCapabilities()
+    assert get_model_capabilities(legacy).input_usage_scope == "opaque"
     legacy.capabilities = {"assistant_message_phase": "native"}
     assert get_model_capabilities(legacy) == LanguageModelCapabilities()
     legacy.capabilities = LanguageModelCapabilities(assistant_message_phase="native")

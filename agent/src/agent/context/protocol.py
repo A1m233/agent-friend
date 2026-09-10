@@ -35,8 +35,8 @@ class BudgetSnapshot:
 
     Attributes:
         effective_window: 当前 model 的有效输入窗口（= ``LanguageModel.context_window``）。
-        last_input_tokens: 上一轮真实 ``usage.prompt_tokens`` 锚点；首轮 / provider
-            不透出时为 ``None``，估算退化到纯字符。
+        last_input_tokens: 上一轮真实 ``usage.prompt_tokens`` 观测值；不能单独作为
+            可复用锚点。请求身份验证由 RuntimeContext.request_estimator 负责。
         output_reserve: 给本轮输出预留的 token（按窗口比例算）。
         buffer: 估算误差缓冲（按窗口比例算）。
     """
@@ -167,6 +167,7 @@ class RuntimeContext:
     calibration_factor: float = 1.0
     trigger_reason: str = "budget"
     run_id: str | None = None
+    request_estimator: Callable[[list[Message]], int] | None = None
     session_id: str | None = None
     surface: str | None = None
     cancel_check: Callable[[], None] | None = None

@@ -89,6 +89,9 @@ class LanguageModelCapabilities:
     """
 
     assistant_message_phase: Literal["native", "unavailable"] = "unavailable"
+    # Whether normalized prompt usage measures the full client-owned request.
+    # Opaque/server-owned continuation requires provider-specific accounting.
+    input_usage_scope: Literal["request", "opaque"] = "opaque"
 
 
 class LanguageModel(Protocol):

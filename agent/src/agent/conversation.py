@@ -103,6 +103,14 @@ from .context import (
     stream_build_messages,
 )
 from .context.checkpoints import bind_business_boundary
+from .context.usage_anchor import (
+    InputEstimate,
+    RequestMeasurement,
+    UsageAnchor,
+    digest,
+    estimate_input,
+    estimate_rendered_tokens,
+)
 from .conversation_events import (
     AssistantMessageEnd,
     AssistantMessagePhase,
@@ -475,6 +483,8 @@ class Conversation:
         # 有效窗口 / 触发阈值），供调试入口读取（AC-1.3）。
         self._last_input_tokens: int | None = None
         self._calibration_by_model: dict[str, float] = {}
+        self._usage_anchor: UsageAnchor | None = None
+        self._pending_request_measurement: RequestMeasurement | None = None
         self._pending_context_usage: dict[str, Any] | None = None
         self._prompt_cache_trace_tracker = prompt_cache_trace_tracker or PromptCacheTraceTracker()
         self._cache_epoch = cache_epoch or SessionCacheEpoch()
@@ -3171,27 +3181,11 @@ class Conversation:
         )
         self._last_built_model_messages = list(build.messages)
         self._last_built_system_prompt = system_prompt
-        self._record_context_notes(build, runtime)
-        client = self._active_llm_client()
+        self._record_context_notes(build, runtime, typed_tool_specs)
         rendered_messages: list[dict[str, Any]] = []
         for message in build.messages:
             self._check_cancel(cancel_check)
-            rendered = (
-                message.to_openai()
-                if self._message_renderer is None
-                else self._message_renderer(message, client)
-            )
-            raw_reasoning = message.meta.get("provider_reasoning_state")
-            if isinstance(raw_reasoning, dict):
-                state = ProviderReasoningState.from_event_payload(raw_reasoning)
-                state_run_id = message.meta.get("provider_reasoning_run_id")
-                rendered = render_provider_reasoning_state(
-                    rendered,
-                    state,
-                    config=self._active_model_config(),
-                    state_run_id=state_run_id if isinstance(state_run_id, str) else None,
-                    active_run_id=self._run_id_override,
-                )
+            rendered = self._render_context_message(message)
             prompt_cache_domain = message.meta.get("prompt_cache_domain")
             if isinstance(prompt_cache_domain, str):
                 self._remember_prompt_item_domain(rendered, prompt_cache_domain)
@@ -3254,6 +3248,9 @@ class Conversation:
                 for spec in tool_specs or []
             ),
             calibration_factor=self._calibration_by_model.get(model_id, 1.0),
+            request_estimator=lambda messages: (
+                self._estimate_context_input(messages, tool_specs).tokens
+            ),
             trigger_reason=self._context_trigger_reason,
             run_id=(
                 self._run_id_override
@@ -3385,7 +3382,135 @@ class Conversation:
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
 
-    def _record_context_notes(self, build: BuildResult, runtime: RuntimeContext) -> None:
+    def _render_context_message(self, message: Message) -> dict[str, Any]:
+        rendered = (
+            message.to_openai()
+            if self._message_renderer is None
+            else self._message_renderer(message, self._active_llm_client())
+        )
+        raw_reasoning = message.meta.get("provider_reasoning_state")
+        if isinstance(raw_reasoning, dict):
+            state_run_id = message.meta.get("provider_reasoning_run_id")
+            rendered = render_provider_reasoning_state(
+                rendered,
+                ProviderReasoningState.from_event_payload(raw_reasoning),
+                config=self._active_model_config(),
+                state_run_id=state_run_id if isinstance(state_run_id, str) else None,
+                active_run_id=self._run_id_override,
+            )
+        return rendered
+
+    def _usage_scope(
+        self, tools: list[dict[str, Any]] | None, settings: dict[str, Any] | None = None
+    ) -> str:
+        client = self._active_llm_client()
+        spec = getattr(client, "spec", None)
+        return digest(
+            {
+                "session": self._session.session_id,
+                "route": self._active_provider_route_identity(),
+                "reasoning": self._active_model_config().reasoning_preset,
+                "replay_scope": getattr(spec, "reasoning_replay_scope", None),
+                "attachment_profile": getattr(spec, "attachment_profile", None),
+                "defaults": getattr(spec, "defaults", None),
+                "responses": repr(getattr(spec, "responses", None)),
+                "input_usage_scope": get_model_capabilities(client).input_usage_scope,
+                "tools": tools or [],
+                "settings": settings or {},
+            }
+        )
+
+    def _estimate_context_input(
+        self, messages: list[Message], tools: list[dict[str, Any]] | None
+    ) -> InputEstimate:
+        from .context import estimate_tokens
+
+        factor = self._calibration_by_model.get(self._active_model_id(), 1.0)
+
+        def fallback() -> int:
+            return math.ceil(
+                (estimate_tokens(messages) + estimate_tool_schema_tokens(tools)) * factor
+            )
+
+        # Rendering attachments can upload files. Budget candidate selection must
+        # remain pure and must not upload content that will subsequently be cut.
+        if any(message.attachments for message in messages):
+            return InputEstimate(fallback(), "full_estimate", "attachments_pending_render")
+        rendered = [self._render_context_message(message) for message in messages]
+        return self._estimate_rendered_input(rendered, tools, fallback_floor=fallback)
+
+    def _estimate_rendered_input(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        settings: dict[str, Any] | None = None,
+        *,
+        fallback_floor: int | Callable[[], int] = 0,
+    ) -> InputEstimate:
+        factor = self._calibration_by_model.get(self._active_model_id(), 1.0)
+
+        native_files = sum(
+            1
+            for message in messages
+            for block in (message["content"] if isinstance(message.get("content"), list) else [])
+            if isinstance(block, dict) and block.get("type") in {"file", "input_file"}
+        )
+        if native_files:
+            from .context import estimate_tokens
+            from .context.budget import DOCUMENT_ATTACHMENT_TOKEN_CAP
+
+            attachments = [
+                attachment
+                for message in self._last_built_model_messages or []
+                for attachment in message.attachments
+            ]
+            allowance = (
+                estimate_tokens([Message(role="user", content="", attachments=attachments)])
+                if len(attachments) >= native_files
+                else native_files * DOCUMENT_ATTACHMENT_TOKEN_CAP
+            )
+            # Native file IDs/base64 are not extracted text. Retain source bounds;
+            # never price a file by the length of its ID or its base64 encoding.
+            return InputEstimate(
+                math.ceil(
+                    (
+                        estimate_rendered_tokens(messages, file_tokens=0)
+                        + estimate_tool_schema_tokens(tools)
+                        + allowance
+                    )
+                    * factor
+                ),
+                "full_estimate",
+                "opaque_attachment",
+            )
+
+        def fallback() -> int:
+            floor = fallback_floor() if callable(fallback_floor) else fallback_floor
+            return max(
+                floor,
+                math.ceil(
+                    (estimate_rendered_tokens(messages) + estimate_tool_schema_tokens(tools))
+                    * factor
+                ),
+            )
+
+        # Responses may retain server-owned reasoning not present in this logical
+        # request. Do not claim exact delta accounting without that continuation.
+        if get_model_capabilities(self._active_llm_client()).input_usage_scope != "request":
+            return InputEstimate(fallback(), "full_estimate", "opaque_provider_continuation")
+        return estimate_input(
+            messages,
+            scope=self._usage_scope(tools, settings),
+            anchor=self._usage_anchor,
+            fallback_tokens=fallback,
+        )
+
+    def _record_context_notes(
+        self,
+        build: BuildResult,
+        runtime: RuntimeContext,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> None:
         """把本轮组装的度量观测刷进 :attr:`last_context_notes`（AC-1.3）。"""
         from .context import estimate_tokens
 
@@ -3407,11 +3532,26 @@ class Conversation:
             ),
         }
         notes.update(build.notes)
+        # Re-evaluate the actual selected candidate, including post-compaction
+        # dynamic context. Never publish a stale estimate from a discarded tail.
+        estimate = self._estimate_context_input(build.messages, tools)
+        notes.update(estimate.notes())
         if build.new_compaction is not None:
             notes["checkpoint_status"] = "candidate"
         if build.new_tool_context_edit is not None:
             notes["tool_context_checkpoint_status"] = "candidate"
         self._last_context_notes = notes
+        logger.info(
+            "context_input_estimate session_id=%s mode=%s tokens=%s anchor=%s "
+            "covered_messages=%s delta=%s fallback=%s",
+            self._session.session_id,
+            estimate.mode,
+            estimate.tokens,
+            estimate.anchor_tokens,
+            estimate.covered_messages,
+            estimate.delta_tokens,
+            estimate.reason,
+        )
         prior = runtime.prior_summary
         compaction = build.new_compaction
         logger.info(
@@ -3457,6 +3597,7 @@ class Conversation:
         # This projection scans the session. Resolve it once, not for every
         # historical usage record (which makes cold recovery quadratic).
         current_model = self._session.current_model
+        anchor_candidate_seen = False
         for event in reversed(self._session.active_events):
             if event.type != "assistant_message":
                 continue
@@ -3470,6 +3611,11 @@ class Conversation:
             model = usage.get("model")
             factor = usage.get("calibration_factor")
             prompt_tokens = usage.get("prompt_tokens")
+            if model == current_model and not anchor_candidate_seen and "input_anchor" in usage:
+                # Candidate only: prefix/scope verification happens against the
+                # restored model history, never merely against the model label.
+                self._usage_anchor = UsageAnchor.restore(usage["input_anchor"])
+                anchor_candidate_seen = True
             if (
                 isinstance(model, str)
                 and model not in self._calibration_by_model
@@ -3608,9 +3754,32 @@ class Conversation:
         while True:
             request_accepted = False
             self._check_cancel(cancel_check)
-            if request_observer is not None:
-                request_observer(current_messages, request_attempt, request_overrides)
             try:
+                estimate = self._estimate_rendered_input(
+                    current_messages,
+                    tools,
+                    request_overrides,
+                    fallback_floor=(
+                        int(self._last_context_notes.get("token_estimate") or 0)
+                        if any(m.attachments for m in self._last_built_model_messages or [])
+                        else 0
+                    ),
+                )
+                self._last_context_notes.update(estimate.notes())
+                self._pending_request_measurement = None
+                threshold = self._last_context_notes.get("trigger_threshold")
+                if (
+                    self._last_context_notes.get("context_strategy") in {"summarizing", "fifo"}
+                    and isinstance(threshold, int)
+                    and estimate.tokens > threshold
+                ):
+                    raise LLMContextWindowError("final_request_budget_exceeded")
+                self._pending_request_measurement = RequestMeasurement.capture(
+                    current_messages,
+                    self._usage_scope(tools, request_overrides),
+                )
+                if request_observer is not None:
+                    request_observer(current_messages, request_attempt, request_overrides)
                 if self._active_tool_run_state is not None:
                     self._active_tool_run_state.model_calls += 1
                 client = self._active_llm_client()
@@ -3671,7 +3840,9 @@ class Conversation:
                 if completed is not None:
                     yield completed
                 return
-            except LLMContextWindowError:
+            except LLMContextWindowError as exc:
+                self._usage_anchor = None
+                self._pending_request_measurement = None
                 discarded = self._discard_pending_context_checkpoints()
                 if discarded is not None:
                     yield discarded
@@ -3682,7 +3853,11 @@ class Conversation:
                 previous_ratio = self._context_emergency_ratio
                 previous_reason = self._context_trigger_reason
                 self._context_emergency_ratio = 0.8
-                self._context_trigger_reason = "provider_context_exceeded"
+                self._context_trigger_reason = (
+                    "final_request_budget_exceeded"
+                    if str(exc) == "final_request_budget_exceeded"
+                    else "provider_context_exceeded"
+                )
                 try:
                     rebuilt = recovery_builder()
                     rebuilt_messages = (
@@ -3692,7 +3867,7 @@ class Conversation:
                         rebuilt_messages,
                         tools=tools,
                         settings=request_overrides,
-                        forced_rebase_reason="provider_context_exceeded",
+                        forced_rebase_reason=self._context_trigger_reason,
                     )
                 finally:
                     self._context_emergency_ratio = previous_ratio
@@ -3864,6 +4039,11 @@ class Conversation:
                 checkpoint_version=self._last_context_notes.get("checkpoint_version"),
                 dropped_count=self._last_context_notes.get("dropped_count"),
                 request_overhead_tokens=self._last_context_notes.get("request_overhead_tokens"),
+                input_token_estimate=self._last_context_notes.get("token_estimate"),
+                estimation_mode=self._last_context_notes.get("estimation_mode"),
+                anchor_input_tokens=self._last_context_notes.get("anchor_input_tokens"),
+                incremental_tokens=self._last_context_notes.get("incremental_tokens"),
+                anchor_fallback_reason=self._last_context_notes.get("anchor_fallback_reason"),
                 continuation_generation=self._session_model_history.generation,
                 continuation_disposition=continuation_disposition,
                 rebase_reason=self._model_history_rebase_reason(),
@@ -4300,6 +4480,17 @@ class Conversation:
                 factor = min(4.0, max(1.0, 0.75 * previous + 0.25 * observed))
             self._calibration_by_model[model_id] = factor
         pending_usage: dict[str, Any] = {"model": model_id}
+        request_measurement = self._pending_request_measurement
+        self._pending_request_measurement = None
+        if request_measurement is not None:
+            self._usage_anchor = (
+                UsageAnchor.from_usage(request_measurement, ev.usage)
+                if get_model_capabilities(self._active_llm_client()).input_usage_scope == "request"
+                else None
+            )
+            pending_usage["input_anchor"] = (
+                self._usage_anchor.payload() if self._usage_anchor is not None else None
+            )
         if ev.usage is not None:
             pending_usage.update(
                 {

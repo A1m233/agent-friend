@@ -1,0 +1,103 @@
+{
+  "status": "passed",
+  "started_at": "2026-09-10T14:42:12.874088+00:00",
+  "source": {
+    "base_commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+    "source_sha256": {
+      "agent/src/agent/context/budget.py": "f50086f77730febbc829774587c6371631abdddd2d21f7e402f1236e51c34e8e",
+      "agent/src/agent/context/protocol.py": "5bfafa8e297c31aa6d95fc292804e2ad0323d766693208211dc7ec0ffe161d0a",
+      "agent/src/agent/context/usage_anchor.py": "445f0f0443dc743c77a2d00f549fac7c7bf8f3f1c8b4c49fa06d9f3249b0e003",
+      "agent/src/agent/conversation.py": "c548a86263ec17f7b1d5b1c0d724d6667710598aae65f5fee802a050a19ba9c2",
+      "llm_providers/src/llm_providers/protocol.py": "6f154a8f0eafdb622749ca718b3d09ae4392720c572c69df805ddb4b885bd4fc",
+      "llm_providers/src/llm_providers/client.py": "af0416072fe97225e3a6092778f29463ea812bbd3d60a52834fce7e3d5e1655f",
+      "scripts/context-usage-smoke/run.py": "2a04c0fe7befc23335f87a605d909537502acdf177c5da79d71f447c5bccfca3"
+    },
+    "worktree_overlay": true
+  },
+  "calls": [
+    {
+      "stage": "warmup",
+      "before": {
+        "token_estimate": 39871,
+        "raw_request_tokens": 39871,
+        "trigger_threshold": 209716,
+        "effective_window": 262144,
+        "estimation_mode": "full_estimate",
+        "anchor_input_tokens": 0,
+        "incremental_tokens": 0,
+        "anchor_fallback_reason": "no_trusted_usage"
+      },
+      "actual_input": 14434,
+      "actual_output": 64,
+      "accounting": "inclusive_total",
+      "cached_input": 256,
+      "stop_reason": "end_turn"
+    },
+    {
+      "stage": "tool_turn",
+      "before": {
+        "token_estimate": 14689,
+        "raw_request_tokens": 39932,
+        "trigger_threshold": 27152,
+        "effective_window": 33940,
+        "estimation_mode": "usage_anchor",
+        "anchor_input_tokens": 14434,
+        "incremental_tokens": 255,
+        "anchor_fallback_reason": "none"
+      },
+      "actual_input": 14533,
+      "actual_output": 62,
+      "accounting": "inclusive_total",
+      "cached_input": 14336,
+      "stop_reason": "tool_use"
+    },
+    {
+      "stage": "tool_turn",
+      "before": {
+        "token_estimate": 14833,
+        "raw_request_tokens": 40082,
+        "trigger_threshold": 27152,
+        "effective_window": 33940,
+        "estimation_mode": "usage_anchor",
+        "anchor_input_tokens": 14533,
+        "incremental_tokens": 300,
+        "anchor_fallback_reason": "none"
+      },
+      "actual_input": 14631,
+      "actual_output": 33,
+      "accounting": "inclusive_total",
+      "cached_input": 14336,
+      "stop_reason": "end_turn"
+    },
+    {
+      "stage": "rollout_reload",
+      "before": {
+        "token_estimate": 14739,
+        "raw_request_tokens": 40099,
+        "trigger_threshold": 27152,
+        "effective_window": 33940,
+        "estimation_mode": "usage_anchor",
+        "anchor_input_tokens": 14631,
+        "incremental_tokens": 108,
+        "anchor_fallback_reason": "none"
+      },
+      "actual_input": 14682,
+      "actual_output": 58,
+      "accounting": "inclusive_total",
+      "cached_input": 14592,
+      "stop_reason": "end_turn"
+    }
+  ],
+  "scope": "isolated synthetic text; logical window override; no product settings changed",
+  "provider_context_window": 262144,
+  "model_config": {
+    "model_id": "kimi/kimi-k2.7-code-highspeed",
+    "reasoning_preset": "on"
+  },
+  "test_window": 33940,
+  "test_threshold": 27152,
+  "synthetic_history_chars": 40000,
+  "persisted_compactions": 0,
+  "reload_kind": "new_Conversation_and_store_from_verified_rollout_same_process",
+  "finished_at": "2026-09-10T14:42:24.770210+00:00"
+}

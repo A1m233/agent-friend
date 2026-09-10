@@ -51,8 +51,8 @@ def estimate_tokens(messages: list[Message]) -> int:
     不依赖 provider 是否透出 usage，任何场景都可用。
 
     Note:
-        ``last_input_tokens`` 真实锚点由 :func:`make_budget_snapshot` 收进
-        :class:`BudgetSnapshot`，供调用方对照 / 未来校准；本函数保持纯字符、可独立单测。
+        本函数只负责无锚点时的全量降级和独立片段估算。真实输入锚点由
+        usage_anchor 校验请求身份，并经 RuntimeContext.request_estimator 接入。
     """
     total_chars = 0
     for msg in messages:
@@ -89,6 +89,8 @@ def estimate_tool_schema_tokens(tool_specs: list[dict[str, Any]] | None) -> int:
 
 def estimate_request_tokens(messages: list[Message], runtime: RuntimeContext) -> int:
     """按当前模型 usage 校准和 tool schema 开销估算完整请求输入。"""
+    if runtime.request_estimator is not None:
+        return runtime.request_estimator(messages)
     raw = estimate_tokens(messages) + runtime.request_overhead_tokens
     return math.ceil(raw * runtime.calibration_factor)
 

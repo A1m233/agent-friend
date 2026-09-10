@@ -276,7 +276,8 @@ class LLMClient:
     def capabilities(self) -> LanguageModelCapabilities:
         route = self.spec.responses
         return LanguageModelCapabilities(
-            assistant_message_phase=route.assistant_message_phase if route else "unavailable"
+            assistant_message_phase=route.assistant_message_phase if route else "unavailable",
+            input_usage_scope="opaque" if route else "request",
         )
 
     @property
