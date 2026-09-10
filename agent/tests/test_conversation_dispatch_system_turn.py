@@ -417,3 +417,30 @@ def test_independent_system_runs_reuse_append_only_calendar_context(tmp_path: Pa
         == 1
     )
     assert all('run="system-run-' not in str(message.get("content") or "") for message in second)
+
+
+def test_model_binding_released_when_turn_preparation_fails(tmp_path: Path) -> None:
+    from contextlib import contextmanager
+    from unittest.mock import patch
+
+    import pytest
+
+    active = []
+
+    class BoundClient(_ScriptedLLMClient):
+        @contextmanager
+        def bind_execution(self) -> Iterator[_ScriptedLLMClient]:
+            active.append(True)
+            try:
+                yield self
+            finally:
+                active.pop()
+
+    conv = _make_conversation(tmp_path, fake_llm=BoundClient())
+    with (
+        patch.object(conv, "_make_tool_run_context", side_effect=ValueError("fixture")),
+        pytest.raises(ValueError, match="fixture"),
+    ):
+        list(conv.dispatch_system_turn(source_kind="fixture", system_prompt_addendum="test"))
+    assert active == []
+    assert conv._run_model_snapshot is None

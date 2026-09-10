@@ -61,7 +61,7 @@ def _attach_request_witness(
 
 def uses_kimi_stream_transport(spec: ProviderSpec) -> bool:
     """Return whether ``spec`` targets a canonical Kimi chat model."""
-    return spec.model.startswith("openai/kimi-")
+    return spec.provider_id in {None, "kimi"} and spec.model.startswith("openai/kimi-")
 
 
 @dataclass

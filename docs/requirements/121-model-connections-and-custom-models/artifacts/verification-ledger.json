@@ -1,0 +1,417 @@
+{
+  "scope": "isolated synthetic smoke only; public call attempts include failures, not exact billing or desktop background activity",
+  "public_call_attempts": 65,
+  "artifacts": [
+    {
+      "file": "background-smoke-20260909-01.json",
+      "sha256": "3c8745dc48f41647f7386602919fd0a0e9399f3840bcea71e0be318624b829b4",
+      "public_call_attempts": 3,
+      "results": [
+        {
+          "route": "deepseek-responses",
+          "passed": false
+        },
+        {
+          "route": "kimi-responses",
+          "passed": false
+        },
+        {
+          "route": "kimi-chat",
+          "passed": false
+        }
+      ]
+    },
+    {
+      "file": "background-smoke-20260909-02.json",
+      "sha256": "ed7c6512a00937cb7efcffc1de0fc48aa427831158e2e02ec7eba96597e78243",
+      "public_call_attempts": 9,
+      "results": [
+        {
+          "route": "deepseek-responses",
+          "passed": false
+        },
+        {
+          "route": "kimi-responses",
+          "passed": false
+        },
+        {
+          "route": "kimi-chat",
+          "passed": false
+        }
+      ]
+    },
+    {
+      "file": "background-smoke-20260909-03.json",
+      "sha256": "8e886f5d567418d27c664e3440413725603ecd04a80faa072f65aec87ad14dfc",
+      "public_call_attempts": 9,
+      "results": [
+        {
+          "route": "deepseek-responses",
+          "passed": true
+        },
+        {
+          "route": "kimi-responses",
+          "passed": true
+        },
+        {
+          "route": "kimi-chat",
+          "passed": false
+        }
+      ]
+    },
+    {
+      "file": "custom-background-smoke-20260909.json",
+      "sha256": "ff9d34516872b0841c09347800ce660db4be4a01aad00657e9a926983aaba3ac",
+      "public_call_attempts": 14,
+      "results": [
+        {
+          "route": "deepseek-responses",
+          "passed": false
+        },
+        {
+          "route": "kimi-responses",
+          "passed": true
+        },
+        {
+          "route": "kimi-chat",
+          "passed": false
+        }
+      ]
+    },
+    {
+      "file": "custom-chat-kimi-smoke-20260909.json",
+      "sha256": "80143060200b5315799cfc1c21dda06629c072da2f2ddd8ee21fb5c0f00b860c",
+      "public_call_attempts": 2,
+      "results": [
+        {
+          "route": "kimi/kimi-k2.6",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "file": "custom-chat-tool-smoke-20260909.json",
+      "sha256": "e71d414867d16d64ea661296072a13a490efe31a33da1e97d48b23288f9620ee",
+      "public_call_attempts": 2,
+      "results": [
+        {
+          "route": "deepseek/deepseek-v4-flash",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "file": "custom-compaction-replay-20260909.json",
+      "sha256": "245fba94d712bfa054f1174767000b79a968dbfac7e60df29b99b64d5b557a07",
+      "public_call_attempts": 6,
+      "results": [
+        {
+          "route": "deepseek-responses",
+          "passed": true
+        },
+        {
+          "route": "kimi-chat",
+          "passed": false
+        }
+      ]
+    },
+    {
+      "file": "custom-deepseek-chat-background-20260909.json",
+      "sha256": "a16005fbef51c556be9f583488fd8f8bb93af8429ab43b5064a61c891a692125",
+      "public_call_attempts": 6,
+      "results": [
+        {
+          "route": "deepseek-chat",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "file": "custom-kimi-background-final-20260909.json",
+      "sha256": "dead4196d8d180b869157e4451502b92fd6e4076ffa8a619df8d17502b800dac",
+      "public_call_attempts": 3,
+      "results": [
+        {
+          "route": "kimi-chat",
+          "passed": false
+        }
+      ]
+    },
+    {
+      "file": "custom-kimi-fixture-check-20260909.json",
+      "sha256": "d87859c5fe5f64584717dc0c189a96146aefc6f25fc86cceeab99772974c5f5f",
+      "public_call_attempts": 0,
+      "results": [
+        {
+          "route": "kimi-chat",
+          "passed": false
+        }
+      ]
+    },
+    {
+      "file": "custom-kimi-notification-service-20260909.json",
+      "sha256": "6d672878d53ac0c7573a690a16310b95f2d5c3d06c1ce66c60583f4b7946612a",
+      "public_call_attempts": 1,
+      "results": []
+    },
+    {
+      "file": "custom-tool-smoke-20260909.json",
+      "sha256": "13f93336b0a8c88a7bb2c0043cdfea9fdebb6eb6ddc242c5385b0a855a8757fd",
+      "public_call_attempts": 4,
+      "results": [
+        {
+          "route": "deepseek/deepseek-v4-flash",
+          "passed": true
+        },
+        {
+          "route": "kimi/kimi-k3",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "file": "frozen-runtime-verification-20260909.json",
+      "sha256": "788906ede4206762ef7eb5239290e19bafaa3c5c787f6c3009a64c40634a67f7",
+      "public_call_attempts": 0,
+      "results": []
+    },
+    {
+      "file": "responses-json-smoke-20260909.json",
+      "sha256": "9fd7545259ffea138b65d97f5e85448f5d58258fe1c32b4a12271e555fbd359c",
+      "public_call_attempts": 2,
+      "results": [
+        {
+          "route": "deepseek/deepseek-v4-flash",
+          "passed": true
+        },
+        {
+          "route": "kimi/kimi-k3",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "file": "responses-text-aggregation.json",
+      "sha256": "7d87b07e08f7820af5fbb7b0514ae74cf784d39b4e259131c9532714c1d149ff",
+      "public_call_attempts": 0,
+      "results": []
+    },
+    {
+      "file": "responses-tool-smoke-20260909.json",
+      "sha256": "f29e7ccf59600b055fb4122230021831c7198739807d34df030b1d5862bb5ba8",
+      "public_call_attempts": 4,
+      "results": [
+        {
+          "route": "deepseek/deepseek-v4-flash",
+          "passed": true
+        },
+        {
+          "route": "kimi/kimi-k3",
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "checks": {
+    "backend": {
+      "command": "scripts/check/run.ps1 --stage backend",
+      "passed": 2936,
+      "skipped": 5,
+      "exit_code": 0
+    },
+    "frontend": {
+      "command": "scripts/check/run.ps1 --stage frontend",
+      "passed": 1239,
+      "files": 150,
+      "exit_code": 0
+    },
+    "rust": {
+      "command": "scripts/rust-check/run.ps1",
+      "passed": 282,
+      "ignored": 1,
+      "exit_code": 0
+    }
+  },
+  "source_head": "8cf97e931cf47188522ff3cfc44682a1eaf369fa",
+  "source_hashes": {
+    "llm_providers\\src\\llm_providers\\binding.py": "c7a6e4375d6743d03c816a878607375f3adc3521e333364dc649424bb5ac498f",
+    "llm_providers\\src\\llm_providers\\cancellable_stream.py": "64f05fa02b8cb31db0ac5eb59a24424fb953f5c134a726469476a16cb7fb77d1",
+    "llm_providers\\src\\llm_providers\\catalog.py": "074d8773d333b870e3259088e5741b48f723b1798a01816e74f17bb1bb22895f",
+    "llm_providers\\src\\llm_providers\\chat_request.py": "ff1666c880d6e7702074ba7601735255fd432237fe44772e696f0e76e38b71bb",
+    "llm_providers\\src\\llm_providers\\client.py": "5c74a55cd1e8522237611002a9c50accba38ffed61a503d1d034d72ebbad1826",
+    "llm_providers\\src\\llm_providers\\credential_validation.py": "75cf03eaa880c4ad717b6e1f183c94a3ebfe2738bc739fbd4cdf92a7b5f5f163",
+    "llm_providers\\src\\llm_providers\\deepseek_vision_compat.py": "613b85860e634d1458c2ac9f169361e1282a3ae38b70690a4b119a1135264968",
+    "llm_providers\\src\\llm_providers\\errors.py": "d18d0a9e0b6c0fe9714e2c0ade78e61ff5677df5005fc24335d95ca60ed47ec8",
+    "llm_providers\\src\\llm_providers\\error_normalization.py": "c3b47f5bb8905f0755929db2b0937ca958ba4a30691e3abf45f6c55ee248cbeb",
+    "llm_providers\\src\\llm_providers\\factory.py": "53d54ff37f7079bd2473881e5ff8396643f0d588fb9e7126e69c54b6cae4b504",
+    "llm_providers\\src\\llm_providers\\final_result.py": "d7ea296da9880b09e03b70f161556da9623b7b58391bb28478b4363cc72a58ff",
+    "llm_providers\\src\\llm_providers\\kimi_transport.py": "49fead5ac70196faa25d2521d1d16e32550a6b7544d448d7b44c7ab77e60755a",
+    "llm_providers\\src\\llm_providers\\litellm_transport.py": "d1988c3ff5f828afbb4001b18ab22f89a4b7673eba93a89a8dc99bedecb50d4b",
+    "llm_providers\\src\\llm_providers\\model_identity.py": "0ad0fbb1e9d27bc12cd13939cbb96934daf99077faa95c85b4046d88f90415b2",
+    "llm_providers\\src\\llm_providers\\prompt_cache_lineage.py": "c01d373e157b972e0207df90a5c1fad5fe09751654ca8d438edfe64e7abd9401",
+    "llm_providers\\src\\llm_providers\\prompt_cache_observation.py": "70f40e020636c0fdff86e742d8e06fbcba784b3ae302b46d45128d261b568fae",
+    "llm_providers\\src\\llm_providers\\protocol.py": "7245dae4975f88317bd1e2f432b3a328071495da9a399421ecb0116888caab76",
+    "llm_providers\\src\\llm_providers\\reasoning.py": "b78ff6911cd7817375d2f65236b82afebc7774c31665a46f6136a66e281b6663",
+    "llm_providers\\src\\llm_providers\\request_witness.py": "f7cc4095e6f39b12fd19b38042105cca52082e7cf1c5362ae6f603bcf2ca35ef",
+    "llm_providers\\src\\llm_providers\\spec.py": "c2d63c614cd791df1c81586912c7e8571151485dee8202e05522e37fd886fcb5",
+    "llm_providers\\src\\llm_providers\\stream_events.py": "0a0747cd4c5069187c8b8edb6f7eb2d46c395e60b9e75b34e30bd93ac3283d4d",
+    "llm_providers\\src\\llm_providers\\usage.py": "8892c4c66f858d8b98186bbf8dd92b89767603bf35ea3192f913dd0e6384722e",
+    "llm_providers\\src\\llm_providers\\__init__.py": "ed2e402ad049e90abbb1c8d1bb7e75bfcd44480d89a6230f38b02d157eda1209",
+    "llm_providers\\src\\llm_providers\\connections\\codec.py": "dcad034f59fb8e122c2c082e86d44965e213e1a8b683992a77b074caf931f259",
+    "llm_providers\\src\\llm_providers\\connections\\definitions.py": "67030533b5b0f5f2ce532a9afc09ff6bcdf5169bd778301d9b524d84603af9f5",
+    "llm_providers\\src\\llm_providers\\connections\\directory.py": "3903d1f64e6ce7591a23daa840d65c9c7415c795022844e1c97abaac42d8bea5",
+    "llm_providers\\src\\llm_providers\\connections\\__init__.py": "2db3fb65cc508d7e7bc9397e68cf2023282caea960da9e233bc4a1152d5b598e",
+    "llm_providers\\src\\llm_providers\\multimodal\\adapter.py": "4e98239b8402ff4f902514bdae8b94ed1953e9ff18ab1768d107a9640206bb9d",
+    "llm_providers\\src\\llm_providers\\multimodal\\__init__.py": "e16a0f24b0ee396569c2ace80c0738202ef2aea4646a174d67bd4404fb465f02",
+    "llm_providers\\src\\llm_providers\\responses\\generate.py": "38feab1ddb87bb3affb7c59fb26242c477a81d3cf24045bd116a1629f1e5bb52",
+    "llm_providers\\src\\llm_providers\\responses\\request.py": "cb104a25c15c1c2f05fd5e6e075cc9d2eccc38992c5284e7bf509cccf8c97c91",
+    "llm_providers\\src\\llm_providers\\responses\\stream.py": "21d592becfa373f6d48b8275c6394e1bc006345a228bc875f04b09bd8bb06b87",
+    "llm_providers\\src\\llm_providers\\responses\\transport.py": "8194d10dedbcf5de7a434497443e8547d4015e97ba69654a2cd8441368a0b0cf",
+    "llm_providers\\src\\llm_providers\\responses\\__init__.py": "2facf1639f5a9e4bdcb07f40016c6a79821e2d732edaa4ebfe0c044212f12e4b",
+    "agent_bridge\\src\\agent_bridge\\model_connections\\routes.py": "1663bfd7ba1593f7eea14c4cedcad373c036bec46596396940f7d413ba2edae6",
+    "agent_bridge\\src\\agent_bridge\\model_connections\\runtime.py": "f67dd949401051b08dc514a7167b7fa97076ea4619ea2fa2cab5f00258dd51f4",
+    "agent_bridge\\src\\agent_bridge\\model_connections\\__init__.py": "3dd7c2ece51b7e9bd0b1a03093179624d724096af27395da4599c61e20ac41b9"
+  },
+  "cpa_luna_additional_verification": {
+    "artifacts": [
+      {
+        "file": "cpa-luna-smoke-20260909-01.json",
+        "sha256": "42820574320f7303d3d14cdf1d5885571e8d939a72c773db61494df6077e831e",
+        "local_post_requests": 3,
+        "results": {
+          "tool-loop": false,
+          "nonstream-json": false,
+          "background": false
+        }
+      },
+      {
+        "file": "cpa-luna-smoke-20260909-02.json",
+        "sha256": "868f5190a1e3f99e75162a87b3394fecd3b0f398971b0de91c0734e465ad29f7",
+        "local_post_requests": 9,
+        "results": {
+          "nonstream-json": true,
+          "tool-loop": true,
+          "background": true
+        }
+      }
+    ],
+    "targeted_tests_passed": 13,
+    "production_changes": false,
+    "visual_e2e": false,
+    "cpa_stopped": false
+  },
+  "dialog_overlay_scroll": {
+    "frontend_tests": 1240,
+    "test_files": 150,
+    "lint_typecheck_build": true,
+    "desktop_visual": "user-owned; not performed",
+    "sources": {
+      "frontend/src/components/ui/dialog/index.tsx": "6adf88ac6177cca118d3e82d37899dbe8edf12a1bff016043e16401a82fa6418",
+      "frontend/src/pages/settings/components/CustomConnections.tsx": "c9080651ce8db6a9dc80a6ad948079259809d0d43d9a01aa552f53724357869f",
+      "frontend/src/pages/settings/components/CustomConnections.test.ts": "7d87820313fb09bb0895c034dcd0eb537e8c798ee0b3f6afaecbf475ef0db285"
+    }
+  },
+  "draft_inspection_revision": {
+    "artifact": "draft-inspection-smoke-20260909-01.json",
+    "sha256": "79e661d82d3ebffdbc2e9630dd92be925c3ad085c313e4e9ac36f1678a90ec11",
+    "model_list_gets": 3,
+    "generation_posts": 9,
+    "passed": true,
+    "backend": {
+      "passed": 2943,
+      "skipped": 5
+    },
+    "frontend": {
+      "passed": 1241,
+      "files": 150
+    },
+    "rust": {
+      "passed": 282,
+      "ignored": 1
+    },
+    "desktop_visual": "user acceptance pending",
+    "source_hashes": {
+      "frontend/src/pages/settings/components/CustomConnections.tsx": "0479949d2fd4b000ae3ab6044091eace076144a894b1d0297b2500ed47b199a6",
+      "frontend/src/pages/settings/components/ConnectionModelPicker.tsx": "42cc87f8b7f5bc0e4fe4e597b640f9b7166e502cfffacff4c06f3d747a4bb37a",
+      "frontend/src/lib/model-config/connections.ts": "a1a43b0c7515a6375df66c83502db5ccb3289e6ee896e7c61f90841caabc4798",
+      "frontend/src-tauri/src/model_connections.rs": "ff3672c38ebd79ad66f3d32c9843acbfce54353265da52ca7c03c94f9680a1fb"
+    }
+  },
+  "assembly_layout_repair": {
+    "artifact": "assembly-and-layout-desktop-20260910.json",
+    "sha256": "990a45e3c5678ef09185f0df7919ebcdcddbfb0bf761f871916432c55d390936",
+    "backend": {
+      "passed": 2945,
+      "skipped": 5
+    },
+    "frontend": {
+      "files": 150,
+      "passed": 1242,
+      "build": "passed"
+    },
+    "native": "unchanged in this repair; previous validation retained",
+    "desktop": "actual WebView, CPA discovery 9 models, no save or generation",
+    "runtime": {
+      "bridge_pid": 18272,
+      "started": "2026-09-09T23:54:30+08:00"
+    }
+  },
+  "reasoning_attachment_revision": {
+    "artifacts": [
+      {
+        "file": "custom-capability-boundary-20260910-01.json",
+        "sha256": "832c94f465b1b33f21f93f161b5c9d56bed3726baf3326bde60c774818ee5402"
+      },
+      {
+        "file": "custom-capability-extended-20260910-01.json",
+        "sha256": "9f180d83b93b3dff6e05923a469b2ab08965eab74440b7bd1e86cdf78b8ad29a"
+      },
+      {
+        "file": "custom-capability-chat-20260910.json",
+        "sha256": "58d927e9e4162942f68ecee5e3ff29d8f3c0a12073870f42ff6794272a025047"
+      },
+      {
+        "file": "cpa-effort-low-chain-20260910-01.json",
+        "sha256": "86d162d6880aafea2d0fd727875d9189295e7f1d5f0eeb9d5167e1e1c33be8f7"
+      },
+      {
+        "file": "deepseek-capability-regression-20260910.json",
+        "sha256": "b2220f253a9b609dfbab6a94a01fc6fdfc0c73470c215348c68e4426a8fb62fd"
+      },
+      {
+        "file": "kimi-capability-regression-20260910.json",
+        "sha256": "d34943671492ed50e2d192a8d0326fcc347e3006010210e2fc5ea59330149b27"
+      },
+      {
+        "file": "desktop-capability-settings-20260910.json",
+        "sha256": "90c5090b86204ec9021aa2c61853d239fc731af491d4c8f2e085885b0c7a57a9"
+      },
+      {
+        "file": "desktop-attachment-e2e-20260910.json",
+        "sha256": "dcf636fb2a0a826800d6b888997ce2580b4a260bb0c2053fb3854c8b83547533"
+      }
+    ],
+    "backend": {
+      "passed": 2961,
+      "skipped": 5
+    },
+    "frontend": {
+      "passed": 1244,
+      "files": 150,
+      "lint_typecheck_build": true
+    },
+    "rust": "fmt, tests and release check passed",
+    "isolated_generation_posts": 26,
+    "desktop": "2 successful synthetic conversation turns; rejected sends before stale writer cleanup; native defaults restored",
+    "runtime_issue": "065-bridge-restart-stale-writer-lease",
+    "user_acceptance": "pending",
+    "guide": "before final merge",
+    "limits": [
+      "CPA targets gpt-5.6-luna only; no universal model capability claim",
+      "Native bridge restart required stale task-owned process cleanup",
+      "Historical cpa low chain scenario report labels upstream_default were hardcoded; effective spec override was effort:low; reporting fixed subsequently",
+      "No installer rebuilt for this standard static code change"
+    ],
+    "final_smoke_harness_tests": 8
+  }
+}

@@ -1,7 +1,7 @@
 /**
  * shadcn/ui Dialog
  * Source: pnpm dlx shadcn@latest add dialog
- * Adapted: project token classes + folder index.tsx layout + overlayClassName escape hatch.
+ * Adapted: project token classes + folder index.tsx layout + overlayClassName escape hatch + opt-in scrollable overlay.
  */
 import * as React from "react"
 import { XIcon } from "lucide-react"
@@ -55,33 +55,54 @@ function DialogContent({
   overlayClassName,
   children,
   showCloseButton = true,
+  scrollMode = "content",
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   overlayClassName?: string
   showCloseButton?: boolean
+  scrollMode?: "content" | "overlay"
 }) {
+  const content = (
+    <DialogPrimitive.Content
+      data-slot="dialog-content"
+      className={cn(
+        "z-50 grid w-full max-w-[calc(100%-2rem)] gap-4 rounded-lg border border-border bg-bg p-6 text-fg shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
+        scrollMode === "overlay"
+          ? "relative m-auto shrink-0 max-w-full sm:max-w-lg"
+          : "fixed top-[50%] left-[50%] translate-x-[-50%] translate-y-[-50%]",
+        className
+      )}
+      {...props}
+    >
+      {children}
+      {showCloseButton && (
+        <DialogPrimitive.Close
+          data-slot="dialog-close"
+          className="absolute top-4 right-4 rounded-xs text-muted opacity-70 transition-opacity hover:text-fg hover:opacity-100 focus:ring-2 focus:ring-accent/50 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-accent-fg [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+        >
+          <XIcon />
+          <span className="sr-only">Close</span>
+        </DialogPrimitive.Close>
+      )}
+    </DialogPrimitive.Content>
+  )
   return (
     <DialogPortal data-slot="dialog-portal">
-      <DialogOverlay className={overlayClassName} />
-      <DialogPrimitive.Content
-        data-slot="dialog-content"
-        className={cn(
-          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border border-border bg-bg p-6 text-fg shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
-          className
-        )}
-        {...props}
-      >
-        {children}
-        {showCloseButton && (
-          <DialogPrimitive.Close
-            data-slot="dialog-close"
-            className="absolute top-4 right-4 rounded-xs text-muted opacity-70 transition-opacity hover:text-fg hover:opacity-100 focus:ring-2 focus:ring-accent/50 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-accent-fg [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
-          >
-            <XIcon />
-            <span className="sr-only">Close</span>
-          </DialogPrimitive.Close>
-        )}
-      </DialogPrimitive.Content>
+      {scrollMode === "overlay" ? (
+        <DialogOverlay
+          className={cn(
+            "flex flex-col overflow-y-auto [scrollbar-gutter:stable_both-edges] overscroll-contain p-4 sm:p-8",
+            overlayClassName
+          )}
+        >
+          {content}
+        </DialogOverlay>
+      ) : (
+        <>
+          <DialogOverlay className={overlayClassName} />
+          {content}
+        </>
+      )}
     </DialogPortal>
   )
 }
@@ -159,5 +180,5 @@ export {
   DialogOverlay,
   DialogPortal,
   DialogTitle,
-  DialogTrigger,
+  DialogTrigger
 }

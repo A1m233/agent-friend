@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -79,7 +80,7 @@ def test_k3_generate_preserves_effort_through_real_litellm(
     )
     original = copy.deepcopy((spec.defaults, request.messages, request.settings))
 
-    response = LLMClient(spec).generate(request)
+    response = LLMClient(replace(spec, responses=None)).generate(request)
 
     assert response.text == "fixture summary"
     assert len(chat_http) == 1
@@ -101,7 +102,7 @@ def test_k3_complete_preserves_per_request_effort_override(chat_http: list[httpx
         provider_id="kimi", model_id="kimi/kimi-k3", api_key="fixture", reasoning_preset="max"
     )
 
-    text = LLMClient(spec).complete(
+    text = LLMClient(replace(spec, responses=None)).complete(
         [{"role": "user", "content": "Summarize briefly."}], reasoning_effort="low", max_tokens=4096
     )
 
@@ -146,3 +147,17 @@ def test_k3_rejects_malformed_allowlist(allowed: Any) -> None:
         prepare_litellm_request(
             spec, [], {"reasoning_effort": "low", "allowed_openai_params": allowed}
         )
+
+
+def test_custom_effort_bypasses_model_family_mapper() -> None:
+    from llm_providers.chat_request import prepare_litellm_request
+    from llm_providers.spec import ProviderSpec
+
+    options = {"reasoning_effort": "vendor-next"}
+    _, wire = prepare_litellm_request(
+        ProviderSpec(model="openai/unknown", api_key="fixture", provider_id="custom/fixture"),
+        [],
+        options,
+    )
+    assert wire == {"extra_body": {"reasoning_effort": "vendor-next"}}
+    assert options == {"reasoning_effort": "vendor-next"}

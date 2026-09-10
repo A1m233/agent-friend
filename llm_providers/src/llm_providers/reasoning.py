@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .catalog import ModelRuntimeConfig, ReasoningReplayScope
+from .model_identity import is_custom_model_reference
 from .spec import ProviderSpec
 
 ReasoningStateFormat = Literal["reasoning_content", "reasoning_details"]
@@ -153,7 +154,10 @@ def render_provider_reasoning_state(
     rendered = dict(message)
     if rendered.get("role") != "assistant":
         return rendered
-    if config.reasoning_preset in {"off", "none"} or state.model_id != config.model_id:
+    if (
+        config.reasoning_preset in {"off", "none"}
+        and not is_custom_model_reference(config.model_id)
+    ) or state.model_id != config.model_id:
         return rendered
     if state.replay_scope == "tool_turn" and (
         not state_run_id or not active_run_id or state_run_id != active_run_id

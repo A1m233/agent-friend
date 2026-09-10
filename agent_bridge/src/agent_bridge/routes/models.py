@@ -9,6 +9,7 @@ from agent.context import (
 )
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from llm_providers.model_identity import is_custom_model_reference
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent import (
@@ -43,12 +44,27 @@ class ModelValidateBody(BaseModel):
 def register_routes(app: FastAPI, runtime: BridgeRuntime | None = None) -> None:
     @app.get("/v1/models/catalog")
     def model_catalog() -> dict[str, object]:
-        return public_model_catalog()
+        if runtime is None or runtime.connection_runtime is None:
+            return public_model_catalog()
+        from dataclasses import replace
+
+        from llm_providers.connections import model_reference
+
+        directory = runtime.connection_runtime.directory()
+        models = tuple(
+            replace(
+                directory.model(model_reference(connection.id, model.id)),
+                label=f"{connection.name} · {model.name}",
+            )
+            for connection in directory.connections.values()
+            for model in connection.models
+        )
+        return public_model_catalog(models)
 
     @app.post("/v1/models/validate")
     def validate_model(body: ModelValidateBody) -> object:
         try:
-            if body.model not in all_model_ids():
+            if body.model not in all_model_ids() and not is_custom_model_reference(body.model):
                 raise UnsupportedModelError(body.model)
             config = (
                 ModelRuntimeConfig(body.model, body.reasoning_preset)

@@ -65,7 +65,7 @@ describe("persistModelSettingSelection", () => {
     expect(mockPersistBridgeRuntimeSetting).not.toHaveBeenCalled();
   });
 
-  it("keeps memory model on the Bridge restart apply path", async () => {
+  it("persists memory model for the next execution without restarting Bridge", async () => {
     const selection = {
       provider: "deepseek",
       model: "deepseek/deepseek-v4-pro",
@@ -78,7 +78,15 @@ describe("persistModelSettingSelection", () => {
     const result = await persistModelSettingSelection("memoryModel", selection);
 
     expect(mockSetSetting).toHaveBeenCalledWith("memoryModel", selection);
-    expect(mockPersistBridgeRuntimeSetting).toHaveBeenCalledOnce();
+    expect(mockPersistBridgeRuntimeSetting).not.toHaveBeenCalled();
     expect(result).toEqual({ scope: "bridge", applied: true, applyError: null });
   });
+});
+
+
+it("validates and persists an explicit custom effort with the default selection", async () => {
+  const selection = { provider: "custom", model: "custom/fixture/model", reasoningPreset: "effort:vendor-next" } as const;
+  await persistModelSettingSelection("memoryModel", selection);
+  expect(mockValidate).toHaveBeenLastCalledWith({ model: selection.model, reasoningPreset: selection.reasoningPreset });
+  expect(mockSetSetting).toHaveBeenLastCalledWith("memoryModel", selection);
 });

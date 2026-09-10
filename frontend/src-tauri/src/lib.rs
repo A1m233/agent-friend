@@ -17,6 +17,7 @@ mod data_migration;
 mod desktop_instance;
 mod diagnostics;
 pub mod install_contract;
+mod model_connections;
 mod notification_sound;
 mod owner_capabilities;
 mod paths;
@@ -1412,6 +1413,7 @@ pub fn run() {
         .manage(settings_state.clone())
         .manage(runtime_service_supervisor.clone())
         .manage(runtime_credential_coordinator)
+        .manage(model_connections::ModelConnectionCoordinator::default())
         .manage(migration_coordinator)
         .manage(avatar_model_manager)
         .plugin(navigation_guard())
@@ -1486,6 +1488,9 @@ pub fn run() {
         runtime_config::get_runtime_config_status,
         runtime_config::set_runtime_secret,
         runtime_config::delete_runtime_secret,
+        model_connections::save_model_connections,
+        model_connections::retry_model_connections,
+        model_connections::inspect_model_connection,
         runtime_credentials::get_runtime_credential_groups,
         runtime_credentials::apply_runtime_credential_group,
         runtime_credentials::confirm_runtime_credential_save,
@@ -1576,6 +1581,9 @@ pub fn run() {
         runtime_config::get_runtime_config_status,
         runtime_config::set_runtime_secret,
         runtime_config::delete_runtime_secret,
+        model_connections::save_model_connections,
+        model_connections::retry_model_connections,
+        model_connections::inspect_model_connection,
         runtime_credentials::get_runtime_credential_groups,
         runtime_credentials::apply_runtime_credential_group,
         runtime_credentials::confirm_runtime_credential_save,
@@ -1779,6 +1787,11 @@ pub fn run() {
             setup_runtime_observer.record("lifecycle", "logger-attached", serde_json::json!({}));
             if let Err(error) = runtime_credentials::cleanup_all_staging() {
                 log::error!("runtime credential staging cleanup failed: {error}");
+            }
+            if let Err(error) =
+                model_connections::cleanup_pending_credentials(app.handle(), &setup_settings_state)
+            {
+                log::error!("model credential cleanup pending: {error}");
             }
             log::info!(
                 "desktop lifecycle: logger attached; process_session_id={}",

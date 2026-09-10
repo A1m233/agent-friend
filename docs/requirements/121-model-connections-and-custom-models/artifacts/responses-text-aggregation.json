@@ -1,0 +1,14 @@
+{
+  "kind": "offline-synthetic-reproduction",
+  "date": "2026-09-09",
+  "sourceHead": "8cf97e931cf47188522ff3cfc44682a1eaf369fa",
+  "externalLlmCalls": 0,
+  "inputItems": [
+    {"phase": "commentary", "text": "I will extract the memory."},
+    {"phase": "final_answer", "text": "{\"entries\": []}"}
+  ],
+  "aggregate": "I will extract the memory.{\"entries\": []}",
+  "aggregateParse": "invalid_json",
+  "itemPhasesPreserved": true,
+  "limitations": "Proves the aggregation/parser incompatibility only if this item combination occurs. It is not an observed provider response and does not prove structured output mode emits commentary."
+}

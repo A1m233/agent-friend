@@ -52,13 +52,22 @@ def _content(value: Any, *, assistant: bool = False) -> list[dict[str, Any]]:
             result.append(output)
         elif kind == "file" and not assistant:
             file = block.get("file")
-            if (
-                set(block) != {"type", "file"}
-                or not isinstance(file, dict)
-                or set(file) != {"file_id"}
-            ):
-                raise _invalid("only existing uploaded image file_id blocks are supported")
-            result.append({"type": "input_image", "file_id": _string(file["file_id"], "file_id")})
+            if set(block) != {"type", "file"} or not isinstance(file, dict):
+                raise _invalid("invalid file block")
+            if set(file) == {"file_id"}:
+                result.append(
+                    {"type": "input_image", "file_id": _string(file.get("file_id"), "file_id")}
+                )
+            elif set(file) == {"filename", "file_data"}:
+                result.append(
+                    {
+                        "type": "input_file",
+                        "filename": _string(file.get("filename"), "filename"),
+                        "file_data": _string(file.get("file_data"), "file_data"),
+                    }
+                )
+            else:
+                raise _invalid("unsupported file block")
         else:
             raise _invalid("unsupported content block")
     return result
@@ -229,6 +238,10 @@ def prepare_request(
     }
     if tools:
         result["tools"] = convert_tools(tools)
+        if route.parameter_profile == "openai":
+            # Chat's omitted strict flag is non-strict; Responses defaults differ.
+            for tool in result["tools"]:
+                tool.setdefault("strict", False)
     budget_keys = [
         key
         for key in ("max_tokens", "max_completion_tokens", "max_output_tokens")
@@ -334,4 +347,6 @@ def prepare_request(
         if set(options) - {"timeout", "prompt_cache_key"}:
             raise _invalid("unsupported Kimi Responses request settings")
     result.update(options)
+    if route.parameter_profile == "openai":
+        result["store"] = False
     return result

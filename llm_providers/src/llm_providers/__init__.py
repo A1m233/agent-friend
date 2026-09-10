@@ -66,6 +66,7 @@ from .errors import (
     LLMUnsupportedParameterError,
 )
 from .factory import create_language_model
+from .final_result import final_response_text
 from .multimodal import MultimodalInputAdapter
 from .prompt_cache_lineage import OperationLineageBinding, OperationRequestLineageTracker
 from .prompt_cache_observation import (
@@ -194,6 +195,7 @@ __all__ = [
     "create_language_model",
     "default_model_for_provider",
     "default_model_runtime_config",
+    "final_response_text",
     "get_model_capabilities",
     "infer_provider_id_from_model",
     "minimum_model_runtime_config",

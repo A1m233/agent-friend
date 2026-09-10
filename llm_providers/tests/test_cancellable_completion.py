@@ -5,6 +5,7 @@ import json
 import threading
 import time
 from collections.abc import AsyncIterator, Callable, Coroutine
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -98,7 +99,7 @@ def test_cancellable_generate_keeps_chat_parameters_usage_and_witness(
         return httpx.Response(200, json=_response())
 
     sessions = _mock_http(monkeypatch, handler)
-    response = LLMClient(_spec()).generate(_request(lambda: None))
+    response = LLMClient(replace(_spec(), responses=None)).generate(_request(lambda: None))
 
     assert response.text == "fixture summary"
     assert response.usage is not None and response.usage.total_tokens == 12
@@ -136,7 +137,7 @@ def test_cancellable_generate_uses_non_openai_async_handler(
 
     sessions = _mock_http(monkeypatch, handler)
     spec = build_provider_spec(provider_id=provider, model_id=model, api_key="fixture")
-    response = LLMClient(spec).generate(_request(lambda: None))
+    response = LLMClient(replace(spec, responses=None)).generate(_request(lambda: None))
 
     assert response.text == "fixture summary"
     assert len(requests) == 1
@@ -185,7 +186,7 @@ def test_generate_cancels_real_async_http_wait_and_closes_resources(
     sessions = _mock_http(monkeypatch, handler)
     started = time.monotonic()
     with pytest.raises(StopRequested, match="stop requested") as raised:
-        LLMClient(_spec()).generate(_request(cancel_check))
+        LLMClient(replace(_spec(), responses=None)).generate(_request(cancel_check))
 
     assert time.monotonic() - started < 2.0
     assert cancelled.is_set()
@@ -207,7 +208,7 @@ def test_generate_already_cancelled_never_constructs_transport(
         lambda *_args: pytest.fail("cancelled generation must not create an HTTP client"),
     )
     with pytest.raises(StopRequested, match="already stopped"):
-        LLMClient(_spec()).generate(_request(cancel_check))
+        LLMClient(replace(_spec(), responses=None)).generate(_request(cancel_check))
 
 
 def test_generate_retry_backoff_is_cancellable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -231,7 +232,7 @@ def test_generate_retry_backoff_is_cancellable(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr("llm_providers.client.complete_cancellable_litellm", failing_call)
     monkeypatch.setattr("llm_providers.client.time.sleep", sleep)
-    client = LLMClient(_spec(), network_retry_backoff_seconds=60)
+    client = LLMClient(replace(_spec(), responses=None), network_retry_backoff_seconds=60)
     with pytest.raises(StopRequested, match="cancelled during retry wait"):
         client.generate(_request(cancel_check))
 
@@ -255,7 +256,7 @@ def test_generate_discards_response_when_cancel_arrives_before_return(
 
     monkeypatch.setattr("llm_providers.client.complete_cancellable_litellm", completed_call)
     with pytest.raises(StopRequested, match="completed concurrently"):
-        LLMClient(_spec()).generate(_request(cancel_check))
+        LLMClient(replace(_spec(), responses=None)).generate(_request(cancel_check))
 
 
 def test_cancellable_generate_preserves_provider_failure_and_closes_client(
@@ -271,7 +272,7 @@ def test_cancellable_generate_preserves_provider_failure_and_closes_client(
 
     sessions = _mock_http(monkeypatch, handler)
     with pytest.raises(LLMBadRequestError) as raised:
-        LLMClient(_spec()).generate(_request(lambda: None))
+        LLMClient(replace(_spec(), responses=None)).generate(_request(lambda: None))
 
     assert len(requests) == 1
     assert len(sessions) == 1 and sessions[0].is_closed

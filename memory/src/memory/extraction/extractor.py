@@ -104,6 +104,34 @@ class Extractor:
         fragment: ConversationFragment,
         context: ExtractionContext | list[SemanticRow],
     ) -> ExtractionOutput:
+        from contextlib import ExitStack
+        from copy import copy
+
+        from llm_providers.binding import bind_language_model
+
+        started = perf_counter()
+        with ExitStack() as stack:
+            try:
+                model = stack.enter_context(bind_language_model(self._llm))
+            except Exception as exc:
+                extraction_context = (
+                    context
+                    if isinstance(context, ExtractionContext)
+                    else ExtractionContext.from_existing(context)
+                )
+                self._report_attempt(
+                    fragment, extraction_context, status="llm_error", started=started, error=exc
+                )
+                return ExtractionOutput()
+            bound = copy(self)
+            bound._llm = model
+            return bound._extract_bound(fragment, context)
+
+    def _extract_bound(
+        self,
+        fragment: ConversationFragment,
+        context: ExtractionContext | list[SemanticRow],
+    ) -> ExtractionOutput:
         """抽取一个 fragment。
 
         失败（LLM 报错 / 返回非法 JSON）时**返回空 output、不抛异常**——抽取是

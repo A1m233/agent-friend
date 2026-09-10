@@ -1,3 +1,4 @@
+import { CustomReasoningInput } from "@/components/model-config/ReasoningSelection";
 import { useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
@@ -69,6 +70,7 @@ export function ConversationModelSelector({
     control: "unsupported" as const,
     defaultPreset: "none",
     presets: [{ id: "none", label: "不支持" }],
+    allowCustom: false,
   };
   const selectedConfig: ModelRuntimeConfig = {
     model: selectedModel,
@@ -79,7 +81,7 @@ export function ConversationModelSelector({
   const selectedPreset = selectedReasoning.presets.find(
     (preset) => preset.id === selectedConfig.reasoningPreset,
   );
-  const reasoningLabel = selectedPreset?.label ?? selectedConfig.reasoningPreset;
+  const reasoningLabel = selectedPreset?.label ?? (selectedReasoning.allowCustom && selectedConfig.reasoningPreset.startsWith("effort:") ? selectedConfig.reasoningPreset.slice(7) : selectedConfig.reasoningPreset);
   const unavailable = disabled || !catalog || modelSwitching || streaming || historyLoading;
   const reason = modelSwitching
     ? `正在切换到 ${modelSwitchTarget ?? "目标模型"}`
@@ -268,6 +270,7 @@ export function ConversationModelSelector({
                     ))}
                   </DropdownMenuRadioGroup>
                 )}
+              {selectedReasoning.allowCustom && <CustomReasoningInput disabled={modelSwitching} onChange={(reasoningPreset) => void handleSelect({ model: selectedModel, reasoningPreset })} />}
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         </DropdownMenuContent>

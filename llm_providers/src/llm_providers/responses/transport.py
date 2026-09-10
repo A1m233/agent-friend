@@ -39,6 +39,8 @@ class ResponsesSource:
             raw = await self.client.responses.with_raw_response.create(**self.request)
             self.response = raw.parse()
             self.request_id = getattr(raw, "request_id", None)
+            if self.request.get("stream") is False:
+                return self._completed_response()
             return cast(AsyncIterator[Any], self.response)
         except BaseException as error:
             with suppress(Exception):
@@ -47,9 +49,14 @@ class ResponsesSource:
         finally:
             self.request_witness = self.capture.witness
 
+    async def _completed_response(self) -> AsyncIterator[Any]:
+        # Reuse item/terminal validation without pretending the HTTP response was SSE.
+        response = self.response.model_dump(mode="json")
+        yield {"type": f"response.{response.get('status')}", "response": response}
+
     async def close(self) -> None:
         try:
-            if self.response is not None:
+            if self.response is not None and self.request.get("stream") is not False:
                 await self.response.close()
         finally:
             await self.client.close()

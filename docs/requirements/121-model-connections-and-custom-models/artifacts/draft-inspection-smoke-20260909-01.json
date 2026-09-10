@@ -1,0 +1,162 @@
+{
+  "runs": [
+    {
+      "target": "deepseek",
+      "model": "deepseek-v4-flash",
+      "protocol": "responses",
+      "requests": [
+        {
+          "method": "GET",
+          "endpoint": "https://api.deepseek.com/models"
+        },
+        {
+          "method": "POST",
+          "endpoint": "https://api.deepseek.com/responses"
+        },
+        {
+          "method": "POST",
+          "endpoint": "https://api.deepseek.com/responses"
+        },
+        {
+          "method": "POST",
+          "endpoint": "https://api.deepseek.com/responses"
+        }
+      ],
+      "passed": true,
+      "discovery": {
+        "error": null,
+        "selected": {
+          "id": "deepseek-v4-flash",
+          "contextWindow": 1000000,
+          "contextSource": "catalog",
+          "contextLabel": "内置目录参考，服务配置可能不同"
+        }
+      },
+      "probe": {
+        "metadata": {
+          "id": "deepseek-v4-flash",
+          "contextWindow": 1000000,
+          "contextSource": "catalog",
+          "contextLabel": "内置目录参考，服务配置可能不同"
+        },
+        "generation": {
+          "status": "passed"
+        },
+        "tools": {
+          "status": "passed"
+        }
+      },
+      "settings_untouched": true
+    },
+    {
+      "target": "kimi",
+      "model": "kimi-k2.6",
+      "protocol": "chat_completions",
+      "requests": [
+        {
+          "method": "GET",
+          "endpoint": "https://api.moonshot.cn/v1/models"
+        },
+        {
+          "method": "POST",
+          "endpoint": "https://api.moonshot.cn/v1/chat/completions"
+        },
+        {
+          "method": "POST",
+          "endpoint": "https://api.moonshot.cn/v1/chat/completions"
+        },
+        {
+          "method": "POST",
+          "endpoint": "https://api.moonshot.cn/v1/chat/completions"
+        }
+      ],
+      "passed": true,
+      "discovery": {
+        "error": null,
+        "selected": {
+          "id": "kimi-k2.6",
+          "contextWindow": 262144,
+          "contextSource": "endpoint",
+          "contextLabel": "服务返回 · context_length"
+        }
+      },
+      "probe": {
+        "metadata": {
+          "id": "kimi-k2.6",
+          "contextWindow": 262144,
+          "contextSource": "catalog",
+          "contextLabel": "内置目录参考，服务配置可能不同"
+        },
+        "generation": {
+          "status": "passed"
+        },
+        "tools": {
+          "status": "passed"
+        }
+      },
+      "settings_untouched": true
+    },
+    {
+      "target": "cpa",
+      "model": "gpt-5.6-luna",
+      "protocol": "responses",
+      "requests": [
+        {
+          "method": "GET",
+          "endpoint": "http://127.0.0.1:8317/v1/models"
+        },
+        {
+          "method": "POST",
+          "endpoint": "http://127.0.0.1:8317/v1/responses"
+        },
+        {
+          "method": "POST",
+          "endpoint": "http://127.0.0.1:8317/v1/responses"
+        },
+        {
+          "method": "POST",
+          "endpoint": "http://127.0.0.1:8317/v1/responses"
+        }
+      ],
+      "passed": true,
+      "discovery": {
+        "error": null,
+        "selected": {
+          "id": "gpt-5.6-luna",
+          "contextWindow": 922000,
+          "contextSource": "catalog",
+          "contextLabel": "SDK 目录参考，服务配置可能不同"
+        }
+      },
+      "probe": {
+        "metadata": {
+          "id": "gpt-5.6-luna",
+          "contextWindow": 922000,
+          "contextSource": "catalog",
+          "contextLabel": "SDK 目录参考，服务配置可能不同"
+        },
+        "generation": {
+          "status": "passed"
+        },
+        "tools": {
+          "status": "passed"
+        }
+      },
+      "settings_untouched": true
+    }
+  ],
+  "source_hashes": {
+    "agent_bridge\\src\\agent_bridge\\model_connections\\inspection.py": "1cc7cee5fb2425000b0d427411f53b30f0c8cf75c0684b8a54bf019bedede1f4",
+    "agent_bridge\\src\\agent_bridge\\model_connections\\routes.py": "c8b56f9d29956948b99c9544aff853c353862cb309a1d5bac76c474282a9a80b",
+    "agent_bridge\\src\\agent_bridge\\model_connections\\runtime.py": "f67dd949401051b08dc514a7167b7fa97076ea4619ea2fa2cab5f00258dd51f4",
+    "agent_bridge\\src\\agent_bridge\\model_connections\\__init__.py": "3dd7c2ece51b7e9bd0b1a03093179624d724096af27395da4599c61e20ac41b9",
+    "llm_providers\\src\\llm_providers\\connections\\codec.py": "dcad034f59fb8e122c2c082e86d44965e213e1a8b683992a77b074caf931f259",
+    "llm_providers\\src\\llm_providers\\connections\\definitions.py": "67030533b5b0f5f2ce532a9afc09ff6bcdf5169bd778301d9b524d84603af9f5",
+    "llm_providers\\src\\llm_providers\\connections\\directory.py": "3903d1f64e6ce7591a23daa840d65c9c7415c795022844e1c97abaac42d8bea5",
+    "llm_providers\\src\\llm_providers\\connections\\metadata.py": "50dd486fe5cdf13368c10397b4102de12b5c3e0fdc8e6da7a352cb11b3868c4d",
+    "llm_providers\\src\\llm_providers\\connections\\__init__.py": "2db3fb65cc508d7e7bc9397e68cf2023282caea960da9e233bc4a1152d5b598e",
+    "scripts\\model-connections-smoke\\cpa.py": "2661f44428c8437db1b699089abd9ec47547e27a4d9a8e8a5b5873195f008d00",
+    "scripts\\model-connections-smoke\\inspection_smoke.py": "48f0529c812e9fe2c38c032cbac61775cf32e46262d5be4cda5a6c03a3f81b5f",
+    "scripts\\model-connections-smoke\\run.py": "839bf3e2ff5574897350951e910a14bc473f1ed417c4743ca8956ff7f19e4d4b"
+  }
+}

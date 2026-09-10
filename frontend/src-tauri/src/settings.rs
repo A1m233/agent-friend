@@ -42,6 +42,8 @@ pub struct Settings {
     pub chat_model: ModelSelection,
     #[serde(default = "default_memory_model")]
     pub memory_model: ModelSelection,
+    #[serde(default = "default_model_connections")]
+    pub model_connections: serde_json::Value,
     #[serde(default = "default_avatar_model_id")]
     pub avatar_model_id: String,
     #[serde(default)]
@@ -106,6 +108,7 @@ pub enum ModelProvider {
     Deepseek,
     Kimi,
     Openrouter,
+    Custom,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -113,6 +116,8 @@ pub enum ModelProvider {
 pub struct ModelSelection {
     pub provider: ModelProvider,
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_preset: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -158,6 +163,7 @@ fn deepseek_model_id(model: DeepseekModel) -> String {
 
 fn default_chat_model() -> ModelSelection {
     ModelSelection {
+        reasoning_preset: None,
         provider: ModelProvider::Kimi,
         model: "kimi/kimi-k2.5".to_string(),
     }
@@ -165,6 +171,7 @@ fn default_chat_model() -> ModelSelection {
 
 fn default_memory_model() -> ModelSelection {
     ModelSelection {
+        reasoning_preset: None,
         provider: ModelProvider::Deepseek,
         model: "deepseek/deepseek-v4-flash".to_string(),
     }
@@ -172,6 +179,7 @@ fn default_memory_model() -> ModelSelection {
 
 fn model_selection_from_deepseek(model: DeepseekModel) -> ModelSelection {
     ModelSelection {
+        reasoning_preset: None,
         provider: ModelProvider::Deepseek,
         model: deepseek_model_id(model),
     }
@@ -203,6 +211,7 @@ fn validate_percent(value: u16, min: u16, max: u16, key: &str) -> Result<u16, St
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            model_connections: default_model_connections(),
             theme: ThemeMode::Light,
             background_online_policy: BackgroundOnlinePolicy::FollowSystem,
             reminder_notification_mode: ReminderNotificationMode::Smart,
@@ -223,6 +232,92 @@ impl Default for Settings {
             pet_mini_scale_percent: default_pet_mini_scale_percent(),
         }
     }
+}
+
+fn default_model_connections() -> serde_json::Value {
+    serde_json::json!({"revision": 0, "connections": []})
+}
+
+fn validate_custom_selection(
+    connections: &serde_json::Value,
+    selection: &ModelSelection,
+) -> Result<(), String> {
+    if selection.provider != ModelProvider::Custom {
+        if selection.model.starts_with("custom/") {
+            return Err("invalid_custom_model_provider".into());
+        }
+        return Ok(());
+    }
+    let found = connections["connections"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|connection| {
+            connection["models"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|model| {
+                    Some(selection.model.as_str())
+                        == connection["id"]
+                            .as_str()
+                            .zip(model["id"].as_str())
+                            .map(|(id, model)| format!("custom/{id}/{model}"))
+                            .as_deref()
+                })
+        });
+    if found {
+        Ok(())
+    } else {
+        Err("custom_model_unavailable".into())
+    }
+}
+
+pub(crate) fn save_connection_settings(
+    app: &AppHandle,
+    state: &Arc<Mutex<Settings>>,
+    expected: &Settings,
+    connections: serde_json::Value,
+    chat: ModelSelection,
+    memory: ModelSelection,
+) -> Result<Settings, String> {
+    let mut current = state.lock().map_err(|_| "settings_lock_failed")?;
+    if current.model_connections != expected.model_connections
+        || current.chat_model != expected.chat_model
+        || current.memory_model != expected.memory_model
+    {
+        return Err("settings_changed_reload_required".into());
+    }
+    let mut next = current.clone();
+    next.model_connections = connections;
+    next.chat_model = chat;
+    next.memory_model = memory;
+    let store = app
+        .store(paths::SETTINGS_STORE_PATH)
+        .map_err(|_| "settings_store_failed")?;
+    store.set(
+        "settings",
+        serde_json::to_value(&next).map_err(|_| "settings_serialize_failed")?,
+    );
+    if store.save().is_err() {
+        store.set(
+            "settings",
+            serde_json::to_value(&*current).map_err(|_| "settings_serialize_failed")?,
+        );
+        return Err("settings_save_failed".into());
+    }
+    *current = next.clone();
+    for (key, value) in [
+        ("modelConnections", next.model_connections.clone()),
+        ("chatModel", serde_json::json!(next.chat_model)),
+        ("memoryModel", serde_json::json!(next.memory_model)),
+    ] {
+        let _ = app.emit(
+            "settings://changed",
+            serde_json::json!({"key":key,"value":value}),
+        );
+    }
+    Ok(next)
 }
 
 impl Settings {
@@ -700,11 +795,13 @@ pub fn set_setting(
         "chatModel" => {
             let model: ModelSelection = serde_json::from_value(payload.value.clone())
                 .map_err(|e| format!("invalid chatModel: {e}"))?;
+            validate_custom_selection(&s.model_connections, &model)?;
             s.chat_model = model;
         }
         "memoryModel" => {
             let model: ModelSelection = serde_json::from_value(payload.value.clone())
                 .map_err(|e| format!("invalid memoryModel: {e}"))?;
+            validate_custom_selection(&s.model_connections, &model)?;
             s.memory_model = model;
         }
         "deepseekModel" => {
@@ -808,6 +905,37 @@ pub fn set_setting(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_selection_preserves_custom_effort_and_legacy_default() {
+        let legacy: ModelSelection =
+            serde_json::from_value(serde_json::json!({"provider":"kimi","model":"kimi/kimi-k2.6"}))
+                .unwrap();
+        assert_eq!(legacy.reasoning_preset, None);
+        let value = serde_json::json!({"provider":"custom","model":"custom/fixture/model","reasoningPreset":"effort:vendor-next"});
+        let selection: ModelSelection = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(selection).unwrap(), value);
+    }
+
+    #[test]
+    fn custom_model_selection_requires_current_directory_and_matching_provider() {
+        let config =
+            serde_json::json!({"connections":[{"id":"connection", "models":[{"id":"model"}]}]});
+        let selection = ModelSelection {
+            reasoning_preset: None,
+            provider: ModelProvider::Custom,
+            model: "custom/connection/model".into(),
+        };
+        assert!(validate_custom_selection(&config, &selection).is_ok());
+        assert!(validate_custom_selection(&default_model_connections(), &selection).is_err());
+        let wrong = ModelSelection {
+            reasoning_preset: None,
+            provider: ModelProvider::Deepseek,
+            model: selection.model,
+        };
+        assert!(validate_custom_selection(&config, &wrong).is_err());
+    }
+
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_settings_dir(name: &str) -> PathBuf {

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from fastapi import HTTPException
+from llm_providers.catalog import ModelRouteCapabilities
 
 from agent import AttachmentError, AttachmentRef, AttachmentStore
 from llm_providers import model_capabilities
@@ -87,13 +88,14 @@ def prepare_attachment_input(
     *,
     model_id: str,
     store: AttachmentStore | None,
+    capability_resolver: Callable[[str], ModelRouteCapabilities] = model_capabilities,
     cancel_check: Callable[[], None] | None = None,
 ) -> AttachmentInputPlan:
     """Validate attachment identities and model limits before SSE admission."""
 
     if cancel_check is not None:
         cancel_check()
-    capabilities = model_capabilities(model_id)
+    capabilities = capability_resolver(model_id)
     if entries and not capabilities.attachments:
         raise HTTPException(
             status_code=400,
@@ -184,11 +186,16 @@ def prepare_run_attachment_input(
     *,
     model_id: str,
     store: AttachmentStore | None,
+    capability_resolver: Callable[[str], ModelRouteCapabilities] = model_capabilities,
     cancel_check: Callable[[], None],
 ) -> AttachmentInputPlan:
     try:
         return prepare_attachment_input(
-            entries, model_id=model_id, store=store, cancel_check=cancel_check
+            entries,
+            model_id=model_id,
+            store=store,
+            cancel_check=cancel_check,
+            capability_resolver=capability_resolver,
         )
     except HTTPException as exc:
         cancel_check()

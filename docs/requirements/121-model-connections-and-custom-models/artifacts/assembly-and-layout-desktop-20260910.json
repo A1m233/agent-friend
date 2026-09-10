@@ -1,0 +1,46 @@
+{
+  "retryGeometry": [
+    {
+      "ms": 0,
+      "x": 278.8000183105469,
+      "y": 32,
+      "h": 760.3624877929688,
+      "w": 512,
+      "gutter": 31,
+      "buttonWidth": 116,
+      "busy": null
+    },
+    {
+      "ms": 82,
+      "x": 278.8000183105469,
+      "y": 32,
+      "h": 760.3624877929688,
+      "w": 512,
+      "gutter": 31,
+      "buttonWidth": 116,
+      "busy": "true"
+    }
+  ],
+  "discovery": {
+    "summary": "已获取 9 个模型，可搜索并勾选添加。",
+    "hasLuna": true,
+    "error": null
+  },
+  "saved": false,
+  "completed": {
+    "x": 278.8000183105469,
+    "y": 32,
+    "width": 512,
+    "buttonWidth": 116,
+    "busy": null,
+    "lunaVisible": true,
+    "protocol": "Responses"
+  },
+  "source_hashes": {
+    "agent_bridge/src/agent_bridge/assembly.py": "e3563f836974a4a53b7403e236fe2fa70c8eb31c3215877b16fa4ec09b6c8b20",
+    "frontend/src/pages/settings/components/CustomConnections.tsx": "a049eaddbec02f2f965c7c9dc2e7e91d4038085a72b2cb4d791d9d7de71081b3",
+    "frontend/src/components/ui/button/index.tsx": "c6f7ab5a5eb08561f5aaff9e44defbbcd307e1bfe4f6d51014fbe90b72de3467",
+    "frontend/src/components/ui/dialog/index.tsx": "95e9ddada21a0e7e0857606b174b7952cc4472307e9b04654c97e0b3d80762fa"
+  },
+  "captured_at": "2026-09-10T00:00:08.209904+08:00"
+}

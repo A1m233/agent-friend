@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
+from llm_providers.model_identity import is_custom_model_reference
+
 from llm_providers import (
     LanguageModel,
     LanguageModelCapabilities,
@@ -34,6 +36,8 @@ from runtime_config import (
     require_secret,
 )
 
+from .model_connections.runtime import ConnectionRuntime
+
 DEFAULT_BRIDGE_CHAT_PROVIDER = "kimi"
 DEFAULT_BRIDGE_MEMORY_PROVIDER = "deepseek"
 
@@ -47,6 +51,7 @@ class BridgeRuntimeConfig:
     memory_client_factory: Callable[[], LanguageModel]
     llm_client_factory: Callable[[ModelRuntimeConfig], LanguageModel]
     tool_credentials: ToolCredentials
+    connection_runtime: ConnectionRuntime | None = None
 
 
 class DeferredLanguageModel:
@@ -65,6 +70,11 @@ class DeferredLanguageModel:
         if self._model is None:
             self._model = self._factory()
         return self._model
+
+    def bind_execution(self):  # type: ignore[no-untyped-def]
+        from llm_providers.binding import bind_language_model
+
+        return bind_language_model(self._factory())
 
     @property
     def capabilities(self) -> LanguageModelCapabilities:
@@ -117,6 +127,11 @@ def _model_selection(
     default_provider_id: str,
 ) -> tuple[str, str]:
     raw_provider_id = optional_secret(source, provider_name) or default_provider_id
+    raw_model = optional_secret(source, model_name)
+    if raw_provider_id == "custom":
+        if raw_model is None or not is_custom_model_reference(raw_model):
+            raise ValueError("Invalid custom model selection")
+        return "custom", raw_model
     provider_id = provider_definition(raw_provider_id).provider_id
     model_id = optional_secret(source, model_name) or default_model_for_provider(
         provider_id, purpose
@@ -148,14 +163,14 @@ def _language_model(
 def resolve_bridge_runtime_config(source: CredentialSource) -> BridgeRuntimeConfig:
     """Resolve bridge credentials from the configured source policy."""
 
-    chat_provider_id, default_model = _model_selection(
+    _chat_provider_id, default_model = _model_selection(
         source,
         provider_name=LLM_CHAT_PROVIDER,
         model_name=LLM_CHAT_MODEL,
         purpose="chat",
         default_provider_id=DEFAULT_BRIDGE_CHAT_PROVIDER,
     )
-    memory_provider_id, memory_model = _model_selection(
+    _memory_provider_id, memory_model = _model_selection(
         source,
         provider_name=LLM_MEMORY_PROVIDER,
         model_name=LLM_MEMORY_MODEL,
@@ -163,19 +178,43 @@ def resolve_bridge_runtime_config(source: CredentialSource) -> BridgeRuntimeConf
         default_provider_id=DEFAULT_BRIDGE_MEMORY_PROVIDER,
     )
 
+    connection_runtime = ConnectionRuntime(source)
+
+    def memory_selection() -> ModelRuntimeConfig:
+        from llm_providers import default_model_runtime_config
+
+        _provider, model = _model_selection(
+            source,
+            provider_name=LLM_MEMORY_PROVIDER,
+            model_name=LLM_MEMORY_MODEL,
+            purpose="memory",
+            default_provider_id=DEFAULT_BRIDGE_MEMORY_PROVIDER,
+        )
+        preset = optional_secret(source, "LLM_MEMORY_REASONING_PRESET")
+        config = (
+            ModelRuntimeConfig(model, preset)
+            if preset is not None
+            else default_model_runtime_config(model)
+        )
+        return connection_runtime.directory().validate(config)
+
     def memory_client_factory() -> LanguageModel:
+        selection = memory_selection()
+        if is_custom_model_reference(selection.model_id):
+            return connection_runtime.model(memory_selection)
         return _language_model(
             source,
-            provider_id=memory_provider_id,
-            model_id=memory_model,
+            provider_id=infer_provider_id_from_model(selection.model_id),
+            model_id=selection.model_id,
+            reasoning_preset=selection.reasoning_preset,
             purpose="memory",
         )
 
     def llm_client_factory(config: ModelRuntimeConfig) -> LanguageModel:
-        try:
-            provider_id = infer_provider_id_from_model(config.model_id)
-        except ValueError:
-            provider_id = chat_provider_id
+        if is_custom_model_reference(config.model_id):
+            connection_runtime.directory().validate(config)
+            return connection_runtime.model(lambda: config)
+        provider_id = infer_provider_id_from_model(config.model_id)
         return _language_model(
             source,
             provider_id=provider_id,
@@ -187,6 +226,7 @@ def resolve_bridge_runtime_config(source: CredentialSource) -> BridgeRuntimeConf
     return BridgeRuntimeConfig(
         default_model=default_model,
         memory_model=memory_model,
+        connection_runtime=connection_runtime,
         memory_client_factory=memory_client_factory,
         llm_client_factory=llm_client_factory,
         tool_credentials=ToolCredentials(

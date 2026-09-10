@@ -119,6 +119,10 @@ def http_mock(monkeypatch: pytest.MonkeyPatch) -> Any:
                 return httpx.Response(
                     status, json={"error": {"type": "invalid_api_key", "message": "fixture"}}
                 )
+            if json.loads(request.content).get("stream") is False:
+                return httpx.Response(
+                    200, json=events[-1]["response"], headers={"x-request-id": "req-1"}
+                )
             data = "".join(
                 f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in events
             )
@@ -568,7 +572,8 @@ def test_capability_query_preserves_old_model_contract() -> None:
     assert get_model_capabilities(legacy).assistant_message_phase == "native"
 
 
-def test_header_wait_is_cancellable(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("nonstream", [False, True])
+def test_header_wait_is_cancellable(monkeypatch: pytest.MonkeyPatch, nonstream: bool) -> None:
     started, closed = threading.Event(), threading.Event()
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -594,15 +599,79 @@ def test_header_wait_is_cancellable(monkeypatch: pytest.MonkeyPatch) -> None:
 
     request = ModelRequest(messages=[], control=ModelCallControl(cancel_check=cancel))
     with pytest.raises(Cancelled):
-        list(
-            LLMClient(build_provider_spec(provider_id="deepseek", api_key="fixture")).stream(
-                request
-            )
-        )
+        model = LLMClient(build_provider_spec(provider_id="deepseek", api_key="fixture"))
+        if nonstream:
+            model.generate(request)
+        else:
+            list(model.stream(request))
     assert closed.wait(1)
 
 
-def test_generate_and_legacy_stream_stay_chat(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "provider,model",
+    [
+        ("deepseek", "deepseek/deepseek-v4-flash"),
+        ("kimi", "kimi/kimi-k3"),
+    ],
+)
+@pytest.mark.parametrize("entry", ["product", "memory_eval"])
+def test_generate_responses_final_json(
+    http_mock: Any, provider: str, model: str, entry: str
+) -> None:
+    requests = http_mock(
+        [
+            terminal(
+                [
+                    message("progress", "I will extract memory.", "commentary"),
+                    message("final", '{"entries": []}', "final_answer"),
+                ]
+            )
+        ]
+    )
+    spec = build_provider_spec(provider_id=provider, model_id=model, api_key="fixture")
+    if entry == "memory_eval":
+        from memory_eval.__main__ import _provider_spec
+
+        from runtime_config import EnvSource
+
+        spec = _provider_spec(
+            model, EnvSource({"DEEPSEEK_API_KEY": "fixture", "KIMI_API_KEY": "fixture"})
+        )
+    client = LLMClient(spec)
+    response = client.generate(ModelRequest(messages=[{"role": "user", "content": "extract"}]))
+    assert json.loads(response.text) == {"entries": []}
+    assert len(requests) == 1
+    assert requests[0].url.path.endswith("/responses")
+    assert json.loads(requests[0].content)["stream"] is False
+    assert response.diagnostics and response.diagnostics.transport == "responses"
+    assert response.diagnostics.provider_request_id == "req-1"
+
+
+@pytest.mark.parametrize(
+    "items",
+    [
+        [message("a", "thinking", "commentary")],
+        [message("a", "one", "final_answer"), message("b", "two", "final_answer")],
+        [message("a", "one"), message("b", "two")],
+    ],
+)
+def test_generate_rejects_ambiguous_results(http_mock: Any, items: list[dict[str, Any]]) -> None:
+    requests = http_mock([terminal(items)])
+    client = LLMClient(build_provider_spec(provider_id="deepseek", api_key="fixture"))
+    with pytest.raises(LLMIncompleteResponseError):
+        client.complete([{"role": "user", "content": "hi"}])
+    assert len(requests) == 1
+
+
+def test_generate_accepts_unphased_result(http_mock: Any) -> None:
+    http_mock([terminal([message("a", "plain JSON")])])
+    client = LLMClient(
+        build_provider_spec(provider_id="kimi", model_id="kimi/kimi-k3", api_key="fixture")
+    )
+    assert client.complete([{"role": "user", "content": "hi"}]) == "plain JSON"
+
+
+def test_legacy_generate_and_stream_stay_chat(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[dict[str, Any]] = []
 
     def complete(**kwargs: Any) -> Any:
@@ -627,7 +696,7 @@ def test_generate_and_legacy_stream_stay_chat(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr("llm_providers.client.litellm.completion", complete)
     spec = build_provider_spec(provider_id="deepseek", api_key="fixture")
-    client = LLMClient(spec)
+    client = LLMClient(replace(spec, responses=None))
     assert (
         client.generate(ModelRequest(messages=[{"role": "user", "content": "hi"}])).text == "direct"
     )

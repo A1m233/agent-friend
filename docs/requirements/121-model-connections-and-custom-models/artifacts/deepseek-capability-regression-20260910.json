@@ -1,0 +1,67 @@
+{
+  "runs": [
+    {
+      "target": "deepseek",
+      "model": "deepseek-v4-flash",
+      "protocol": "responses",
+      "requests": [
+        {
+          "method": "GET",
+          "endpoint": "https://api.deepseek.com/models"
+        },
+        {
+          "method": "POST",
+          "endpoint": "https://api.deepseek.com/responses"
+        },
+        {
+          "method": "POST",
+          "endpoint": "https://api.deepseek.com/responses"
+        },
+        {
+          "method": "POST",
+          "endpoint": "https://api.deepseek.com/responses"
+        }
+      ],
+      "passed": true,
+      "discovery": {
+        "error": null,
+        "selected": {
+          "id": "deepseek-v4-flash",
+          "contextWindow": 1000000,
+          "contextSource": "catalog",
+          "contextLabel": "内置目录参考，服务配置可能不同"
+        }
+      },
+      "probe": {
+        "metadata": {
+          "id": "deepseek-v4-flash",
+          "contextWindow": 1000000,
+          "contextSource": "catalog",
+          "contextLabel": "内置目录参考，服务配置可能不同"
+        },
+        "generation": {
+          "status": "passed"
+        },
+        "tools": {
+          "status": "passed"
+        }
+      },
+      "settings_untouched": true
+    }
+  ],
+  "source_hashes": {
+    "agent_bridge\\src\\agent_bridge\\model_connections\\inspection.py": "1cc7cee5fb2425000b0d427411f53b30f0c8cf75c0684b8a54bf019bedede1f4",
+    "agent_bridge\\src\\agent_bridge\\model_connections\\routes.py": "c8b56f9d29956948b99c9544aff853c353862cb309a1d5bac76c474282a9a80b",
+    "agent_bridge\\src\\agent_bridge\\model_connections\\runtime.py": "f67dd949401051b08dc514a7167b7fa97076ea4619ea2fa2cab5f00258dd51f4",
+    "agent_bridge\\src\\agent_bridge\\model_connections\\__init__.py": "3dd7c2ece51b7e9bd0b1a03093179624d724096af27395da4599c61e20ac41b9",
+    "llm_providers\\src\\llm_providers\\connections\\codec.py": "891005e88f6f1617c9447e37ed69349417b1424d1b1e7fe1b978caa47e5c8d9b",
+    "llm_providers\\src\\llm_providers\\connections\\definitions.py": "5551e4b9455212c98fd5ea6ec0499d423c6d40ce35510e06a73a3fc4520b8ac8",
+    "llm_providers\\src\\llm_providers\\connections\\directory.py": "b92e2f6dbd543555b52faed3fe5fb9d4b0107a55a330e954017dc490ca6ab4c6",
+    "llm_providers\\src\\llm_providers\\connections\\metadata.py": "50dd486fe5cdf13368c10397b4102de12b5c3e0fdc8e6da7a352cb11b3868c4d",
+    "llm_providers\\src\\llm_providers\\connections\\__init__.py": "2db3fb65cc508d7e7bc9397e68cf2023282caea960da9e233bc4a1152d5b598e",
+    "scripts\\model-connections-smoke\\capability_smoke.py": "207f0f5656c58d1ea0795a3c5f8833999e40b8ea77517f50fd853ebb20e3c65e",
+    "scripts\\model-connections-smoke\\cpa.py": "f35c06e55835bca67f40251ffc29ce8cb3d083a54fd8344ceacc51b958352c9e",
+    "scripts\\model-connections-smoke\\inspection_smoke.py": "48f0529c812e9fe2c38c032cbac61775cf32e46262d5be4cda5a6c03a3f81b5f",
+    "scripts\\model-connections-smoke\\run.py": "839bf3e2ff5574897350951e910a14bc473f1ed417c4743ca8956ff7f19e4d4b"
+  }
+}

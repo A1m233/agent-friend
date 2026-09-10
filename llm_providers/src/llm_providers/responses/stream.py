@@ -424,8 +424,10 @@ def stream_responses(
     diagnostic_attempt: int,
     timeout_seconds: float,
     previous_request_witness: ProviderRequestWitness | None,
+    stream_response: bool = True,
 ) -> Iterator[LLMStreamEvent]:
     request = prepare_request(spec, messages, tools, overrides)
+    request["stream"] = stream_response
     request["timeout"] = min(float(request.get("timeout", timeout_seconds)), timeout_seconds)
     started = time.monotonic()
     state = ResponsesState(spec)

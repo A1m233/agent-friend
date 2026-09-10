@@ -1,0 +1,146 @@
+{
+  "endpoint": "http://127.0.0.1:8317/v1/responses",
+  "model": "gpt-5.6-luna",
+  "context_window_fixture": 100000,
+  "scenarios": {
+    "tool-loop": {
+      "model": "openai/gpt-5.6-luna",
+      "reasoning_preset": "upstream_default",
+      "protocol": "responses",
+      "calls": [
+        {
+          "turn": 1,
+          "event_counts": {},
+          "phase_counts": {}
+        }
+      ],
+      "passed": false,
+      "scenario": "tool-loop",
+      "custom_connection": true,
+      "error": {
+        "type": "LLMTransientProviderError",
+        "status_code": 500,
+        "provider_code": "internal_server_error",
+        "provider_type": "server_error",
+        "provider_message": "Post \"https://chatgpt.com/backend-api/codex/responses\": utls: dial upstream: dial tcp [2a03:2880:f134:83:face:b00c:0:25de]:443: connectex: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond."
+      },
+      "wire_requests": [
+        {
+          "method": "POST",
+          "host": "127.0.0.1",
+          "scheme": "http",
+          "port": 8317,
+          "path": "/v1/responses",
+          "body_sha256": "016f25c23c15b5c23043e964e56dae9c3bf4295d745b7ec8872649132662ff8a"
+        }
+      ],
+      "real_requests": 1
+    },
+    "nonstream-json": {
+      "model": "openai/gpt-5.6-luna",
+      "reasoning_preset": "upstream_default",
+      "protocol": "responses",
+      "calls": [],
+      "passed": false,
+      "scenario": "nonstream-json",
+      "custom_connection": true,
+      "error": {
+        "type": "LLMTransientProviderError",
+        "status_code": 503,
+        "provider_code": "internal_server_error",
+        "provider_type": "server_error",
+        "provider_message": "auth_unavailable: no auth available (providers=codex, model=gpt-5.6-luna; last upstream error: Post \"https://chatgpt.com/backend-api/codex/responses\": utls: dial upstream: dial tcp [2a03:2880:f134:83:face:b00c:0:25de]:443: connectex: A connection attempt failed because the connected party did not properly respond after a period of time, or establ...)"
+      },
+      "wire_requests": [
+        {
+          "method": "POST",
+          "host": "127.0.0.1",
+          "scheme": "http",
+          "port": 8317,
+          "path": "/v1/responses",
+          "body_sha256": "d2025a6fc2fd53ea168459cbfd396eb42d92846713b7b7e135633258a239741b"
+        }
+      ],
+      "real_requests": 1
+    },
+    "background": {
+      "route": "cpa-responses",
+      "model": "custom/00000000-0000-0000-0000-000000000079/00000000-0000-0000-0000-00000000007a",
+      "custom_connection": true,
+      "stages": {},
+      "calls": [
+        {
+          "operation": "memory_extraction",
+          "kind": "base_extraction"
+        }
+      ],
+      "compaction_fixture": {
+        "effective_window": 100000,
+        "emergency_ratio": 0.03,
+        "trigger_threshold": 2400,
+        "summary_output_budget": 4096
+      },
+      "passed": false,
+      "error": {
+        "type": "AssertionError",
+        "assertion": "memory profile was not persisted"
+      }
+    }
+  },
+  "source": {
+    "head": "8cf97e931cf47188522ff3cfc44682a1eaf369fa",
+    "files_sha256": {
+      "scripts/responses-smoke/run.py": "6644896ab2c72ab7977dbfda1720e04d1ce441ee1eb769883d54430aaaf4c211",
+      "uv.lock": "ef4200b13dd2e43668413c573a02cb879bf8d0714bca5e2e621d91e031b57ea3",
+      "llm_providers/src/llm_providers/__init__.py": "ed2e402ad049e90abbb1c8d1bb7e75bfcd44480d89a6230f38b02d157eda1209",
+      "llm_providers/src/llm_providers/binding.py": "c7a6e4375d6743d03c816a878607375f3adc3521e333364dc649424bb5ac498f",
+      "llm_providers/src/llm_providers/cancellable_stream.py": "64f05fa02b8cb31db0ac5eb59a24424fb953f5c134a726469476a16cb7fb77d1",
+      "llm_providers/src/llm_providers/catalog.py": "074d8773d333b870e3259088e5741b48f723b1798a01816e74f17bb1bb22895f",
+      "llm_providers/src/llm_providers/chat_request.py": "ff1666c880d6e7702074ba7601735255fd432237fe44772e696f0e76e38b71bb",
+      "llm_providers/src/llm_providers/client.py": "5c74a55cd1e8522237611002a9c50accba38ffed61a503d1d034d72ebbad1826",
+      "llm_providers/src/llm_providers/connections/__init__.py": "2db3fb65cc508d7e7bc9397e68cf2023282caea960da9e233bc4a1152d5b598e",
+      "llm_providers/src/llm_providers/connections/codec.py": "dcad034f59fb8e122c2c082e86d44965e213e1a8b683992a77b074caf931f259",
+      "llm_providers/src/llm_providers/connections/definitions.py": "67030533b5b0f5f2ce532a9afc09ff6bcdf5169bd778301d9b524d84603af9f5",
+      "llm_providers/src/llm_providers/connections/directory.py": "3903d1f64e6ce7591a23daa840d65c9c7415c795022844e1c97abaac42d8bea5",
+      "llm_providers/src/llm_providers/credential_validation.py": "75cf03eaa880c4ad717b6e1f183c94a3ebfe2738bc739fbd4cdf92a7b5f5f163",
+      "llm_providers/src/llm_providers/deepseek_vision_compat.py": "613b85860e634d1458c2ac9f169361e1282a3ae38b70690a4b119a1135264968",
+      "llm_providers/src/llm_providers/error_normalization.py": "c3b47f5bb8905f0755929db2b0937ca958ba4a30691e3abf45f6c55ee248cbeb",
+      "llm_providers/src/llm_providers/errors.py": "d18d0a9e0b6c0fe9714e2c0ade78e61ff5677df5005fc24335d95ca60ed47ec8",
+      "llm_providers/src/llm_providers/factory.py": "53d54ff37f7079bd2473881e5ff8396643f0d588fb9e7126e69c54b6cae4b504",
+      "llm_providers/src/llm_providers/final_result.py": "d7ea296da9880b09e03b70f161556da9623b7b58391bb28478b4363cc72a58ff",
+      "llm_providers/src/llm_providers/kimi_transport.py": "49fead5ac70196faa25d2521d1d16e32550a6b7544d448d7b44c7ab77e60755a",
+      "llm_providers/src/llm_providers/litellm_transport.py": "d1988c3ff5f828afbb4001b18ab22f89a4b7673eba93a89a8dc99bedecb50d4b",
+      "llm_providers/src/llm_providers/model_identity.py": "0ad0fbb1e9d27bc12cd13939cbb96934daf99077faa95c85b4046d88f90415b2",
+      "llm_providers/src/llm_providers/multimodal/__init__.py": "e16a0f24b0ee396569c2ace80c0738202ef2aea4646a174d67bd4404fb465f02",
+      "llm_providers/src/llm_providers/multimodal/adapter.py": "4e98239b8402ff4f902514bdae8b94ed1953e9ff18ab1768d107a9640206bb9d",
+      "llm_providers/src/llm_providers/prompt_cache_lineage.py": "c01d373e157b972e0207df90a5c1fad5fe09751654ca8d438edfe64e7abd9401",
+      "llm_providers/src/llm_providers/prompt_cache_observation.py": "70f40e020636c0fdff86e742d8e06fbcba784b3ae302b46d45128d261b568fae",
+      "llm_providers/src/llm_providers/protocol.py": "7245dae4975f88317bd1e2f432b3a328071495da9a399421ecb0116888caab76",
+      "llm_providers/src/llm_providers/reasoning.py": "b78ff6911cd7817375d2f65236b82afebc7774c31665a46f6136a66e281b6663",
+      "llm_providers/src/llm_providers/request_witness.py": "f7cc4095e6f39b12fd19b38042105cca52082e7cf1c5362ae6f603bcf2ca35ef",
+      "llm_providers/src/llm_providers/responses/__init__.py": "2facf1639f5a9e4bdcb07f40016c6a79821e2d732edaa4ebfe0c044212f12e4b",
+      "llm_providers/src/llm_providers/responses/generate.py": "38feab1ddb87bb3affb7c59fb26242c477a81d3cf24045bd116a1629f1e5bb52",
+      "llm_providers/src/llm_providers/responses/request.py": "cb104a25c15c1c2f05fd5e6e075cc9d2eccc38992c5284e7bf509cccf8c97c91",
+      "llm_providers/src/llm_providers/responses/stream.py": "21d592becfa373f6d48b8275c6394e1bc006345a228bc875f04b09bd8bb06b87",
+      "llm_providers/src/llm_providers/responses/transport.py": "8194d10dedbcf5de7a434497443e8547d4015e97ba69654a2cd8441368a0b0cf",
+      "llm_providers/src/llm_providers/spec.py": "c2d63c614cd791df1c81586912c7e8571151485dee8202e05522e37fd886fcb5",
+      "llm_providers/src/llm_providers/stream_events.py": "0a0747cd4c5069187c8b8edb6f7eb2d46c395e60b9e75b34e30bd93ac3283d4d",
+      "llm_providers/src/llm_providers/usage.py": "8892c4c66f858d8b98186bbf8dd92b89767603bf35ea3192f913dd0e6384722e"
+    },
+    "source_sha256": "b1c13340d45e54948b2158fff75c5e5ff089c1f999788acc17c93c5836164add"
+  },
+  "discovery": {
+    "passed": true,
+    "endpoint": "http://127.0.0.1:8317/v1/models"
+  },
+  "background_wire_requests": [
+    {
+      "method": "POST",
+      "host": "127.0.0.1",
+      "scheme": "http",
+      "port": 8317,
+      "path": "/v1/responses",
+      "body_sha256": "0fbe42d940ff7ed497320eaf27428597d4ab2ee339663e840a88e1447cde6c00"
+    }
+  ]
+}

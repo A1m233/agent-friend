@@ -1,9 +1,13 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { ReasoningSelection } from "@/components/model-config/ReasoningSelection";
 import { RefreshCw } from "lucide-react";
 import {
-  Badge,
   Button,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
   Select,
   SelectContent,
   SelectItem,
@@ -18,6 +22,7 @@ import {
   useModelCatalogStore,
 } from "@/lib/model-config";
 import {
+  runtimeCredentialOperationBusy,
   type RuntimeConfigGroup,
   type RuntimeCredentialFieldMutation,
   type RuntimeCredentialGroupSnapshot,
@@ -33,6 +38,8 @@ import {
   useRuntimeCredentialStore,
 } from "@/stores";
 import { RuntimeCredentialGroupEditor } from "./RuntimeCredentialGroupEditor";
+import { RuntimeCredentialSection } from "./RuntimeCredentialSection";
+import { CustomConnections } from "./CustomConnections";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageLayout } from "./SettingsPageLayout";
 import { SettingsRow } from "./SettingsRow";
@@ -67,6 +74,7 @@ function ModelSelectionRows({
   const catalog = useModelCatalogStore((state) => state.catalog);
   const providers = modelProvidersFromCatalog(catalog);
   const models = providerModelsFromCatalog(catalog, selection.provider);
+  const reasoning = models.find((model) => model.id === selection.model)?.reasoning;
 
   return (
     <>
@@ -111,22 +119,8 @@ function ModelSelectionRows({
           </SelectContent>
         </Select>
       </SettingsRow>
+      {reasoning && <SettingsRow label="推理强度"><ReasoningSelection definition={reasoning} value={selection.reasoningPreset ?? reasoning.defaultPreset} disabled={disabled} onChange={(reasoningPreset) => void onChange({ ...selection, reasoningPreset })} /></SettingsRow>}
     </>
-  );
-}
-
-function ProviderRow({ value, label }: { value: string; label: string }) {
-  return (
-    <SettingsRow label="供应商">
-      <Select value={value} disabled>
-        <SelectTrigger className="min-w-48">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={value}>{label}</SelectItem>
-        </SelectContent>
-      </Select>
-    </SettingsRow>
   );
 }
 
@@ -187,7 +181,32 @@ function CredentialEditor({
   );
 }
 
+const MODEL_CREDENTIALS = [
+  { id: "deepseek", title: "DeepSeek", description: "DeepSeek 官方模型" },
+  { id: "kimi", title: "Kimi", description: "Moonshot AI 模型" },
+] as const;
+const SERVICE_CREDENTIALS = [
+  { id: "tavily", title: "网络搜索", description: "Tavily" },
+  { id: "amap", title: "地图与地点", description: "高德地图" },
+  { id: "qWeather", title: "天气", description: "和风天气" },
+  { id: "volcVoice", title: "语音通话与语音输入", description: "火山引擎" },
+] as const;
+type CredentialTab = "models" | "services";
+function tabForGroup(group?: RuntimeConfigGroup): CredentialTab {
+  return SERVICE_CREDENTIALS.some((item) => item.id === group) ? "services" : "models";
+}
+
 export function RuntimeConfigPanel({ focusGroup }: { focusGroup?: RuntimeConfigGroup }) {
+  const [tab, setTab] = useState<CredentialTab>(() => tabForGroup(focusGroup));
+  const [expanded, setExpanded] = useState<Partial<Record<RuntimeConfigGroup, boolean>>>(
+    () => focusGroup ? { [focusGroup]: true } : {},
+  );
+  const [scrollGroup, setScrollGroup] = useState<RuntimeConfigGroup>();
+  const revealGroup = useCallback((id: RuntimeConfigGroup) => {
+    setTab(tabForGroup(id));
+    setExpanded((current) => ({ ...current, [id]: true }));
+    setScrollGroup(id);
+  }, []);
   const [chatModel] = useSetting("chatModel");
   const [memoryModel] = useSetting("memoryModel");
   const [savingModel, setSavingModel] = useState<"chatModel" | "memoryModel" | null>(null);
@@ -221,13 +240,17 @@ export function RuntimeConfigPanel({ focusGroup }: { focusGroup?: RuntimeConfigG
     void loadModelCatalog();
   }, [loadModelCatalog]);
   useEffect(() => {
-    if (!focusGroup) return;
-    window.setTimeout(() => {
-      document
-        .getElementById(`runtime-credential-${focusGroup}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (focusGroup) revealGroup(focusGroup);
+  }, [focusGroup, revealGroup]);
+  useEffect(() => {
+    if (!scrollGroup) return;
+    const timer = window.setTimeout(() => {
+      document.getElementById(`runtime-credential-${scrollGroup}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      setScrollGroup(undefined);
     }, 0);
-  }, [focusGroup]);
+    return () => window.clearTimeout(timer);
+  }, [scrollGroup]);
 
   const group = (id: RuntimeConfigGroup) => groups.find((item) => item.group === id);
 
@@ -245,7 +268,7 @@ export function RuntimeConfigPanel({ focusGroup }: { focusGroup?: RuntimeConfigG
         return;
       }
       if (result.applied) {
-        toast.success("记忆模型已保存并生效", { description: "对话服务已自动重启" });
+        toast.success("记忆模型已保存", { description: "下一次记忆任务使用新配置，正在运行的任务保持原配置。" });
       } else {
         toast.warning("记忆模型已保存，但尚未应用", {
           description: result.applyError ?? undefined,
@@ -262,10 +285,7 @@ export function RuntimeConfigPanel({ focusGroup }: { focusGroup?: RuntimeConfigG
           friendly.code === "credential_missing" && credentialGroup
             ? {
                 label: "配置凭据",
-                onClick: () =>
-                  document
-                    .getElementById(`runtime-credential-${credentialGroup}`)
-                    ?.scrollIntoView({ behavior: "smooth", block: "center" }),
+                onClick: () => revealGroup(credentialGroup),
               }
             : undefined,
       });
@@ -282,77 +302,60 @@ export function RuntimeConfigPanel({ focusGroup }: { focusGroup?: RuntimeConfigG
     retryValidation,
   };
 
+  const busy = savingModel !== null || groups.some((item) =>
+    runtimeCredentialOperationBusy(item.operation) || item.operation.phase === "awaitingConfirmation",
+  );
+  const renderCredentials = (items: readonly { id: RuntimeConfigGroup; title: string; description: string }[]) =>
+    items.map((item) => (
+      <RuntimeCredentialSection key={item.id} id={`runtime-credential-${item.id}`}
+        title={item.title} description={item.description} snapshot={group(item.id)}
+        open={expanded[item.id] ?? false}
+        onOpenChange={(open) => setExpanded((current) => ({ ...current, [item.id]: open }))}>
+        <CredentialEditor group={item.id} snapshot={group(item.id)} {...editorProps} />
+      </RuntimeCredentialSection>
+    ));
+
   return (
-    <SettingsPageLayout
-      title="模型与凭据"
-      actions={
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => void refresh()}
-          loading={loading}
-          disabled={loading}
-        >
-          {!loading && <RefreshCw className="size-4" />}
-          刷新
-        </Button>
-      }
-    >
-      <SettingsGroup
-        title={NEW_CONVERSATION_DEFAULT_MODEL_COPY.groupTitle}
-        description={NEW_CONVERSATION_DEFAULT_MODEL_COPY.groupDescription}
-      >
-        <ModelSelectionRows
-          selection={chatModel}
-          purpose="chat"
-          modelLabel={NEW_CONVERSATION_DEFAULT_MODEL_COPY.modelLabel}
-          onChange={(selection) => saveModelSetting("chatModel", selection)}
-          disabled={savingModel !== null}
-        />
-      </SettingsGroup>
-
-      <SettingsGroup title="记忆模型">
-        <ModelSelectionRows
-          selection={memoryModel}
-          purpose="memory"
-          modelLabel="记忆模型"
-          onChange={(selection) => saveModelSetting("memoryModel", selection)}
-          disabled={savingModel !== null}
-        />
-      </SettingsGroup>
-
-      <SettingsGroup id="runtime-credential-deepseek" title="DeepSeek 凭据">
-        <CredentialEditor group="deepseek" snapshot={group("deepseek")} {...editorProps} />
-      </SettingsGroup>
-      <SettingsGroup id="runtime-credential-kimi" title="Kimi 凭据">
-        <CredentialEditor group="kimi" snapshot={group("kimi")} {...editorProps} />
-      </SettingsGroup>
-      {/* OpenRouter 暂不维护：隐藏配置入口，保留存量设置、凭据与后端兼容。 */}
-
-      {error ? <div className="text-sm text-danger">{error}</div> : null}
-
-      <SettingsGroup id="runtime-credential-tavily" title="Web Search">
-        <ProviderRow value="tavily" label="Tavily" />
-        <CredentialEditor group="tavily" snapshot={group("tavily")} {...editorProps} />
-      </SettingsGroup>
-
-      <SettingsGroup id="runtime-credential-amap" title="地图与地点">
-        <ProviderRow value="amap" label="高德地图" />
-        <CredentialEditor group="amap" snapshot={group("amap")} {...editorProps} />
-      </SettingsGroup>
-
-      <SettingsGroup id="runtime-credential-qWeather" title="天气">
-        <ProviderRow value="qweather" label="和风天气" />
-        <CredentialEditor group="qWeather" snapshot={group("qWeather")} {...editorProps} />
-      </SettingsGroup>
-
-      <SettingsGroup id="runtime-credential-volcVoice" title="语音通话与语音输入">
-        <SettingsRow label="供应商">
-          <Badge variant="secondary">火山引擎</Badge>
-        </SettingsRow>
-        <CredentialEditor group="volcVoice" snapshot={group("volcVoice")} {...editorProps} />
-      </SettingsGroup>
+    <SettingsPageLayout title="模型与凭据" actions={
+      <Button type="button" variant="ghost" size="sm" onClick={() => void refresh()}
+        loading={loading} disabled={loading || busy}>
+        {!loading && <RefreshCw className="size-4" />}刷新
+      </Button>
+    }>
+      <p className="text-sm text-muted">选择使用的模型，管理模型和服务的访问凭据。</p>
+      {error ? <div role="alert" className="text-sm text-danger">{error}</div> : null}
+      <Tabs value={tab} onValueChange={(value) => setTab(value as CredentialTab)} className="gap-4">
+        <TabsList aria-label="模型与凭据分类">
+          <TabsTrigger value="models" disabled={busy}>模型</TabsTrigger>
+          <TabsTrigger value="services" disabled={busy}>服务凭据</TabsTrigger>
+        </TabsList>
+        <TabsContent value="models" forceMount hidden={tab !== "models"} className="space-y-4 data-[state=inactive]:hidden">
+          <SettingsGroup title="默认模型" description="为对话和记忆处理分别选择模型。">
+            <div className="space-y-2">
+              <h4 className="text-sm font-medium">{NEW_CONVERSATION_DEFAULT_MODEL_COPY.groupTitle}</h4>
+              <p className="text-xs leading-relaxed text-muted">{NEW_CONVERSATION_DEFAULT_MODEL_COPY.groupDescription}</p>
+              <ModelSelectionRows selection={chatModel} purpose="chat"
+                modelLabel={NEW_CONVERSATION_DEFAULT_MODEL_COPY.modelLabel}
+                onChange={(selection) => saveModelSetting("chatModel", selection)} disabled={busy} />
+            </div>
+            <div className="space-y-2 border-t border-border pt-4">
+              <h4 className="text-sm font-medium">记忆模型</h4>
+              <ModelSelectionRows selection={memoryModel} purpose="memory" modelLabel="记忆模型"
+                onChange={(selection) => saveModelSetting("memoryModel", selection)} disabled={busy} />
+            </div>
+          </SettingsGroup>
+          <SettingsGroup title="模型供应商" description="配置对应供应商的 API Key，供模型调用使用。">
+            <div>{renderCredentials(MODEL_CREDENTIALS)}</div>
+          </SettingsGroup>
+          {/* OpenRouter 暂不维护：保留存量设置及后端兼容，不展示编辑入口。 */}
+          <CustomConnections />
+        </TabsContent>
+        <TabsContent value="services" forceMount hidden={tab !== "services"} className="space-y-4 data-[state=inactive]:hidden">
+          <SettingsGroup title="服务凭据" description="按需配置搜索、地图、天气和语音服务。">
+            <div>{renderCredentials(SERVICE_CREDENTIALS)}</div>
+          </SettingsGroup>
+        </TabsContent>
+      </Tabs>
     </SettingsPageLayout>
   );
 }

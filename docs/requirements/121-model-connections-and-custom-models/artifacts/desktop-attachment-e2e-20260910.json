@@ -1,0 +1,32 @@
+{
+  "firstAnswer": "左侧：蓝色\n右侧：红色\nPDF代码：amber-583\nTXT归档代码：silver-917",
+  "messageIds": [
+    "09734efd-21be-48f5-b15a-e8850642bba2",
+    "4fac3aaa-25e4-434a-8515-845cbaf7a483"
+  ],
+  "model": "当前模型：my cpa · gpt-5.6-luna，推理强度：low",
+  "afterBridgeRestartAnswers": [
+    "左侧：蓝色  右侧：红色  PDF代码：amber-583  TXT归档代码：silver-917",
+    "左侧：蓝色  右侧：红色  PDF代码：amber-583  TXT归档代码：silver-917"
+  ],
+  "sessionId": "c893b889-48f5-4b1d-9819-896b36fa23ab",
+  "sessionPersisted": true,
+  "finalMessageCount": 4,
+  "restartCaveat": "Native restart left old Bridge PID 7836 and launcher 53520 alive holding writer lease; explicitly cleaned verified task-owned stale processes before successful replay. New Bridge PID 51516.",
+  "persisted_terminal_states": [
+    {
+      "run_id": "449ee3bf-edef-46de-b72c-b48215767175",
+      "status": "completed"
+    },
+    {
+      "run_id": "9c85998d-42ce-4d0c-9bb6-5e10796314ad",
+      "status": "completed"
+    }
+  ],
+  "source_hashes": {
+    "llm_providers\\src\\llm_providers\\multimodal\\adapter.py": "ea1fb524b240c1041bef50079c6041f42765d38077deba7255e02be94e77ba7d",
+    "llm_providers\\src\\llm_providers\\connections\\directory.py": "b92e2f6dbd543555b52faed3fe5fb9d4b0107a55a330e954017dc490ca6ab4c6",
+    "agent_bridge\\src\\agent_bridge\\attachment_inputs.py": "0e132038ae3b21fcfbc93806b273282f53099520912aece782e2765794d2d371",
+    "frontend\\src\\pages\\chat\\components\\Composer.tsx": "eac8d8526ec82a97f85560125c055509ecfac2f9e62e20a9eb8065f909466759"
+  }
+}

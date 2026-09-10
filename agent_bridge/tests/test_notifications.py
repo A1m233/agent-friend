@@ -342,10 +342,26 @@ def test_todo_notification_keeps_its_todo_title_when_session_has_a_display_title
     assert generator.calls == 0
 
 
-def test_prompt_uses_settings_minimum_persona_and_filtered_memory(tmp_path: Path) -> None:
+@pytest.mark.parametrize("phased", [False, True])
+@pytest.mark.parametrize(
+    "provider,model,preset,budget",
+    [
+        ("kimi", "kimi/kimi-k3", "low", 2048),
+        ("deepseek", "deepseek/deepseek-v4-flash", "off", 512),
+        (
+            "custom",
+            "custom/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000002",
+            "none",
+            2048,
+        ),
+    ],
+)
+def test_prompt_uses_settings_minimum_persona_and_filtered_memory(
+    tmp_path: Path, phased: bool, provider: str, model: str, preset: str, budget: int
+) -> None:
     reader = DesktopSettingsReader(tmp_path / "settings.json")
     reader.path.write_text(
-        json.dumps({"chatModel": {"provider": "kimi", "model": "kimi/kimi-k3"}}), encoding="utf-8"
+        json.dumps({"chatModel": {"provider": provider, "model": model}}), encoding="utf-8"
     )
     persona = EffectivePersonaStore(
         user_file=tmp_path / "persona.md",
@@ -364,9 +380,26 @@ def test_prompt_uses_settings_minimum_persona_and_filtered_memory(tmp_path: Path
     configs: list[Any] = []
 
     def stream(request: ModelRequest) -> Iterator[LLMTextDelta | LLMTurnDone]:
+        from llm_providers import ProviderAssistantItem, ProviderAssistantTurn
+
         requests.append(request)
-        yield LLMTextDelta("照片有新回复，回来看看吧。")
-        yield LLMTurnDone("end_turn")
+        text = "照片有新回复，回来看看吧。"
+        if phased:
+            yield LLMTextDelta("过程说明" * 100, phase="commentary")
+            yield LLMTextDelta(text, phase="final_answer")
+            yield LLMTurnDone(
+                "end_turn",
+                assistant_turn=ProviderAssistantTurn(
+                    "过程说明" * 100 + text,
+                    text_items=(
+                        ProviderAssistantItem("progress", 0, "过程说明" * 100, "commentary"),
+                        ProviderAssistantItem("final", 1, text, "final_answer"),
+                    ),
+                ),
+            )
+        else:
+            yield LLMTextDelta(text)
+            yield LLMTurnDone("end_turn")
 
     def factory(config: Any) -> Any:
         configs.append(config)
@@ -376,8 +409,12 @@ def test_prompt_uses_settings_minimum_persona_and_filtered_memory(tmp_path: Path
     gen = NotificationGenerator(
         reader=reader, factory=cast(Any, factory), persona=persona, memory=cast(Any, memory)
     )
-    assert gen.generate(fact(), stopping=threading.Event(), still_valid=lambda: True)
-    assert configs[0].reasoning_preset == "low"
+    assert (
+        gen.generate(fact(), stopping=threading.Event(), still_valid=lambda: True)
+        == "照片有新回复，回来看看吧。"
+    )
+    assert configs[0].reasoning_preset == preset
+    assert requests[0].settings["max_tokens"] == budget
     assert requests[0].tools is None
     assert not requests[0].control.allow_retries
     text = str(requests[0].messages)

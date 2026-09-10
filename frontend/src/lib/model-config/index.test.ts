@@ -10,6 +10,7 @@ import {
   providerModelsFromCatalog,
   modelRuntimeConfigLabel,
   resolveDefaultConversationModel,
+  resolveDefaultConversationRuntimeConfig,
   setModelCatalogForTests,
   type ModelCatalog,
 } from "./index";
@@ -248,4 +249,9 @@ describe("model config", () => {
       model: "kimi/vision",
     });
   });
+});
+
+
+it("preserves explicit default effort without requiring it in the catalog", () => {
+  expect(resolveDefaultConversationRuntimeConfig({ chatModel: { provider: "custom", model: "custom/fixture/model", reasoningPreset: "effort:vendor-next" } })).toEqual({ model: "custom/fixture/model", reasoningPreset: "effort:vendor-next" });
 });

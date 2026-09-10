@@ -1,4 +1,5 @@
 mod model;
+mod process;
 mod supervisor;
 
 pub use model::{RuntimeServiceKind, RuntimeServicePhase, RuntimeServiceSnapshot};

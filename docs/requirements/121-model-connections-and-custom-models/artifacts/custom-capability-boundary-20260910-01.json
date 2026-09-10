@@ -1,0 +1,94 @@
+{
+  "requests": [
+    {
+      "endpoint": "http://127.0.0.1:8317/v1/responses",
+      "model": "gpt-5.6-luna",
+      "reasoning": {
+        "effort": "low"
+      },
+      "types": [
+        "input_text"
+      ],
+      "body_sha256": "f1350b86ee9e6ec2aee533686242a182d645ea6dc80261bdd990a89aa9b85bb7"
+    },
+    {
+      "endpoint": "http://127.0.0.1:8317/v1/responses",
+      "model": "gpt-5.6-luna",
+      "reasoning": {
+        "effort": "low"
+      },
+      "types": [
+        "input_text",
+        "input_image"
+      ],
+      "body_sha256": "f67a510bf80f43b7b7515233bfb32158fafebc8045c191c4ea66c7becda67740"
+    },
+    {
+      "endpoint": "http://127.0.0.1:8317/v1/responses",
+      "model": "gpt-5.6-luna",
+      "reasoning": {
+        "effort": "low"
+      },
+      "types": [
+        "input_text",
+        "input_file"
+      ],
+      "body_sha256": "8a797ea37e4c4562190830a0bf1e0d2e022b5d630ee0fd4c0cfd0070fff3c9d0"
+    }
+  ],
+  "cases": [
+    {
+      "name": "effort",
+      "passed": true,
+      "answer": "OK"
+    },
+    {
+      "name": "image",
+      "passed": true,
+      "answer": "Left: blue  \nRight: red"
+    },
+    {
+      "name": "pdf",
+      "passed": true,
+      "answer": "violet-246"
+    }
+  ],
+  "source_hashes": {
+    "llm_providers\\src\\llm_providers\\binding.py": "c7a6e4375d6743d03c816a878607375f3adc3521e333364dc649424bb5ac498f",
+    "llm_providers\\src\\llm_providers\\cancellable_stream.py": "64f05fa02b8cb31db0ac5eb59a24424fb953f5c134a726469476a16cb7fb77d1",
+    "llm_providers\\src\\llm_providers\\catalog.py": "e1b6ca1e1d0ef3094564785da185dc714bfaca4ea7640d8ec9f8644f1a964ffd",
+    "llm_providers\\src\\llm_providers\\chat_request.py": "afd4f960d4104bbdfdd7d3122f2e65c9372d13aff94bc72e08bc5fbd187e5d81",
+    "llm_providers\\src\\llm_providers\\client.py": "5c74a55cd1e8522237611002a9c50accba38ffed61a503d1d034d72ebbad1826",
+    "llm_providers\\src\\llm_providers\\credential_validation.py": "75cf03eaa880c4ad717b6e1f183c94a3ebfe2738bc739fbd4cdf92a7b5f5f163",
+    "llm_providers\\src\\llm_providers\\custom_reasoning.py": "a0a59f9231a695f8f9155d150175a52e45402fb96a1c7ba18c930b22d051b2a3",
+    "llm_providers\\src\\llm_providers\\deepseek_vision_compat.py": "613b85860e634d1458c2ac9f169361e1282a3ae38b70690a4b119a1135264968",
+    "llm_providers\\src\\llm_providers\\errors.py": "d18d0a9e0b6c0fe9714e2c0ade78e61ff5677df5005fc24335d95ca60ed47ec8",
+    "llm_providers\\src\\llm_providers\\error_normalization.py": "c3b47f5bb8905f0755929db2b0937ca958ba4a30691e3abf45f6c55ee248cbeb",
+    "llm_providers\\src\\llm_providers\\factory.py": "53d54ff37f7079bd2473881e5ff8396643f0d588fb9e7126e69c54b6cae4b504",
+    "llm_providers\\src\\llm_providers\\final_result.py": "d7ea296da9880b09e03b70f161556da9623b7b58391bb28478b4363cc72a58ff",
+    "llm_providers\\src\\llm_providers\\kimi_transport.py": "49fead5ac70196faa25d2521d1d16e32550a6b7544d448d7b44c7ab77e60755a",
+    "llm_providers\\src\\llm_providers\\litellm_transport.py": "d1988c3ff5f828afbb4001b18ab22f89a4b7673eba93a89a8dc99bedecb50d4b",
+    "llm_providers\\src\\llm_providers\\model_identity.py": "0ad0fbb1e9d27bc12cd13939cbb96934daf99077faa95c85b4046d88f90415b2",
+    "llm_providers\\src\\llm_providers\\prompt_cache_lineage.py": "c01d373e157b972e0207df90a5c1fad5fe09751654ca8d438edfe64e7abd9401",
+    "llm_providers\\src\\llm_providers\\prompt_cache_observation.py": "70f40e020636c0fdff86e742d8e06fbcba784b3ae302b46d45128d261b568fae",
+    "llm_providers\\src\\llm_providers\\protocol.py": "7245dae4975f88317bd1e2f432b3a328071495da9a399421ecb0116888caab76",
+    "llm_providers\\src\\llm_providers\\reasoning.py": "b78ff6911cd7817375d2f65236b82afebc7774c31665a46f6136a66e281b6663",
+    "llm_providers\\src\\llm_providers\\request_witness.py": "f7cc4095e6f39b12fd19b38042105cca52082e7cf1c5362ae6f603bcf2ca35ef",
+    "llm_providers\\src\\llm_providers\\spec.py": "a1cab95600ed2e227dd549e58bd8f1325f40e66c385062a64b4bfb7b7cebcd91",
+    "llm_providers\\src\\llm_providers\\stream_events.py": "0a0747cd4c5069187c8b8edb6f7eb2d46c395e60b9e75b34e30bd93ac3283d4d",
+    "llm_providers\\src\\llm_providers\\usage.py": "8892c4c66f858d8b98186bbf8dd92b89767603bf35ea3192f913dd0e6384722e",
+    "llm_providers\\src\\llm_providers\\__init__.py": "ed2e402ad049e90abbb1c8d1bb7e75bfcd44480d89a6230f38b02d157eda1209",
+    "llm_providers\\src\\llm_providers\\connections\\codec.py": "891005e88f6f1617c9447e37ed69349417b1424d1b1e7fe1b978caa47e5c8d9b",
+    "llm_providers\\src\\llm_providers\\connections\\definitions.py": "5551e4b9455212c98fd5ea6ec0499d423c6d40ce35510e06a73a3fc4520b8ac8",
+    "llm_providers\\src\\llm_providers\\connections\\directory.py": "b92e2f6dbd543555b52faed3fe5fb9d4b0107a55a330e954017dc490ca6ab4c6",
+    "llm_providers\\src\\llm_providers\\connections\\metadata.py": "50dd486fe5cdf13368c10397b4102de12b5c3e0fdc8e6da7a352cb11b3868c4d",
+    "llm_providers\\src\\llm_providers\\connections\\__init__.py": "2db3fb65cc508d7e7bc9397e68cf2023282caea960da9e233bc4a1152d5b598e",
+    "llm_providers\\src\\llm_providers\\multimodal\\adapter.py": "ea1fb524b240c1041bef50079c6041f42765d38077deba7255e02be94e77ba7d",
+    "llm_providers\\src\\llm_providers\\multimodal\\__init__.py": "e16a0f24b0ee396569c2ace80c0738202ef2aea4646a174d67bd4404fb465f02",
+    "llm_providers\\src\\llm_providers\\responses\\generate.py": "38feab1ddb87bb3affb7c59fb26242c477a81d3cf24045bd116a1629f1e5bb52",
+    "llm_providers\\src\\llm_providers\\responses\\request.py": "89b0dcb81920edefe39b8f1204f844f1ddb525ec630317859e312060e789043b",
+    "llm_providers\\src\\llm_providers\\responses\\stream.py": "21d592becfa373f6d48b8275c6394e1bc006345a228bc875f04b09bd8bb06b87",
+    "llm_providers\\src\\llm_providers\\responses\\transport.py": "8194d10dedbcf5de7a434497443e8547d4015e97ba69654a2cd8441368a0b0cf",
+    "llm_providers\\src\\llm_providers\\responses\\__init__.py": "2facf1639f5a9e4bdcb07f40016c6a79821e2d732edaa4ebfe0c044212f12e4b"
+  }
+}
