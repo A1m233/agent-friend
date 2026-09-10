@@ -106,6 +106,7 @@ def test_verify_smoke_report_rejects_failed_or_stale_evidence(tmp_path: Path) ->
 
 def test_run_smoke_cleans_isolated_state_on_keyboard_interrupt(monkeypatch) -> None:
     cleaned: list[bool] = []
+    monkeypatch.setattr(installer_smoke, "verify_smoke_environment", lambda: None)
     monkeypatch.setattr(
         installer_smoke,
         "_run_smoke",
@@ -218,3 +219,33 @@ def test_installer_diagnostics_parser_preserves_repeated_phases_and_equals(
 
     assert parsed["phase"] == ["preinstall", "rollback"]
     assert parsed["helperOutput"] == ['{"error":"path=a"}']
+
+
+def test_environment_failure_never_enters_install_or_cleanup(monkeypatch) -> None:
+    def blocked():
+        raise RuntimeError("filesystem redirection")
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("must not install or clean existing smoke state")
+
+    monkeypatch.setattr(installer_smoke, "verify_smoke_environment", blocked)
+    monkeypatch.setattr(installer_smoke, "_run_smoke", unexpected)
+    monkeypatch.setattr(installer_smoke, "cleanup_smoke_state", unexpected)
+    with pytest.raises(RuntimeError, match="filesystem redirection"):
+        installer_smoke.run_smoke(
+            object(),
+            build_report_path=Path("unused"),
+            installed_smoke=None,
+            expected_verification_inputs=_inputs(),
+        )
+
+
+def test_shell_locations_do_not_follow_appdata_overrides(monkeypatch, tmp_path: Path) -> None:
+    folders = {key: tmp_path / key for key in ("local", "roaming", "programs", "desktop")}
+    monkeypatch.setattr(installer_smoke, "shell_paths", lambda: folders)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "wrong-local"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "wrong-roaming"))
+    actual = installer_smoke._windows_paths()
+    assert actual["install"].parent == folders["local"]
+    assert actual["programs"] == folders["programs"]
+    assert actual["desktop"] == folders["desktop"]

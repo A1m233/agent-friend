@@ -23,6 +23,7 @@ from install_contract import (
 )
 from paths import PackageRoots, create_build_paths
 from releases import validate_release_directory
+from windows_shell_paths import shell_paths, verify_smoke_environment
 
 SMOKE_REPORT_SCHEMA = 3
 SMOKE_DISK_MARGIN_BYTES = 512 * 1024 * 1024
@@ -180,8 +181,9 @@ def _resolve_build_report(
 
 
 def _windows_paths() -> dict[str, Path]:
-    local = Path(os.environ["LOCALAPPDATA"]).resolve()
-    roaming = Path(os.environ["APPDATA"]).resolve()
+    folders = shell_paths()
+    local = folders["local"].resolve()
+    roaming = folders["roaming"].resolve()
     install = (local / INSTALLER_SMOKE_PROFILE.install_dir_name).resolve()
     move_parent = (local / "agent-friend-smoke-move").resolve()
     move_install = (move_parent / INSTALLER_SMOKE_PROFILE.install_dir_name).resolve()
@@ -203,6 +205,8 @@ def _windows_paths() -> dict[str, Path]:
     return {
         "local": local,
         "roaming": roaming,
+        "programs": folders["programs"].resolve(),
+        "desktop": folders["desktop"].resolve(),
         "install": install,
         "move_parent": move_parent,
         "move_install": move_install,
@@ -251,15 +255,6 @@ def _delete_exact(path: Path, expected_parent: Path) -> None:
         shutil.rmtree(target)
     elif target.exists():
         target.unlink()
-
-
-def _desktop_dir() -> Path:
-    import winreg
-
-    key_path = r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
-        value, _ = winreg.QueryValueEx(key, "Desktop")
-    return Path(os.path.expandvars(value)).resolve()
 
 
 def _shortcut_target(path: Path) -> Path:
@@ -314,23 +309,11 @@ def cleanup_smoke_state() -> None:
     ):
         winreg.DeleteValue(key, INSTALLER_SMOKE_PROFILE.autostart_value_name)
     for shortcut in (
-        _desktop_dir() / f"{INSTALLER_SMOKE_PROFILE.product_name}.lnk",
-        paths["roaming"]
-        / "Microsoft"
-        / "Windows"
-        / "Start Menu"
-        / "Programs"
-        / f"{INSTALLER_SMOKE_PROFILE.product_name}.lnk",
+        paths["desktop"] / f"{INSTALLER_SMOKE_PROFILE.product_name}.lnk",
+        paths["programs"] / f"{INSTALLER_SMOKE_PROFILE.product_name}.lnk",
     ):
         shortcut.unlink(missing_ok=True)
-    start_menu_product_dir = (
-        paths["roaming"]
-        / "Microsoft"
-        / "Windows"
-        / "Start Menu"
-        / "Programs"
-        / INSTALLER_SMOKE_PROFILE.product_name
-    )
+    start_menu_product_dir = paths["programs"] / INSTALLER_SMOKE_PROFILE.product_name
     programs_dir = start_menu_product_dir.parent
     if start_menu_product_dir.exists():
         _delete_exact(start_menu_product_dir, programs_dir)
@@ -589,6 +572,7 @@ def run_smoke(
     installed_smoke: Any,
     expected_verification_inputs: InstallerVerificationInputs,
 ) -> Path:
+    verify_smoke_environment()
     completed = False
     try:
         output = _run_smoke(
@@ -853,7 +837,7 @@ def _run_smoke(
         if expected_target not in _read_smoke_autostart():
             raise RuntimeError("explicit migration did not switch autostart target")
         expected_executable = (target / f"{INSTALLER_SMOKE_PROFILE.main_binary_name}.exe").resolve()
-        start_menu_root = paths["roaming"] / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+        start_menu_root = paths["programs"]
         start_menu_candidates = (
             start_menu_root / f"{INSTALLER_SMOKE_PROFILE.product_name}.lnk",
             start_menu_root
@@ -864,7 +848,7 @@ def _run_smoke(
             (path for path in start_menu_candidates if path.is_file()),
             None,
         )
-        desktop_shortcut = _desktop_dir() / f"{INSTALLER_SMOKE_PROFILE.product_name}.lnk"
+        desktop_shortcut = paths["desktop"] / f"{INSTALLER_SMOKE_PROFILE.product_name}.lnk"
         if start_menu_shortcut is None or not desktop_shortcut.is_file():
             raise RuntimeError("explicit migration did not produce expected shortcuts")
         for shortcut in (start_menu_shortcut, desktop_shortcut):

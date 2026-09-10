@@ -163,3 +163,5 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 自定义能力边界验证：`scripts/model-connections-smoke/run.* capabilities --allow-llm --output <new.json>`，CPA/Luna 默认 Responses（可传 `--protocol chat_completions`）最多 3 次请求，分别验证显式 low、合成图片及原生 PDF；输出脱敏 wire 元数据，不保存密钥或用户附件。
 
 `capabilities --extended` 单独运行 5 次补充验证：服务默认不传强度、JPEG/WebP、扫描 PDF、TXT；`cpa --effort <value>` 对工具/记忆/压缩/通知矩阵使用显式自定义强度，调用数量仍约 9 次。两端 run 包装透传这些参数。
+
+安装矩阵从 Windows Shell 获取安装默认目录、开始菜单与桌面位置，检查和清理共用同一来源。不要通过覆盖 `APPDATA` / `LOCALAPPDATA` 迁移测试目录；环境不一致或写入被虚拟化时，脚本会在安装和清理之前停止。此时从普通、非虚拟化 Windows 终端运行标准 package 脚本。默认目录安装 case 始终保留，迁移 case 继续显式指定安装目标。
