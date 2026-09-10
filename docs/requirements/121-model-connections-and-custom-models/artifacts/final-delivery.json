@@ -1,0 +1,54 @@
+{
+  "version": "0.3.0",
+  "build_id": "20260910T133334Z-dc9baaea0766-36ed7f59",
+  "build_mode": "local-test",
+  "publishable": false,
+  "sensitive": false,
+  "source": {
+    "commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+    "dirty": true,
+    "tree_sha256": "783224ed743812732f1a34dd01bd60add36fcad05358f01b1f69ab6602410f1d",
+    "guide_baseline": {
+      "source_commit": "cb528b7ba30f0ed708e23772ed35d0289ed034dd",
+      "snapshot_sha256": "4692909c8164eb8bee73aaa8751037b1919918bc949a163ee9b1f0c3b6c3372d",
+      "lifecycle": "transient"
+    }
+  },
+  "installer": {
+    "name": "agent-friend_0.3.0_windows_x64-local-test-NOT-FOR-DISTRIBUTION-setup.exe",
+    "size": 265731094,
+    "sha256": "960a221f461fe4f746939eec6280fc8b38ec199962b58373505b19ec0b6244a4"
+  },
+  "installer_verification": {
+    "schemaVersion": 1,
+    "scope": "windows-installer-shared-behavior-v1",
+    "packageInputSha256": "390e58d999fcbdf50cfab6271196c31ed2bf434dd602c43630127eb72f7167a9",
+    "fileCount": 1157,
+    "buildEnvironment": {
+      "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+      "node": "v22.15.0",
+      "platform_machine": "AMD64",
+      "platform_release": "11",
+      "platform_system": "Windows",
+      "platform_version": "10.0.26200",
+      "pnpm": "10.15.0",
+      "pyinstaller": "6.21.0",
+      "python": "3.12.6",
+      "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+      "source_content_identity": "git-clean-filter-v1",
+      "tauri_cli": "2.11.2"
+    }
+  },
+  "artifact_validation": "passed",
+  "matrix_scenarios_passed": 14,
+  "backend_passed": 2966,
+  "backend_skipped": 5,
+  "frontend_passed": 1244,
+  "rust_passed": 287,
+  "guide_release": "agent-friend-guide-r37",
+  "original_case": "passed: same session resumed after native bridge restart, attachments readable, old processes exited, QQ active/bound",
+  "source_overlay": "Only governed transient Guide r37 baseline; original builtin restored after build.",
+  "production_install": "not performed; original installed app remains running",
+  "temporary_task": "removed",
+  "publication_retry": "Initial atomic directory rename returned WinError 5; standard installer --reuse-build-id retry passed using same build ID."
+}

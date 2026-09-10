@@ -1,7 +1,7 @@
 # 模型设置交互整理与自定义连接 - 进度
 
 ## 当前状态
-VERIFIED：需求及 issue065 原 case 已通过；全量代码检查、完整安装矩阵14/14和独立报告校验通过，用户已授权通过后合入推送。guide r37已发布，进入主干合入和本地测试包交付。
+DONE：需求及issue065原case、全量检查、完整安装矩阵14/14均通过；主干已合入推送，guide r37已发布，本地测试包已生成并完成清单/哈希核验。
 
 此前 requirement/design 均已确认；本轮修订须重新确认。用户于 2026-09-09 授权实现及本需求有界真实 smoke，不需逐次申请；每轮已说明用途和调用量。
 
@@ -202,3 +202,9 @@ artifacts/cpa-effort-low-chain-20260910-01.json：显式 low 下 JSON、工具�
 ### 安装矩阵路径修复与门禁通过
 
 提交894f5b55统一Windows Shell目录、快捷方式校验与清理，并在安装/清理之前拒绝AppData环境覆盖或写入重定向。12项定向回归、全量后端2966 passed/5 skipped通过，前端1244与Rust287项证据保持适用。普通Windows用户工作进程的路径预检通过；构建候选20260910T125916Z-894f5b5567a3-41d06a71，完整安装矩阵14/14通过，installer-smoke-verify独立校验通过。第一次独立校验准备临时Guide时遇到短暂目录重命名拒绝，仓库恢复干净后仅复验校验步骤成功，没有重建或重跑矩阵。报告见../../issues/065-bridge-restart-stale-writer-lease/installer-smoke-passed.json。安装与服务原case均已验收，issue065关闭。
+
+### 交付完成
+
+主干合入提交dc9baaea已推送。已用同一代码树和guide r37构建0.3.0本地测试包，build ID为20260910T133334Z-dc9baaea0766-36ed7f59，SHA-256为960a221f461fe4f746939eec6280fc8b38ec199962b58373505b19ec0b6244a4。release manifest及文件哈希验证通过；源状态dirty仅来自受治理的临时guide基线，构建后原builtin与工作区恢复。首次发布目录原子重命名遇到WinError5，标准installer --reuse-build-id按同build ID复用后重试成功，无覆盖已有制品。
+
+证据见artifacts/final-delivery.json和issue065的installer-smoke-passed.json。临时Windows任务已删除，隔离矩阵自行清理完成；未升级当前安装版，QQ最终检查为active/bound。此包只供本机测试，不可分发。
