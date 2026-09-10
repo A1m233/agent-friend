@@ -5,6 +5,7 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react"
 import { Select as SelectPrimitive } from "radix-ui"
 
 import { cn } from "@/utils/cn"
+import { PortalHost } from "../portal-host"
 
 function Select({
   ...props
@@ -59,7 +60,7 @@ function SelectContent({
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
   return (
-    <SelectPrimitive.Portal>
+    <PortalHost>{(host) => <SelectPrimitive.Portal container={host}>
       <SelectPrimitive.Content
         data-slot="select-content"
         className={cn(
@@ -85,7 +86,7 @@ function SelectContent({
         </SelectPrimitive.Viewport>
         <SelectScrollDownButton />
       </SelectPrimitive.Content>
-    </SelectPrimitive.Portal>
+    </SelectPrimitive.Portal>}</PortalHost>
   )
 }
 
