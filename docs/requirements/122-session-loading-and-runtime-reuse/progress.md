@@ -79,3 +79,6 @@ AC-1～AC-7 尚未全部验收；暖准备及部分真实桌面、并发证据�
 - merge-main-and-push 已调用 Guide 检查。公开 Guide 702b4ac2 clean 且 verified，来源锚点为 ec252027（运行提示卡片／浮层修复），不是当前合入结果或已抓取主干的祖先；共同祖先为 74b15788。按 Skill 停止公开写入与发布，未擅自换基线或把独立修复加入本次交付。分页操作说明需要更新，须先解除来源基线问题。
 - 完整合入复验通过：backend lint／673 文件 typecheck／3002 passed、5 skipped；frontend lint／1247 tests／production build 通过。第三方退出清理和既有 CSS／包体警告保留，命令退出 0。
 - 检查期间远端主干自然推进至 ec252027，Guide 基线问题已解除；后续同步该主干并复验界面交集，不再需要基线豁免。
+- 最终产品合入树为 26a3256f：包含 ec252027，自动合并 MessageList 后保留双方行为；前端完整复验 153 文件／1256 tests、lint／typecheck／production build 通过。后端与通过 3002 tests 的输入无差异，Rust 与上述已验证主干输入无差异。
+- Guide 复核仅新增“加载更早的消息”的用户操作说明，明确旧版本无按钮时沿用原有展示；未承诺固定加载时延。系统 validator 在 Windows 默认 GBK 下首次解码失败，显式使用 Python UTF-8 模式后通过；项目 verify 通过。公开提交 32e79ffc 已推送，并发布 agent-friend-guide-r39，immutable=true，ZIP SHA256 为 21d805000f449a1c2fae7669bf4324808f819b09aee4088680872060d1eb7fa2，兼容 0.3.0 ≤ version < 0.4.0；未同步 builtin 或构建安装包。
+- Guide 来源锚定 26a3256f；随后的本文件仅补交付证据，经复核无用户可见事实变化，无需追加 Guide 发布。当前阶段按用户授权推送 main，未完成的 AC 与剩余加载成本保留待后续治理。
