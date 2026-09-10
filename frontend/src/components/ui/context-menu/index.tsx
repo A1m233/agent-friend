@@ -3,6 +3,7 @@ import { CheckIcon, ChevronRightIcon, CircleIcon } from "lucide-react";
 import { ContextMenu as ContextMenuPrimitive } from "radix-ui";
 
 import { cn } from "@/utils/cn";
+import { PortalHost } from "../portal-host";
 
 /**
  * shadcn/ui ContextMenu（`pnpm dlx shadcn@latest add context-menu` 拉取后按项目目录
@@ -36,10 +37,13 @@ function ContextMenuGroup({
 }
 
 function ContextMenuPortal({
+  container,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Portal>) {
   return (
-    <ContextMenuPrimitive.Portal data-slot="context-menu-portal" {...props} />
+    <PortalHost container={container}>
+      {(host) => <ContextMenuPrimitive.Portal data-slot="context-menu-portal" {...props} container={host} />}
+    </PortalHost>
   );
 }
 
@@ -105,7 +109,7 @@ function ContextMenuContent({
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
   return (
-    <ContextMenuPrimitive.Portal>
+    <ContextMenuPortal>
       <ContextMenuPrimitive.Content
         data-slot="context-menu-content"
         className={cn(
@@ -114,7 +118,7 @@ function ContextMenuContent({
         )}
         {...props}
       />
-    </ContextMenuPrimitive.Portal>
+    </ContextMenuPortal>
   );
 }
 
