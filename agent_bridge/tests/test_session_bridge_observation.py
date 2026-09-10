@@ -14,7 +14,7 @@ def test_bind_persistent_forwards_external_post_turn_ownership() -> None:
     manager = runtime.persistent_session_manager
     session = object()
     conversation = object()
-    manager.open.return_value = session
+    manager.open_for_execution.return_value = session
     manager.start_conversation.return_value = conversation
     bridge = SessionBridge(runtime)
     boot = PersistentBootstrap(
@@ -38,7 +38,7 @@ def test_bind_persistent_applies_initial_auto_only_when_creating_session() -> No
     manager = runtime.persistent_session_manager
     session = object()
     conversation = object()
-    manager.open.side_effect = SessionNotFoundError("session-1")
+    manager.open_for_execution.side_effect = SessionNotFoundError("session-1")
     manager.create.return_value = session
     manager.start_conversation.return_value = conversation
     bridge = SessionBridge(runtime)
@@ -64,7 +64,7 @@ def test_bind_persistent_does_not_override_existing_session_mode() -> None:
     runtime = MagicMock()
     manager = runtime.persistent_session_manager
     session = object()
-    manager.open.return_value = session
+    manager.open_for_execution.return_value = session
     manager.start_conversation.return_value = object()
     bridge = SessionBridge(runtime)
     boot = PersistentBootstrap(

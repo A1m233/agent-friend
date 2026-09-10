@@ -30,6 +30,7 @@ from agent import AttachmentRef, Conversation, SessionNotFoundError
 
 from ...assembly import BridgeRuntime
 from ...attachment_inputs import (
+    AttachmentInput,
     AttachmentInputPlan,
     DraftAttachmentInput,
     prepare_attachment_input,
@@ -80,18 +81,20 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             nonlocal attachment_plan, resolved_attachments
             cancel_check()
             try:
-                session = runtime.persistent_session_manager.open(
+                session = runtime.persistent_session_manager.open_for_execution(
                     decoded.thread_id, cancel_check=cancel_check
                 )
             except SessionNotFoundError:
                 session = None
             cancel_check()
+            attachment_inputs: list[AttachmentInput] = [
+                DraftAttachmentInput(draft_id=item.draft_id, kind=item.kind)
+                for item in decoded.draft_attachments
+            ]
+            prepared_model = session.current_model if session is not None else boot.default_model
             attachment_plan = prepare_run_attachment_input(
-                [
-                    DraftAttachmentInput(draft_id=item.draft_id, kind=item.kind)
-                    for item in decoded.draft_attachments
-                ],
-                model_id=session.current_model if session is not None else boot.default_model,
+                attachment_inputs,
+                model_id=prepared_model,
                 store=runtime.attachment_store,
                 capability_resolver=runtime.attachment_capabilities,
                 cancel_check=cancel_check,
@@ -103,6 +106,15 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 existing_session=session,
             )
             cancel_check()
+            if conv.current_model_config.model_id != prepared_model:
+                # A cold source may have changed before ownership was acquired.
+                # Revalidate drafts against the authoritative restored model.
+                attachment_plan = prepare_run_attachment_input(
+                    attachment_inputs,
+                    model_id=conv.current_model_config.model_id,
+                    store=runtime.attachment_store,
+                    cancel_check=cancel_check,
+                )
             resolved_attachments = attachment_plan.resolve()
             cancel_check()
             return conv

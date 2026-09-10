@@ -95,8 +95,17 @@ export const sessionsApi = {
   /** 单个会话详情只取当前有效事件，避免重复传输原始事件流。 */
   get(sessionId: string): Promise<SessionDetail> {
     return http.get<unknown, SessionDetail>(
-      `/v1/sessions/${encodeURIComponent(sessionId)}?view=active`,
+      `/v1/sessions/${encodeURIComponent(sessionId)}?view=active&turn_limit=30`,
     );
+  },
+
+  getFull(sessionId: string): Promise<SessionDetail> {
+    return http.get<unknown, SessionDetail>(`/v1/sessions/${encodeURIComponent(sessionId)}?view=active`);
+  },
+
+  getOlder(sessionId: string, before: string, epoch: string): Promise<SessionDetail> {
+    const query = new URLSearchParams({ view: "active", turn_limit: "30", before, history_epoch: epoch });
+    return http.get<unknown, SessionDetail>(`/v1/sessions/${encodeURIComponent(sessionId)}?${query}`);
   },
 
   getApprovalMode(sessionId: string): Promise<SessionApprovalModeState> {

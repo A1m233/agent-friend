@@ -308,6 +308,23 @@ class SessionManager:
     def query(self, session_id: str, *, cancel_check: CancelCheck = None) -> SessionQuerySnapshot:
         return query_session(self._store, session_id, cancel_check=cancel_check)
 
+    def open_for_execution(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
+        """Acquire the session used by the serialized execution owner.
+
+        A resident runtime owns its writer lease for its entire lifetime. Reading
+        persistence before looking it up both wastes work and supplies stale
+        configuration to attachment/client preparation. Explicit history reads
+        continue to use ``open``.
+        """
+        check_cancel(cancel_check)
+        state = self._runtime_states.get(session_id)
+        if state is not None:
+            validate = getattr(state.writer_lease, "validate", None)
+            if callable(validate):
+                validate()
+            return state.rollout_recorder.session
+        return self.open(session_id, cancel_check=cancel_check)
+
     def update_model_config(
         self, session_id: str, *, model: str | None, reasoning_preset: str | None
     ) -> ModelRuntimeConfig:
@@ -556,6 +573,9 @@ class SessionManager:
                 在 catalog 找不到。
         """
         check_cancel(cancel_check)
+        state = self._runtime_states.get(session.session_id)
+        if state is not None:
+            session = self.open_for_execution(session.session_id, cancel_check=cancel_check)
         if (
             self._llm_client_factory is None
             or self._prompt_builder_factory is None
@@ -568,49 +588,7 @@ class SessionManager:
         from ..conversation import Conversation  # 避免顶层循环 import
         from ..personas import PersonaCatalog  # 同上
 
-        catalog = PersonaCatalog()
-
-        # 解析当前 persona id：优先 session.current_persona_id；老 session（None）
-        # fallback：按 current_persona_name 查 user 优先
-        persona_id = session.current_persona_id
-        if persona_id is None:
-            from ..errors import PersonaNotFoundError
-
-            try:
-                info = catalog.find_by_name(session.current_persona_name)
-                persona_id = info.id
-            except PersonaNotFoundError:
-                # 老 session 引用的 persona 已不存在 → fallback 到 builtin default
-                import warnings
-
-                from ..personas import BUILTIN_DEFAULT_PERSONA_ID
-
-                warnings.warn(
-                    f"老 session 引用的 persona name "
-                    f"{session.current_persona_name!r} 在 catalog 找不到；"
-                    f"fallback 到 builtin default",
-                    stacklevel=2,
-                )
-                persona_id = BUILTIN_DEFAULT_PERSONA_ID
-
-        check_cancel(cancel_check)
-        llm_client = self._llm_client_factory(session.current_model_config)
-
-        # 007 起：把 factory 包一层，让返回的 PromptBuilder 实例绑当前 session。
-        # 动态 channel 已移出稳定 system prompt，但自定义 builder 仍可能依赖
-        # ``with_session``，因此保留兼容绑定。
-        base_factory = self._prompt_builder_factory
-
-        def _session_aware_factory(pid: str) -> PromptBuilder:
-            builder = base_factory(pid)
-            with_session = getattr(builder, "with_session", None)
-            if callable(with_session):
-                bound: PromptBuilder = with_session(session)
-                return bound
-            return builder
-
-        prompt_builder = _session_aware_factory(persona_id)
-        check_cancel(cancel_check)
+        opened_here = session.session_id not in self._runtime_states
         runtime_state = self._runtime_states.get(session.session_id)
         if runtime_state is None:
             writer_lease = acquire_session_writer_lease(self._store, session.session_id)
@@ -619,40 +597,93 @@ class SessionManager:
                     session, writer_lease, cancel_check=cancel_check
                 )
                 check_cancel(cancel_check)
+                validate = getattr(writer_lease, "validate", None)
+                if callable(validate):
+                    validate()
             except BaseException:
                 writer_lease.release()
                 raise
-            self._runtime_states[session.session_id] = runtime_state
         else:
             session = runtime_state.rollout_recorder.session
-        return Conversation(
-            session=session,
-            store=self._store,
-            llm_client=llm_client,
-            context_manager=runtime_state.context_manager,
-            prompt_builder=prompt_builder,
-            llm_client_factory=self._llm_client_factory,
-            prompt_builder_factory=_session_aware_factory,
-            catalog=catalog,
-            memory=self._memory,
-            tool_registry=self._tool_registry,
-            tool_hook_invoker=tool_hook_invoker,
-            tool_pre_hook=tool_pre_hook,
-            tool_post_hook=tool_post_hook,
-            tool_run_policy=tool_run_policy,
-            tool_run_context_factory=tool_run_context_factory,
-            post_turn_external=post_turn_external,
-            message_renderer=self._message_renderer,
-            skill_service=self._skill_service,
-            session_model_history=runtime_state.model_history,
-            session_model_context=runtime_state.model_context,
-            prompt_cache_trace_tracker=runtime_state.prompt_cache_trace_tracker,
-            cache_epoch=runtime_state.cache_epoch,
-            rollout_recorder=runtime_state.rollout_recorder,
-            time_provider=self._time_provider,
-            approval_mode_provider=lambda: self.approval_mode_state(session),
-            tool_execution_evidence_store=self._tool_execution_evidence_store,
-        )
+        try:
+            catalog = PersonaCatalog()
+
+            # 解析当前 persona id：优先 session.current_persona_id；老 session（None）
+            # fallback：按 current_persona_name 查 user 优先
+            persona_id = session.current_persona_id
+            if persona_id is None:
+                from ..errors import PersonaNotFoundError
+
+                try:
+                    info = catalog.find_by_name(session.current_persona_name)
+                    persona_id = info.id
+                except PersonaNotFoundError:
+                    # 老 session 引用的 persona 已不存在 → fallback 到 builtin default
+                    import warnings
+
+                    from ..personas import BUILTIN_DEFAULT_PERSONA_ID
+
+                    warnings.warn(
+                        f"老 session 引用的 persona name "
+                        f"{session.current_persona_name!r} 在 catalog 找不到；"
+                        f"fallback 到 builtin default",
+                        stacklevel=2,
+                    )
+                    persona_id = BUILTIN_DEFAULT_PERSONA_ID
+
+            check_cancel(cancel_check)
+            llm_client = self._llm_client_factory(session.current_model_config)
+
+            # 007 起：把 factory 包一层，让返回的 PromptBuilder 实例绑当前 session。
+            # 动态 channel 已移出稳定 system prompt，但自定义 builder 仍可能依赖
+            # ``with_session``，因此保留兼容绑定。
+            base_factory = self._prompt_builder_factory
+
+            def _session_aware_factory(pid: str) -> PromptBuilder:
+                builder = base_factory(pid)
+                with_session = getattr(builder, "with_session", None)
+                if callable(with_session):
+                    bound: PromptBuilder = with_session(session)
+                    return bound
+                return builder
+
+            prompt_builder = _session_aware_factory(persona_id)
+            check_cancel(cancel_check)
+            conversation = Conversation(
+                session=session,
+                store=self._store,
+                llm_client=llm_client,
+                context_manager=runtime_state.context_manager,
+                prompt_builder=prompt_builder,
+                llm_client_factory=self._llm_client_factory,
+                prompt_builder_factory=_session_aware_factory,
+                catalog=catalog,
+                memory=self._memory,
+                tool_registry=self._tool_registry,
+                tool_hook_invoker=tool_hook_invoker,
+                tool_pre_hook=tool_pre_hook,
+                tool_post_hook=tool_post_hook,
+                tool_run_policy=tool_run_policy,
+                tool_run_context_factory=tool_run_context_factory,
+                post_turn_external=post_turn_external,
+                message_renderer=self._message_renderer,
+                skill_service=self._skill_service,
+                session_model_history=runtime_state.model_history,
+                session_model_context=runtime_state.model_context,
+                prompt_cache_trace_tracker=runtime_state.prompt_cache_trace_tracker,
+                cache_epoch=runtime_state.cache_epoch,
+                rollout_recorder=runtime_state.rollout_recorder,
+                time_provider=self._time_provider,
+                approval_mode_provider=lambda: self.approval_mode_state(session),
+                tool_execution_evidence_store=self._tool_execution_evidence_store,
+            )
+            check_cancel(cancel_check)
+        except BaseException:
+            if opened_here:
+                runtime_state.writer_lease.release()
+            raise
+        self._runtime_states[session.session_id] = runtime_state
+        return conversation
 
     def _restore_runtime_state(
         self,
@@ -665,7 +696,14 @@ class SessionManager:
         check_cancel(cancel_check)
         if context_manager_factory is None:  # guarded by start_conversation
             raise AgentError("context_manager_factory 未配置")
-        if self._transaction_reconciler is not None and session.business_llm_messages:
+        can_reuse = getattr(self._store, "can_reuse_loaded", None)
+        if callable(can_reuse) and not can_reuse(session):
+            # Opening may precede the writer lease. Revalidate every cold source,
+            # including conversations with no tool transactions to reconcile.
+            session = load_session(self._store, session.session_id, cancel_check=cancel_check)
+        if self._transaction_reconciler is not None and any(
+            event.type == "tool_call_request" for event in session.events
+        ):
             session = self._transaction_reconciler.reconcile_session(
                 session.session_id, cancel_check=cancel_check, loaded_session=session
             ).session

@@ -13,13 +13,17 @@ import shutil
 import socket
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--session-id", required=True)
     parser.add_argument("--directory", type=Path, required=True)
+    parser.add_argument("--source-root", type=Path, help="Reuse an isolated data fixture")
     args = parser.parse_args()
+    if args.source_root is not None:
+        os.environ["AGENT_FRIEND_DATA_DIR"] = str(args.source_root.resolve())
     from agent.paths import personas_dir, sessions_dir
 
     source = sessions_dir() / f"{args.session_id}.jsonl"
@@ -81,6 +85,23 @@ def main() -> None:
         started = time.perf_counter()
         conversation = profile.runcall(manager.start_conversation, session)
         rows.append({"phase": "start_conversation", "ms": (time.perf_counter() - started) * 1000})
+        with (
+            patch.object(manager, "open", side_effect=AssertionError("warm_full_load")),
+            patch.object(
+                manager, "_restore_runtime_state", side_effect=AssertionError("warm_restore")
+            ),
+        ):
+            for iteration in range(3):
+                started = time.perf_counter()
+                resident = manager.open_for_execution(args.session_id)
+                manager.start_conversation(resident)
+                rows.append(
+                    {
+                        "phase": "warm_prepare",
+                        "iteration": iteration,
+                        "ms": (time.perf_counter() - started) * 1000,
+                    }
+                )
         stream = io.StringIO()
         pstats.Stats(profile, stream=stream).strip_dirs().sort_stats("cumulative").print_stats(65)
         (directory / "profile.txt").write_text(stream.getvalue(), encoding="utf-8")

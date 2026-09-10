@@ -18,7 +18,7 @@ describe("sessionsApi.get", () => {
     sessionsApi.get("im:qq/group 1");
 
     expect(http.get).toHaveBeenCalledWith(
-      "/v1/sessions/im%3Aqq%2Fgroup%201?view=active",
+      "/v1/sessions/im%3Aqq%2Fgroup%201?view=active&turn_limit=30",
     );
   });
 });

@@ -33,6 +33,7 @@ from ag_ui.encoder import EventEncoder
 from agent.runtime import ConsumerAbandonPolicy, InteractiveBusyPolicy, UserEvent
 from agent.runtime.cancellation import CancellationToken
 from agent.runtime.models import RunRequest
+from agent.sessions.query import SessionQuerySnapshot
 from agent.system_prompt import DESKTOP_CHAT_SURFACE
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -261,6 +262,9 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             "full",
             description="full 保留原始事件；active 只返回当前有效事件",
         ),
+        turn_limit: int | None = Query(None, ge=1, le=100),
+        before: str | None = Query(None),
+        history_epoch: str | None = Query(None),
     ) -> dict[str, Any]:
         """返回单个 session 的事件列表（纯 REST 不走协议）。
 
@@ -276,7 +280,23 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 revision = mgr.current_revision(session_id)
         except SessionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
-        active_events = [_public_event_dict(ev) for ev in session.active_events]
+        page_info: dict[str, Any] = {}
+        if isinstance(session, SessionQuerySnapshot):
+            page_info = {"history_cursor": None, "history_epoch": session.history_epoch}
+        visible = session.active_events
+        if turn_limit is not None:
+            if not isinstance(session, SessionQuerySnapshot):
+                raise HTTPException(status_code=400, detail="Pagination requires view=active")
+            if history_epoch is not None and history_epoch != session.history_epoch:
+                raise HTTPException(
+                    status_code=409, detail="History changed; reload the latest page"
+                )
+            try:
+                visible, next_cursor = session.page_events(turn_limit=turn_limit, before=before)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            page_info = {"history_cursor": next_cursor, "history_epoch": session.history_epoch}
+        active_events = [_public_event_dict(ev) for ev in visible]
         detail = {
             "session_id": session.session_id,
             "title": session.initial_title,
@@ -287,7 +307,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             **mgr.approval_mode_state(session).to_dict(),
         }
         if view == "active":
-            return {**detail, "active_events": active_events}
+            return {**detail, "active_events": active_events, **page_info}
         return {
             **detail,
             "events": [_public_event_dict(ev) for ev in session.events],
@@ -340,7 +360,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         run_id = body.run_id or uuid4().hex
 
         try:
-            preflight_session = mgr.open(session_id)
+            preflight_session = mgr.query(session_id)
         except SessionNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         target = next(
@@ -437,7 +457,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             )
 
         def _conversation_for_edit() -> Conversation:
-            session = mgr.open(session_id)
+            session = mgr.open_for_execution(session_id)
             return mgr.start_conversation(
                 session,
                 post_turn_external=runtime.agent_runtime is not None,
@@ -522,7 +542,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         run_id = body.run_id if body and body.run_id else uuid4().hex
 
         def _conversation_for_continue() -> Conversation:
-            session = mgr.open(session_id)
+            session = mgr.open_for_execution(session_id)
             return mgr.start_conversation(
                 session,
                 post_turn_external=runtime.agent_runtime is not None,
@@ -668,7 +688,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                         runtime.agent_runtime.try_reserve_session_mutation(session_id)
                     )
                 stack.enter_context(runtime.turn_coordinator.try_hold(session_id))
-                session = mgr.open(session_id)
+                session = mgr.open_for_execution(session_id)
                 conv = mgr.start_conversation(session)
                 conv.switch_persona(persona_info.id)
         except SessionNotFoundError as e:
@@ -753,7 +773,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                         runtime.agent_runtime.try_reserve_session_mutation(session_id)
                     )
                 stack.enter_context(runtime.turn_coordinator.try_hold(session_id))
-                session = mgr.open(session_id)
+                session = mgr.open_for_execution(session_id)
                 conv = mgr.start_conversation(session)
                 conv.switch_channel(body.channel)
         except SessionNotFoundError as e:
