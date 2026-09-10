@@ -1,6 +1,6 @@
 # 065 · Bridge 服务重启遗留旧进程和会话写锁
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：medium
 - **发现日期**：2026-09-10
 - **关联需求**：121-model-connections-and-custom-models
@@ -20,3 +20,5 @@ Windows 当前 worktree 的真实 Tauri 开发态中，原生 restart_runtime_se
 验证记录见需求121 artifacts/desktop-attachment-e2e-20260910.json。
 
 修复自动化与安装验证记录见 [verification.json](verification.json)；原 case 在需求分支的复测状态见 [feature-retest.json](feature-retest.json)。
+
+已在 commit `22e78eb7` 修复；原 case 及完整安装矩阵验证见 [feature-retest.json](feature-retest.json)。

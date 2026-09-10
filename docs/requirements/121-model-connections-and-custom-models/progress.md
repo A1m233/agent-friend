@@ -1,7 +1,7 @@
 # 模型设置交互整理与自定义连接 - 进度
 
 ## 当前状态
-IN_PROGRESS：实现与原 case 复测已完成。用户授权复测通过后合入主干、推送及本地测试包；当前进入交付门禁，安装矩阵与公开 guide 发布尚待完成。
+VERIFIED：需求及 issue065 原 case 已通过；全量代码检查、完整安装矩阵14/14和独立报告校验通过，用户已授权通过后合入推送。guide r37已发布，进入主干合入和本地测试包交付。
 
 此前 requirement/design 均已确认；本轮修订须重新确认。用户于 2026-09-09 授权实现及本需求有界真实 smoke，不需逐次申请；每轮已说明用途和调用量。
 
@@ -198,3 +198,7 @@ artifacts/cpa-effort-low-chain-20260910-01.json：显式 low 下 JSON、工具�
 修复提交22e78eb7，需求提交b4cbd155，最新主干同步提交112553f3，无冲突；同步后后端2961 passed/5 skipped再次通过。公开guide已发布agent-friend-guide-r37（cb528b7，immutable=true），介绍自定义连接、推理强度和附件。
 
 独立issue065候选在短路径隔离环境下安装矩阵12/14通过，首次安装目录预期和迁移开始菜单快捷方式预期仍失败；环境覆盖没有统一NSIS与测试脚本的路径来源。原case通过不替代安装矩阵。主干合入/推送及最终BYOK本地测试包因此尚未执行，issue保持open。详见issue目录installer-smoke-short-root-attempt.json。任务开发实例已停止，原安装版与QQ已恢复，CPA已恢复；未升级用户安装。
+
+### 安装矩阵路径修复与门禁通过
+
+提交894f5b55统一Windows Shell目录、快捷方式校验与清理，并在安装/清理之前拒绝AppData环境覆盖或写入重定向。12项定向回归、全量后端2966 passed/5 skipped通过，前端1244与Rust287项证据保持适用。普通Windows用户工作进程的路径预检通过；构建候选20260910T125916Z-894f5b5567a3-41d06a71，完整安装矩阵14/14通过，installer-smoke-verify独立校验通过。第一次独立校验准备临时Guide时遇到短暂目录重命名拒绝，仓库恢复干净后仅复验校验步骤成功，没有重建或重跑矩阵。报告见../../issues/065-bridge-restart-stale-writer-lease/installer-smoke-passed.json。安装与服务原case均已验收，issue065关闭。

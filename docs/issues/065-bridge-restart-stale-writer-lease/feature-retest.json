@@ -1,14 +1,14 @@
 {
   "recorded_at": "2026-09-10T11:43:54.670735+00:00",
   "branch": "feature/121-model-connections-and-custom-models",
-  "integration": "Committed issue fix 22e78eb7 and BYOK b4cbd155; merged origin/main into feature at 112553f3. Product main not merged or pushed.",
+  "integration": "Issue 065 fix 22e78eb7, BYOK b4cbd155, installer path fix 894f5b55; all merge gates passed.",
   "checks": {
     "command": ".\\scripts\\rust-check\\run.ps1",
     "passed": 287,
     "ignored": 1,
     "fmt": true,
     "release_check": true,
-    "backend_passed": 2961,
+    "backend_passed": 2966,
     "backend_skipped": 5,
     "frontend_passed": 1244,
     "frontend_files": 150,
@@ -88,23 +88,15 @@
     "manual_kill_during_restart": false
   },
   "runtime_blocker": null,
-  "issue_status": "open",
+  "issue_status": "resolved",
   "installer_matrix": {
-    "candidate_scope": "Independent issue 065 candidate, not final BYOK candidate",
-    "report": "installer-smoke-short-root-attempt.json",
-    "passed": 12,
-    "failed": [
-      {
-        "name": "fresh_install",
-        "reason": "RuntimeError: installed runtime is incomplete: D:\\agent-friend-smoke-env\\Local\\agent-friend-installer-smoke\\active-install.json"
-      },
-      {
-        "name": "explicit_program_root_migration",
-        "reason": "RuntimeError: explicit migration did not produce expected shortcuts"
-      }
-    ],
-    "result": "blocked",
-    "environment": "Isolated short Local/Roaming test directories. NSIS default install root and Start Menu paths did not follow environment overrides."
+    "result": "passed",
+    "passed": 14,
+    "failed": [],
+    "report": "installer-smoke-passed.json",
+    "independent_report_verification": "passed",
+    "candidate_build_id": "20260910T125916Z-894f5b5567a3-41d06a71",
+    "environment": "Normal Windows interactive-user worker; shell-folder preflight passed; no AppData overrides."
   },
   "initial_attempt": "CPA port 8317 had no listener, producing upstream_transient; restored existing CPA executable/config and repeated once successfully.",
   "guide": {
