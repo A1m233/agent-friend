@@ -29,3 +29,4 @@ export * from "./tooltip";
 export * from "./tooltip-button";
 export * from "./sidebar";
 export * from "./sonner";
+export * from "./alert";
