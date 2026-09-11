@@ -1,5 +1,7 @@
 # scripts/
 
+> `package/run.* runtime` 校验 Codex 配套助手及 bin 哈希清单，旧缓存缺清单时重新从锁定官方归档准备；frozen doctor 额外以无参数启动 setup helper 验证可加载性，不执行初始化或修改系统状态。
+
 > `session-latency/run.* prepare --session-id ID --directory PATH` 在新建的项目外副本中剖析 `manager.open` 与 `start_conversation`，随后测量三次驻留准备，保存不含消息正文的 cProfile 和分阶段耗时；`--source-root DATA_PATH` 可复用固定隔离夹具。关闭 memory/IM，不启动回合或应用后台任务，禁止 HTTPX 请求及非 loopback 连接。仅复制 JSONL/persona，不能替代真实执行验收；两个平台入口参数一致。
 
 > `session-latency/run.* paging --title TITLE --output PRIVATE_FILE` 在已确认身份的真实 Tauri CDP 中打开长会话并点击加载旧页，记录消息数量及逐帧锚点位移；不发送模型请求。两个平台入口一致。

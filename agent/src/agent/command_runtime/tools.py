@@ -754,7 +754,9 @@ class ExecCommandTool:
                 and details.cwd_source == "session_managed"
                 and details.filesystem_access == "read_only"
             ):
-                self._runtime.prepare_owned_read_only_workdir(workdir, sandbox)
+                self._runtime.prepare_owned_read_only_workdir(
+                    workdir, sandbox, operation_id=tool_call_id
+                )
             process_id = f"proc_{uuid4().hex}"
             evidence_ref = (
                 self._tool_execution_evidence_store.new_reference()

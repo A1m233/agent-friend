@@ -583,6 +583,11 @@ def _smoke_command_runtime() -> dict[str, Any]:
     if not execution_root_value:
         raise RuntimeError("packaged command runtime execution root was not injected")
     executable = verify_codex_executable(Path(executable_value))
+    from agent.command_runtime.vendor import probe_setup_helper
+
+    helper_probe = probe_setup_helper(executable)
+    if helper_probe["status"] not in {"ready", "not_applicable"}:
+        raise RuntimeError(f"packaged sandbox helper cannot load: {helper_probe}")
     with tempfile.TemporaryDirectory(prefix="agent-friend-command-smoke-") as temp_dir:
         root = Path(temp_dir).resolve()
         runtime = CommandRuntime(

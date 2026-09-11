@@ -35,6 +35,7 @@ The generator does not upload the bundle or intentionally call an external provi
 | `diagnostics/runtime-services.json` | Bridge/voice lifecycle snapshots | Snapshot at bundle generation time, not the whole incident history |
 | `diagnostics/runtime-config.json` | Config item name, group, configured/source/effect/error | Contains configuration presence, never intended credential values |
 | `diagnostics/execution-environments.json` | Managed provider status, runtime/version identity, prepare duration bucket, overlay/cache size buckets, recent GC state and packaged-payload validation | Present when `managed-execution-environment-v1` is declared; deliberately excludes session ids/keys, paths, package names, scripts, file content, environment values, commands and output |
+| `diagnostics/command-runtime.json` | Current sandbox state, helper presence and bounded content-free command setup/network history | `command-runtime-health-v1`; counts and stable codes only in inventory; raw output, credentials and paths are excluded |
 | `diagnostics/desktop-instance.json` | Resolved runtime kind, shared instance domain, process session, and current owner evidence | Present when `desktop-instance-governance-v1` is declared; paths are home-redacted and no command-line or environment content is included |
 | `install/integrity.json` | Embedded shell identity, active receipt, verified payload/runtime hashes, observed readiness identity, Job Object state, and installer residue | Present when `install-integrity-v1` is declared; uses relative paths and stable error codes, never credential values |
 | `diagnostics/webview2.json` | WebView2 runtime version, recent crash-report metadata, handler registration coverage, graphics inventory, and a bounded process-failure event buffer | `supported: false` on non-Windows; raw dump files are never included; `gpu-process-exited` can trigger the product's bounded recovery flow |
@@ -75,6 +76,12 @@ The generator does not upload the bundle or intentionally call an external provi
 - `pet-input-evidence-v1` adds `petInputEvidence` and required coverage metadata. Inspect both coverage and collection failures: successful ZIP generation and current healthy input do not establish complete historical coverage. Missing declared artifacts, malformed records or invalid metadata are consumer evidence gaps; no capability in an old bundle means `not-collected`, not proof that no failure occurred.
 
 Format v1 permits additive fields. Ignore unknown fields safely and do not require newer optional fields when reading an older v1 bundle.
+
+## Command Runtime Evidence
+
+`command-runtime-health-v1` adds a read-only Bridge snapshot and at most 128 recent events. Events carry their own hashed build, runtime and operation identities, timestamps, stage, stable code, optional native code and proxy kind. Hashes cannot reconstruct a command or session. Native 1223 means the launch API returned cancellation; it does not establish which user action caused it. Unknown module names remain unknown.
+
+History is persisted as a bounded 64 KiB JSON snapshot under the canonical log directory; policy observations are flushed at process completion or runtime close. A crash can lose the unflushed policy tail. `evicted`, `history_unavailable`, `invalid_record` and `write_failed` are observer gaps, not business failures. Helper presence is not hash or load verification. Current ready status cannot replace occurrence-time evidence. Export never starts setup or a network probe. Older bundles lacking the capability are not-collected.
 
 ## Session Evidence
 

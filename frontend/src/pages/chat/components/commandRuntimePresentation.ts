@@ -6,6 +6,10 @@ import type {
 const SANDBOX_SETUP_ERRORS = new Set([
   "windows_sandbox_setup_required",
   "windows_sandbox_became_unavailable",
+  "windows_sandbox_repair_required",
+  "windows_sandbox_state_incompatible",
+  "windows_sandbox_probe_failed",
+  "windows_sandbox_helper_load_failed",
 ]);
 const COMMAND_PROCESS_STATUSES = new Set<CommandProcessStatus>([
   "running",
