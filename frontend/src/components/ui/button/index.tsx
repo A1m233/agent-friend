@@ -14,7 +14,7 @@ import { Spinner } from "../spinner";
  * asChild 走 radix-ui 的 Slot。页面/业务禁止散写原生 <button>（ESLint 门禁强制）。
  */
 const buttonVariants = cva(
-  "relative inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-all outline-none focus-visible:ring-[3px] focus-visible:ring-accent/50 aria-invalid:border-danger aria-invalid:ring-danger/20 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "relative inline-flex shrink-0 select-none items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-all outline-none focus-visible:ring-[3px] focus-visible:ring-accent/50 aria-invalid:border-danger aria-invalid:ring-danger/20 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {

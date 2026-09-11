@@ -80,6 +80,31 @@ describe("draft workspaces", () => {
     expect(useDraftStore.getState().workspaces["session-1"].text).toBe("first message");
   });
 
+  it.each([false, true])("keeps next-turn choices isolated when settling a submission (restore=%s)", (restore) => {
+    const state = useDraftStore.getState();
+    const submitted = { model: "old", reasoningPreset: "off" };
+    const next = { model: "next", reasoningPreset: "high" };
+    state.setText("a", "submitted");
+    state.setRuntimeConfig("a", submitted);
+    state.beginSubmission("a", "a", "run");
+    state.setText("a", "next draft");
+    state.setRuntimeConfig("a", next);
+    state.setText("b", "another session");
+    state.finishSubmission("run", restore);
+    expect(useDraftStore.getState().workspaces.a.runtimeConfig).toEqual(next);
+    expect(useDraftStore.getState().workspaces.a.text).toBe(restore ? "submitted\nnext draft" : "next draft");
+    expect(useDraftStore.getState().workspaces.b.text).toBe("another session");
+  });
+
+  it("restores a rejected next-turn model choice when no newer choice exists", () => {
+    const state = useDraftStore.getState();
+    const config = { model: "chosen", reasoningPreset: "high" };
+    state.setRuntimeConfig("a", config);
+    state.beginSubmission("a", "a", "run");
+    state.finishSubmission("run", true);
+    expect(useDraftStore.getState().workspaces.a.runtimeConfig).toEqual(config);
+  });
+
   it("initializes an isolated edit workspace without overwriting later edits", () => {
     const key = editDraftKey("session-1", "user-1");
     const state = useDraftStore.getState();

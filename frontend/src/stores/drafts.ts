@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { releaseAttachmentDraft, type AttachmentDraft } from "@/services";
 import type { ChatAttachment, ChatTextReference } from "@/types/chat";
+import type { ModelRuntimeConfig } from "@/lib/model-config";
 
 export const HOME_DRAFT_KEY = "__agent_friend_home_draft__";
 
@@ -30,6 +31,8 @@ export interface DraftValidationState {
 }
 
 export interface DraftWorkspace {
+  /** Validated next-turn choice; never mutates the active run. */
+  runtimeConfig?: ModelRuntimeConfig;
   text: string;
   attachments: DraftAttachmentState[];
   references: ChatTextReference[];
@@ -39,6 +42,7 @@ export interface DraftWorkspace {
 }
 
 interface DraftSubmission {
+  runtimeConfig?: ModelRuntimeConfig;
   runId: string;
   sessionId: string;
   sourceKey: string;
@@ -57,6 +61,7 @@ interface DraftState {
     references?: ChatTextReference[],
   ) => void;
   setText: (key: string, text: string) => void;
+  setRuntimeConfig: (key: string, config: ModelRuntimeConfig | undefined) => void;
   addAttachment: (key: string, attachment: DraftAttachmentState) => void;
   updateAttachment: (
     key: string,
@@ -125,6 +130,15 @@ export const useDraftStore = create<DraftState>((set, get) => ({
       workspaces: {
         ...state.workspaces,
         [key]: changed(workspace(state, key), { text }),
+      },
+    }));
+  },
+
+  setRuntimeConfig(key, runtimeConfig) {
+    set((state) => ({
+      workspaces: {
+        ...state.workspaces,
+        [key]: changed(workspace(state, key), { runtimeConfig }),
       },
     }));
   },
@@ -248,6 +262,7 @@ export const useDraftStore = create<DraftState>((set, get) => ({
         submissions: {
           ...state.submissions,
           [runId]: {
+            runtimeConfig: current.runtimeConfig,
             runId,
             sessionId,
             sourceKey: key,
@@ -279,6 +294,7 @@ export const useDraftStore = create<DraftState>((set, get) => ({
         workspaces: {
           ...state.workspaces,
           [targetKey]: changed(current, {
+            runtimeConfig: current.runtimeConfig ?? submission.runtimeConfig,
             text: restoredText,
             attachments: [
               ...submission.attachments.filter((item) => !existingIds.has(item.localId)),

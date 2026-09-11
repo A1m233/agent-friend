@@ -163,6 +163,18 @@ describe("ConversationModelSelector", () => {
     setModelCatalogForTests(null);
   });
 
+  it("keeps next-turn selection available while busy and displays the draft reasoning preset", async () => {
+    await act(async () => {
+      useConversationStore.setState({ runCalibrationPhase: "calibrating" });
+      root.render(createElement(TooltipProvider, null, createElement(ConversationModelSelector, {
+        selectedModel: "deepseek/deepseek-v4-flash", selectedReasoningPreset: "max",
+      })));
+    });
+    const trigger = container.querySelector<HTMLButtonElement>("button")!;
+    expect(trigger.disabled).toBe(false);
+    expect(trigger.textContent).toContain("最高");
+  });
+
   it("opens submenus on pointer movement and keeps the root open after concrete selections", async () => {
     const trigger = container.querySelector<HTMLButtonElement>("button");
     if (!trigger) throw new Error("missing trigger");

@@ -24,6 +24,7 @@ import { draftKey, HOME_DRAFT_KEY, useConversationStore, useDraftStore } from "@
 import { sessionRunPresentation } from "@/stores/runPresentation";
 import { useShallow } from "zustand/react/shallow";
 import type { DraftAttachmentState } from "@/stores/drafts";
+import type { ChatTextReference } from "@/types/chat";
 import { useVoiceInputStore } from "@/stores/voiceInput";
 import { isVoiceInputLive } from "@/stores/voiceInputStateMachine";
 import { joinVoiceDraft, transcriptDeltaAfterConsumed } from "@/services/voiceInput/draft";
@@ -89,6 +90,7 @@ export interface ComposerHandle {
 }
 
 const EMPTY_DRAFT_ATTACHMENTS: DraftAttachmentState[] = [];
+const EMPTY_DRAFT_REFERENCES: ChatTextReference[] = [];
 
 interface VoiceDraftSegment {
   workspaceKey: string;
@@ -140,11 +142,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     ? editingMessage.draftKey
     : draftKey(currentSessionId);
   const draftText = useDraftStore((state) => state.workspaces[workspaceKey]?.text ?? "");
+  const draftRuntimeConfig = useDraftStore((state) => state.workspaces[workspaceKey]?.runtimeConfig);
   const draftAttachments = useDraftStore(
     (state) => state.workspaces[workspaceKey]?.attachments ?? EMPTY_DRAFT_ATTACHMENTS,
   );
   const draftReferences = useDraftStore(
-    (state) => state.workspaces[workspaceKey]?.references ?? [],
+    (state) => state.workspaces[workspaceKey]?.references ?? EMPTY_DRAFT_REFERENCES,
   );
   const setWorkspaceText = useDraftStore((state) => state.setText);
   const addDraftAttachment = useDraftStore((state) => state.addAttachment);
@@ -158,7 +161,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const catalog = useModelCatalogStore((state) => state.catalog);
   // 正常情况下新对话草稿和已有会话都持有自己的模型快照。固定默认值只用于
   // history loading 等短暂空态，不能回读实时设置并改写已存在草稿的展示。
-  const selectedModel = currentModel ?? DEFAULT_SETTINGS.chatModel.model;
+  const selectedModel = draftRuntimeConfig?.model ?? currentModel ?? DEFAULT_SETTINGS.chatModel.model;
   const capabilities = modelOption(selectedModel)?.capabilities ?? null;
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentImagePreview | null>(null);
   const draftTextRef = useRef("");
@@ -172,24 +175,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const cancelling = runPresentation.phase === "stopping";
   const showStop = runPresentation.canStop || cancelling;
   const editSubmitting = editingMessage?.phase === "submitting";
-  const voiceInputDisabled = disabled || streaming || cancelling || editSubmitting;
+  const voiceInputDisabled = disabled || editSubmitting;
   const attachmentsDisabled = disabled
-    || streaming
-    || cancelling
     || editSubmitting
     || !capabilities?.attachments;
   const composerControlDisabledReason = disabled
     ? disabledReason ?? "暂时不可用"
-    : cancelling
-      ? "正在取消当前回复…"
-      : editSubmitting
+    : editSubmitting
         ? "正在提交修改…"
-      : streaming
-      ? runPresentation.phase === "recovering"
-        ? "正在恢复这段对话的运行状态…"
-        : runPresentation.run?.control_scope !== "desktop_text"
-          ? "这段对话正在其他入口处理中，请从原入口处理或等待完成"
-          : "请等待当前回复完成"
       : undefined;
   const availableAttachmentSlots = capabilities?.attachments
     ? Math.max(0, capabilities.maxAttachmentsPerTurn - draftAttachments.length)
@@ -284,7 +277,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }, [attachmentDisabledReason]);
 
   const addFiles = useCallback(async (files: File[]) => {
-    if (disabled || streaming || editSubmitting) {
+    if (disabled || editSubmitting) {
       explainAttachmentUnavailable();
       return;
     }
@@ -350,7 +343,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     draftAttachments,
     editSubmitting,
     explainAttachmentUnavailable,
-    streaming,
     updateDraftAttachment,
     workspaceKey,
   ]);
@@ -388,12 +380,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const dropFeedback = attachmentsDisabled
     ? disabled
       ? disabledReason ?? "暂时不能添加附件"
-      : cancelling
-        ? "正在取消当前回复…"
-        : editSubmitting
+      : editSubmitting
           ? "正在提交修改…"
-        : streaming
-        ? "请等待当前回复完成"
         : "当前模型不支持附件"
     : availableAttachmentSlots <= 0
       ? `单轮最多添加 ${capabilities?.maxAttachmentsPerTurn ?? 0} 个附件`
@@ -586,7 +574,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }, [voiceInputError, voiceInputErrorCode, voiceInputLastEventAt]);
 
   const submit = (text: string) => {
-    if (disabled || cancelling || editSubmitting) return;
+    if (disabled || streaming || cancelling || editSubmitting) return;
     if (!catalog) {
       toast.error("模型信息正在加载，请稍后再发送");
       return;
@@ -662,6 +650,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
       if (workspaceKey === HOME_DRAFT_KEY) claimHomeDraft(result.sessionId);
       beginDraftSubmission(result.sessionId, result.sessionId, result.runId);
+      void result.completion.then((outcome) => {
+        if (outcome === "rejected") toast.error("消息未发送，草稿已保留，可稍后重试。");
+      });
 
       if (voiceState.traceId && voiceTargetsSubmission) {
         sentVoiceTraceIdsRef.current.add(voiceState.traceId);
@@ -751,7 +742,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               ref={senderRef}
               value={draftText}
               autosize={COMPOSER_AUTOSIZE}
-              disabled={disabled || (streaming && !showStop) || cancelling || editSubmitting}
+              disabled={disabled || editSubmitting}
+              sendBlocked={streaming}
               loading={showStop}
               sendBtnLoading={cancelling}
               placeholder={
@@ -759,8 +751,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   ? disabledReason ?? "暂时不能发送"
                   : editSubmitting
                     ? "正在提交修改…"
-                    : streaming && !showStop
-                      ? composerControlDisabledReason
+                    : streaming
+                      ? "可以先准备下一条消息…"
                     : editingMessage
                       ? "修改后重新发送"
                       : "说点什么…（Enter 发送）"
@@ -784,7 +776,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   }
                 });
               }}
-              sendBtnDisabled={(value) => modelSwitching
+              sendBtnDisabled={(value) => streaming
+                || disabled
+                || modelSwitching
                 || editSubmitting
                 || !attachmentCompatibility.compatible
                 || draftAttachments.some((item) => item.status !== "ready")
@@ -801,7 +795,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     className="composer-draft-attachments"
                     items={attachmentItems}
                     overflow="scrollX"
-                    removable={!streaming && !editSubmitting}
+                    removable={!disabled && !editSubmitting}
                     imageViewer={false}
                     onRemove={(event) => removeAttachment(String(event.detail.key))}
                     onFileClick={(event) => {
@@ -812,7 +806,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   />
                 ) : null}
                 references={draftReferences}
-                removable={!streaming && !editSubmitting}
+                removable={!disabled && !editSubmitting}
                 onReferenceRemove={(referenceId) => removeDraftReference(workspaceKey, referenceId)}
                 onClearReferences={() => clearDraftReferences(workspaceKey)}
               />
@@ -839,7 +833,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   <div className="flex min-w-0 items-center gap-1">
                     <ConversationModelSelector
                       selectedModel={selectedModel}
-                      disabled={disabled || streaming || cancelling || editSubmitting}
+                      selectedReasoningPreset={draftRuntimeConfig?.reasoningPreset}
+                      disabled={disabled || editSubmitting}
                       disabledReason={composerControlDisabledReason}
                     />
                     <VoiceInputAction
