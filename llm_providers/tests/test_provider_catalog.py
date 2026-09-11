@@ -22,13 +22,13 @@ from llm_providers import (
 def test_deepseek_defaults_keep_existing_models_and_thinking_disabled() -> None:
     spec = build_provider_spec(provider_id="deepseek", api_key="k")
 
-    assert spec.model == "deepseek/deepseek-v4-flash"
+    assert spec.model == "openai/deepseek-flash"
     assert spec.context_window == 1_000_000
     assert spec.defaults["extra_body"] == {"thinking": {"type": "disabled"}}
     assert spec.reasoning_preset == "off"
     assert spec.reasoning_replay_scope == "none"
     assert spec.defaults["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS
-    assert default_model_for_provider("deepseek", "memory") == "deepseek/deepseek-v4-pro"
+    assert default_model_for_provider("deepseek", "memory") == "deepseek/deepseek-flash"
 
 
 def test_deepseek_vision_uses_generic_openai_route_and_model_level_base() -> None:
@@ -112,7 +112,6 @@ def test_public_provider_models_are_safe_model_allowlists() -> None:
     models = public_provider_models()
 
     assert models["deepseek"] == (
-        "deepseek/deepseek-v4-flash",
         "deepseek/deepseek-v4-pro",
         DEEPSEEK_VISION_MODEL_ID,
     )
@@ -128,8 +127,8 @@ def test_public_model_catalog_is_the_capability_source_of_truth() -> None:
 
     assert catalog["schemaVersion"] == 2
     assert catalog["catalogRevision"]
-    assert deepseek["deepseek/deepseek-v4-flash"]["capabilities"]["attachments"] is False
-    assert deepseek["deepseek/deepseek-v4-flash"]["reasoning"] == {
+    assert deepseek["deepseek/deepseek-flash"]["capabilities"]["attachments"] is True
+    assert deepseek["deepseek/deepseek-flash"]["reasoning"] == {
         "control": "effort",
         "defaultPreset": "off",
         "presets": [
@@ -140,7 +139,7 @@ def test_public_model_catalog_is_the_capability_source_of_truth() -> None:
         ],
     }
     vision = deepseek[DEEPSEEK_VISION_MODEL_ID]
-    assert vision["label"] == "DeepSeek V4 Flash Vision"
+    assert vision["label"] == "DeepSeek Flash"
     assert vision["processingProfile"] == "deepseek-vision-files-v1"
     assert vision["capabilities"]["inputModalities"] == ("text", "image")
     assert vision["capabilities"]["acceptedMediaTypes"] == (
@@ -266,4 +265,30 @@ def test_runtime_config_rejects_provider_model_mismatch() -> None:
             provider_id="deepseek",
             api_key="k",
             runtime_config=ModelRuntimeConfig("kimi/kimi-k2.6", "on"),
+        )
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v4-flash-vision-exp",
+        "deepseek/deepseek-chat",
+        "deepseek/deepseek-reasoner",
+    ],
+)
+def test_removed_models_remain_readable_but_have_no_executable_route(model: str) -> None:
+    from llm_providers import LLMModelUnavailableError
+
+    assert model not in public_provider_models()["deepseek"]
+    config = default_model_runtime_config(model)
+    assert config.model_id == model
+    assert validate_model_runtime_config(config) == config
+    with pytest.raises(LLMModelUnavailableError):
+        build_provider_spec(provider_id="deepseek", api_key="fixture", runtime_config=config)
+    with pytest.raises(LLMModelUnavailableError):
+        build_provider_spec(provider_id="deepseek", api_key="fixture", model_id=model)
+    with pytest.raises(LLMModelUnavailableError):
+        build_provider_spec(
+            provider_id="deepseek", api_key="fixture", model_id=model.split("/", 1)[1]
         )

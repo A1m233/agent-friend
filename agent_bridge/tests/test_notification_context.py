@@ -33,7 +33,7 @@ def context_config(tmp_path: Path) -> tuple[DesktopSettingsReader, EffectivePers
             {
                 "chatModel": {
                     "provider": "deepseek",
-                    "model": "deepseek/deepseek-v4-flash-vision-exp",
+                    "model": "deepseek/deepseek-flash",
                 }
             }
         ),

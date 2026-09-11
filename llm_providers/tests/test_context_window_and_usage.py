@@ -175,7 +175,7 @@ def test_spec_from_env_can_read_dedicated_model_env(
 ) -> None:
     """旁路任务可用专门的 model env，不影响主 ``{prefix}_MODEL``。"""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
-    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek/deepseek-v4-flash")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek/deepseek-flash")
     monkeypatch.setenv("DEEPSEEK_MEMORY_MODEL", "deepseek/deepseek-v4-pro")
 
     spec = ProviderSpec.from_env(
@@ -210,7 +210,7 @@ def test_spec_from_config_uses_explicit_config_and_defaults() -> None:
     )
 
     assert spec.api_key == "k"
-    assert spec.model == "deepseek/deepseek-v4-flash"
+    assert spec.model == "deepseek/deepseek-flash"
     assert spec.context_window == 1000000
     assert spec.defaults["extra_body"] == {"thinking": {"type": "disabled"}}
     assert spec.defaults["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS

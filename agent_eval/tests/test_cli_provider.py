@@ -40,12 +40,12 @@ def test_provider_spec_preserves_provider_api_base_override() -> None:
 
 def test_provider_spec_applies_deepseek_max_reasoning_preset() -> None:
     spec = _provider_spec(
-        "deepseek/deepseek-v4-flash-vision-exp",
+        "deepseek/deepseek-flash",
         EnvSource({"DEEPSEEK_API_KEY": "deepseek-test-key"}),
         "max",
     )
 
-    assert spec.product_model_id == "deepseek/deepseek-v4-flash-vision-exp"
+    assert spec.product_model_id == "deepseek/deepseek-flash"
     assert spec.reasoning_preset == "max"
     assert spec.defaults["reasoning_effort"] == "max"
     assert spec.defaults["extra_body"] == {"thinking": {"type": "enabled"}}
@@ -54,7 +54,7 @@ def test_provider_spec_applies_deepseek_max_reasoning_preset() -> None:
 def test_provider_spec_rejects_unsupported_reasoning_preset() -> None:
     with pytest.raises(ValueError, match="不支持推理档位"):
         _provider_spec(
-            "deepseek/deepseek-v4-flash-vision-exp",
+            "deepseek/deepseek-flash",
             EnvSource({"DEEPSEEK_API_KEY": "deepseek-test-key"}),
             "xhigh",
         )

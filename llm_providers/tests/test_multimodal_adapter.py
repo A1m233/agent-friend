@@ -88,7 +88,7 @@ def test_text_only_route_projects_historical_attachment_to_marker(tmp_path: Path
     adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"x"), cache_dir=tmp_path)
     message = _Message(_attachment(kind="image", media_type="image/png"))
 
-    rendered = adapter.render_message(message, _client("deepseek/deepseek-v4-flash"))
+    rendered = adapter.render_message(message, _client("deepseek/deepseek-v4-pro"))
 
     assert "当前模型无法直接读取" in rendered["content"]
     assert "sample.png" in rendered["content"]
@@ -99,7 +99,7 @@ def test_text_only_route_rejects_current_attachment(tmp_path: Path) -> None:
     message = _Message(_attachment(kind="image", media_type="image/png"), current=True)
 
     with pytest.raises(LLMBadRequestError, match="attachment_model_unsupported"):
-        adapter.render_message(message, _client("deepseek/deepseek-v4-flash"))
+        adapter.render_message(message, _client("deepseek/deepseek-v4-pro"))
 
 
 @pytest.mark.parametrize(
@@ -221,7 +221,7 @@ def test_deepseek_image_upload_uses_finite_ttl_and_nested_file_block(
         current=True,
         content="",
     )
-    client = _client("openai/deepseek-v4-flash-vision-exp", context_window=1_000_000)
+    client = _client("openai/deepseek-flash", context_window=1_000_000)
 
     first = adapter.render_message(message, client)
     second = adapter.render_message(message, client)
@@ -249,10 +249,10 @@ def test_deepseek_cache_is_isolated_by_api_key(
     )
     adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"png"), cache_dir=tmp_path)
     message = _Message(_attachment(kind="image", media_type="image/webp"), current=True)
-    first_client = _client("openai/deepseek-v4-flash-vision-exp")
+    first_client = _client("openai/deepseek-flash")
     second_client = LLMClient(
         ProviderSpec(
-            model="openai/deepseek-v4-flash-vision-exp",
+            model="openai/deepseek-flash",
             api_key="other-secret",
             api_base="https://example.test",
             context_window=1_000_000,
@@ -281,7 +281,7 @@ def test_deepseek_unexpired_disk_cache_skips_remote_validation(
         open_asset=lambda _id: BytesIO(b"jpeg"), cache_dir=tmp_path
     )
     message = _Message(_attachment(kind="image", media_type="image/jpeg"), current=True)
-    client = _client("openai/deepseek-v4-flash-vision-exp")
+    client = _client("openai/deepseek-flash")
 
     first = first_adapter.render_message(message, client)
     files.retrieve_error = True
@@ -308,7 +308,7 @@ def test_deepseek_near_expiry_cache_reuploads_without_reusing_remote_id(
     )
     adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"png"), cache_dir=tmp_path)
     message = _Message(_attachment(kind="image", media_type="image/png"), current=True)
-    client = _client("openai/deepseek-v4-flash-vision-exp")
+    client = _client("openai/deepseek-flash")
 
     adapter.render_message(message, client)
     now = files.expires_at - 299
@@ -331,7 +331,7 @@ def test_deepseek_single_flight_uploads_once(
     )
     adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"png"), cache_dir=tmp_path)
     message = _Message(_attachment(kind="image", media_type="image/png"), current=True)
-    client = _client("openai/deepseek-v4-flash-vision-exp")
+    client = _client("openai/deepseek-flash")
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _index: adapter.render_message(message, client), range(2)))
@@ -359,7 +359,7 @@ def test_deepseek_rejects_unsupported_attachment_types(
     with pytest.raises(LLMBadRequestError, match="attachment_type_unsupported"):
         adapter.render_message(
             _Message(_attachment(kind=kind, media_type=media_type), current=True),
-            _client("openai/deepseek-v4-flash-vision-exp"),
+            _client("openai/deepseek-flash"),
         )
 
 
@@ -376,7 +376,7 @@ def test_deepseek_rejects_file_over_64_mib(tmp_path: Path) -> None:
                 ),
                 current=True,
             ),
-            _client("openai/deepseek-v4-flash-vision-exp"),
+            _client("openai/deepseek-flash"),
         )
 
 
@@ -395,7 +395,7 @@ def test_deepseek_upload_failure_uses_safe_project_error(
     with pytest.raises(LLMProviderError) as caught:
         adapter.render_message(
             _Message(_attachment(kind="image", media_type="image/png"), current=True),
-            _client("openai/deepseek-v4-flash-vision-exp"),
+            _client("openai/deepseek-flash"),
         )
 
     assert "attachment_provider_upload_failed" in str(caught.value)

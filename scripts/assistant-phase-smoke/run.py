@@ -44,7 +44,7 @@ from llm_providers import (
 from runtime_config import credential_source_for_mode
 
 ROOT = Path(__file__).resolve().parents[2]
-MODEL = "deepseek/deepseek-v4-flash-vision-exp"
+MODEL = "deepseek/deepseek-flash"
 IMAGE_CODE = "AF-115"
 
 

@@ -11,12 +11,13 @@ describe("avatar scale settings", () => {
     expect(DEFAULT_SETTINGS.reminderNotificationMode).toBe("smart");
     expect(DEFAULT_SETTINGS.displayRecoveryProtectionEnabled).toBe(false);
     expect(DEFAULT_SETTINGS.chatModel).toEqual({
-      provider: "kimi",
-      model: "kimi/kimi-k2.5",
+      provider: "deepseek",
+      model: "deepseek/deepseek-flash",
     });
     expect(DEFAULT_SETTINGS.memoryModel).toEqual({
       provider: "deepseek",
-      model: "deepseek/deepseek-v4-flash",
+      model: "deepseek/deepseek-flash",
+      reasoningPreset: "max",
     });
     expect(DEFAULT_SETTINGS.avatarModelScalePercents).toEqual({});
     expect(DEFAULT_SETTINGS.petMiniScalePercent).toBe(50);

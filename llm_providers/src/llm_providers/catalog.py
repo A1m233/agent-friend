@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .errors import LLMAuthError
+from .errors import LLMAuthError, LLMModelUnavailableError
 from .model_identity import is_custom_model_reference
 from .spec import DEFAULT_LLM_TIMEOUT_SECONDS, ProviderSpec, ResponsesRoute
 
@@ -22,7 +22,7 @@ InputModality = Literal["text", "image", "document"]
 ReasoningControl = Literal["unsupported", "toggle", "effort", "fixed"]
 ReasoningReplayScope = Literal["none", "tool_turn", "conversation"]
 
-CATALOG_REVISION = "2026-09-05.1"
+CATALOG_REVISION = "2026-09-12.1"
 
 DEEPSEEK_PROVIDER_ID = "deepseek"
 KIMI_PROVIDER_ID = "kimi"
@@ -35,8 +35,8 @@ OPENROUTER_API_KEY = "OPENROUTER_API_KEY"
 KIMI_API_BASE = "https://api.moonshot.cn/v1"
 KIMI_CONTEXT_WINDOW = 256 * 1024
 DEEPSEEK_API_BASE = "https://api.deepseek.com"
-DEEPSEEK_VISION_MODEL_ID = "deepseek/deepseek-v4-flash-vision-exp"
-DEEPSEEK_VISION_LITELLM_MODEL = "openai/deepseek-v4-flash-vision-exp"
+DEEPSEEK_VISION_MODEL_ID = "deepseek/deepseek-flash"
+DEEPSEEK_VISION_LITELLM_MODEL = "openai/deepseek-flash"
 
 
 @dataclass(frozen=True)
@@ -283,16 +283,6 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
         credential_group=DEEPSEEK_PROVIDER_ID,
         models=(
             ProviderModel(
-                id="deepseek/deepseek-v4-flash",
-                label="deepseek/deepseek-v4-flash",
-                litellm_model="deepseek/deepseek-v4-flash",
-                context_window=1_000_000,
-                reasoning=DEEPSEEK_REASONING,
-                responses=ResponsesRoute(
-                    "deepseek-v4-flash", DEEPSEEK_API_BASE, "deepseek", "native"
-                ),
-            ),
-            ProviderModel(
                 id="deepseek/deepseek-v4-pro",
                 label="deepseek/deepseek-v4-pro",
                 litellm_model="deepseek/deepseek-v4-pro",
@@ -304,20 +294,18 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
             ),
             ProviderModel(
                 id=DEEPSEEK_VISION_MODEL_ID,
-                label="DeepSeek V4 Flash Vision",
+                label="DeepSeek Flash",
                 litellm_model=DEEPSEEK_VISION_LITELLM_MODEL,
                 context_window=1_000_000,
                 processing_profile="deepseek-vision-files-v1",
                 api_base=DEEPSEEK_API_BASE,
                 capabilities=DEEPSEEK_VISION_CAPABILITIES,
                 reasoning=DEEPSEEK_REASONING,
-                responses=ResponsesRoute(
-                    "deepseek-v4-flash-vision-exp", DEEPSEEK_API_BASE, "deepseek", "native"
-                ),
+                responses=ResponsesRoute("deepseek-flash", DEEPSEEK_API_BASE, "deepseek", "native"),
             ),
         ),
-        default_model="deepseek/deepseek-v4-flash",
-        default_memory_model="deepseek/deepseek-v4-pro",
+        default_model="deepseek/deepseek-flash",
+        default_memory_model="deepseek/deepseek-flash",
         default_call_options={
             "timeout": DEFAULT_LLM_TIMEOUT_SECONDS,
         },
@@ -475,7 +463,33 @@ def model_capabilities(model_id: str) -> ModelRouteCapabilities:
     return model.capabilities if model is not None else TEXT_ONLY_CAPABILITIES
 
 
+REMOVED_DEEPSEEK_MODELS = frozenset(
+    {
+        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v4-flash-vision-exp",
+        "deepseek/deepseek-chat",
+        "deepseek/deepseek-reasoner",
+    }
+)
+
+
+def require_model_not_removed(model_id: str) -> None:
+    """Reject retired built-in routes before provider-side aliasing can occur."""
+    if model_id in REMOVED_DEEPSEEK_MODELS:
+        raise LLMModelUnavailableError(
+            "所选模型已不可用，请重新选择模型。", availability_code="model_not_configured"
+        )
+
+
 def model_reasoning(model_id: str) -> ModelReasoningDefinition:
+    # Historical snapshots retain their model identity and reasoning settings.
+    # This is read compatibility, not an alias or permission to execute.
+    if model_id in REMOVED_DEEPSEEK_MODELS:
+        return (
+            dataclasses.replace(DEEPSEEK_REASONING, default_preset="high")
+            if model_id.endswith("/deepseek-reasoner")
+            else DEEPSEEK_REASONING
+        )
     if is_custom_model_reference(model_id):
         return CUSTOM_REASONING
     provider = provider_definition(infer_provider_id_from_model(model_id))
@@ -552,6 +566,11 @@ def build_provider_spec(
     """Build a ``ProviderSpec`` from a provider selection and API key."""
 
     provider = provider_definition(provider_id)
+    requested_model = runtime_config.model_id if runtime_config else model_id
+    if requested_model:
+        require_model_not_removed(requested_model)
+        if provider.provider_id == DEEPSEEK_PROVIDER_ID and "/" not in requested_model:
+            require_model_not_removed("deepseek/" + requested_model)
     key = api_key.strip()
     if not key:
         raise LLMAuthError(f"{provider.credential_name} 未配置。请先配置 provider credential。")

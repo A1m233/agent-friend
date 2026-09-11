@@ -12,7 +12,7 @@ def test_call_control_disables_stream_retries_without_mutating_shared_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = LLMClient(
-        ProviderSpec(model="deepseek/deepseek-v4-flash", api_key="fake", context_window=10000),
+        ProviderSpec(model="deepseek/deepseek-flash", api_key="fake", context_window=10000),
         network_retries=2,
         network_retry_backoff_seconds=0,
     )

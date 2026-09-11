@@ -30,7 +30,7 @@ def test_deepseek_vision_admission_enforces_model_single_file_limit() -> None:
 
     accepted = prepare_attachment_input(
         [ExistingAttachmentInput(_image(64 * 1024 * 1024))],
-        model_id="deepseek/deepseek-v4-flash-vision-exp",
+        model_id="deepseek/deepseek-flash",
         store=store,
     )
     assert accepted.validated_refs[0].size_bytes == 64 * 1024 * 1024
@@ -38,7 +38,7 @@ def test_deepseek_vision_admission_enforces_model_single_file_limit() -> None:
     with pytest.raises(HTTPException) as caught:
         prepare_attachment_input(
             [ExistingAttachmentInput(_image(64 * 1024 * 1024 + 1))],
-            model_id="deepseek/deepseek-v4-flash-vision-exp",
+            model_id="deepseek/deepseek-flash",
             store=store,
         )
 

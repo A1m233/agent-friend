@@ -347,7 +347,7 @@ def test_todo_notification_keeps_its_todo_title_when_session_has_a_display_title
     "provider,model,preset,budget",
     [
         ("kimi", "kimi/kimi-k3", "low", 2048),
-        ("deepseek", "deepseek/deepseek-v4-flash", "off", 512),
+        ("deepseek", "deepseek/deepseek-flash", "off", 512),
         (
             "custom",
             "custom/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000002",
@@ -428,7 +428,7 @@ def test_prompt_uses_settings_minimum_persona_and_filtered_memory(
     [
         ("kimi/kimi-k2.5", "off"),
         ("kimi/kimi-k3", "low"),
-        ("deepseek/deepseek-v4-flash", "off"),
+        ("deepseek/deepseek-flash", "off"),
     ],
 )
 def test_catalog_minimum(model: str, preset: str) -> None:

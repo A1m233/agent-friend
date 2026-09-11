@@ -34,7 +34,7 @@ SETTINGS_NAME_MAP: dict[str, str] = {
 }
 
 DEFAULT_MEMORY_PROVIDER = "deepseek"
-DEFAULT_MEMORY_MODEL = "deepseek/deepseek-v4-flash"
+DEFAULT_MEMORY_MODEL = "deepseek/deepseek-flash"
 
 
 def _string_setting(data: Mapping[str, Any], key: str) -> str | None:
@@ -298,7 +298,10 @@ class SettingsFileSource:
 
     def _projected_model_value(self, name: str) -> str | None:
         if name == "LLM_MEMORY_REASONING_PRESET":
-            selection = self._settings().get("memoryModel")
+            settings = self._settings()
+            if "memoryModel" not in settings and "deepseekMemoryModel" not in settings:
+                return "max"
+            selection = settings.get("memoryModel")
             return (
                 _string_setting(selection, "reasoningPreset")
                 if isinstance(selection, dict)

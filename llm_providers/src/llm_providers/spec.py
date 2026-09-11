@@ -27,12 +27,11 @@ an unbounded waiting state. Provider-specific runtime config can override it.
 
 PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
     "DEEPSEEK": {
-        # 注意：旧模型 ``deepseek-chat`` / ``deepseek-reasoner`` 将于
-        # 2026/07/24 弃用，已改为指向 V4 系列的高性价比款 ``v4-flash``。
+        # 新安装使用统一 Flash；旧设置保留原值并在调用时拒绝，不自动迁移。
         # 切换到旗舰款用 ``deepseek/deepseek-v4-pro``，详见 .env.example。
-        "model": "deepseek/deepseek-v4-flash",
-        # 记忆抽取是旁路质量任务，默认用更稳的旗舰款；主对话仍保持 v4-flash。
-        "memory_model": "deepseek/deepseek-v4-pro",
+        "model": "deepseek/deepseek-flash",
+        # 对话与记忆均默认使用 Flash。
+        "memory_model": "deepseek/deepseek-flash",
         "api_base": None,
         # Keep the legacy env/config builder aligned with the provider catalog.
         # DeepSeek thinking-mode tool calls require replaying the provider's

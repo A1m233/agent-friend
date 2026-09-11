@@ -108,7 +108,7 @@ function ModelSelectionRows({
           }
         >
           <SelectTrigger className="min-w-64">
-            <SelectValue />
+            <SelectValue>{models.find((model) => model.id === selection.model)?.label ?? selection.model}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             {models.map((model) => (

@@ -255,3 +255,14 @@ describe("model config", () => {
 it("preserves explicit default effort without requiring it in the catalog", () => {
   expect(resolveDefaultConversationRuntimeConfig({ chatModel: { provider: "custom", model: "custom/fixture/model", reasoningPreset: "effort:vendor-next" } })).toEqual({ model: "custom/fixture/model", reasoningPreset: "effort:vendor-next" });
 });
+
+it.each(["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-flash-vision-exp"])(
+  "keeps a removed saved default %s until the user selects another model",
+  (model) => {
+    const settings = { chatModel: { provider: "deepseek" as const, model, reasoningPreset: "high" } };
+    expect(resolveDefaultConversationModel(settings)).toBe(model);
+    expect(resolveDefaultConversationRuntimeConfig(settings)).toEqual({ model, reasoningPreset: "high" });
+    expect(modelRuntimeConfigLabel({ model, reasoningPreset: "high" })).toBe(model);
+    expect(settings.chatModel.model).toBe(model);
+  },
+);

@@ -51,9 +51,9 @@ class FakeSessions:
             "SESSION-A": SimpleNamespace(
                 session_id="SESSION-A",
                 initial_title="Alpha",
-                current_model="deepseek/deepseek-v4-flash",
+                current_model="deepseek/deepseek-flash",
                 current_model_config=ModelRuntimeConfig(
-                    "deepseek/deepseek-v4-flash",
+                    "deepseek/deepseek-flash",
                     "high",
                 ),
                 messages=[],
@@ -160,7 +160,7 @@ async def test_menu_switches_future_session_without_routing_control_to_agent(
 
     await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
     menu = provider.sent[-1]
-    assert menu.text == ("当前会话：Alpha\n当前模型：deepseek/deepseek-v4-flash\n当前推理强度：高")
+    assert menu.text == ("当前会话：Alpha\n当前模型：deepseek/deepseek-flash\n当前推理强度：高")
     assert menu.text_format == "markdown"
     assert menu.controls is not None
     assert menu.controls.rows[0][0].click_limit is None
@@ -291,11 +291,11 @@ async def test_menu_switches_model_for_bound_session(tmp_path: Path) -> None:
     assert len(models.calls) == 1
     assert models.calls[0] == {
         "session_id": "SESSION-A",
-        "model": "deepseek/deepseek-v4-flash",
+        "model": "deepseek/deepseek-v4-pro",
         "reasoning_preset": None,
     }
     assert provider.sent[-1].text == (
-        "配置已切换\n模型：deepseek/deepseek-v4-flash\n推理强度：关闭\n下一条回复开始生效。"
+        "配置已切换\n模型：deepseek/deepseek-v4-pro\n推理强度：关闭\n下一条回复开始生效。"
     )
     assert provider.sent[-1].controls is None
 
@@ -328,7 +328,7 @@ async def test_menu_switches_reasoning_for_bound_session(tmp_path: Path) -> None
 
     await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[0][1].payload))
     page = provider.sent[-1]
-    assert page.text == "选择推理强度（deepseek/deepseek-v4-flash，第 1/1 页）"
+    assert page.text == "选择推理强度（deepseek/deepseek-flash，第 1/1 页）"
     assert page.controls is not None
     labels = [action.label for row in page.controls.rows for action in row]
     assert labels == ["关闭", "低", "当前 · 高", "最高", "返回"]
@@ -344,7 +344,7 @@ async def test_menu_switches_reasoning_for_bound_session(tmp_path: Path) -> None
         "reasoning_preset": "low",
     }
     assert provider.sent[-1].text == (
-        "推理强度已切换\n模型：deepseek/deepseek-v4-flash\n推理强度：低\n下一条回复开始生效。"
+        "推理强度已切换\n模型：deepseek/deepseek-flash\n推理强度：低\n下一条回复开始生效。"
     )
     assert provider.sent[-1].controls is None
 
