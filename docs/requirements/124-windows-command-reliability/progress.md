@@ -70,3 +70,10 @@ IN_PROGRESS
 ## 用户交付决定（2026-09-11）
 
 用户明确要求先将当前实现合入主干并推送，再登记剩余现场问题为 open issue；随后由用户自行打包给受影响用户。本次按该明确决定先交付已实现部分，Windows 10、完整安装矩阵、真实联网和现场恢复证据继续待补，不将需求或原始弹窗问题标记完成。此决定覆盖本次先合入的顺序，不代表未执行的验收已通过。
+
+## 实际交付结果
+
+- 实现提交 e43213e26310e5ad54248e564a16c044b03175ae；合并提交 2969849bff44e56e385c846740b394b72e33db3e 已推送 origin/main。上文未提交/未合入描述是实施时状态，以本节为最新结果。
+- 合入时 origin/main 已包含需求 125 的身份提示词改动，无重叠文件、无合并冲突；本次改动内容保持不变。未重新构建安装包，既有 frozen 证据只绑定对应 feature 实现。
+- Guide 自动维护完成：r40，来源 78af5946b5345ef97635d41efc22153e34a4d6d9，immutable=true；validator 和 verify 通过，builtin 未同步。
+- 剩余工作移交 [issue 066](../../issues/066-windows-sandbox-field-recovery/README.md)，保持 open；用户自行后续打包，需求仍为 IN_PROGRESS。
