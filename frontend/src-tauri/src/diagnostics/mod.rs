@@ -151,6 +151,23 @@ pub async fn generate_diagnostic_bundle(
         }
     }
     .await;
+    let command_runtime_result = {
+        let client = client.clone();
+        async move {
+            let mut url =
+                reqwest::Url::parse(&runtime_services::RuntimeServiceKind::Bridge.base_url())
+                    .map_err(|e| e.to_string())?;
+            url.path_segments_mut()
+                .map_err(|_| "bridge base URL cannot accept path segments".to_string())?
+                .extend(["v1", "command-runtime", "diagnostics"]);
+            let response = client.get(url).send().await.map_err(|e| e.to_string())?;
+            if !response.status().is_success() {
+                return Err(format!("bridge returned HTTP {}", response.status()));
+            }
+            response.json::<Value>().await.map_err(|e| e.to_string())
+        }
+    }
+    .await;
     let session_results = futures_util::future::join_all(session_ids.iter().map(|session_id| {
         let client = client.clone();
         let session_id = session_id.clone();
@@ -233,6 +250,19 @@ pub async fn generate_diagnostic_bundle(
         }
     };
 
+    let command_runtime = match command_runtime_result {
+        Ok(value) => value,
+        Err(message) => {
+            failures.push(CollectionFailure {
+                collection: "command-runtime".into(),
+                item: None,
+                message: redact_text(&message, &credentials, home.as_deref()).0,
+            });
+            json!({"schemaVersion": 1, "status": "unavailable", "events": [],
+                   "gaps": ["bridge_unavailable"]})
+        }
+    };
+
     for (name, mut value) in [
         ("diagnostics/application.json", app_info),
         ("diagnostics/environment.json", environment),
@@ -248,6 +278,7 @@ pub async fn generate_diagnostic_bundle(
             "diagnostics/execution-environments.json",
             execution_environments,
         ),
+        ("diagnostics/command-runtime.json", command_runtime),
         ("install/integrity.json", install_integrity),
     ] {
         let mut count = 0;
@@ -1345,6 +1376,7 @@ mod tests {
                     "diagnostics/runtime-config.json",
                     "diagnostics/desktop-instance.json",
                     "diagnostics/execution-environments.json",
+                    "diagnostics/command-runtime.json",
                     "diagnostics/webview2.json",
                     "diagnostics/webview2-render-evidence.json",
                     "install/integrity.json",

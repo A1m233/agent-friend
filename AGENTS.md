@@ -16,6 +16,7 @@
 |---|---|
 | `agent-eval-governance.mdc` | agent-friend 的 agent_eval 治理规则：约束 case 维护、确定性验证、真实模型运行、续跑和报告复核 |
 | `agent-failure-attribution.mdc` | agent-friend 的 Agent 用户可见异常、真实 bad case、评测失败与运行时问题的根因归因门禁：区分模型、上下文、记忆、工具、编排、provider、环境、投影和评测侧故障 |
+| `agent-prompt-composition.mdc` | agent-friend 提示词与 Agent 入口维护：新增或修改模型调用、提示词、人格、记忆及摘要消费者时，分类职责、复用公共契约并验证来源与装配边界 |
 | `agent-tool-contract-design.mdc` | agent-friend 面向 LLM/Agent 公开工具的设计与变更规则：约束工具边界、description、JSON Schema、标识符、错误恢复、权限和验证 |
 | `coding-design.mdc` | agent-friend 项目编码设计原则：边界、可扩展性与不过度设计 |
 | `cross-platform-dev.mdc` | agent-friend 项目跨平台开发支持与 scripts/ 规范 |
@@ -31,7 +32,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: 7c50dbf2057e091fc445e02926576628ce335d6e002642370ab7c6de165ebd4a -->
+<!-- codex-adapter-source-sha256: fa44169fc8c9e522e98a848ba51c7f03f9644acdf618b4050de9bcb131acacab -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -495,6 +496,7 @@ Before starting work that matches a trigger below, read the rule file and apply 
 |---|---|---|---|
 | `agent-eval-governance.mdc` | agent-friend 的 agent_eval 治理规则：约束 case 维护、确定性验证、真实模型运行、续跑和报告复核 | agent-friend 的 agent_eval 治理规则：约束 case 维护、确定性验证、真实模型运行、续跑和报告复核 | `.cursor/rules/agent-eval-governance.mdc` |
 | `agent-failure-attribution.mdc` | agent-friend 的 Agent 用户可见异常、真实 bad case、评测失败与运行时问题的根因归因门禁：区分模型、上下文、记忆、工具、编排、provider、环境、投影和评测侧故障 | agent-friend 的 Agent 用户可见异常、真实 bad case、评测失败与运行时问题的根因归因门禁：区分模型、上下文、记忆、工具、编排、provider、环境、投影和评测侧故障 | `.cursor/rules/agent-failure-attribution.mdc` |
+| `agent-prompt-composition.mdc` | ["agent/src/**", "agent_bridge/src/**", "voice_bridge/src/**", "memory/src/**", "llm_providers/src/**"] | agent-friend 提示词与 Agent 入口维护：新增或修改模型调用、提示词、人格、记忆及摘要消费者时，分类职责、复用公共契约并验证来源与装配边界 | `.cursor/rules/agent-prompt-composition.mdc` |
 | `agent-tool-contract-design.mdc` | ["agent/src/agent/tools/**", "agent/src/agent/command_runtime/**", "agent/src/agent/filesystem/**", "agent/src/agent/tool_runtime/**", "agent/src/agent/prompt_sections/tool_usage_contract.md", "agent_bridge/**", "llm_providers/**", "agent_eval/**"] | agent-friend 面向 LLM/Agent 公开工具的设计与变更规则：约束工具边界、description、JSON Schema、标识符、错误恢复、权限和验证 | `.cursor/rules/agent-tool-contract-design.mdc` |
 | `diagnostic-bundle-contract.mdc` | ["frontend/src-tauri/src/diagnostics/**", "frontend/src-tauri/src/shell_diagnostics/**", ".cursor/skills/inspect-agent-friend-diagnostics/**"] | agent-friend 诊断包生产协议、机器契约与 inspect-agent-friend-diagnostics 消费者的同步约束 | `.cursor/rules/diagnostic-bundle-contract.mdc` |
 | `frontend-ui-conventions.mdc` | frontend/** | agent-friend 前端 UI 编写规范：语义化组件选型、组件复用与设计 token CSS 变量化 | `.cursor/rules/frontend-ui-conventions.mdc` |

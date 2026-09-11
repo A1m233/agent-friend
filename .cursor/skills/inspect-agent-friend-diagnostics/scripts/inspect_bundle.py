@@ -36,6 +36,7 @@ CAPABILITY_HANDLERS = {
     "install-integrity-v1": "installIntegrity",
     "desktop-instance-governance-v1": "desktopInstance",
     "managed-execution-environment-v1": "executionEnvironments",
+    "command-runtime-health-v1": "commandRuntime",
     "pet-input-evidence-v1": "petInputEvidence",
     "pet-render-evidence-v1": "petRenderEvidence",
 }
@@ -1554,10 +1555,71 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 execution_environments,
                 collected=execution_environments_collected,
             ),
+            "commandRuntime": summarize_command_runtime(
+                optional_json(archive, "diagnostics/command-runtime.json", warnings)
+                if "diagnostics/command-runtime.json" in names
+                else None,
+                collected="command-runtime-health-v1" in capabilities
+                or "diagnostics/command-runtime.json" in names,
+            ),
             "petInputEvidence": summarize_pet_input(archive, manifest, warnings),
             "petRenderEvidence": summarize_pet_render(archive, manifest, warnings),
             "warnings": warnings,
         }
+
+
+def summarize_command_runtime(value: Any, *, collected: bool) -> dict[str, Any]:
+    if not collected:
+        return {"evidence": "not-collected"}
+    if not isinstance(value, dict) or not isinstance(value.get("events"), list):
+        return {"evidence": "unavailable"}
+    events = value["events"]
+    allowed_codes = {
+        "ok",
+        "requested",
+        "failed",
+        "cancelled",
+        "timed_out",
+        "not_authorized",
+        "allowed",
+        "helper_launch_failed",
+        "helper_incomplete",
+        "helper_exit_failed",
+        "state_invalid",
+        "runtime_lost",
+        "unknown",
+        "proxy_domain_denied",
+        "proxy_private_target_denied",
+        "proxy_route_denied",
+        "payload_rejected",
+    }
+    counts: dict[str, int] = {}
+    invalid = 0
+    for event in events:
+        code = event.get("code") if isinstance(event, dict) else None
+        if isinstance(code, str) and code in allowed_codes:
+            counts[code] = counts.get(code, 0) + 1
+        else:
+            invalid += 1
+    states = {
+        "unsupported",
+        "checking",
+        "setup_required",
+        "setting_up",
+        "ready",
+        "repair_required",
+        "unavailable",
+    }
+    return {
+        "evidence": "collected",
+        "status": value.get("status")
+        if isinstance(value.get("status"), str) and value["status"] in states
+        else "unknown",
+        "eventCount": len(events),
+        "codes": counts,
+        "invalidCount": invalid,
+        "gapCount": len(value["gaps"]) if isinstance(value.get("gaps"), list) else None,
+    }
 
 
 def summarize_pet_render(
@@ -1815,6 +1877,7 @@ def print_human(summary: dict[str, Any]) -> None:
         f"inactiveOverlays={execution_environments.get('inactiveOverlayCount')} "
         f"payloadValidated={execution_environments.get('validatedPayloadCount')}"
     )
+    print("Command runtime: " + json.dumps(summary["commandRuntime"], ensure_ascii=False))
     render = summary["petRenderEvidence"]
     print(
         f"Pet render evidence: evidence={render.get('evidence')} "

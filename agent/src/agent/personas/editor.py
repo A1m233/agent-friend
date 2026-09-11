@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from ..errors import PersonaPersistError
+from ..system_prompt.resources import load_identity_contract
 from ..system_prompt.sections import PromptChannel
 from ..tools import ToolResult
 from .effective import (
@@ -95,7 +96,11 @@ class PersonaEditorPromptBuilder:
         channel_override: PromptChannel | None = None,
     ) -> str:
         del channel_override
-        return self._template.format(current_persona=self._store.load().content)
+        return (
+            load_identity_contract()
+            + "\n\n"
+            + self._template.format(current_persona=self._store.load().content)
+        )
 
     def snapshot(self) -> _FrozenPersonaEditorPromptBuilder:
         return _FrozenPersonaEditorPromptBuilder(self.build())

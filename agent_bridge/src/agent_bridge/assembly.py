@@ -504,6 +504,13 @@ def build_runtime(
         codex_home=command_runtime_root / "codex-home",
         execution_root=Path(tempfile.gettempdir()) / "agent-friend-command-execution",
         runtime_instance_id=runtime_identity.bridge_instance_id,
+        diagnostics_path=log_dir() / "command-runtime-diagnostics.json",
+        build_id=str(build_identity.get("buildId", "")) if build_identity else "",
+        payload_status="validated"
+        if codex_executable
+        else "rejected"
+        if codex_path_value
+        else "unknown",
     )
     tool_evidence_store = ToolExecutionEvidenceStore(
         tool_execution_evidence_dir(settings.sessions_dir.parent)
