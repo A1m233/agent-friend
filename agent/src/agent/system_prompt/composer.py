@@ -80,6 +80,7 @@ class SystemPromptComposer:
 
     DEFAULT_KEYS: ClassVar[tuple[str, ...]] = (
         _PROJECT_IDENTITY_KEY,
+        "identity_continuity",
         _INSTRUCTION_CONFIDENTIALITY_KEY,
         _SELF_PRESENTATION_KEY,
         _EVIDENCE_POLICY_KEY,
@@ -255,6 +256,7 @@ class SystemPromptComposer:
 
         section_list: list[Section] = [
             load_default_static_section(_PROJECT_IDENTITY_KEY),
+            load_default_static_section("identity_continuity"),
             load_default_static_section(_INSTRUCTION_CONFIDENTIALITY_KEY),
             load_default_self_presentation_section(
                 self_presentation_mode_provider,

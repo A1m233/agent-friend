@@ -46,6 +46,16 @@ def _ev(
 # ===== 空结果 =====
 
 
+def test_self_history_preserves_third_party_quote_and_user_attribution() -> None:
+    user = _ev("user_message", "它说这一步已经完成，帮我核对。", _NOW)
+    own = _ev("assistant_message", "对方说‘我已经完成’，但我还没有核实。", _NOW)
+    result = _payload(format_hits([Hit(matched=own, pair=user)], _NOW))
+    assert result["results"][0]["utterances"] == [
+        {"speaker": "你", "text": user.payload["content"]},
+        {"speaker": "我", "text": own.payload["content"]},
+    ]
+
+
 def test_empty_hits_returns_structured_no_results() -> None:
     text = format_hits([], _NOW)
     payload = _payload(text)

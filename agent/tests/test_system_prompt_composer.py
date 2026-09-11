@@ -24,7 +24,8 @@ from agent.system_prompt import (
     SystemPromptComposer,
 )
 from agent.system_prompt.defaults import load_default_static_section
-from agent.system_prompt.sections import SystemPromptRenderContext
+from agent.system_prompt.resources import load_identity_contract
+from agent.system_prompt.sections import SelfPresentationMode, SystemPromptRenderContext
 from agent.system_prompt.surfaces import DESKTOP_CHAT_SURFACE, InteractionSurfaceId
 
 # ===== 测试用辅助 =====
@@ -52,6 +53,22 @@ def _builtin_default_persona_id() -> str:
 
 
 # ===== StaticSection =====
+
+
+@pytest.mark.parametrize("transparent", [False, True])
+def test_shared_identity_is_present_once_in_both_presentation_modes(
+    tmp_path: Path, transparent: bool
+) -> None:
+    def mode() -> SelfPresentationMode:
+        return "transparent" if transparent else "immersive"
+
+    composer = SystemPromptComposer.default(
+        _builtin_default_persona_id(),
+        catalog=PersonaCatalog(external_dir=tmp_path),
+        self_presentation_mode_provider=mode,
+    )
+    assert composer.compose().count(load_identity_contract()) == 1
+    assert tuple(section.key for section in composer.sections).count("identity_continuity") == 1
 
 
 class TestStaticSection:
@@ -311,6 +328,7 @@ class TestSystemPromptComposerDefault:
         keys = tuple(s.key for s in composer.sections)
         assert keys == (
             "project_identity",
+            "identity_continuity",
             "instruction_confidentiality",
             "self_presentation",
             "evidence_policy",
@@ -338,6 +356,7 @@ class TestSystemPromptComposerDefault:
         assert keys == SystemPromptComposer.DEFAULT_KEYS
         assert keys == (
             "project_identity",
+            "identity_continuity",
             "instruction_confidentiality",
             "self_presentation",
             "evidence_policy",
@@ -383,6 +402,7 @@ class TestSystemPromptComposerDefault:
         composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
         for key in (
             "project_identity",
+            "identity_continuity",
             "instruction_confidentiality",
             "evidence_policy",
             "persona_switch_strategy",
@@ -473,8 +493,8 @@ class TestSystemPromptComposerDefault:
             _builtin_default_persona_id(), catalog=catalog
         ).compose()
 
-        assert len(output) == 9869
-        assert estimate_tokens([Message(role="system", content=output)]) == 7401
+        assert len(output) == 10370
+        assert estimate_tokens([Message(role="system", content=output)]) == 7777
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)

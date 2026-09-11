@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from agent.system_prompt.resources import load_identity_contract
+
 from agent import (
     EffectivePersonaStore,
     PersonaEditorPromptBuilder,
@@ -28,8 +30,21 @@ def test_editor_prompt_snapshot_freezes_current_persona_for_one_turn(tmp_path: P
     store.apply("外部更新后的人格", expected_revision=first.revision)
 
     assert "初始人格" in frozen.build()
+    assert frozen.build().count(load_identity_contract()) == 1
     assert "外部更新后的人格" not in frozen.build()
     assert "外部更新后的人格" in builder.build()
+
+
+def test_editor_candidate_does_not_change_effective_identity(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    builder = PersonaEditorPromptBuilder(store)
+    original = builder.build()
+    result = ProposePersonaTool(store).invoke(
+        {"content": "# 新名字\n新的表达方式", "summary": ["调整名字"]}
+    )
+    assert not result.is_error
+    assert builder.build() == original
+    assert "新名字" in json.loads(result.text)["content"]
 
 
 def test_editor_prompt_uses_stable_ui_labels_instead_of_spatial_directions(

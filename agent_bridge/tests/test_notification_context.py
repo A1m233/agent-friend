@@ -11,6 +11,7 @@ import httpx
 import pytest
 from agent.notifications import NotificationFact
 from agent.personas import EffectivePersonaStore
+from agent.system_prompt.resources import load_identity_contract
 from agent_bridge.notifications.generation import NotificationGenerator, recall_query
 from agent_bridge.notifications.prompt import NOTIFICATION_PROMPT
 from memory.contracts import MemoryContext, MemoryItem
@@ -145,6 +146,7 @@ def test_notification_context_keeps_current_fact_separate_through_provider_wire(
     system_text = system["content"][0]["text"]
     user_text = user["content"][0]["text"]
     assert system_text.count(original_persona) == 1
+    assert system_text.count(load_identity_contract()) == 1
     assert system_text.endswith(NOTIFICATION_PROMPT)
     assert "当前事件是唯一通知主题" in system_text
     assert "记忆仅作背景，不能替换或扩展事件" in system_text
