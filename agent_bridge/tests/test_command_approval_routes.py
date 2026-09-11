@@ -23,6 +23,20 @@ from fastapi.testclient import TestClient
 from agent import Event, JsonlSessionStore, Session, SessionManager, SessionNotFoundError
 
 
+def test_command_diagnostics_does_not_launch_setup_or_load_sessions(tmp_path: Path) -> None:
+    from agent.command_runtime import CommandRuntime
+
+    runtime = CommandRuntime(None, codex_home=tmp_path / "home", execution_root=tmp_path / "exec")
+    app = FastAPI()
+    register_routes(app, cast(Any, SimpleNamespace(command_runtime=runtime)))
+    with TestClient(app) as client:
+        response = client.get("/v1/command-runtime/diagnostics")
+    assert response.status_code == 200
+    assert response.json()["events"] == []
+    assert runtime._client is None
+    assert not (tmp_path / "home").exists()
+
+
 @pytest.fixture
 def approval_sessions(
     tmp_path: Path,

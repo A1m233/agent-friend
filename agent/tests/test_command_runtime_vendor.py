@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -36,6 +38,8 @@ def _payload(root: Path) -> Path:
     executable = root / "bin" / "codex.exe"
     executable.parent.mkdir()
     executable.write_bytes(b"codex")
+    for name in ("codex-windows-sandbox-setup.exe", "codex-command-runner.exe"):
+        (executable.parent / name).write_bytes(name.encode())
     license_path = root / "LICENSE-CODEX"
     license_path.write_bytes(b"license")
     protocol = {
@@ -61,8 +65,48 @@ def _payload(root: Path) -> Path:
         "platform": "windows-x86_64",
         "archive_sha256": "a" * 64,
         "executable_sha256": hashlib.sha256(b"codex").hexdigest(),
+        "bin_sha256": {
+            p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in executable.parent.iterdir()
+        },
         "protocol": protocol,
     }
     (root / "vendor-lock.json").write_text(json.dumps(lock), encoding="utf-8")
     (root / "identity.json").write_text(json.dumps(identity), encoding="utf-8")
     return executable
+
+
+@pytest.mark.parametrize("action", ["missing", "tampered", "no_manifest"])
+def test_runtime_rejects_incomplete_companions(tmp_path: Path, action: str) -> None:
+    executable = _payload(tmp_path)
+    helper = executable.parent / "codex-windows-sandbox-setup.exe"
+    if action == "missing":
+        helper.unlink()
+    elif action == "tampered":
+        helper.write_bytes(b"modified")
+    else:
+        path = tmp_path / "identity.json"
+        data = json.loads(path.read_text())
+        data.pop("bin_sha256")
+        path.write_text(json.dumps(data))
+    with pytest.raises(CodexIdentityError, match="companion"):
+        verify_codex_executable(executable)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows helper")
+def test_helper_probe_only_reaches_argument_parser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent.command_runtime.vendor import probe_setup_helper
+
+    executable = _payload(tmp_path)
+    monkeypatch.setenv("CODEX_HOME", "private-control-state")
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        assert argv == [str(executable.parent / "codex-windows-sandbox-setup.exe")]
+        assert "private-control-state" not in str(kwargs)
+        return subprocess.CompletedProcess(
+            argv, 1, b"", b"helper_request_args_failed: expected payload argument"
+        )
+
+    monkeypatch.setattr("agent.command_runtime.vendor.subprocess.run", run)
+    assert probe_setup_helper(executable)["status"] == "ready"

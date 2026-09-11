@@ -34,6 +34,29 @@ def _load_inspector() -> ModuleType:
 INSPECTOR = _load_inspector()
 
 
+def test_command_inventory_is_bounded_to_codes_and_counts() -> None:
+    value = {
+        "status": "repair_required",
+        "events": [
+            {"code": "helper_launch_failed", "message": "secret", "path": "private-file"},
+            {"code": "secret-code"},
+        ],
+        "gaps": ["private-gap"],
+    }
+    summary = INSPECTOR.summarize_command_runtime(value, collected=True)
+    assert summary["codes"] == {"helper_launch_failed": 1}
+    assert summary["invalidCount"] == 1
+    assert "secret" not in json.dumps(summary)
+    assert "private" not in json.dumps(summary)
+    assert INSPECTOR.summarize_command_runtime(None, collected=False) == {
+        "evidence": "not-collected"
+    }
+    assert (
+        INSPECTOR.summarize_command_runtime({"events": [], "status": []}, collected=True)["status"]
+        == "unknown"
+    )
+
+
 def _load_contract() -> dict[str, object]:
     return json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
 
@@ -318,6 +341,12 @@ def _build_bundle(
         },
         "diagnostics/runtime-services.json": {},
         "diagnostics/runtime-config.json": {"items": []},
+        "diagnostics/command-runtime.json": {
+            "schemaVersion": 1,
+            "status": "repair_required",
+            "events": [{"code": "helper_launch_failed"}],
+            "gaps": [],
+        },
         "diagnostics/execution-environments.json": {
             "schemaVersion": 1,
             "status": "ready",
@@ -649,6 +678,7 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
         "render-evidence/webview2-pet.png",
         "render-evidence/windows-desktop.png",
     ]
+    assert summary["commandRuntime"]["codes"] == {"helper_launch_failed": 1}
     assert summary["installIntegrity"]["status"] == "consistent"
     assert summary["installIntegrity"]["evidence"] == "collected"
     assert summary["installIntegrity"]["payload"]["validated"] is True

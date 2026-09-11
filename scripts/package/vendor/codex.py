@@ -96,6 +96,7 @@ def prepare(
             "platform": platform_key(),
             "archive_sha256": artifact["sha256"],
             "executable_sha256": _sha256(bin_dir / _installed_executable_name()),
+            "bin_sha256": {p.name: _sha256(p) for p in sorted(bin_dir.iterdir()) if p.is_file()},
             "protocol": lock["protocol"],
         }
         (staged / "identity.json").write_text(
@@ -174,9 +175,26 @@ def _verify_prepared(
             and identity["archive_sha256"] == artifact["sha256"]
             and identity["executable_sha256"] == _sha256(executable)
             and identity["protocol"] == lock["protocol"]
+            and _verify_bin_files(root / "bin", identity)
         )
     except (OSError, KeyError, ValueError, json.JSONDecodeError, RuntimeError):
         return False
+
+
+def _verify_bin_files(bin_dir: Path, identity: dict[str, Any]) -> bool:
+    hashes = identity.get("bin_sha256")
+    required = {_installed_executable_name()}
+    if identity.get("platform") == "windows-x86_64":
+        required.update({"codex-windows-sandbox-setup.exe", "codex-command-runner.exe"})
+    if not isinstance(hashes, dict) or not required.issubset(hashes):
+        return False
+    for name, digest in hashes.items():
+        if not isinstance(name, str) or Path(name).name != name or name in {".", ".."}:
+            return False
+        path = bin_dir / name
+        if path.is_symlink() or not path.is_file() or _sha256(path) != digest:
+            return False
+    return True
 
 
 def _download(url: str, destination: Path, *, offline: bool = False) -> None:

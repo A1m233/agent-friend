@@ -256,6 +256,12 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 detail={"error": exc.code, "message": str(exc)},
             ) from exc
 
+    @router.get("/command-runtime/diagnostics")
+    def command_runtime_diagnostics() -> dict[str, object]:
+        if runtime.command_runtime is None:
+            raise HTTPException(status_code=503, detail="command runtime unavailable")
+        return runtime.command_runtime.diagnostics()
+
     @router.post("/sessions/{session_id}/runs/{run_id}/commands/{process_id}/cancel")
     def cancel_command_process(session_id: str, run_id: str, process_id: str) -> dict[str, object]:
         if runtime.command_runtime is None:

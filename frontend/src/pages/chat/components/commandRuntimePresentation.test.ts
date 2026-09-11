@@ -29,6 +29,9 @@ describe("commandNeedsSandboxPreparation", () => {
 
   it("uses the tool result only while live runtime state is unavailable", () => {
     expect(commandNeedsSandboxPreparation("windows_sandbox_became_unavailable", null)).toBe(true);
+    expect(commandNeedsSandboxPreparation("windows_sandbox_repair_required", null)).toBe(true);
+    expect(commandNeedsSandboxPreparation("windows_sandbox_probe_failed", null)).toBe(true);
+    expect(commandNeedsSandboxPreparation("windows_sandbox_repair_required", status(true))).toBe(false);
   });
 
   it("never routes an approved host-user command through sandbox preparation", () => {

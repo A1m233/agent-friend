@@ -11,6 +11,7 @@ import time
 write_lock = threading.Lock()
 live: set[str] = set()
 commands: dict[str, str] = {}
+network_requests: dict[object, str] = {}
 
 
 def send(value: dict[str, object]) -> None:
@@ -50,6 +51,13 @@ for raw_line in sys.stdin:
     method = message.get("method")
     params = message.get("params", {})
     request_id = message.get("id")
+    if method is None and request_id in network_requests:
+        process_id = network_requests.pop(request_id)
+        decision = message.get("result", {}).get("decision", {}).get("type")
+        threading.Thread(
+            target=finish, args=(process_id, str(decision).encode()), daemon=True
+        ).start()
+        continue
     if method == "initialize":
         send({"id": request_id, "result": {"protocolVersion": 1}})
     elif method == "initialized":
@@ -65,6 +73,22 @@ for raw_line in sys.stdin:
         sandbox_type = (
             "none" if command == "fake:none-sandbox" or "sandbox" not in params else "windows"
         )
+        if command == "fake:network":
+            network_requests[request_id] = process_id
+            send(
+                {
+                    "id": request_id,
+                    "method": "network/policyRequest",
+                    "params": {
+                        "processId": process_id,
+                        "request": {
+                            "host": "example.com",
+                            "port": 443,
+                            "protocol": "https_connect",
+                        },
+                    },
+                }
+            )
         send({"id": request_id, "result": {"sandboxType": sandbox_type}})
         if command == "fake:buffered":
             threading.Thread(

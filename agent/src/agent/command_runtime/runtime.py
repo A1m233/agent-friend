@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -22,6 +23,7 @@ from typing import Any
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
+from .diagnostics import CommandDiagnostics, classify_setup_error
 from .exec_server import ExecServerClient, ExecServerError
 from .models import (
     CommandMode,
@@ -29,6 +31,9 @@ from .models import (
     CommandProcessStatus,
     decode_process_output,
 )
+from .network import network_decision, valid_network_request
+from .vendor import probe_setup_helper
+from .windows_state import compatible_state, read_state
 
 OUTPUT_TAIL_BYTES = 256 * 1024
 MAX_RETAINED_TERMINAL_PROCESSES = 128
@@ -338,6 +343,7 @@ def managed_network_request(
         "enforceManagedNetwork": True,
         "managedNetwork": None,
         "networkProxy": {
+            "policyDecisionTimeoutMs": 5000,
             "proxy": {
                 "enabled": True,
                 "enableSocks5": False,
@@ -348,7 +354,7 @@ def managed_network_request(
                 "domains": None,
                 "unixSockets": None,
                 "allowLocalBinding": False,
-            }
+            },
         },
     }
 
@@ -364,6 +370,9 @@ class CommandRuntime:
         output_tail_bytes: int = OUTPUT_TAIL_BYTES,
         exec_server_command: list[str] | None = None,
         runtime_instance_id: str = "",
+        diagnostics_path: Path | None = None,
+        build_id: str = "",
+        payload_status: str = "unknown",
     ) -> None:
         self._codex_executable = codex_executable.resolve() if codex_executable else None
         self._codex_home = codex_home.resolve()
@@ -379,6 +388,13 @@ class CommandRuntime:
         self._exec_server_command = list(exec_server_command) if exec_server_command else None
         self._runtime_instance_id = runtime_instance_id
         self._lock = threading.RLock()
+        self._diagnostics = CommandDiagnostics(
+            diagnostics_path, runtime_instance_id or uuid4().hex, build_id
+        )
+        self._payload_status = (
+            payload_status if payload_status in {"validated", "rejected"} else "unknown"
+        )
+        self._network_grants: set[str] = set()
         self._setup_lock = threading.Lock()
         self._client: ExecServerClient | None = None
         self._processes: dict[str, _ProcessState] = {}
@@ -387,6 +403,11 @@ class CommandRuntime:
         self._capability_listeners: list[Callable[[dict[str, object]], None]] = []
         self._setup_active = False
         self._setup_error: dict[str, str] | None = None
+        if self._diagnostics.needs_repair():
+            self._setup_error = {
+                "error": "windows_sandbox_repair_required",
+                "message": "上次沙箱初始化失败尚未验证恢复，请先修复后重新发起命令。",
+            }
         self._capability_version = 1
         self._capability_fingerprint: tuple[object, ...] | None = None
 
@@ -404,7 +425,7 @@ class CommandRuntime:
     def windows_sandbox_ready(self) -> bool:
         if os.name != "nt" or self._exec_server_command is not None:
             return True
-        return self._read_windows_sandbox_state()[0] == "ready"
+        return self.sandbox_capability()["ready"] is True
 
     def _read_windows_sandbox_state(self) -> tuple[str, dict[str, str] | None]:
         if os.name != "nt":
@@ -427,12 +448,13 @@ class CommandRuntime:
             }
         required_proxy_port = safe_loopback_proxy_port(self._base_env)
         try:
-            marker = json.loads(marker_path.read_text(encoding="utf-8"))
-            users = json.loads(users_path.read_text(encoding="utf-8"))
-            if not isinstance(marker, dict) or not isinstance(marker.get("version"), int):
-                raise ValueError("invalid setup marker")
-            if not isinstance(users, dict):
-                raise ValueError("invalid sandbox users")
+            marker = read_state(marker_path)
+            users = read_state(users_path)
+            if not compatible_state(marker, users):
+                return "repair_required", {
+                    "error": "windows_sandbox_state_incompatible",
+                    "message": "Windows 命令沙箱状态不完整或与内置运行时不兼容，请修复后重试。",
+                }
             configured_ports = marker.get("proxy_ports")
             if required_proxy_port is not None and (
                 not isinstance(configured_ports, list)
@@ -455,6 +477,9 @@ class CommandRuntime:
             if self._setup_active:
                 state = "setting_up"
                 error = None
+            elif self._setup_error is not None and state != "unsupported":
+                state = "repair_required"
+                error = self._setup_error
             elif state == "ready":
                 error = None
             else:
@@ -524,14 +549,36 @@ class CommandRuntime:
                 "command_runtime_unavailable", "product Codex executable is unavailable"
             )
         with self._setup_lock:
-            if self.windows_sandbox_ready:
-                return self.status()
+            was_ready = self.windows_sandbox_ready
             with self._lock:
                 self._setup_active = True
                 self._setup_error = None
             self.refresh_sandbox_capability()
             try:
-                self._perform_windows_sandbox_setup(executable, timeout_seconds=timeout_seconds)
+                helper = probe_setup_helper(executable)
+                native = helper.get("nativeCode", helper.get("exitCode"))
+                helper_ready = helper["status"] in {"ready", "not_applicable"}
+                self._diagnostics.record(
+                    "helper",
+                    "ok" if helper_ready else "helper_launch_failed",
+                    native_code=native if isinstance(native, int) else None,
+                )
+                if not helper_ready:
+                    raise CommandRuntimeError(
+                        "windows_sandbox_helper_load_failed",
+                        "Windows 沙箱初始化助手无法加载，未执行系统初始化。请导出诊断检查安装与系统依赖。",
+                    )
+                if was_ready:
+                    try:
+                        self._probe_windows_sandbox()
+                    except CommandRuntimeError:
+                        self._perform_windows_sandbox_setup(
+                            executable, timeout_seconds=timeout_seconds
+                        )
+                        self._probe_windows_sandbox()
+                else:
+                    self._perform_windows_sandbox_setup(executable, timeout_seconds=timeout_seconds)
+                    self._probe_windows_sandbox()
             except Exception as exc:
                 runtime_error = (
                     exc
@@ -547,11 +594,13 @@ class CommandRuntime:
                         "error": runtime_error.code,
                         "message": str(runtime_error),
                     }
+                self._diagnostics.record("setup", "failed")
                 self.refresh_sandbox_capability()
                 raise runtime_error from exc
             with self._lock:
                 self._setup_active = False
                 self._setup_error = None
+            self._diagnostics.record("setup", "ok")
             self.refresh_sandbox_capability()
             return self.status()
 
@@ -598,7 +647,7 @@ class CommandRuntime:
             else:
                 message = f"{message} without diagnostic output"
             raise CommandRuntimeError("windows_sandbox_setup_failed", message)
-        if not self.windows_sandbox_ready:
+        if self._read_windows_sandbox_state()[0] != "ready":
             required_proxy_port = safe_loopback_proxy_port(self._base_env)
             suffix = (
                 f" for required proxy port {required_proxy_port}"
@@ -610,6 +659,109 @@ class CommandRuntime:
                 "Windows sandbox setup exited successfully, but its readiness marker "
                 f"was not updated{suffix}",
             )
+
+    def _probe_windows_sandbox(self) -> None:
+        if self._read_windows_sandbox_state()[0] != "ready":
+            raise CommandRuntimeError("windows_sandbox_setup_incomplete", "沙箱状态校验未通过。")
+        system_root = _env_value(self._base_env, "SystemRoot", "WINDIR")
+        if not system_root:
+            raise CommandRuntimeError("windows_sandbox_probe_failed", "无法定位系统命令解释器。")
+        self._execution_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="sandbox-probe-", dir=self._execution_root) as tmp:
+            workdir = Path(tmp)
+            process = self.start_process(
+                argv=(
+                    str(Path(system_root) / "System32" / "cmd.exe"),
+                    "/D",
+                    "/C",
+                    "echo agent-friend-sandbox-ready",
+                ),
+                workdir=workdir,
+                env=self._windows_setup_env(),
+                mode="buffered",
+                session_id="sandbox-setup",
+                run_id="sandbox-probe",
+                tool_call_id="sandbox-probe",
+                sandbox=sandbox_context(
+                    workdir=workdir, writable=True, additional_roots=(), network_enabled=False
+                ),
+                _setup_probe=True,
+            )
+            result = self.wait(
+                process.process_id,
+                session_id="sandbox-setup",
+                run_id="sandbox-probe",
+                timeout_seconds=15,
+            )
+            if not result.terminal():
+                with suppress(CommandRuntimeError):
+                    self.terminate(
+                        process.process_id,
+                        session_id="sandbox-setup",
+                        run_id="sandbox-probe",
+                        reason="timeout",
+                    )
+            if (
+                not result.terminal()
+                or result.exit_code != 0
+                or b"agent-friend-sandbox-ready" not in result.stdout_tail
+            ):
+                self._diagnostics.record("probe", "failed")
+                raise CommandRuntimeError(
+                    "windows_sandbox_probe_failed",
+                    "沙箱实际执行验证失败，请导出诊断并修复后重新发起命令。",
+                )
+        self._diagnostics.record("probe", "ok")
+
+    def _record_sandbox_failure(self, stage: str, detail: str, *, operation: str = "") -> None:
+        code, native_code = classify_setup_error(detail)
+        self._diagnostics.record(stage, code, native_code=native_code, operation=operation)
+        if code != "unknown":
+            with self._lock:
+                self._setup_error = {
+                    "error": "windows_sandbox_repair_required",
+                    "message": "Windows 沙箱初始化助手失败，请在系统权限中修复后重新发起命令；"
+                    "不要原样重试或改用宿主托管 Python。可导出诊断定位原因。",
+                }
+            self.refresh_sandbox_capability()
+
+    def diagnostics(self) -> dict[str, Any]:
+        capability = self.sandbox_capability()
+        error = capability.get("last_error")
+        return {
+            **self._diagnostics.snapshot(),
+            "status": capability["state"],
+            "payloadStatus": self._payload_status,
+            "errorCode": error.get("error") if isinstance(error, dict) else None,
+            "helpers": {
+                name: bool(
+                    self._codex_executable and (self._codex_executable.parent / name).is_file()
+                )
+                for name in ("codex-windows-sandbox-setup.exe", "codex-command-runner.exe")
+            }
+            if os.name == "nt"
+            else {},
+        }
+
+    def _handle_server_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        process_id = params.get("processId")
+        with self._lock:
+            allowed = (
+                method == "network/policyRequest"
+                and isinstance(process_id, str)
+                and process_id in self._network_grants
+                and set(params) == {"processId", "request"}
+                and valid_network_request(params.get("request"))
+            )
+        # The RPC reader must never wait for disk or another RPC.
+        self._diagnostics.record(
+            "policy",
+            "allowed" if allowed else "not_authorized",
+            operation=process_id if isinstance(process_id, str) else "",
+            proxy="executor_managed",
+            persist=False,
+        )
+        return network_decision(allowed)
 
     @staticmethod
     def _consume_windows_setup_diagnostic(path: Path) -> str:
@@ -681,8 +833,13 @@ class CommandRuntime:
         sandbox: dict[str, Any] | None,
         tool_name: str = "exec_command",
         evidence_ref: str | None = None,
+        _setup_probe: bool = False,
     ) -> CommandProcessSnapshot:
-        if sandbox is not None and not self.windows_sandbox_ready:
+        if sandbox is not None and not (
+            self._read_windows_sandbox_state()[0] == "ready"
+            if _setup_probe
+            else self.windows_sandbox_ready
+        ):
             raise CommandRuntimeError(
                 "windows_sandbox_setup_required",
                 "Windows command sandbox is not initialized; run the explicit setup action first",
@@ -723,20 +880,41 @@ class CommandRuntime:
         if sandbox is not None:
             params["sandbox"] = sandbox
             params.update(managed_network_request(network_enabled, env))
+        proxy = (
+            "executor_managed"
+            if params.get("networkProxy")
+            else "inherited_loopback"
+            if params.get("managedNetwork")
+            else "none"
+        )
+        with state.condition, self._lock:
+            if (
+                params.get("networkProxy")
+                and network_enabled
+                and state.termination_reason is None
+                and not state.snapshot.terminal()
+                and self._client is client
+            ):
+                self._network_grants.add(process_id)
+        self._diagnostics.record("start", "requested", operation=process_id, proxy=proxy)
         try:
             # The elevated Windows backend may need to establish or refresh its
             # dedicated sandbox identities before the first process starts.
             response = client.request("process/start", params, timeout_seconds=60)
         except ExecServerError as exc:
             with self._lock:
+                self._network_grants.discard(process_id)
                 self._processes.pop(process_id, None)
             stderr = client.stderr_tail.strip()
             detail = f"{exc}; exec-server stderr: {stderr}" if stderr else str(exc)
+            self._record_sandbox_failure("start", str(exc), operation=process_id)
             raise CommandRuntimeError("process_start_failed", detail) from exc
         sandbox_type = response.get("sandboxType") if isinstance(response, dict) else None
         if sandbox is not None and (
             not isinstance(sandbox_type, str) or sandbox_type.lower() == "none"
         ):
+            with self._lock:
+                self._network_grants.discard(process_id)
             with suppress(ExecServerError):
                 client.request("process/terminate", {"processId": process_id}, timeout_seconds=5)
             self._finish(state, "runtime_lost", "sandbox_visibility_unavailable")
@@ -747,6 +925,7 @@ class CommandRuntime:
         with state.condition:
             state.snapshot.sandbox_type = sandbox_type if isinstance(sandbox_type, str) else "none"
             state.snapshot.version += 1
+        self._diagnostics.record("start", "ok", operation=process_id, proxy=proxy)
         self._publish_state(state)
         return self._copy_snapshot(state.snapshot)
 
@@ -754,6 +933,8 @@ class CommandRuntime:
         self,
         workdir: Path,
         sandbox: Mapping[str, Any],
+        *,
+        operation_id: str = "",
     ) -> None:
         """Synchronously warm a product-owned Windows cwd before a read-only launch."""
         if os.name != "nt":
@@ -789,6 +970,7 @@ class CommandRuntime:
                 timeout_seconds=60,
             )
         except ExecServerError as exc:
+            self._record_sandbox_failure("visibility", str(exc), operation=operation_id)
             raise CommandRuntimeError(
                 "sandbox_visibility_unavailable",
                 f"failed to prepare product-owned read-only workdir {target_uri}: {exc}",
@@ -863,6 +1045,8 @@ class CommandRuntime:
             )
         state = self._owned_state(process_id, session_id=session_id, run_id=run_id)
         normalized_reason = reason.strip() or "cancelled"
+        with self._lock:
+            self._network_grants.discard(process_id)
         should_request = False
         with state.condition:
             if state.snapshot.terminal():
@@ -872,6 +1056,8 @@ class CommandRuntime:
                 state.termination_rpc_status = "requesting"
                 state.termination_error = None
                 should_request = True
+            with self._lock:
+                self._network_grants.discard(process_id)
 
         if should_request:
             client = self._client
@@ -963,6 +1149,7 @@ class CommandRuntime:
 
     def close(self) -> None:
         with self._lock:
+            self._network_grants.clear()
             states = tuple(self._processes.values())
             client = self._client
             self._client = None
@@ -971,6 +1158,7 @@ class CommandRuntime:
                 self._finish(state, "runtime_lost", "runtime_closed")
         if client is not None:
             client.close()
+        self._diagnostics.flush()
 
     def _ensure_client(self) -> ExecServerClient:
         with self._lock:
@@ -997,6 +1185,8 @@ class CommandRuntime:
                 command,
                 env=env,
                 notification=self._handle_notification,
+                server_request=self._handle_server_request,
+                stderr_observer=self._observe_exec_stderr,
             )
             try:
                 client.start()
@@ -1005,6 +1195,27 @@ class CommandRuntime:
                 raise CommandRuntimeError("exec_server_start_failed", str(exc)) from exc
             self._client = client
             return client
+
+    def _observe_exec_stderr(self, line: str) -> None:
+        prefix = "CODEX_NETWORK_POLICY_VIOLATION "
+        if prefix not in line:
+            return
+        try:
+            value = json.loads(line.split(prefix, 1)[1])
+        except ValueError:
+            return
+        if not isinstance(value, dict):
+            return
+        reason = value.get("reason")
+        codes = {
+            "not_allowed": "proxy_domain_denied",
+            "denied": "proxy_domain_denied",
+            "not_allowed_local": "proxy_private_target_denied",
+        }
+        if isinstance(reason, str) and reason in codes:
+            self._diagnostics.record(
+                "policy", codes[reason], proxy="executor_managed", persist=False
+            )
 
     def _exec_server_env(self) -> dict[str, str]:
         canonical_names = {
@@ -1034,6 +1245,7 @@ class CommandRuntime:
     def _handle_notification(self, method: str, params: dict[str, Any]) -> None:
         if method == "connection/lost":
             with self._lock:
+                self._network_grants.clear()
                 states = tuple(self._processes.values())
                 self._client = None
             for state in states:
@@ -1050,6 +1262,8 @@ class CommandRuntime:
         if method == "process/output":
             self._handle_output(process_state, params)
         elif method == "process/exited":
+            with self._lock:
+                self._network_grants.discard(process_id)
             with process_state.condition:
                 code = params.get("exitCode")
                 process_state.snapshot.exit_code = code if isinstance(code, int) else None
@@ -1100,6 +1314,8 @@ class CommandRuntime:
         self._schedule_publish(state, len(chunk))
 
     def _finish(self, state: _ProcessState, status: CommandProcessStatus, reason: str) -> None:
+        with self._lock:
+            self._network_grants.discard(state.snapshot.process_id)
         with state.condition:
             if state.snapshot.terminal():
                 return
@@ -1121,6 +1337,7 @@ class CommandRuntime:
             state.condition.notify_all()
         self._publish_state(state, include_evidence=False)
         self._prune_terminal_processes()
+        self._diagnostics.flush()
 
     def _owned_state(self, process_id: str, *, session_id: str, run_id: str) -> _ProcessState:
         with self._lock:

@@ -523,7 +523,16 @@ def test_windows_sandbox_readiness_includes_approved_proxy_port(tmp_path: Path) 
     users = codex_home / ".sandbox-secrets" / "sandbox_users.json"
     marker.parent.mkdir(parents=True)
     users.parent.mkdir(parents=True)
-    users.write_text("{}", encoding="utf-8")
+    users.write_text(
+        json.dumps(
+            {
+                "version": 5,
+                "online": {"username": "online", "password": "YWJj"},
+                "offline": {"username": "offline", "password": "YWJj"},
+            }
+        ),
+        encoding="utf-8",
+    )
     runtime = CommandRuntime(
         executable,
         codex_home=codex_home,
@@ -531,9 +540,15 @@ def test_windows_sandbox_readiness_includes_approved_proxy_port(tmp_path: Path) 
         base_env={"HTTP_PROXY": "http://127.0.0.1:15236"},
     )
 
-    marker.write_text('{"version": 5, "proxy_ports": []}', encoding="utf-8")
+    marker.write_text(
+        '{"version": 5, "online_username":"online", "offline_username":"offline", "proxy_ports": []}',
+        encoding="utf-8",
+    )
     assert not runtime.windows_sandbox_ready
-    marker.write_text('{"version": 5, "proxy_ports": [15236]}', encoding="utf-8")
+    marker.write_text(
+        '{"version": 5, "online_username":"online", "offline_username":"offline", "proxy_ports": [15236]}',
+        encoding="utf-8",
+    )
     assert runtime.windows_sandbox_ready
 
 
@@ -1206,6 +1221,9 @@ def test_windows_setup_process_detail_extracts_errors_and_drops_progress() -> No
 def test_windows_setup_reports_uac_cancellation_without_clixml(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        "agent.command_runtime.runtime.probe_setup_helper", lambda _: {"status": "ready"}
+    )
     executable = tmp_path / "codex.exe"
     executable.write_bytes(b"fixture")
     runtime = CommandRuntime(
@@ -1232,6 +1250,9 @@ def test_windows_setup_reports_uac_cancellation_without_clixml(
 def test_windows_setup_surfaces_and_removes_elevated_child_diagnostic(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        "agent.command_runtime.runtime.probe_setup_helper", lambda _: {"status": "ready"}
+    )
     executable = tmp_path / "codex.exe"
     executable.write_bytes(b"fixture")
     execution_root = tmp_path / "execution"
@@ -1266,6 +1287,9 @@ def test_windows_setup_surfaces_and_removes_elevated_child_diagnostic(
 def test_windows_setup_reports_missing_readiness_marker_after_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(
+        "agent.command_runtime.runtime.probe_setup_helper", lambda _: {"status": "ready"}
+    )
     executable = tmp_path / "codex.exe"
     executable.write_bytes(b"fixture")
     runtime = CommandRuntime(
@@ -2267,7 +2291,7 @@ def test_read_only_session_directory_is_prepared_before_process_start(
     prepared: list[Path] = []
     original = runtime.prepare_owned_read_only_workdir
 
-    def prepare(workdir: Path, sandbox: Mapping[str, object]) -> None:
+    def prepare(workdir: Path, sandbox: Mapping[str, object], **kwargs: object) -> None:
         prepared.append(workdir)
         original(workdir, sandbox)
 

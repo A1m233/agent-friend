@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 11,
+  "schemaRevision": 12,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -160,6 +160,16 @@
         "diagnostics/pet-render/coverage.json",
         "diagnostics/pet-render/history-*.jsonl",
         "diagnostics/pet-render/incident-*.json"
+      ]
+    },
+    {
+      "id": "command-runtime-health-v1",
+      "manifestFields": [],
+      "requiredEntries": [
+        "diagnostics/command-runtime.json"
+      ],
+      "entryPatterns": [
+        "diagnostics/command-runtime.json"
       ]
     }
   ]

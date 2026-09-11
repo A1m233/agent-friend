@@ -36,10 +36,14 @@ class ExecServerClient:
         *,
         env: Mapping[str, str],
         notification: Callable[[str, dict[str, Any]], None],
+        server_request: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+        stderr_observer: Callable[[str], None] | None = None,
     ) -> None:
         self._command = list(command)
         self._env = dict(env)
         self._notification = notification
+        self._server_request = server_request
+        self._stderr_observer = stderr_observer
         self._process: subprocess.Popen[bytes] | None = None
         self._write_lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -169,6 +173,7 @@ class ExecServerClient:
         process = self._process
         if process is None or process.stderr is None:
             return
+        tail = b""
         try:
             while chunk := process.stderr.read(4096):
                 with self._state_lock:
@@ -176,11 +181,44 @@ class ExecServerClient:
                     overflow = len(self._stderr_tail) - MAX_STDERR_TAIL_BYTES
                     if overflow > 0:
                         del self._stderr_tail[:overflow]
+                tail += chunk
+                while b"\n" in tail:
+                    line, tail = tail.split(b"\n", 1)
+                    if self._stderr_observer is not None:
+                        self._stderr_observer(line.decode("utf-8", errors="replace"))
+                tail = tail[-MAX_STDERR_TAIL_BYTES:]
         except OSError:
             logger.debug("exec-server stderr reader stopped", exc_info=True)
 
     def _dispatch(self, message: dict[str, Any]) -> None:
         request_id = message.get("id")
+        # The two RPC peers have independent ID spaces. A server request must
+        # never complete a pending client request with the same numeric ID.
+        if "method" in message and request_id is not None:
+            method, params = message.get("method"), message.get("params")
+            if not isinstance(request_id, (str, int)) or isinstance(request_id, bool):
+                return
+            try:
+                if (
+                    method != "network/policyRequest"
+                    or not isinstance(params, dict)
+                    or self._server_request is None
+                ):
+                    self._write(
+                        {
+                            "id": request_id,
+                            "error": {
+                                "code": -32601,
+                                "message": "Unsupported server request",
+                            },
+                        }
+                    )
+                    return
+                result = self._server_request(method, params)
+            except Exception:
+                result = {"decision": {"type": "deny", "reason": "policy_unavailable"}}
+            self._write({"id": request_id, "result": result})
+            return
         if isinstance(request_id, int):
             with self._state_lock:
                 pending = self._pending.get(request_id)
