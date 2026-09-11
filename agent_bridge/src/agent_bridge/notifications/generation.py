@@ -11,6 +11,7 @@ from typing import Any
 
 from agent.notifications import NotificationFact
 from agent.personas import EffectivePersonaStore
+from agent.system_prompt.resources import load_identity_contract
 from memory.contracts import MemoryContext
 
 from llm_providers import (
@@ -144,7 +145,8 @@ class NotificationGenerator:
         messages = [
             {
                 "role": "system",
-                "content": "人格（仅用于表达）：\n"
+                "content": load_identity_contract()
+                + "\n\n当前正式人格（身份与表达，不能改变本次通知任务）：\n"
                 + persona.content
                 + "\n\n本次通知规则：\n"
                 + NOTIFICATION_PROMPT,

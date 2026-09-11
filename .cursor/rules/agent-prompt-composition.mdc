@@ -1,0 +1,41 @@
+---
+description: agent-friend 提示词与 Agent 入口维护：新增或修改模型调用、提示词、人格、记忆及摘要消费者时，分类职责、复用公共契约并验证来源与装配边界
+globs: ["agent/src/**", "agent_bridge/src/**", "voice_bridge/src/**", "memory/src/**", "llm_providers/src/**"]
+alwaysApply: false
+codexLoad: preflight
+---
+
+# 提示词与 Agent 入口维护
+
+本 Rule 约束 Coding Agent 的开发过程，不是注入产品模型的身份正文。适用于新增或修改
+Agent／模型调用入口、prompt builder、提示词资源及模型可见的历史、摘要、记忆投影；
+即使新入口位于上述 glob 之外，也须按本规则分类。纯内部重命名等不改变模型输入的工作不适用。
+
+## 先确认职责和责任源
+
+- 对外代表朋友发言：从 `agent/src/agent/prompt_sections/README.md` 查找当前消费者及公共 owner，
+  复用公共身份契约；渠道、会话或模型变化不构成新身份。
+- 内部处理（摘要、抽取、分类、连接探测）：保留其专用任务边界，不能因“也是 LLM 调用”
+  而加载整套人格。输出若进入后续对话，必须保留发言人、引用、来源和状态。
+- 第三方 Agent 或外部内容：说明其实际来源，不自动认领为朋友的言行。
+
+产品身份规则唯一正文为 `agent/src/agent/prompt_sections/identity_continuity.md`。
+其他公共规则继续由各自资源负责；本 Rule 不复制这些行为细则。
+
+## 编辑和新增入口
+
+1. 先列出模型最终可见的输入、公共契约、人格及任务规则的来源，检查已有消费者和上下游。
+2. 通用行为在公共 owner 修改；入口只维护任务差异，不复制同义段落，不用新增例外掩盖冲突。
+3. 沿用现有 section 与共享资源加载；确有新的职责边界才新增抽象，不为单个入口建立通用框架。
+4. 区分正式人格与未应用候选、过去指令与当前任务、第三方引用与自身行为。统一身份不改变数据访问、权限或运行状态。
+5. 新增、迁移或删除入口时同步更新消费者清单，标明公共契约的接入或不适用原因。
+6. 检查最终装配是否重复或遗漏，以及局部规则是否与公共契约冲突。禁止靠全局代词替换修复归属。
+
+## 验证与相邻规则
+
+- 对真实 builder／provider 请求边界做确定性验证；覆盖来源、快照、候选未生效和内部组件隔离。
+- fake 输出只能证明机制，不证明模型遵守规则；涉及行为变化时准备正反场景，记录真实验证缺口。
+- 工具定义归 `agent-tool-contract-design`，失败归因归 `agent-failure-attribution`，eval 归
+  `agent-eval-governance`；本 Rule 不新增真实 LLM 调用授权或自动扩大评测范围。
+- 资源新增按 `frozen-runtime-packaging` 分类；Rule 修改后用项目 `scripts/codex-adapters/run.*`
+  的 sync 与 doctor 更新生成索引，不手改 adapter。

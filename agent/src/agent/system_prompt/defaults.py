@@ -11,6 +11,7 @@ from __future__ import annotations
 from importlib.resources import files
 
 from ..sessions import Session
+from .resources import load_prompt_resource
 from .sections import (
     ChannelSection,
     SelfPresentationModeProvider,
@@ -21,6 +22,7 @@ from .sections import (
 _RESOURCE_PACKAGE = "agent.prompt_sections"
 
 _SECTION_KEY_TO_FILENAME: dict[str, str] = {
+    "identity_continuity": "identity_continuity.md",
     "project_identity": "project_identity.md",
     "instruction_confidentiality": "instruction_confidentiality.md",
     "evidence_policy": "evidence_policy.md",
@@ -43,8 +45,7 @@ _SELF_PRESENTATION_FILENAMES = {
 
 def _load_section_text(key: str) -> str:
     filename = _SECTION_KEY_TO_FILENAME[key]
-    resource = files(_RESOURCE_PACKAGE) / filename
-    return resource.read_text(encoding="utf-8").strip()
+    return load_prompt_resource(filename)
 
 
 def load_default_static_section(key: str) -> StaticSection:

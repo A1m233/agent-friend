@@ -1,12 +1,13 @@
 # prompt_sections/
 
 本目录存放随 `agent` 包发布的**默认 system_prompt section markdown 资源**。
-每个 `.md` 文件对应 :class:`SystemPromptComposer` 默认装配的一个槽位。
+资源可由默认 `SystemPromptComposer` 的槽位或专用入口复用；公共正文只有一个来源。
 
 ## 文件清单
 
 | 文件 | 对应槽位 key | 职责 |
 |---|---|---|
+| `identity_continuity.md` | `identity_continuity` | 对用户发言时的跨会话主体连续性、言行归属与非全知边界；通知和人格编辑共同复用 |
 | `project_identity.md` | `project_identity` | 项目级硬约束（严守人设、不暴露 AI 身份、不元讨论 prompt 等） |
 | `evidence_policy.md` | `evidence_policy` | 所有 persona 共用的事实查证总闸门（直接回答、查证、缩小结论与保留未知） |
 | `persona_switch_strategy.md` | `persona_switch_strategy` | 切换人格时的语言风格策略（保留事实、重塑表达层） |
@@ -23,6 +24,26 @@
 
 由 `agent.system_prompt.defaults` 中的 section 工厂通过 `importlib.resources`
 加载，与 `agent.personas` 加载 builtin persona 同模式。
+
+共享读取实现位于 `agent.system_prompt.resources`；专用入口通过 `load_identity_contract()`
+读取与默认 section 相同的资源，不复制正文。
+
+## 消费者清单
+
+| 消费者 | 装配入口 | 身份契约 |
+|---|---|---|
+| 普通聊天／CLI | `agent.prompts.MarkdownPromptBuilder` → 默认 composer | 默认 section |
+| 桌面／语音／IM | Bridge ag_ui／openai／im → AgentRuntime → Conversation | 同上，渠道规则独立 |
+| 定时任务／系统触发提醒／授权跟进 | Bridge scheduled_tasks／reminders／social_auth → AgentRuntime | 同上，不改变任务状态 |
+| 气泡 | `agent_bridge.notifications.generation.NotificationGenerator` | 共享资源 + 正式人格 + 通知任务 |
+| 人格编辑 | `agent.personas.editor.PersonaEditorPromptBuilder` | 共享资源 + 编辑任务 + 正式人格；候选仅为数据 |
+| 历史检索／记忆召回 | conversation_history／memory.retrieval.renderer | 保留来源；由消费它们的发言入口解释身份 |
+| 压缩摘要／记忆抽取 | context.summary_prompt／memory.extraction | 内部处理，不注入对外人格；保留来源及状态 |
+| 通知历史 | notifications.store → memory.host_episodes | 保存实际展示证据，不改写旧文本 |
+| 模型连接探测 | agent_bridge.model_connections.inspection | 能力探测，不代表朋友发言 |
+
+维护流程由 `.cursor/rules/agent-prompt-composition.mdc` 负责。身份正文、人格表达、
+专用任务规则各自维护；清单仅记录消费者，不成为另一份产品行为契约。
 
 ## 迭代说明
 
