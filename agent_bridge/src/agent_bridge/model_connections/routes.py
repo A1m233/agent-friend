@@ -3,6 +3,7 @@
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
+from llm_providers.catalog import REMOVED_DEEPSEEK_MODELS
 from llm_providers.connections import ModelDirectory
 from llm_providers.connections.codec import decode_connections
 
@@ -35,7 +36,16 @@ def register_routes(
                         {m.id for m in candidate.connections[identity].models}
                     )
                 ]
+                saved = runtime.reader.read() or {}
                 for key in ("chatModel", "memoryModel"):
+                    # Unrelated connection edits may retain a removed saved default.
+                    # New selections still require a currently available model.
+                    if (
+                        body[key] == saved.get(key)
+                        and body[key]["provider"] == "deepseek"
+                        and body[key]["model"] in REMOVED_DEEPSEEK_MODELS
+                    ):
+                        continue
                     candidate.model(body[key]["model"])
                     if not model_belongs_to_provider(body[key]["provider"], body[key]["model"]):
                         raise ValueError("invalid_default_selection")

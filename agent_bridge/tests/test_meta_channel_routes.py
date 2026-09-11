@@ -234,7 +234,7 @@ class TestGetSessionEndpoint:
                 ts=datetime.now(UTC),
                 payload={
                     "provider": "deepseek",
-                    "model": "deepseek/deepseek-v4-flash",
+                    "model": "deepseek/deepseek-flash",
                     "format": "text",
                     "replayScope": "conversation",
                     "data": "private-reasoning-continuation",
@@ -253,7 +253,7 @@ class TestGetSessionEndpoint:
         )
         assert reasoning_event["payload"] == {
             "provider": "deepseek",
-            "model": "deepseek/deepseek-v4-flash",
+            "model": "deepseek/deepseek-flash",
             "format": "text",
             "replayScope": "conversation",
             "dataCharCount": len("private-reasoning-continuation"),
@@ -1046,3 +1046,66 @@ def test_destructive_session_mutations_reject_busy_session(
     assert [response.status_code for response in responses] == [409, 409, 409, 409]
     assert all(response.json()["error"]["code"] == "session_busy" for response in responses)
     assert runtime.persistent_session_manager.open(sid).current_channel == "text"
+
+
+@pytest.mark.parametrize(
+    "old_model",
+    [
+        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v4-flash-vision-exp",
+    ],
+)
+def test_removed_model_history_run_error_and_manual_switch_recovery(
+    client: TestClient,
+    runtime: BridgeRuntime,
+    old_model: str,
+) -> None:
+    from llm_providers import build_provider_spec
+
+    def factory(config: ModelRuntimeConfig) -> LanguageModel:
+        # Real route admission, with a fake generator: no external requests.
+        build_provider_spec(provider_id="deepseek", api_key="fixture", runtime_config=config)
+        return _RouteLLM()
+
+    runtime.persistent_session_manager._llm_client_factory = factory
+    from dataclasses import replace
+
+    runtime = replace(runtime, llm_client_factory=factory, default_model=old_model)
+    client = TestClient(create_app_with_runtime(runtime))
+    created = client.post("/v1/sessions", json={})
+    assert created.status_code == 200
+    sid = created.json()["session_id"]
+    assert created.json()["model"] == old_model
+    detail = client.get(f"/v1/sessions/{sid}")
+    assert detail.status_code == 200
+    assert detail.json()["model"] == old_model
+
+    def run(run_id: str) -> Any:
+        return client.post(
+            "/ag-ui/run",
+            json={
+                "thread_id": sid,
+                "run_id": run_id,
+                "messages": [{"id": run_id, "role": "user", "content": "hello"}],
+                "tools": [],
+                "context": [],
+                "forwarded_props": {},
+                "state": {},
+            },
+            headers={"accept": "text/event-stream"},
+        )
+
+    failed = run("removed-model-run")
+    assert "model_route_unavailable" in failed.text
+    assert not _RouteLLM.seen_messages
+    assert runtime.persistent_session_manager.open(sid).current_model == old_model
+    switched = client.patch(
+        f"/v1/sessions/{sid}/runtime-config",
+        json={
+            "model": "deepseek/deepseek-flash",
+            "reasoningPreset": "off",
+        },
+    )
+    assert switched.status_code == 200
+    assert "new answer" in run("new-model-run").text
+    assert runtime.persistent_session_manager.open(sid).initial_model == old_model

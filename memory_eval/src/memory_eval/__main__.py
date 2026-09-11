@@ -113,7 +113,7 @@ def _provider_spec(
     from llm_providers import build_provider_spec, infer_provider_id_from_model, provider_definition
     from runtime_config import DEEPSEEK_MODEL, optional_secret, require_secret
 
-    selected = model or optional_secret(source, DEEPSEEK_MODEL) or "deepseek/deepseek-v4-flash"
+    selected = model or optional_secret(source, DEEPSEEK_MODEL) or "deepseek/deepseek-flash"
     provider = provider_definition(infer_provider_id_from_model(selected))
     prefix = provider.credential_name.removesuffix("_API_KEY")
     spec = build_provider_spec(

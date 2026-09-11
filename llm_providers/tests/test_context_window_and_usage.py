@@ -175,7 +175,7 @@ def test_spec_from_env_can_read_dedicated_model_env(
 ) -> None:
     """旁路任务可用专门的 model env，不影响主 ``{prefix}_MODEL``。"""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
-    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek/deepseek-v4-flash")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek/deepseek-flash")
     monkeypatch.setenv("DEEPSEEK_MEMORY_MODEL", "deepseek/deepseek-v4-pro")
 
     spec = ProviderSpec.from_env(
@@ -187,10 +187,10 @@ def test_spec_from_env_can_read_dedicated_model_env(
     assert spec.model == "deepseek/deepseek-v4-pro"
 
 
-def test_spec_from_env_memory_model_defaults_to_v4_pro(
+def test_spec_from_env_memory_model_defaults_to_flash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DEEPSEEK_MEMORY_MODEL 未设置时，记忆抽取默认走 V4 Pro。"""
+    """DEEPSEEK_MEMORY_MODEL 未设置时，记忆抽取默认走 Flash。"""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
     monkeypatch.delenv("DEEPSEEK_MEMORY_MODEL", raising=False)
 
@@ -200,7 +200,7 @@ def test_spec_from_env_memory_model_defaults_to_v4_pro(
         default_model_key="memory_model",
     )
 
-    assert spec.model == "deepseek/deepseek-v4-pro"
+    assert spec.model == "deepseek/deepseek-flash"
 
 
 def test_spec_from_config_uses_explicit_config_and_defaults() -> None:
@@ -210,7 +210,7 @@ def test_spec_from_config_uses_explicit_config_and_defaults() -> None:
     )
 
     assert spec.api_key == "k"
-    assert spec.model == "deepseek/deepseek-v4-flash"
+    assert spec.model == "deepseek/deepseek-flash"
     assert spec.context_window == 1000000
     assert spec.defaults["extra_body"] == {"thinking": {"type": "disabled"}}
     assert spec.defaults["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS
@@ -225,14 +225,14 @@ def test_spec_from_config_allows_timeout_override() -> None:
     assert spec.defaults["timeout"] == 15.0
 
 
-def test_spec_from_config_memory_model_defaults_to_v4_pro() -> None:
+def test_spec_from_config_memory_model_defaults_to_flash() -> None:
     spec = ProviderSpec.from_config(
         "DEEPSEEK",
         ProviderConfig(api_key="k"),
         default_model_key="memory_model",
     )
 
-    assert spec.model == "deepseek/deepseek-v4-pro"
+    assert spec.model == "deepseek/deepseek-flash"
 
 
 # ===== _extract_usage =====

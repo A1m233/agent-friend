@@ -409,3 +409,51 @@ def test_summary_reverse_scan_crosses_large_control_event_and_skips_partial_tail
         file.write(b'{"incomplete":')
 
     assert store.list()[0].updated_at == message_at
+
+
+@pytest.mark.parametrize(
+    "old_model",
+    [
+        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v4-flash-vision-exp",
+    ],
+)
+def test_removed_model_history_preserves_latest_selection_until_user_changes_it(
+    tmp_path: Path,
+    old_model: str,
+) -> None:
+    from llm_providers import ModelRuntimeConfig
+
+    store = JsonlSessionStore(tmp_path)
+    session = Session.new(
+        title="old",
+        persona="default",
+        model=old_model,
+        reasoning_preset="high",
+        session_id="old-model",
+    )
+    store.create(session)
+    # A later old-model selection must not fall back to the initial model either.
+    target = "deepseek/deepseek-v4-flash-vision-exp"
+    change = Event(
+        type="model_config_change",
+        uuid=str(uuid4()),
+        ts=datetime.now(UTC),
+        payload={"to": {"model": target, "reasoningPreset": "max"}},
+    )
+    store.append_event(session.session_id, change)
+    assert store.load(session.session_id).current_model_config == ModelRuntimeConfig(target, "max")
+    assert store.list()[0].model == target
+    assert store.list()[0].reasoning_preset == "max"
+    store.append_event(
+        session.session_id,
+        Event(
+            type="model_config_change",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload={"to": {"model": "deepseek/deepseek-flash", "reasoningPreset": "high"}},
+        ),
+    )
+    restored = store.load(session.session_id)
+    assert restored.initial_model == old_model
+    assert restored.current_model_config == ModelRuntimeConfig("deepseek/deepseek-flash", "high")

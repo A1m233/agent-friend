@@ -2143,6 +2143,69 @@ describe("conversation store · session model selection", () => {
     expect(useConversationStore.getState().modelSwitching).toBe(false);
   });
 
+  it("validates next-turn choices during a run without mutating its session config", async () => {
+    mockGet.mockResolvedValue(sessionDetail("sid-1", "history", "deepseek/old"));
+    await useConversationStore.getState().openSession("sid-1");
+    useConversationStore.setState({ runSnapshots: { active: runSnapshot("active", "sid-1", "running", 2) } });
+    const config = { model: "kimi/kimi-k2.6", reasoningPreset: "high" };
+    expect(await useConversationStore.getState().selectRuntimeConfig(config)).toEqual({ status: "applied", ...config });
+    expect(mockValidateModel).toHaveBeenCalledWith(config);
+    expect(mockUpdateRuntimeConfig).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().currentModel).toBe("deepseek/old");
+    expect(useDraftStore.getState().workspaces["sid-1"].runtimeConfig).toEqual(config);
+    expect(useConversationStore.getState().send("next")).toEqual({ accepted: false, reason: "busy" });
+    expect(mockStream).not.toHaveBeenCalled();
+    await useConversationStore.getState().refreshCurrentSession("sid-1");
+    await useConversationStore.getState().openSession("sid-2");
+    await useConversationStore.getState().openSession("sid-1");
+    expect(useDraftStore.getState().workspaces["sid-1"].runtimeConfig).toEqual(config);
+    expect(useDraftStore.getState().workspaces["sid-2"]?.runtimeConfig).toBeUndefined();
+  });
+
+  it.each([false, true])("applies a captured draft model before sending and preserves later drafts (failure=%s)", async (failure) => {
+    mockGet.mockResolvedValue(sessionDetail("sid-1", "history", "deepseek/old"));
+    await useConversationStore.getState().openSession("sid-1");
+    const config = { model: "kimi/kimi-k2.6", reasoningPreset: "high" };
+    useDraftStore.getState().setRuntimeConfig("sid-1", config);
+    useDraftStore.getState().setText("sid-1", "submitted");
+    const applying = deferred<{ sessionId: string; runtimeConfig: typeof config }>();
+    mockUpdateRuntimeConfig.mockReturnValueOnce(applying.promise);
+    mockStream.mockImplementation(async function* () { yield ev({ type: EventType.RUN_FINISHED }); });
+    const result = useConversationStore.getState().send("submitted");
+    if (!result.accepted) throw new Error("send unexpectedly rejected");
+    useDraftStore.getState().beginSubmission("sid-1", "sid-1", result.runId);
+    useDraftStore.getState().setText("sid-1", "later draft");
+    expect(mockStream).not.toHaveBeenCalled();
+    expect(mockUpdateRuntimeConfig).toHaveBeenCalledWith("sid-1", config);
+    if (failure) applying.reject(new Error("config unavailable"));
+    else applying.resolve({ sessionId: "sid-1", runtimeConfig: config });
+    expect(await result.completion).toBe(failure ? "rejected" : "completed");
+    expect(useDraftStore.getState().workspaces["sid-1"].text).toBe(failure ? "submitted\nlater draft" : "later draft");
+    if (failure) {
+      expect(mockStream).not.toHaveBeenCalled();
+      expect(useDraftStore.getState().workspaces["sid-1"].runtimeConfig).toEqual(config);
+      expect(isSessionBusy(useConversationStore.getState(), "sid-1")).toBe(false);
+    } else {
+      expect(mockStream).toHaveBeenCalledWith(expect.objectContaining({ modelConfig: config }), expect.any(Object));
+    }
+  });
+
+  it("does not send after cancellation while applying the next-turn config", async () => {
+    mockGet.mockResolvedValue(sessionDetail("sid-1", "history", "deepseek/old"));
+    await useConversationStore.getState().openSession("sid-1");
+    useDraftStore.getState().setRuntimeConfig("sid-1", { model: "next", reasoningPreset: "high" });
+    const applying = deferred<{ sessionId: string; runtimeConfig: { model: string; reasoningPreset: string } }>();
+    mockUpdateRuntimeConfig.mockReturnValueOnce(applying.promise);
+    const result = useConversationStore.getState().send("hello");
+    if (!result.accepted) throw new Error("send unexpectedly rejected");
+    mockRunCancel.mockRejectedValueOnce(new Error("not admitted yet"));
+    await useConversationStore.getState().stop();
+    applying.resolve({ sessionId: "sid-1", runtimeConfig: { model: "next", reasoningPreset: "high" } });
+    await result.completion;
+    expect(mockStream).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().stopRequestsByRun[result.runId]).toBeUndefined();
+  });
+
   it("连续切换的迟到响应不会覆盖最后一次选择", async () => {
     mockGet.mockResolvedValueOnce(sessionDetail("sid-1", "hello", "deepseek/old"));
     await useConversationStore.getState().openSession("sid-1");

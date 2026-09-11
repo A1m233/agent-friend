@@ -23,9 +23,9 @@ def _payload(model: object | None = None) -> RunAgentInput:
 
 
 def test_decode_accepts_allowed_desktop_requested_model() -> None:
-    decoded = decode_run_agent_input(_payload("deepseek/deepseek-v4-flash"))
+    decoded = decode_run_agent_input(_payload("deepseek/deepseek-flash"))
 
-    assert decoded.requested_model == "deepseek/deepseek-v4-flash"
+    assert decoded.requested_model == "deepseek/deepseek-flash"
 
 
 def test_decode_accepts_kimi_desktop_requested_model() -> None:

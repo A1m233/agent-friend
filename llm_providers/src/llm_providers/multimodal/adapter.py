@@ -155,7 +155,7 @@ class MultimodalInputAdapter:
     def _canonical_model_id(client: LLMClient) -> str:
         model = client.spec.model
         if model == DEEPSEEK_VISION_LITELLM_MODEL:
-            return "deepseek/deepseek-v4-flash-vision-exp"
+            return "deepseek/deepseek-flash"
         if model.startswith("openai/kimi-"):
             return "kimi/" + model.removeprefix("openai/")
         return model

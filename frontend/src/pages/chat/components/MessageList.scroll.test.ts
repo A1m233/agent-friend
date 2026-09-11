@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, createElement, type ReactNode } from "react";
+import { act, createElement, type ComponentProps, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConversationStore } from "@/stores";
@@ -127,7 +127,7 @@ describe("MessageTimeline disclosure scrolling", () => {
       get(this: HTMLElement) { return isViewport(this) ? VIEWPORT_HEIGHT : 0; },
     });
     overrideProperty("scrollHeight", {
-      get(this: HTMLElement) { return isViewport(this) ? contentHeight(this) : this.clientHeight; },
+      get(this: HTMLElement) { return isViewport(this) ? Math.max(this.clientHeight, contentHeight(this)) : this.clientHeight; },
     });
     overrideProperty("scrollTop", {
       get(this: HTMLElement) { return scrollPositions.get(this) ?? 0; },
@@ -195,9 +195,10 @@ describe("MessageTimeline disclosure scrolling", () => {
     expect(frames.size, "animation frames should settle").toBe(0);
   }
 
-  async function renderTimeline(items: ChatMessage[] = messages(), streaming = false, overlayComposer = false) {
+  async function renderTimeline(items: ChatMessage[] = messages(), streaming = false, overlayComposer = false,
+    options: Partial<ComponentProps<typeof MessageTimeline>> = {}) {
     await act(async () => root.render(createElement(MessageTimeline, {
-      messages: items, streaming, overlayComposer,
+      messages: items, streaming, overlayComposer, ...options,
     })));
   }
 
@@ -240,6 +241,131 @@ describe("MessageTimeline disclosure scrolling", () => {
     expect(element.scrollHeight).toBeGreaterThan(element.clientHeight);
     expect(element.scrollTop).toBe(element.scrollHeight - element.clientHeight);
   }
+
+  it("loads one older page near the top and preserves the visible message through prepend", async () => {
+    let finish!: (success: boolean) => void;
+    const load = vi.fn(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    const options = { hasOlderHistory: true, onLoadOlderHistory: load };
+    const items = messages();
+    await renderTimeline(items, false, false, options);
+    await measureMountedRows();
+    await flushFrames();
+    expect(load).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("加载更早的消息");
+    await scrollUp(viewport().scrollTop - 100);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("正在加载更早的消息");
+    await scrollUp(10);
+    expect(load).toHaveBeenCalledTimes(1);
+    const anchorOffset = () => Number.parseFloat(row(items[0].id).style.transform.replace("translateY(", ""))
+      - viewport().scrollTop;
+    const before = anchorOffset();
+    await renderTimeline([...messages("older"), ...items], false, false, options);
+    await act(async () => finish(true));
+    await measureMountedRows();
+    await flushFrames();
+    expect(anchorOffset()).toBe(before);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(container.textContent).not.toContain("正在加载更早的消息");
+    expect(container.querySelector('[aria-label="滚到底部"]')).not.toBeNull();
+  });
+
+  it.each(["false", "reject"])("stops automatic retries after %s and permits explicit retry", async (failure) => {
+    const load = vi.fn<() => Promise<boolean>>();
+    if (failure === "false") load.mockResolvedValueOnce(false);
+    else load.mockRejectedValueOnce(new Error("offline"));
+    load.mockResolvedValue(false);
+    await renderTimeline(messages(), false, false, { hasOlderHistory: true, onLoadOlderHistory: load });
+    await measureMountedRows();
+    await flushFrames();
+    await scrollUp(viewport().scrollTop);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("更早的消息暂时未能加载");
+    await scrollUp(20);
+    expect(load).toHaveBeenCalledTimes(1);
+    const retry = [...container.querySelectorAll("button")].find((button) => button.textContent === "重试");
+    expect(retry).toBeDefined();
+    await act(async () => retry!.click());
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["streaming", "historyLoading", "exhausted"])("does not fetch older history while %s", async (blocked) => {
+    const load = vi.fn(async () => true);
+    await renderTimeline(messages(), blocked === "streaming", false, {
+      hasOlderHistory: blocked !== "exhausted", historyLoading: blocked === "historyLoading",
+      onLoadOlderHistory: load,
+    });
+    await measureMountedRows();
+    await flushFrames();
+    await scrollUp(viewport().scrollTop);
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("does not load for automatic positioning or scrolling toward newer messages", async () => {
+    const load = vi.fn(async () => true);
+    await renderTimeline(messages(), false, false, { hasOlderHistory: true, onLoadOlderHistory: load });
+    await measureMountedRows();
+    await flushFrames();
+    await act(async () => {
+      viewport().scrollTop = 0;
+      viewport().dispatchEvent(new Event("scroll"));
+      viewport().dispatchEvent(new WheelEvent("wheel", { deltaY: 50, bubbles: true }));
+      viewport().scrollTop = 50;
+      viewport().dispatchEvent(new Event("scroll"));
+    });
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("loads a short page on upward input without a scroll event and shows the history end", async () => {
+    const load = vi.fn(async () => true);
+    const items = messages().slice(0, 1);
+    await renderTimeline(items, false, false, { hasOlderHistory: true, onLoadOlderHistory: load });
+    await measureMountedRows();
+    await flushFrames();
+    expect(load).not.toHaveBeenCalled();
+    await act(async () => {
+      viewport().dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+    });
+    expect(load).toHaveBeenCalledTimes(1);
+    await renderTimeline(items, false, false, { hasOlderHistory: false, onLoadOlderHistory: load });
+    expect(container.textContent).toContain("已到最早的消息");
+    await scrollUp(20);
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["pointerup", "pointercancel"])("keeps a held pointer scroll active across scrollend until %s", async (ending) => {
+    await mountTimeline();
+    const element = viewport();
+    const pointer = (type: string) => {
+      const event = new Event(type, { bubbles: true });
+      Object.defineProperty(event, "pointerType", { value: "touch" });
+      element.dispatchEvent(event);
+    };
+    await act(async () => {
+      pointer("pointerdown");
+      element.scrollTop -= 100;
+      element.dispatchEvent(new Event("scroll"));
+    });
+    expect(container.querySelector('[aria-label="滚到底部"]')).not.toBeNull();
+    await act(async () => {
+      element.dispatchEvent(new Event("scrollend"));
+      vi.advanceTimersByTime(300);
+    });
+    await act(async () => {
+      element.scrollTop = element.scrollHeight;
+      element.dispatchEvent(new Event("scroll"));
+      pointer(ending);
+      vi.advanceTimersByTime(300);
+    });
+    expectAtBottom();
+    expect(container.querySelector('[aria-label="滚到底部"]')).toBeNull();
+    // Once released, automatic movement must not be mistaken for a new gesture.
+    await act(async () => {
+      element.scrollTop -= 100;
+      element.dispatchEvent(new Event("scroll"));
+    });
+    expect(container.querySelector('[aria-label="滚到底部"]')).toBeNull();
+  });
 
   it("reveals live login actions and folds them again without reopening adjacent tools", async () => {
     const initialAuthStore = useSocialAuthRequestsStore.getState();

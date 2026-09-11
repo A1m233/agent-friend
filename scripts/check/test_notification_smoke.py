@@ -192,7 +192,7 @@ def test_capture_observes_actual_sdk_serialized_body_without_http_credentials(
         LLMClient(
             build_provider_spec(
                 provider_id="deepseek",
-                model_id="deepseek/deepseek-v4-flash-vision-exp",
+                model_id="deepseek/deepseek-flash",
                 reasoning_preset="off",
                 api_key=evidence.secret,
             )

@@ -91,7 +91,7 @@ def test_settings_file_source_only_projects_memory_defaults_when_settings_are_mi
     assert source.get(LLM_CHAT_PROVIDER) is None
     assert source.get(LLM_CHAT_MODEL) is None
     assert source.get(LLM_MEMORY_PROVIDER).value == "deepseek"  # type: ignore[union-attr]
-    assert source.get(LLM_MEMORY_MODEL).value == "deepseek/deepseek-v4-flash"  # type: ignore[union-attr]
+    assert source.get(LLM_MEMORY_MODEL).value == "deepseek/deepseek-flash"  # type: ignore[union-attr]
 
 
 def test_process_env_wins_over_keyring_and_dotenv(tmp_path: Path) -> None:
@@ -468,4 +468,22 @@ def test_memory_effort_projection_preserves_arbitrary_value(tmp_path: Path) -> N
         json.dumps({"memoryModel": {"provider": "kimi", "model": "kimi/kimi-k2.6"}}),
         encoding="utf-8",
     )
+    assert source.get("LLM_MEMORY_REASONING_PRESET") is None
+
+
+def test_memory_default_effort_only_applies_without_saved_selection(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    source = SettingsFileSource(path)
+    assert source.get("LLM_MEMORY_REASONING_PRESET").value == "max"  # type: ignore[union-attr]
+    path.write_text(
+        '{"memoryModel":{"provider":"deepseek","model":"deepseek/deepseek-flash"}}',
+        encoding="utf-8",
+    )
+    assert source.get("LLM_MEMORY_REASONING_PRESET") is None
+    path.write_text(
+        '{"memoryModel":{"provider":"deepseek","model":"deepseek/deepseek-flash","reasoningPreset":"low"}}',
+        encoding="utf-8",
+    )
+    assert source.get("LLM_MEMORY_REASONING_PRESET").value == "low"  # type: ignore[union-attr]
+    path.write_text('{"deepseekMemoryModel":"deepseek/deepseek-v4-flash"}', encoding="utf-8")
     assert source.get("LLM_MEMORY_REASONING_PRESET") is None

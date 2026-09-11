@@ -164,16 +164,16 @@ fn deepseek_model_id(model: DeepseekModel) -> String {
 fn default_chat_model() -> ModelSelection {
     ModelSelection {
         reasoning_preset: None,
-        provider: ModelProvider::Kimi,
-        model: "kimi/kimi-k2.5".to_string(),
+        provider: ModelProvider::Deepseek,
+        model: "deepseek/deepseek-flash".to_string(),
     }
 }
 
 fn default_memory_model() -> ModelSelection {
     ModelSelection {
-        reasoning_preset: None,
+        reasoning_preset: Some("max".to_string()),
         provider: ModelProvider::Deepseek,
-        model: "deepseek/deepseek-v4-flash".to_string(),
+        model: "deepseek/deepseek-flash".to_string(),
     }
 }
 
@@ -1173,13 +1173,17 @@ mod tests {
     }
 
     #[test]
-    fn product_defaults_use_kimi_2_5_for_chat_and_deepseek_flash_for_memory() {
+    fn product_defaults_use_deepseek_flash_with_max_reasoning_for_memory() {
         let settings = Settings::default();
 
-        assert_eq!(settings.chat_model.provider, ModelProvider::Kimi);
-        assert_eq!(settings.chat_model.model, "kimi/kimi-k2.5");
+        assert_eq!(settings.chat_model.provider, ModelProvider::Deepseek);
+        assert_eq!(settings.chat_model.model, "deepseek/deepseek-flash");
         assert_eq!(settings.memory_model.provider, ModelProvider::Deepseek);
-        assert_eq!(settings.memory_model.model, "deepseek/deepseek-v4-flash");
+        assert_eq!(settings.memory_model.model, "deepseek/deepseek-flash");
+        assert_eq!(
+            settings.memory_model.reasoning_preset.as_deref(),
+            Some("max")
+        );
     }
 
     #[test]

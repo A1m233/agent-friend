@@ -89,6 +89,11 @@ t-chat-sender::part(t-textarea__inner) {
   padding-bottom: 0;
 }
 
+/* WebView2 会把空 textarea 的提示纳入页面拖选；有输入后恢复原生选择行为。 */
+t-chat-sender::part(t-textarea__inner):placeholder-shown {
+  user-select: none;
+}
+
 .chat-message-attachments {
   --td-attachment-image-width: var(--size-chat-attachment-image);
   --td-attachment-image-height: var(--size-chat-attachment-image);

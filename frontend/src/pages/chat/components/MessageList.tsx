@@ -104,6 +104,8 @@ type TdContentProp = ComponentProps<typeof TdChatMessage>["content"];
 const SCROLL_BUTTON_GAP_PX = 12;
 const STREAMING_MARKDOWN_THROTTLE_MS = 100;
 const USER_SCROLL_IDLE_MS = 160;
+const OLDER_HISTORY_PREFETCH_PX = 160;
+const HISTORY_STATUS_HEIGHT_PX = 32;
 const USER_LAYOUT_MUTATION_TIMEOUT_MS = 1_000;
 const EMPTY_CHAT_ATTACHMENTS: ChatAttachment[] = [];
 const MESSAGE_ATTACHMENTS_SLOT = "message-attachments";
@@ -720,6 +722,9 @@ export function MessageTimeline({
   const prependingRef = useRef(false);
   const [historyControlVisible, setHistoryControlVisible] = useState(hasOlderHistory);
   const [olderLoading, setOlderLoading] = useState(false);
+  const olderLoadingRef = useRef(false);
+  const [olderLoadFailed, setOlderLoadFailed] = useState(false);
+  const olderLoadFailedRef = useRef(false);
   const [pendingReference, setPendingReference] = useState<ChatTextReference | null>(null);
   useEffect(() => {
     if (hasOlderHistory) setHistoryControlVisible(true);
@@ -754,6 +759,7 @@ export function MessageTimeline({
     ? Math.max(composerHeight, CHAT_COMPOSER_FALLBACK_HEIGHT_PX)
     : 0;
   const scrollButtonBottom = composerInset + SCROLL_BUTTON_GAP_PX;
+  const showHistoryStatus = Boolean(onLoadOlderHistory && (hasOlderHistory || historyControlVisible));
   const lastUserMessageId = [...messages].reverse().find((m) => m.role === "user")?.id ?? null;
   const handleExternalLinkClick = useExternalLinkOpener();
   const getItemKey = useCallback(
@@ -767,7 +773,7 @@ export function MessageTimeline({
     getItemKey,
     overscan: MESSAGE_VIRTUALIZER_OVERSCAN,
     gap: MESSAGE_VIRTUALIZER_GAP_PX,
-    paddingStart: MESSAGE_VIRTUALIZER_PADDING_START_PX,
+    paddingStart: MESSAGE_VIRTUALIZER_PADDING_START_PX + (showHistoryStatus ? HISTORY_STATUS_HEIGHT_PX : 0),
     paddingEnd: composerInset,
     // End anchoring intentionally bypasses the item-size predicate while physically at the end.
     // While reading history, switch it off for the disclosure's layout commit.
@@ -950,7 +956,8 @@ export function MessageTimeline({
   }, [applyFollowEvent, cancelUserLayoutMutation, endUserScrollSession, finishUserLayoutMutation]);
 
   const settleUserScrollSession = useCallback(() => {
-    if (!userScrollSessionRef.current) return;
+    // A scrollbar drag can emit scrollend between pointer moves while still held.
+    if (!userScrollSessionRef.current || pointerScrollActiveRef.current) return;
     const viewport = scrollRef.current;
     endUserScrollSession();
     if (!viewport) return;
@@ -1006,6 +1013,34 @@ export function MessageTimeline({
     [applyFollowEvent, cancelUserLayoutMutation, endUserScrollSession, virtualizer],
   );
 
+  const loadOlderHistory = useCallback(async (retry = false) => {
+    const viewport = scrollRef.current;
+    if (
+      !viewport || !hasOlderHistory || !onLoadOlderHistory
+      || streaming || historyLoading || olderLoadingRef.current
+      || (olderLoadFailedRef.current && !retry)
+      || (!retry && viewport.scrollTop > OLDER_HISTORY_PREFETCH_PX)
+    ) return;
+
+    // Lock synchronously: wheel and scroll can arrive before React commits loading state.
+    olderLoadingRef.current = true;
+    olderLoadFailedRef.current = false;
+    setOlderLoadFailed(false);
+    setOlderLoading(true);
+    prependingRef.current = true;
+    applyFollowEvent({ type: "detach-requested" });
+    try {
+      if (!await onLoadOlderHistory()) throw new Error("older_history_unavailable");
+    } catch {
+      prependingRef.current = false;
+      olderLoadFailedRef.current = true;
+      setOlderLoadFailed(true);
+    } finally {
+      olderLoadingRef.current = false;
+      setOlderLoading(false);
+    }
+  }, [applyFollowEvent, hasOlderHistory, historyLoading, onLoadOlderHistory, streaming]);
+
   const handleViewportScroll = useCallback(
     (e: UIEvent<HTMLDivElement>) => {
       const viewport = e.currentTarget;
@@ -1019,6 +1054,7 @@ export function MessageTimeline({
       applyFollowEvent({ type: "viewport-scrolled", atBottom, source, direction });
 
       if (source === "user") {
+        if (direction === "away") void loadOlderHistory();
         if (supportsScrollEndRef.current) {
           if (userScrollIdleTimerRef.current) {
             window.clearTimeout(userScrollIdleTimerRef.current);
@@ -1029,7 +1065,7 @@ export function MessageTimeline({
         }
       }
     },
-    [applyFollowEvent, scheduleUserScrollSessionEnd],
+    [applyFollowEvent, loadOlderHistory, scheduleUserScrollSessionEnd],
   );
 
   const handleWheelCapture = useCallback((event: WheelEvent<HTMLDivElement>) => {
@@ -1038,8 +1074,10 @@ export function MessageTimeline({
     scheduleUserScrollSessionEnd();
     if (event.deltaY < 0) {
       applyFollowEvent({ type: "detach-requested" });
+      // Short pages may already be at scrollTop=0 and produce no scroll event.
+      void loadOlderHistory();
     }
-  }, [applyFollowEvent, beginUserScrollSession, scheduleUserScrollSessionEnd]);
+  }, [applyFollowEvent, beginUserScrollSession, loadOlderHistory, scheduleUserScrollSessionEnd]);
 
   const handlePointerDownCapture = useCallback((event: PointerEvent<HTMLDivElement>) => {
     const target = event.target;
@@ -1072,8 +1110,9 @@ export function MessageTimeline({
     scheduleUserScrollSessionEnd();
     if (scrollsAway) {
       applyFollowEvent({ type: "detach-requested" });
+      void loadOlderHistory();
     }
-  }, [applyFollowEvent, beginUserScrollSession, scheduleUserScrollSessionEnd]);
+  }, [applyFollowEvent, beginUserScrollSession, loadOlderHistory, scheduleUserScrollSessionEnd]);
 
   useLayoutEffect(() => {
     if (searchTargetRef.current) return;
@@ -1272,24 +1311,6 @@ export function MessageTimeline({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      {(hasOlderHistory || historyControlVisible) && onLoadOlderHistory && (
-        <Button variant="ghost" size="sm" disabled={!hasOlderHistory || olderLoading || streaming || historyLoading}
-          onClick={async () => {
-            prependingRef.current = true;
-            followingRef.current = false;
-            setOlderLoading(true);
-            try {
-              if (!await onLoadOlderHistory()) {
-                prependingRef.current = false;
-                toast.error("更早的消息暂时未能加载，请重试。");
-              }
-            } finally {
-              setOlderLoading(false);
-            }
-          }}>
-          {olderLoading ? "正在加载…" : hasOlderHistory ? "加载更早的消息" : "已到最早的消息"}
-        </Button>
-      )}
       <ScrollArea
         viewportRef={scrollRef}
         onViewportScroll={handleViewportScroll}
@@ -1306,6 +1327,19 @@ export function MessageTimeline({
           className="relative w-full"
           style={{ height: virtualTotalSize }}
         >
+          {showHistoryStatus && (
+            <div role="status" className="absolute inset-x-0 top-0 flex h-8 items-center justify-center gap-2 text-xs text-muted">
+              {olderLoading ? "正在加载更早的消息…" : !hasOlderHistory ? "已到最早的消息" : olderLoadFailed ? (
+                <>
+                  更早的消息暂时未能加载
+                  <Button variant="link" size="sm" disabled={streaming || historyLoading}
+                    onClick={() => { void loadOlderHistory(true); }}>
+                    重试
+                  </Button>
+                </>
+              ) : streaming ? "回复完成后可继续加载历史" : null}
+            </div>
+          )}
           {virtualItems.map((virtualItem) => {
             const index = virtualItem.index;
             const m = messages[index];
@@ -1501,7 +1535,7 @@ export function MessageList({
       />
       <MessageQuoteSelectionAction
         workspaceKey={quoteWorkspaceKey}
-        disabled={streaming || historyLoading}
+        disabled={historyLoading || editingMessage?.phase === "submitting"}
       />
     </ExecutionDisclosureStateProvider>
   );

@@ -105,7 +105,7 @@ def test_owner_routes_validate_defaults_and_recover_lost_prepare_response(tmp_pa
         "operationId": "0123456789abcdef",
         "modelConnections": {"revision": 2, "connections": []},
         "chatModel": {"provider": "custom", "model": reference},
-        "memoryModel": {"provider": "deepseek", "model": "deepseek/deepseek-v4-flash"},
+        "memoryModel": {"provider": "deepseek", "model": "deepseek/deepseek-flash"},
     }
     assert client.post(url, json=body).status_code == 401
     headers = {"x-agent-friend-lifecycle-token": "owner"}
@@ -261,3 +261,48 @@ def test_probe_auth_failure_is_redacted_and_skips_tools(
     assert result["generation"] == {"status": "failed", "code": "authentication_failed"}
     assert result["tools"]["status"] == "skipped"
     assert len(calls) == 1 and "draft-secret" not in json.dumps(result)
+
+
+def test_connection_edit_can_preserve_but_not_select_removed_default(tmp_path: Path) -> None:
+    from typing import cast
+
+    from agent_bridge.assembly import BridgeRuntime
+    from agent_bridge.lifecycle import BridgeLifecycleController
+    from agent_bridge.model_connections.routes import register_routes
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    runtime, config, _ref = fixture(tmp_path)
+    old = {"provider": "deepseek", "model": "deepseek/deepseek-v4-flash"}
+    runtime.reader.path.write_text(
+        json.dumps(
+            {
+                "modelConnections": config,
+                "chatModel": old,
+                "memoryModel": old,
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = FastAPI()
+    register_routes(
+        app, BridgeLifecycleController(cast(BridgeRuntime, None), token="owner"), runtime
+    )
+    client = TestClient(app)
+    headers = {"x-agent-friend-lifecycle-token": "owner"}
+    body = {
+        "operationId": "0123456789abcdef",
+        "modelConnections": config,
+        "chatModel": old,
+        "memoryModel": old,
+    }
+    before = runtime.reader.path.read_bytes()
+    result = client.post("/internal/model-connections/prepare", json=body, headers=headers)
+    assert result.status_code == 200
+    runtime.finish(result.json()["operationId"])
+    assert runtime.reader.path.read_bytes() == before
+    body["memoryModel"] = {"provider": "deepseek", "model": "deepseek/deepseek-v4-flash-vision-exp"}
+    assert (
+        client.post("/internal/model-connections/prepare", json=body, headers=headers).status_code
+        == 400
+    )

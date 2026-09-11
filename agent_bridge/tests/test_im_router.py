@@ -722,7 +722,7 @@ async def test_native_stream_agent_error_aborts_partial_without_static_duplicate
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "model_id",
-    ("kimi/kimi-k2.7-code", "deepseek/deepseek-v4-flash-vision-exp"),
+    ("kimi/kimi-k2.7-code", "deepseek/deepseek-flash"),
 )
 async def test_inbound_attachments_allow_text_output_streaming(
     router: IMRouter,
@@ -766,7 +766,7 @@ async def test_unsupported_inbound_attachment_does_not_open_stream(
 ) -> None:
     from agent.attachments import AttachmentRef
 
-    session_bridge.persistent_model.return_value = "deepseek/deepseek-v4-flash"
+    session_bridge.persistent_model.return_value = "deepseek/deepseek-v4-pro"
     provider = StubStreamingProvider(StubStreamSession())
     attachment = AttachmentRef(
         asset_id="asset-unsupported",
@@ -791,7 +791,7 @@ async def test_deepseek_vision_rejects_oversized_inbound_image_before_stream(
 ) -> None:
     from agent.attachments import AttachmentRef
 
-    session_bridge.persistent_model.return_value = "deepseek/deepseek-v4-flash-vision-exp"
+    session_bridge.persistent_model.return_value = "deepseek/deepseek-flash"
     provider = StubStreamingProvider(StubStreamSession())
     attachment = AttachmentRef(
         asset_id="asset-oversized",

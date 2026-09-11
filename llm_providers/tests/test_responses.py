@@ -145,9 +145,8 @@ def http_mock(monkeypatch: pytest.MonkeyPatch) -> Any:
 @pytest.mark.parametrize(
     "provider,model,path",
     [
-        ("deepseek", "deepseek/deepseek-v4-flash", "/responses"),
+        ("deepseek", "deepseek/deepseek-flash", "/responses"),
         ("deepseek", "deepseek/deepseek-v4-pro", "/responses"),
-        ("deepseek", "deepseek/deepseek-v4-flash-vision-exp", "/responses"),
         ("kimi", "kimi/kimi-k3", "/v1/responses"),
     ],
 )
@@ -291,7 +290,7 @@ def test_parallel_functions_and_replay_request() -> None:
 
 def test_request_preserves_schema_images_settings_and_source() -> None:
     spec = build_provider_spec(
-        provider_id="deepseek", api_key="fixture", model_id="deepseek/deepseek-v4-flash-vision-exp"
+        provider_id="deepseek", api_key="fixture", model_id="deepseek/deepseek-flash"
     )
     messages = [
         {
@@ -613,7 +612,7 @@ def test_header_wait_is_cancellable(monkeypatch: pytest.MonkeyPatch, nonstream: 
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("deepseek", "deepseek/deepseek-v4-flash"),
+        ("deepseek", "deepseek/deepseek-flash"),
         ("kimi", "kimi/kimi-k3"),
     ],
 )

@@ -15,7 +15,7 @@ from llm_providers import LLMBadRequestError, LLMClient, LLMTextDelta, LLMTurnDo
 
 
 def _spec(
-    model: str = "openai/deepseek-v4-flash-vision-exp",
+    model: str = "openai/deepseek-flash",
     *,
     defaults: dict[str, Any] | None = None,
 ) -> ProviderSpec:
@@ -119,7 +119,7 @@ def test_prepare_request_is_exact_model_gated_and_non_mutating() -> None:
     assert prepared_options["allowed_openai_params"] == ["reasoning_effort"]
 
     other_messages, other_options = prepare_litellm_request(
-        _spec("deepseek/deepseek-v4-flash"), messages, options
+        _spec("deepseek/deepseek-flash"), messages, options
     )
     assert other_messages is messages
     assert other_options is options
@@ -142,7 +142,7 @@ def test_client_sync_keeps_litellm_safe_messages_and_adds_flat_wire_override(
     response = LLMClient(_spec()).complete(_messages())
 
     assert response == "ok"
-    assert seen["model"] == "openai/deepseek-v4-flash-vision-exp"
+    assert seen["model"] == "openai/deepseek-flash"
     assert seen["messages"][1]["content"][1] == {
         "type": "file",
         "file": {"file_id": "file-one"},
@@ -166,10 +166,10 @@ def test_client_stream_golden_http_body_uses_flat_deepseek_file_blocks(
         captured["body"] = json.loads(request.content)
         chunks = (
             'data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,'
-            '"model":"deepseek-v4-flash-vision-exp","choices":[{"index":0,'
+            '"model":"deepseek-flash","choices":[{"index":0,'
             '"delta":{"role":"assistant","content":"ok"},"finish_reason":null}]}\n\n'
             'data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,'
-            '"model":"deepseek-v4-flash-vision-exp","choices":[{"index":0,'
+            '"model":"deepseek-flash","choices":[{"index":0,'
             '"delta":{},"finish_reason":"stop"}]}\n\n'
             "data: [DONE]\n\n"
         )
@@ -226,7 +226,7 @@ def test_client_stream_golden_http_body_uses_flat_deepseek_file_blocks(
     assert captured["url"] == "https://api.deepseek.com/chat/completions"
     assert captured["authorization"] == "Bearer secret"
     body = captured["body"]
-    assert body["model"] == "deepseek-v4-flash-vision-exp"
+    assert body["model"] == "deepseek-flash"
     assert body["stream"] is True
     assert body["stream_options"] == {"include_usage": True}
     assert body["thinking"] == {"type": "enabled"}
@@ -289,7 +289,7 @@ def test_cancellable_stream_keeps_litellm_transport_and_wire_override(
     events = list(LLMClient(_spec()).stream(_messages(), _cancel_check=cancel_check))
 
     assert [event.text for event in events if isinstance(event, LLMTextDelta)] == ["ok"]
-    assert seen["spec"].model == "openai/deepseek-v4-flash-vision-exp"
+    assert seen["spec"].model == "openai/deepseek-flash"
     assert seen["messages"][1]["content"][1] == {
         "type": "file",
         "file": {"file_id": "file-one"},

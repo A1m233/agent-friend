@@ -38,7 +38,7 @@ from runtime_config import (
 
 from .model_connections.runtime import ConnectionRuntime
 
-DEFAULT_BRIDGE_CHAT_PROVIDER = "kimi"
+DEFAULT_BRIDGE_CHAT_PROVIDER = "deepseek"
 DEFAULT_BRIDGE_MEMORY_PROVIDER = "deepseek"
 
 
@@ -147,6 +147,9 @@ def _language_model(
     reasoning_preset: str | None = None,
     purpose: ModelPurpose,
 ) -> LanguageModel:
+    from llm_providers.catalog import require_model_not_removed
+
+    require_model_not_removed(model_id)
     provider = provider_definition(provider_id)
     prefix = _provider_prefix(provider.provider_id)
     return create_language_model(
@@ -190,7 +193,16 @@ def resolve_bridge_runtime_config(source: CredentialSource) -> BridgeRuntimeConf
             purpose="memory",
             default_provider_id=DEFAULT_BRIDGE_MEMORY_PROVIDER,
         )
+        from llm_providers.catalog import require_model_not_removed
+
+        require_model_not_removed(model)
         preset = optional_secret(source, "LLM_MEMORY_REASONING_PRESET")
+        if (
+            preset is None
+            and optional_secret(source, LLM_MEMORY_MODEL) is None
+            and model == "deepseek/deepseek-flash"
+        ):
+            preset = "max"
         config = (
             ModelRuntimeConfig(model, preset)
             if preset is not None

@@ -122,7 +122,7 @@ def test_cancellable_generate_keeps_chat_parameters_usage_and_witness(
 @pytest.mark.parametrize(
     ("provider", "model", "expected_host"),
     [
-        ("deepseek", "deepseek/deepseek-v4-flash", "api.deepseek.com"),
+        ("deepseek", "deepseek/deepseek-flash", "api.deepseek.com"),
         ("openrouter", "openrouter/openai/gpt-5.6-luna", "openrouter.ai"),
     ],
 )

@@ -31,18 +31,18 @@ import {
   useModelCatalogStore,
 } from "@/lib/model-config";
 import { useConversationStore } from "@/stores/conversation";
-import { sessionRunPresentation } from "@/stores/runPresentation";
-import { useShallow } from "zustand/react/shallow";
 import { cn } from "@/utils/cn";
 
 interface ConversationModelSelectorProps {
   selectedModel: string;
+  selectedReasoningPreset?: string;
   disabled?: boolean;
   disabledReason?: string;
 }
 
 export function ConversationModelSelector({
   selectedModel,
+  selectedReasoningPreset,
   disabled = false,
   disabledReason,
 }: ConversationModelSelectorProps) {
@@ -52,10 +52,6 @@ export function ConversationModelSelector({
   const currentReasoningPreset = useConversationStore(
     (state) => state.currentReasoningPreset,
   );
-  const runPresentation = useConversationStore(useShallow((state) => (
-    sessionRunPresentation(state, state.currentSessionId)
-  )));
-  const streaming = runPresentation.busy;
   const historyLoading = useConversationStore((state) => state.historyLoading);
   const selectRuntimeConfig = useConversationStore((state) => state.selectRuntimeConfig);
   const [announcement, setAnnouncement] = useState("");
@@ -74,7 +70,7 @@ export function ConversationModelSelector({
   };
   const selectedConfig: ModelRuntimeConfig = {
     model: selectedModel,
-    reasoningPreset: currentReasoningPreset
+    reasoningPreset: selectedReasoningPreset ?? currentReasoningPreset
       ?? selectedReasoning.defaultPreset
       ?? "none",
   };
@@ -82,14 +78,12 @@ export function ConversationModelSelector({
     (preset) => preset.id === selectedConfig.reasoningPreset,
   );
   const reasoningLabel = selectedPreset?.label ?? (selectedReasoning.allowCustom && selectedConfig.reasoningPreset.startsWith("effort:") ? selectedConfig.reasoningPreset.slice(7) : selectedConfig.reasoningPreset);
-  const unavailable = disabled || !catalog || modelSwitching || streaming || historyLoading;
+  const unavailable = disabled || !catalog || modelSwitching || historyLoading;
   const reason = modelSwitching
     ? `正在切换到 ${modelSwitchTarget ?? "目标模型"}`
     : disabled
       ? disabledReason ?? "暂时不可用"
-      : streaming
-        ? "请等待当前回复完成"
-        : historyLoading
+      : historyLoading
           ? "正在加载会话历史"
           : !catalog
             ? "模型列表尚未就绪"

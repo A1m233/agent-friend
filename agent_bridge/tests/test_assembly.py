@@ -346,14 +346,20 @@ def test_openrouter_errors_keep_actionable_protocol_categories(
     assert error.code == code
 
 
-def test_memory_model_defaults_to_v4_pro(
+def test_memory_model_defaults_to_flash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-fake-key")
     monkeypatch.delenv("DEEPSEEK_MEMORY_MODEL", raising=False)
 
     runtime_config = resolve_bridge_runtime_config(credential_source_for_mode("env-only"))
-    assert runtime_config.memory_model == "deepseek/deepseek-v4-pro"
+    assert runtime_config.memory_model == "deepseek/deepseek-flash"
+    from llm_providers import LLMClient
+
+    memory_client = runtime_config.memory_client_factory()
+    assert isinstance(memory_client, LLMClient)
+    assert memory_client.spec.reasoning_preset == "max"
+    assert memory_client.spec.defaults["reasoning_effort"] == "max"
 
 
 def test_memory_model_allows_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -382,7 +388,7 @@ def test_desktop_chat_model_setting_does_not_change_bridge_fallback(
         credential_source_for_mode("desktop", settings_path=settings, env={})
     )
 
-    assert runtime_config.default_model == default_model_for_provider("kimi", "chat")
+    assert runtime_config.default_model == default_model_for_provider("deepseek", "chat")
 
 
 def test_runtime_config_allows_provider_timeout_override(
@@ -502,3 +508,29 @@ def test_connection_routes_survive_real_runtime_assembly(
             )
     finally:
         runtime.close()
+
+
+@pytest.mark.parametrize(
+    "old_model",
+    [
+        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v4-flash-vision-exp",
+    ],
+)
+def test_removed_default_does_not_break_bootstrap_or_silently_change_model(
+    monkeypatch: pytest.MonkeyPatch,
+    old_model: str,
+) -> None:
+    from llm_providers import LLMModelUnavailableError, ModelRuntimeConfig
+
+    monkeypatch.setenv("LLM_CHAT_PROVIDER", "deepseek")
+    monkeypatch.setenv("LLM_CHAT_MODEL", old_model)
+    monkeypatch.setenv("LLM_MEMORY_PROVIDER", "deepseek")
+    monkeypatch.setenv("LLM_MEMORY_MODEL", old_model)
+    config = resolve_bridge_runtime_config(credential_source_for_mode("env-only"))
+    assert config.default_model == old_model
+    assert config.memory_model == old_model
+    with pytest.raises(LLMModelUnavailableError):
+        config.llm_client_factory(ModelRuntimeConfig(old_model, "high"))
+    with pytest.raises(LLMModelUnavailableError):
+        config.memory_client_factory()

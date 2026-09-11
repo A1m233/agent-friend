@@ -53,6 +53,17 @@ def test_directory_replacement_does_not_mutate_previous_snapshot() -> None:
         ModelDirectory().model(ref)
 
 
+def test_removed_builtin_name_does_not_rewrite_custom_connection() -> None:
+    original = connection()
+    original = replace(original, models=(replace(original.models[0], name="deepseek-v4-flash"),))
+    directory = ModelDirectory([original])
+    ref = model_reference(original.id, original.models[0].id)
+    spec = directory.build_spec(directory.default_config(ref), api_key="fixture")
+    assert spec.model == "openai/deepseek-v4-flash"
+    assert spec.api_base == original.base_url
+    assert spec.responses and spec.responses.model == "deepseek-v4-flash"
+
+
 def test_custom_does_not_inherit_capabilities_from_remote_name() -> None:
     from llm_providers.kimi_transport import uses_kimi_stream_transport
 

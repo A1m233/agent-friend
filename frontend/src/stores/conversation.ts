@@ -49,6 +49,7 @@ import { applyAguiEvent, applyPushConversationEvent } from "./conversationReduce
 import { projectSessionEvents } from "./sessionProjection";
 import { useSessionsStore } from "./sessions";
 import {
+  draftKey,
   editDraftKey,
   HOME_DRAFT_KEY,
   type DraftAttachmentState,
@@ -1362,9 +1363,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   async selectRuntimeConfig(config) {
     const current = get();
-    const effectiveModel = current.currentModel;
+    const workspaceKey = current.editingMessage?.draftKey ?? draftKey(current.currentSessionId);
+    const draftConfig = useDraftStore.getState().workspaces[workspaceKey]?.runtimeConfig;
+    const effectiveModel = draftConfig?.model ?? current.currentModel;
     const effectiveReasoningPreset = effectiveModel
-      ? current.currentReasoningPreset
+      ? draftConfig?.reasoningPreset ?? current.currentReasoningPreset
         ?? defaultModelRuntimeConfig(effectiveModel).reasoningPreset
       : null;
     if (
@@ -1379,8 +1382,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       };
     }
     if (
-      isSessionBusy(current, current.currentSessionId)
-      || current.historyLoading
+      current.historyLoading
       || current.editingMessage?.phase === "submitting"
     ) {
       return {
@@ -1393,10 +1395,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     modelMutationSeq = seq;
     detailRefreshSeq += 1;
     const sessionId = current.currentSessionId;
+    const deferToNextTurn = isSessionBusy(current, sessionId) || Boolean(draftConfig);
     const openToken = openSessionToken;
     set({ modelSwitching: true, modelSwitchTarget: config.model });
     try {
-      const appliedConfig = sessionId
+      const appliedConfig = sessionId && !deferToNextTurn
         ? (await sessionsApi.updateRuntimeConfig(sessionId, config)).runtimeConfig
         : (await modelsApi.validate(config)).runtimeConfig ?? config;
       if (
@@ -1406,10 +1409,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       ) {
         return { status: "stale" };
       }
-      set({
-        currentModel: appliedConfig.model,
-        currentReasoningPreset: appliedConfig.reasoningPreset,
-      });
+      if (deferToNextTurn) {
+        useDraftStore.getState().setRuntimeConfig(workspaceKey, appliedConfig);
+      } else {
+        set({
+          currentModel: appliedConfig.model,
+          currentReasoningPreset: appliedConfig.reasoningPreset,
+        });
+      }
       return { status: "applied", ...appliedConfig };
     } catch (error) {
       if (
@@ -1582,7 +1589,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const initialApprovalModeVersion = shouldBootstrapApprovalMode
       ? Math.max(1, runtimeState.approvalModeVersion)
       : runtimeState.approvalModeVersion;
-    const initialConfig = {
+    const draftConfig = useDraftStore.getState().workspaces[draftKey(existingSessionId)]?.runtimeConfig;
+    const initialConfig = draftConfig ?? {
       model: runtimeState.currentModel,
       reasoningPreset: runtimeState.currentReasoningPreset,
     };
@@ -1692,7 +1700,17 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       let sawStreamEvent = false;
       let sawTerminalEvent = false;
       let admissionFailed = false;
+      let runRequested = false;
       try {
+        if (existingSessionId && draftConfig) {
+          // Existing-session runs use persisted config. Apply the draft only now,
+          // under the backend's idle-session mutation gate, before admitting input.
+          await sessionsApi.updateRuntimeConfig(sessionId, initialConfig);
+        }
+        if (controller.signal.aborted || sendEpoch !== runtimeGeneration || cancellations.has(runId)) {
+          throw new Error("send_cancelled_before_admission");
+        }
+        runRequested = true;
         for await (const evt of runAgentStream(
           {
             threadId: sessionId,
@@ -1739,7 +1757,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             : "completed";
       } catch (error) {
         streamUpdates?.flush();
-        admissionFailed = error instanceof StreamAdmissionError;
+        admissionFailed = !runRequested || error instanceof StreamAdmissionError;
         if (controller.signal.aborted) {
           outcome = "interrupted";
           patch((m) => (m.status === "streaming" ? markMessageTerminal(m, "interrupted") : m));
@@ -1750,7 +1768,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         streamUpdates?.dispose();
         activeTransports.delete(runId);
         let runStillActive = false;
-        try {
+        if (!runRequested) {
+          cancellations.forget(runId);
+          outcome = "rejected";
+          dropOptimisticRun(runId);
+        } else try {
           const snapshot = await runsApi.get(runId);
           get().applyRunSnapshot(snapshot);
           const latest = get().runSnapshots[runId] ?? snapshot;

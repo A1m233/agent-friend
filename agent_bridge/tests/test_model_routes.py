@@ -30,12 +30,8 @@ def test_model_catalog_route_projects_provider_capabilities() -> None:
     assert k26["limits"]["contextWindow"] == 256 * 1024
     assert k26["reasoning"]["defaultPreset"] == "on"
     deepseek = next(provider for provider in body["providers"] if provider["id"] == "deepseek")
-    vision = next(
-        model
-        for model in deepseek["models"]
-        if model["id"] == "deepseek/deepseek-v4-flash-vision-exp"
-    )
-    assert vision["label"] == "DeepSeek V4 Flash Vision"
+    vision = next(model for model in deepseek["models"] if model["id"] == "deepseek/deepseek-flash")
+    assert vision["label"] == "DeepSeek Flash"
     assert vision["processingProfile"] == "deepseek-vision-files-v1"
     assert vision["capabilities"]["inputModalities"] == ["text", "image"]
     assert vision["capabilities"]["acceptedMediaTypes"] == [
@@ -54,8 +50,8 @@ def test_model_catalog_route_projects_provider_capabilities() -> None:
             {"id": "max", "label": "最高"},
         ],
     }
-    assert deepseek["defaultChatModel"] == "deepseek/deepseek-v4-flash"
-    assert deepseek["defaultMemoryModel"] == "deepseek/deepseek-v4-pro"
+    assert deepseek["defaultChatModel"] == "deepseek/deepseek-flash"
+    assert deepseek["defaultMemoryModel"] == "deepseek/deepseek-flash"
 
 
 def _validation_client(factory: object) -> TestClient:

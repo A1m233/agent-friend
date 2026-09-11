@@ -20,6 +20,7 @@ interface ChatSenderBoxProps extends ChatSenderProps {
   onNativeValueChange?: (value: string) => void;
   onNativePasteFiles?: (files: File[]) => void;
   shouldIgnoreNativeValueChange?: () => boolean;
+  sendBlocked?: boolean;
 }
 
 export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
@@ -30,6 +31,7 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
       onNativeValueChange,
       onNativePasteFiles,
       shouldIgnoreNativeValueChange,
+      sendBlocked = false,
       children,
       ...props
     },
@@ -55,6 +57,14 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
       const onKey = (e: KeyboardEvent) => {
         const inIme = composing || e.isComposing || e.keyCode === 229 || e.key === "Process";
         if ((e.key === "Enter" || e.key === "Process") && inIme) {
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+        }
+        if (
+          e.key === "Enter" && (sendBlocked || props.loading)
+          && e.composedPath().some((target) => target instanceof HTMLTextAreaElement)
+        ) {
+          // Keep native newline editing, but do not let TDesign route Enter to stop/send.
           e.stopPropagation();
           e.stopImmediatePropagation();
         }
@@ -87,7 +97,7 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
         el.removeEventListener("change", onNativeChange);
         el.removeEventListener("input", onNativeChange);
       };
-    }, [onNativePasteFiles, onNativeValueChange, shouldIgnoreNativeValueChange]);
+    }, [onNativePasteFiles, onNativeValueChange, shouldIgnoreNativeValueChange, props.loading, sendBlocked]);
 
     return (
       <div
