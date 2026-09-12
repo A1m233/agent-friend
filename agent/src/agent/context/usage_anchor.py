@@ -1,7 +1,7 @@
 """Request-bound input usage; only an unchanged prefix can spend a measured anchor.
 
-Persist hashes and counts, never another copy of model-visible content. Completion
-tokens are deliberately excluded: only replayed assistant items belong to input.
+Persist hashes and counts, never another copy of model-visible content. Output
+usage only bounds matching replayed reasoning, never unconditionally adds input.
 """
 
 from __future__ import annotations
@@ -82,10 +82,14 @@ class UsageAnchor:
     prefix: str
     message_count: int
     input_tokens: int
-    version: int = 1
+    version: int = 2
+    output_reasoning_digest: str | None = None
+    output_reasoning_tokens: int | None = None
 
     @classmethod
-    def from_usage(cls, request: RequestMeasurement, usage: Any) -> UsageAnchor | None:
+    def from_usage(
+        cls, request: RequestMeasurement, usage: Any, *, reasoning_details: Any = None
+    ) -> UsageAnchor | None:
         # The provider layer normalizes inclusive totals and exclusive buckets
         # into prompt_tokens. Neither completion nor cache-hit subtraction belongs here.
         # Unknown counters must not silently become trusted, even if positive.
@@ -102,7 +106,19 @@ class UsageAnchor:
                 return None
         if (usage.cached_prompt_tokens or 0) + (usage.cache_write_prompt_tokens or 0) > tokens:
             return None
-        return cls(request.scope, request.prefix, request.message_count, tokens)
+        # Output usage is not additional input by itself. It is only an upper
+        # bound for the exact reasoning payload if it is replayed in the delta.
+        # This avoids estimating hidden reasoning by its ID/ciphertext length.
+        output = usage.completion_tokens
+        has_bound = bool(reasoning_details) and type(output) is int and output > 0
+        return cls(
+            request.scope,
+            request.prefix,
+            request.message_count,
+            tokens,
+            output_reasoning_digest=digest(reasoning_details) if has_bound else None,
+            output_reasoning_tokens=output if has_bound else None,
+        )
 
     def payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -111,7 +127,7 @@ class UsageAnchor:
     def restore(cls, value: Any) -> UsageAnchor | None:
         if not isinstance(value, dict) or type(value.get("version")) is not int:
             return None
-        if value["version"] != 1:
+        if value["version"] not in {1, 2}:
             return None
         for key in ("scope", "prefix"):
             field = value.get(key)
@@ -122,7 +138,61 @@ class UsageAnchor:
         for key in ("message_count", "input_tokens"):
             if type(value.get(key)) is not int or value[key] <= 0:
                 return None
-        return cls(value["scope"], value["prefix"], value["message_count"], value["input_tokens"])
+        reasoning_digest = value.get("output_reasoning_digest") if value["version"] == 2 else None
+        reasoning_tokens = value.get("output_reasoning_tokens") if value["version"] == 2 else None
+        if (reasoning_digest is not None or reasoning_tokens is not None) and (
+            not isinstance(reasoning_digest, str)
+            or len(reasoning_digest) != 64
+            or any(char not in "0123456789abcdef" for char in reasoning_digest)
+            or type(reasoning_tokens) is not int
+            or reasoning_tokens <= 0
+        ):
+            return None
+        return cls(
+            value["scope"],
+            value["prefix"],
+            value["message_count"],
+            value["input_tokens"],
+            output_reasoning_digest=reasoning_digest,
+            output_reasoning_tokens=reasoning_tokens,
+        )
+
+
+def _estimate_delta(messages: list[dict[str, Any]], anchor: UsageAnchor) -> int | None:
+    """Count only replayed output; unknown opaque deltas cannot spend an anchor."""
+    tokens = 0
+    for message in messages:
+        details = message.get("reasoning_details")
+        if not details:
+            tokens += estimate_rendered_tokens([message])
+            continue
+        if (
+            anchor.output_reasoning_digest == digest(details)
+            and anchor.output_reasoning_tokens is not None
+        ):
+            # The output bound includes all reasoning items from this response.
+            # Visible text/tool calls are estimated separately (conservative).
+            tokens += anchor.output_reasoning_tokens
+            tokens += estimate_rendered_tokens([{**message, "reasoning_details": None}])
+        else:
+            # Text-only reasoning is countable. A summary, signature, encrypted
+            # payload or reasoning ID is not evidence for its underlying cost.
+            if not isinstance(details, (list, tuple)) or any(
+                not isinstance(item, dict)
+                or item.get("encrypted_content")
+                or not item.get("content")
+                or not isinstance(item["content"], list)
+                or any(
+                    not isinstance(part, dict)
+                    or part.get("type") != "reasoning_text"
+                    or not isinstance(part.get("text"), str)
+                    for part in item["content"]
+                )
+                for item in details
+            ):
+                return None
+            tokens += estimate_rendered_tokens([message])
+    return tokens
 
 
 @dataclass(frozen=True)
@@ -161,14 +231,16 @@ def estimate_input(
                 len(messages) >= anchor.message_count
                 and digest(messages[: anchor.message_count]) == anchor.prefix
             ):
-                delta = estimate_rendered_tokens(messages[anchor.message_count :])
-                return InputEstimate(
-                    anchor.input_tokens + delta,
-                    "usage_anchor",
-                    "none",
-                    anchor.input_tokens,
-                    anchor.message_count,
-                    delta,
-                )
+                delta = _estimate_delta(messages[anchor.message_count :], anchor)
+                if delta is not None:
+                    return InputEstimate(
+                        anchor.input_tokens + delta,
+                        "usage_anchor",
+                        "none",
+                        anchor.input_tokens,
+                        anchor.message_count,
+                        delta,
+                    )
+                reason = "unmeasured_reasoning_delta"
     fallback = fallback_tokens() if callable(fallback_tokens) else fallback_tokens
     return InputEstimate(fallback, "full_estimate", reason)

@@ -277,7 +277,10 @@ class LLMClient:
         route = self.spec.responses
         return LanguageModelCapabilities(
             assistant_message_phase=route.assistant_message_phase if route else "unavailable",
-            input_usage_scope="opaque" if route else "request",
+            # Both adapters send the complete client-owned history. Responses
+            # rejects server-side conversation storage / previous_response_id;
+            # opaque reasoning items are replayed explicitly in that request.
+            input_usage_scope="request",
         )
 
     @property

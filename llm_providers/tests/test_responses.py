@@ -427,6 +427,8 @@ def test_k3_native_stream_keeps_reasoning_without_chat_compatibility_settings(
         {"extra_body": {"input": "override"}},
         {"unsupported": True},
         {"store": True},
+        {"previous_response_id": "resp-old"},
+        {"conversation": "conv-old"},
     ],
 )
 def test_invalid_settings_fail_before_transport(settings: dict[str, Any]) -> None:
@@ -559,7 +561,7 @@ def test_catalog_capabilities_and_hidden_legacy_provider() -> None:
             capability = get_model_capabilities(LLMClient(spec)).assistant_message_phase
             assert capability == ("native" if provider.provider_id == "deepseek" else "unavailable")
             usage_scope = get_model_capabilities(LLMClient(spec)).input_usage_scope
-            assert usage_scope == ("opaque" if spec.responses is not None else "request")
+            assert usage_scope == "request"
     assert {item["id"] for item in public_model_catalog()["providers"]} == {"deepseek", "kimi"}
     assert build_provider_spec(provider_id="openrouter", api_key="fixture").responses is None
 

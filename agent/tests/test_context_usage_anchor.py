@@ -133,7 +133,8 @@ def test_restore_rechecks_scope_and_exact_prefix_and_rejects_future_metadata() -
     anchor = measured(messages, 100)
     restored = UsageAnchor.restore(anchor.payload())
     assert restored == anchor
-    assert UsageAnchor.restore({**anchor.payload(), "version": 2}) is None
+    assert UsageAnchor.restore({**anchor.payload(), "version": 3}) is None
+    assert UsageAnchor.restore({**anchor.payload(), "version": 1}) == anchor
     assert UsageAnchor.restore({**anchor.payload(), "input_tokens": True}) is None
     assert UsageAnchor.restore({**anchor.payload(), "prefix": "invalid"}) is None
     assert UsageAnchor.restore(None) is None

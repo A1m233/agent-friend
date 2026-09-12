@@ -3377,8 +3377,8 @@ class Conversation:
                 ),
             )
 
-        # Responses may retain server-owned reasoning not present in this logical
-        # request. Do not claim exact delta accounting without that continuation.
+        # Only adapters which own the complete request may reuse input usage.
+        # Explicit reasoning replay is accounted for by the delta estimator.
         if get_model_capabilities(self._active_llm_client()).input_usage_scope != "request":
             return InputEstimate(fallback(), "full_estimate", "opaque_provider_continuation")
         return estimate_input(
@@ -4384,8 +4384,19 @@ class Conversation:
         request_measurement = self._pending_request_measurement
         self._pending_request_measurement = None
         if request_measurement is not None:
+            reasoning = ev.reasoning_state or (
+                ev.assistant_turn.reasoning_state if ev.assistant_turn is not None else None
+            )
             self._usage_anchor = (
-                UsageAnchor.from_usage(request_measurement, ev.usage)
+                UsageAnchor.from_usage(
+                    request_measurement,
+                    ev.usage,
+                    reasoning_details=(
+                        reasoning.payload
+                        if reasoning is not None and reasoning.format == "reasoning_details"
+                        else None
+                    ),
+                )
                 if get_model_capabilities(self._active_llm_client()).input_usage_scope == "request"
                 else None
             )
