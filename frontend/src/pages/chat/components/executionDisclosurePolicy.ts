@@ -1,5 +1,5 @@
-import type { ChatMessage } from "@/types/chat";
-import { canDiscloseExecution, shouldCollapseExecution } from "@/stores/assistantPhase";
+import type { AssistantPhase, ChatMessage } from "@/types/chat";
+import { normalizeAssistantPhase } from "@/stores/assistantPhase";
 import type { MessagePresentationSegment } from "./toolActivityPresentation";
 import type { SocialAuthRequestStatus } from "@/services";
 
@@ -16,40 +16,64 @@ export interface ExecutionSection {
 
 export interface ExecutionDisclosurePolicy {
   /** A view decision, never a replacement for the provider's persisted phase. */
-  source: "native" | "inferred" | "none";
-  finalTextId?: string;
+  source: "native" | "inferred" | "mixed" | "none";
+  /** The last visible item is not necessarily a provider final_answer. */
+  retainedTextId?: string;
+  processTextIds: string[];
   collapse: boolean;
 }
 
 export function executionDisclosurePolicy(message: ChatMessage): ExecutionDisclosurePolicy {
-  if (message.role !== "assistant") return { source: "none", collapse: false };
-  if (canDiscloseExecution(message)) {
-    return { source: "native", collapse: shouldCollapseExecution(message) };
-  }
-  // Missing/invalid native semantics must not silently become a successful inference.
-  if (message.assistantPhase?.mode === "native" || message.assistantPhase?.validation === "conflict"
-    || !message.runId || message.status !== "complete" || message.runOutcome !== "completed"
-    || message.error || message.blocks.some((block) => block.kind === "tool" && block.status === "running")) {
-    return { source: "none", collapse: false };
+  const unavailable: ExecutionDisclosurePolicy = { source: "none", processTextIds: [], collapse: false };
+  // Run mode is historical capability metadata, not a presentation gate.
+  const completed = message.status === "complete" && message.runOutcome === "completed";
+  const streaming = message.status === "streaming" && message.runOutcome === undefined;
+  if (message.role !== "assistant" || !message.runId || message.error
+    || message.assistantPhase?.validation === "conflict" || (!completed && !streaming)) {
+    return unavailable;
   }
 
-  const items = new Map<string, { firstIndex: number; hasText: boolean }>();
+  const items = new Map<string, { firstIndex: number; hasText: boolean; phase: AssistantPhase }>();
+  let lastToolIndex = -1;
+  let runningTool = false;
   for (const [index, block] of message.blocks.entries()) {
-    if (block.kind !== "text") continue;
-    if (!block.mid || (block.phase !== undefined && block.phase !== "unknown")) {
-      return { source: "none", collapse: false };
+    if (block.kind === "tool") {
+      lastToolIndex = index;
+      runningTool ||= block.status === "running";
     }
-    const item = items.get(block.mid) ?? { firstIndex: index, hasText: false };
+    if (block.kind !== "text") continue;
+    const phase = normalizeAssistantPhase(block.phase);
+    if (!block.mid) return unavailable;
+    const previous = items.get(block.mid);
+    if (previous && previous.phase !== phase) return unavailable;
+    const item = previous ?? { firstIndex: index, hasText: false, phase };
     item.hasText ||= !!block.text.trim();
     items.set(block.mid, item);
   }
-  // Map insertion order is logical item order; a late fragment of an earlier item
-  // cannot become the final answer just because its fragment is last in the array.
-  const finalItem = [...items.entries()].reverse().find(([, item]) => item.hasText);
-  if (!finalItem || message.blocks.slice(finalItem[1].firstIndex + 1).some((block) => block.kind === "tool")) {
-    return { source: "none", collapse: false };
+  // First appearance defines logical item order, not the arrival of late fragments.
+  const ordered = [...items.entries()].filter(([, item]) => item.hasText);
+  const last = ordered.at(-1);
+  if (!last || (completed && runningTool)) return unavailable;
+  const firstFinal = ordered.findIndex(([, item]) => item.phase === "final_answer");
+  if (firstFinal >= 0 && (ordered[firstFinal][1].firstIndex < lastToolIndex
+    || ordered.slice(firstFinal).some(([, item]) => item.phase !== "final_answer"))) {
+    return unavailable;
   }
-  return { source: "inferred", finalTextId: finalItem[0], collapse: true };
+  const hasNativePhase = ordered.some(([, item]) => item.phase !== "unknown");
+  const retainedTextId = firstFinal < 0 ? last[0] : undefined;
+  const hasClosingText = last[1].firstIndex > lastToolIndex;
+  const collapse = completed && hasClosingText && message.assistantPhase?.validation !== "pending";
+  // Keep mixed unknown text visible. Infer earlier text only for entirely phase-less
+  // completed runs; explicit commentary never becomes a final answer in stored facts.
+  const processTextIds = ordered.filter(([id, item]) => id !== retainedTextId
+    && (item.phase === "commentary" || (!hasNativePhase && collapse))).map(([id]) => id);
+  if (!hasClosingText && completed) return unavailable;
+  return {
+    source: firstFinal >= 0 ? "native" : hasNativePhase ? "mixed" : "inferred",
+    retainedTextId,
+    processTextIds,
+    collapse,
+  };
 }
 
 export function executionSections(
@@ -62,9 +86,7 @@ export function executionSections(
   const sections: ExecutionSection[] = [];
   segments.forEach((segment, index) => {
     const text = segment.kind === "block" && segment.block.kind === "text" ? segment.block : null;
-    const processText = text && (policy.source === "native"
-      ? text.phase === "commentary"
-      : policy.source === "inferred" && text.mid !== policy.finalTextId);
+    const processText = text && policy.processTextIds.includes(text.mid);
     // File/command approvals remain reachable in the dock. Only live social
     // login actions need their message card outside the execution disclosure.
     const execution = enabled && (processText || segment.kind === "toolActivity"

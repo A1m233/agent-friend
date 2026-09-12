@@ -45,13 +45,3 @@ export function updateAssistantItemPhase(blocks: MessageBlock[], mid: string, ph
   return blocks.map((block) => block.kind === "text" && block.mid === mid
     ? { ...block, phase: normalizeAssistantPhase(phase) } : block);
 }
-
-export function canDiscloseExecution(message: ChatMessage): boolean {
-  return message.assistantPhase?.mode === "native" && message.assistantPhase.validation !== "conflict";
-}
-
-export function shouldCollapseExecution(message: ChatMessage): boolean {
-  return canDiscloseExecution(message) && message.assistantPhase?.validation === "valid"
-    && message.status === "complete" && message.runOutcome === "completed"
-    && message.blocks.some((block) => block.kind === "text" && block.phase === "final_answer" && !!block.text.trim());
-}
