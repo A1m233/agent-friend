@@ -27,6 +27,7 @@ Note:
 
 from __future__ import annotations
 
+import copy
 import html
 import json
 import logging
@@ -102,6 +103,7 @@ from .context import (
     resolve_prior_summary,
     stream_build_messages,
 )
+from .context.budget import estimate_request_tokens
 from .context.checkpoints import bind_business_boundary
 from .context.usage_anchor import (
     InputEstimate,
@@ -172,6 +174,9 @@ from .sessions import (
     ToolExecutionEvidenceStore,
     render_interrupted_evidence,
 )
+from .sessions.model_context import ModelContextProjection
+from .sessions.store import append_session_events
+from .sessions.turn_origin import history_before_rewrite
 from .skills import (
     ActivatedSkill,
     SkillCatalogService,
@@ -801,6 +806,38 @@ class Conversation:
             ``KeyboardInterrupt`` 等 :class:`BaseException` 会被 ``finally``
             通过 :func:`sys.exc_info` 识别为中断，按"部分回复"语义落盘。
         """
+        yield from self._stream_user_turn(
+            user_input,
+            attachments=attachments,
+            references=references,
+            user_event_id=user_event_id,
+            channel=channel,
+            surface=surface,
+            interaction_destination_id=interaction_destination_id,
+            run_id=run_id,
+            cancel_check=cancel_check,
+            skill_selections=skill_selections,
+            skill_turn_snapshot=skill_turn_snapshot,
+            turn_context=turn_context,
+        )
+
+    def _stream_user_turn(
+        self,
+        user_input: str,
+        *,
+        attachments: list[AttachmentRef] | None = None,
+        references: list[QuotedTextReference] | None = None,
+        user_event_id: str | None = None,
+        channel: PromptChannel | None = None,
+        surface: InteractionSurfaceId | None = None,
+        interaction_destination_id: str | None = None,
+        run_id: str | None = None,
+        cancel_check: Callable[[], None] | None = None,
+        skill_selections: tuple[SkillSelection, ...] = (),
+        skill_turn_snapshot: SkillTurnSnapshot | None = None,
+        turn_context: str | None = None,
+        rewrite_plan: _RewritePlan | None = None,
+    ) -> Iterator[ConversationEvent]:
         self._session_model_history.reconcile(self._session)
         self._repair_incomplete_model_tool_transactions()
         turn_attachments = list(attachments or [])
@@ -839,6 +876,8 @@ class Conversation:
             selection_history = (
                 self._session.events[: self._session.events.index(existing_user_event)]
                 if existing_user_event is not None
+                else rewrite_plan.prefix_events
+                if rewrite_plan is not None
                 else self._session.active_events
             )
             turn_references = self._validate_references_for_session(
@@ -848,7 +887,16 @@ class Conversation:
             # Freeze the pre-turn model view before committing the durable user event.  The
             # first request still receives ``new_user_input`` separately, so reading live
             # session history after the append would send the same query twice.
-            prefix_history = self._session_model_history.snapshot()
+            prefix_history = (
+                history_before_rewrite(
+                    self._session,
+                    rewrite_plan.target_user_uuid,
+                    rewrite_plan.prefix_events,
+                    cancel_check=cancel_check,
+                )
+                if rewrite_plan is not None
+                else self._session_model_history.snapshot()
+            )
             prefix_prior_summary = self._derive_prior_summary_from_events(
                 selection_history, prefix_history
             )
@@ -927,7 +975,7 @@ class Conversation:
             )
             first_turn_catalog_message = self._skill_catalog_message()
             loop_frame = _ToolLoopFrame(current_text_buf=[])
-            tool_run_context = self._make_tool_run_context(user_input)
+            tool_run_context = self._make_tool_run_context(user_input, events=selection_history)
             previous_tool_run_context = self._active_tool_run_context
             self._active_tool_run_context = tool_run_context
             tool_run_state = ToolRunState(self._tool_run_policy)
@@ -964,6 +1012,9 @@ class Conversation:
             if not user_event_appended:
                 if self._input_accepted_callback is not None:
                     self._check_cancel(cancel_check)
+                if rewrite_plan is not None:
+                    self._invalidate_rewrite_memory(rewrite_plan.inactive_event_uuids)
+                    self._append_turn_rewrite_event(rewrite_plan, replacement_text=user_input)
                 self._append_skill_catalog_state_event()
                 appended_user_id = self._append_user_event(
                     user_input,
@@ -1094,144 +1145,17 @@ class Conversation:
         if not user_input.strip() and not replacement_attachments and not replacement_references:
             raise AgentError("编辑后的文字、附件和引用不能同时为空")
 
-        previous_prompt_channel = self._prompt_channel_override
-        previous_prompt_surface = self._prompt_surface_override
-        previous_run_id = self._run_id_override
-        previous_turn_context = self._turn_context_override
-        previous_turn_prompt_builder = self._turn_prompt_builder
-        previous_run_model_snapshot = self._run_model_snapshot
-        previous_skill_turn_snapshot = self._active_skill_turn_snapshot
-        previous_skill_selections = self._active_skill_selections
-        self._prompt_channel_override = channel
-        self._prompt_surface_override = surface
-        self._run_id_override = run_id
-        self._turn_context_override = _compose_turn_context(None, replacement_attachments)
-        self._turn_prompt_builder = self._snapshot_prompt_builder()
-        self._run_model_snapshot = self._capture_run_model_snapshot()
-        try:
-            persona_name = self._session.current_persona_name
-            persona_id = self._session.current_persona_id
-            model_snapshot = self._active_model_id()
-            self._active_skill_selections = self._resolve_turn_skill_selections(
-                user_input,
-                skill_selections,
-                history_events=plan.prefix_events,
-            )
-            self._active_skill_turn_snapshot = (
-                self._skill_service.begin_turn(
-                    self._active_skill_selections,
-                    model_window=self._active_llm_client().context_window,
-                    semantic_activation_available=self._skill_read_available(),
-                )
-                if self._skill_service is not None
-                else None
-            )
-            first_turn_catalog_message = self._skill_catalog_message()
-
-            self._invalidate_rewrite_memory(plan.inactive_event_uuids)
-
-            prefix_history = self._messages_from_events(plan.prefix_events)
-            prefix_prior_summary = self._derive_prior_summary_from_events(
-                plan.prefix_events, prefix_history
-            )
-            prefix_recall_boundary = (
-                self._derive_business_recall_boundary(plan.prefix_events)
-                if self._memory is not None
-                else None
-            )
-
-            rewrite_event_appended = False
-            user_event_appended = False
-            loop_frame = _ToolLoopFrame(current_text_buf=[])
-            tool_run_context = self._make_tool_run_context(user_input, events=plan.prefix_events)
-            previous_tool_run_context = self._active_tool_run_context
-            self._active_tool_run_context = tool_run_context
-            tool_run_state = ToolRunState(self._tool_run_policy)
-            self._active_tool_run_state = tool_run_state
-            no_progress = ToolProgressTracker(self._tool_run_policy.no_progress_advisory_threshold)
-            turn_start_idx = len(self._session.events)
-
-            def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
-                nonlocal rewrite_event_appended, user_event_appended
-                if not rewrite_event_appended:
-                    self._append_turn_rewrite_event(plan, replacement_text=user_input)
-                    rewrite_event_appended = True
-                if not user_event_appended:
-                    self._append_skill_catalog_state_event()
-                    appended_user_id = self._append_user_event(
-                        user_input,
-                        attachments=replacement_attachments,
-                        references=replacement_references,
-                    )
-                    self._append_skill_context_events(appended_user_id)
-                    user_event_appended = True
-                return (
-                    yield from self._build_openai_messages_first_turn_stream(
-                        user_input,
-                        attachments=replacement_attachments,
-                        references=replacement_references,
-                        history_override=prefix_history,
-                        prior_summary_override=prefix_prior_summary,
-                        recall_boundary_override=prefix_recall_boundary,
-                        persist_compaction=False,
-                        catalog_message_override=first_turn_catalog_message,
-                        cancel_check=cancel_check,
-                    )
-                )
-
-        except BaseException:
-            self._restore_run_model_snapshot(previous_run_model_snapshot)
-            raise
-        try:
-            self._check_cancel(cancel_check)
-            yield from self._run_tool_loop(
-                prepare_first_turn=prepare_first_turn,
-                first_turn_prelude=self._skill_activation_status_events,
-                persona_name=persona_name,
-                persona_id=persona_id,
-                model_snapshot=model_snapshot,
-                runtime=tool_run_state,
-                context=tool_run_context,
-                progress=no_progress,
-                frame=loop_frame,
-                current_turn_start_idx=turn_start_idx,
-                user_turn=True,
-                cancel_check=cancel_check,
-            )
-        finally:
-            exc_info = sys.exc_info()
-            interrupted = exc_info[0] is not None
-            if interrupted:
-                if not rewrite_event_appended and (
-                    user_event_appended or loop_frame.current_text_buf
-                ):
-                    self._append_turn_rewrite_event(plan, replacement_text=user_input)
-                    rewrite_event_appended = True
-                self._on_interrupt(
-                    user_input=user_input,
-                    user_event_appended=user_event_appended,
-                    current_text_buf=loop_frame.current_text_buf,
-                    current_text_persisted=loop_frame.current_text_persisted,
-                    persona_name=persona_name,
-                    persona_id=persona_id,
-                    model_snapshot=model_snapshot,
-                    persist_empty_partial=_is_explicit_run_cancellation(exc_info[1]),
-                    interruption_reason=_interruption_reason_code(exc_info[1]),
-                )
-            else:
-                if not self._post_turn_external:
-                    self._observe_turn(turn_start_idx)
-            self._prompt_channel_override = previous_prompt_channel
-            self._prompt_surface_override = previous_prompt_surface
-            self._run_id_override = previous_run_id
-            self._turn_context_override = previous_turn_context
-            self._turn_prompt_builder = previous_turn_prompt_builder
-            self._restore_run_model_snapshot(previous_run_model_snapshot)
-            self._active_skill_turn_snapshot = previous_skill_turn_snapshot
-            self._active_skill_selections = previous_skill_selections
-            self._active_tool_run_state = None
-            tool_run_context.close_commands("run_finished")
-            self._active_tool_run_context = previous_tool_run_context
+        yield from self._stream_user_turn(
+            user_input,
+            attachments=replacement_attachments,
+            references=replacement_references,
+            channel=channel,
+            surface=surface,
+            run_id=run_id,
+            cancel_check=cancel_check,
+            skill_selections=skill_selections,
+            rewrite_plan=plan,
+        )
 
     def continue_after_tool_error(
         self,
@@ -2757,7 +2681,6 @@ class Conversation:
         history_override: list[Message] | None = None,
         prior_summary_override: PriorSummary | None | object = _UNSET,
         recall_boundary_override: str | None | object = _UNSET,
-        persist_compaction: bool = True,
         catalog_message_override: Message | None | object = _UNSET,
         cancel_check: Callable[[], None] | None = None,
     ) -> list[dict[str, Any]]:
@@ -2770,7 +2693,6 @@ class Conversation:
                 history_override=history_override,
                 prior_summary_override=prior_summary_override,
                 recall_boundary_override=recall_boundary_override,
-                persist_compaction=persist_compaction,
                 catalog_message_override=catalog_message_override,
                 cancel_check=cancel_check,
             )
@@ -2786,7 +2708,6 @@ class Conversation:
         history_override: list[Message] | None = None,
         prior_summary_override: PriorSummary | None | object = _UNSET,
         recall_boundary_override: str | None | object = _UNSET,
-        persist_compaction: bool = True,
         catalog_message_override: Message | None | object = _UNSET,
         cancel_check: Callable[[], None] | None = None,
     ) -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
@@ -2910,7 +2831,6 @@ class Conversation:
             turn_context=turn_context or None,
             history_override=history_override,
             prior_summary_override=prior_summary_override,
-            persist_compaction=persist_compaction,
             cancel_check=cancel_check,
         )
         log_voice_latency(
@@ -3001,7 +2921,6 @@ class Conversation:
         trailing_system: str | None = None,
         history_override: list[Message] | None = None,
         prior_summary_override: PriorSummary | None | object = _UNSET,
-        persist_compaction: bool = True,
         tool_specs: list[dict[str, Any]] | None | object = _UNSET,
         cancel_check: Callable[[], None] | None = None,
     ) -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
@@ -3059,7 +2978,7 @@ class Conversation:
         approval_state = (
             self._approval_mode_provider() if self._approval_mode_provider is not None else None
         )
-        model_context_plan = self._session_model_context.plan(
+        model_context_plan = SessionModelContext().plan(
             current_time=current_time,
             timezone=timezone,
             surface=current_surface,
@@ -3074,12 +2993,31 @@ class Conversation:
             approval_version=approval_state.version if approval_state is not None else None,
             runtime_capabilities=render_runtime_capability_notice(
                 tuple(sorted(name for name in callable_names if name)),
-                surface=None,
+                surface=current_surface,
             ),
-            capability_catalog=capability_catalog,
+            capability_catalog=(
+                capability_catalog
+                or (
+                    '<capability_catalog available="false" />'
+                    if any(
+                        message.meta.get("model_context_contributor") == "capability_catalog"
+                        for message in raw_history
+                    )
+                    else None
+                )
+            ),
         )
-        self._pending_model_context_plan = model_context_plan
-        boundary_context = [*model_context_plan.messages, *(pre_user_context or [])]
+        projection = ModelContextProjection(model_context_plan)
+        completed_history = projection.apply(history_for_llm, at_end=True)
+        context_additions = completed_history[len(history_for_llm) :]
+        budget_runtime = runtime
+        runtime = replace(
+            runtime,
+            request_estimator=lambda messages: estimate_request_tokens(
+                projection.apply(messages), budget_runtime
+            ),
+        )
+        boundary_context = [*context_additions, *(pre_user_context or [])]
         active_turn_context = list(turn_context or [])
         filesystem_scope_delta = self._filesystem_scope_delta_message()
         if filesystem_scope_delta is not None:
@@ -3090,7 +3028,7 @@ class Conversation:
             self._session.session_id,
             self._run_id_override or "none",
             self._prompt_surface_override or "none",
-            len(model_context_plan.messages),
+            len(context_additions),
             "present",
             len(system_prompt),
         )
@@ -3115,69 +3053,21 @@ class Conversation:
                 build = stopped.value
                 break
             self._check_cancel(cancel_check)
-            if persist_compaction and isinstance(progress, ContextCompactionProgress):
+            if isinstance(progress, ContextCompactionProgress):
                 yield ContextCompactionStatus(
                     activity_id=progress.activity_id,
                     phase=progress.phase,
                 )
         self._check_cancel(cancel_check)
-        if build.new_compaction is not None:
-            prior_context_uuids = {message.uuid for message in model_context_plan.messages}
-            insertion_candidates = [
-                index
-                for index, message in enumerate(build.messages)
-                if message.uuid in prior_context_uuids
-            ]
-            retained_messages = [
-                message for message in build.messages if message.uuid not in prior_context_uuids
-            ]
-            insertion_index = (
-                min(insertion_candidates)
-                if insertion_candidates
-                else next(
-                    (
-                        index
-                        for index, message in enumerate(retained_messages)
-                        if message.meta.get("current_input") is True
-                    ),
-                    len(retained_messages),
-                )
-            )
-            self._session_model_context.reset()
-            model_context_plan = self._session_model_context.plan(
-                current_time=current_time,
-                timezone=timezone,
-                surface=current_surface,
-                surface_context=DEFAULT_INTERACTION_CONTEXT_RENDERER.render_snapshot(
-                    surface=self._prompt_surface_override
-                ),
-                channel=current_channel,
-                channel_instruction=(
-                    load_default_channel_instruction() if current_channel == "voice" else None
-                ),
-                approval_mode=approval_state.mode if approval_state is not None else None,
-                approval_version=approval_state.version if approval_state is not None else None,
-                runtime_capabilities=render_runtime_capability_notice(
-                    tuple(sorted(name for name in callable_names if name)),
-                    surface=None,
-                ),
-                capability_catalog=capability_catalog,
-            )
-            build.messages[:] = [
-                *retained_messages[:insertion_index],
-                *model_context_plan.messages,
-                *retained_messages[insertion_index:],
-            ]
-            self._pending_model_context_plan = model_context_plan
+        build.messages[:] = projection.apply(build.messages)
+        self._pending_model_context_plan = projection.accepted_plan(build.messages)
         self._pending_compaction = (
             bind_business_boundary(build.new_compaction, raw_history, self._session.active_events)
-            if persist_compaction and build.new_compaction is not None
+            if build.new_compaction is not None
             else None
         )
         self._pending_tool_context_edit = (
-            build.new_tool_context_edit
-            if persist_compaction and build.new_tool_context_edit is not None
-            else None
+            build.new_tool_context_edit if build.new_tool_context_edit is not None else None
         )
         self._last_built_model_messages = list(build.messages)
         self._last_built_system_prompt = system_prompt
@@ -3322,12 +3212,8 @@ class Conversation:
             policy_version=int(checkpoint.payload.get("policy_version", 1)),
         )
 
-    def _append_compaction_event(self, record: CompactionRecord) -> str:
-        """把本轮新生成的摘要落为 ``compaction`` 事件（append-only，不动原始消息）。
-
-        原始 user/assistant/tool 事件一条不删不改；compaction 只是流上叠加的折叠点
-        marker。下一轮 :meth:`_derive_prior_summary` 会读到它做折叠（009 design §6.4）。
-        """
+    def _compaction_event(self, record: CompactionRecord) -> Event:
+        """Build a checkpoint fact for the accepted model-history commit boundary."""
         event = Event(
             type="compaction",
             uuid=record.activity_id or str(uuid4()),
@@ -3357,12 +3243,10 @@ class Conversation:
             },
             meta=self._run_event_meta(),
         )
-        self._store.append_event(self._session.session_id, event)
-        self._session.append(event)
-        return event.uuid
+        return event
 
-    def _append_tool_context_edit_event(self, record: ToolContextEditRecord) -> None:
-        """追加 tool result 低水位投影 checkpoint；原始结果保持不变。"""
+    def _tool_context_edit_event(self, record: ToolContextEditRecord) -> Event:
+        """Build a tool-projection checkpoint without mutating raw results."""
         event = Event(
             type="tool_context_edit",
             uuid=str(uuid4()),
@@ -3379,8 +3263,7 @@ class Conversation:
             },
             meta=self._run_event_meta(),
         )
-        self._store.append_event(self._session.session_id, event)
-        self._session.append(event)
+        return event
 
     def _render_context_message(self, message: Message) -> dict[str, Any]:
         rendered = (
@@ -3631,34 +3514,48 @@ class Conversation:
             ):
                 self._last_input_tokens = prompt_tokens
 
-    def _commit_pending_model_request_state(self) -> None:
+    def _commit_pending_model_request_state(self, context_events: list[Event]) -> None:
         prepared = self._pending_model_history
         if prepared is None:
             return
-        self._pending_model_history = None
-        self._session_model_history.commit(prepared)
-        self._session_model_history.note_active_events(self._session)
+        history = copy.copy(self._session_model_history)
+        history.commit(prepared)
+        history.note_active_events(self._session)
+        context = SessionModelContext(self._session_model_context.snapshot)
         built_uuids = {message.uuid for message in prepared.items}
         plan = self._pending_model_context_plan
         if plan is not None and all(message.uuid in built_uuids for message in plan.messages):
-            self._session_model_context.commit(plan)
-        self._pending_model_context_plan = None
+            context.commit(plan)
+        epoch = copy.deepcopy(self._cache_epoch)
+        prepared_epoch = self._pending_cache_epoch
+        if prepared_epoch is not None:
+            epoch.commit(prepared_epoch)
+        if self._rollout_recorder is not None:
+            self._rollout_recorder.commit(
+                history=history,
+                model_context=context,
+                cache_epoch=epoch,
+                boundary="provider_input_accepted",
+                turn_terminal=False,
+                context_events=context_events,
+            )
+        else:
+            append_session_events(self._store, self._session.session_id, context_events)
+            for event in context_events:
+                self._session.append(event)
+        # Publish in-process state only after the durable boundary succeeds.
+        self._session_model_history.commit(prepared)
+        self._session_model_history.note_active_events(self._session)
+        self._session_model_context.snapshot = context.snapshot
+        if prepared_epoch is not None:
+            self._cache_epoch.commit(prepared_epoch)
         for message_uuid, scope_ids in tuple(self._pending_filesystem_scope_announcements.items()):
             if message_uuid in built_uuids:
                 self._announced_filesystem_scope_ids.update(scope_ids)
-        self._pending_filesystem_scope_announcements.clear()
-        prepared_epoch = self._pending_cache_epoch
+        self._pending_model_history = None
+        self._pending_model_context_plan = None
         self._pending_cache_epoch = None
-        if prepared_epoch is not None:
-            self._cache_epoch.commit(prepared_epoch)
-        if self._rollout_recorder is not None:
-            self._rollout_recorder.commit(
-                history=self._session_model_history,
-                model_context=self._session_model_context,
-                cache_epoch=self._cache_epoch,
-                boundary="provider_input_accepted",
-                turn_terminal=False,
-            )
+        self._pending_filesystem_scope_announcements.clear()
 
     def _stage_pending_rollout_request(self) -> None:
         recorder = self._rollout_recorder
@@ -3690,23 +3587,20 @@ class Conversation:
         self._last_cache_epoch_changed = False
 
     def _commit_pending_context_checkpoints(self) -> ContextCompactionStatus | None:
-        """幂等提交本次被 provider 接受的 model history 与 checkpoint。"""
-        self._commit_pending_model_request_state()
+        """Commit accepted history and its checkpoints in one rollout boundary."""
         compaction = self._pending_compaction
         tool_context_edit = self._pending_tool_context_edit
-        self._pending_compaction = None
-        self._pending_tool_context_edit = None
+        events: list[Event] = []
         completed: ContextCompactionStatus | None = None
         if compaction is not None:
-            activity_id = self._append_compaction_event(compaction)
-            completed = ContextCompactionStatus(
-                activity_id=activity_id,
-                phase="completed",
-            )
+            event = self._compaction_event(compaction)
+            events.append(event)
+            completed = ContextCompactionStatus(activity_id=event.uuid, phase="completed")
         if tool_context_edit is not None:
-            self._append_tool_context_edit_event(tool_context_edit)
-        if compaction is not None or tool_context_edit is not None:
-            self._session_model_history.note_active_events(self._session)
+            events.append(self._tool_context_edit_event(tool_context_edit))
+        self._commit_pending_model_request_state(events)
+        self._pending_compaction = None
+        self._pending_tool_context_edit = None
         return completed
 
     def _discard_pending_context_checkpoints(self) -> ContextCompactionStatus | None:
@@ -3892,7 +3786,6 @@ class Conversation:
                     recovery_instruction,
                     kind="response_recovery",
                 )
-                self._commit_pending_model_request_state()
                 current_messages = [
                     *current_messages,
                     {"role": "user", "content": recovery_packet},
@@ -3907,7 +3800,15 @@ class Conversation:
                         "prompt_cache_domain": "runtime",
                     },
                 )
-                self._session_model_history.append([recovery_message])
+                if self._pending_model_history is not None:
+                    self._pending_model_history = replace(
+                        self._pending_model_history,
+                        items=(*self._pending_model_history.items, recovery_message),
+                        update=replace(
+                            self._pending_model_history.update,
+                            current_items=len(self._pending_model_history.items) + 1,
+                        ),
+                    )
                 self._remember_prompt_item_domain(
                     recovery_message.to_openai(),
                     "runtime",

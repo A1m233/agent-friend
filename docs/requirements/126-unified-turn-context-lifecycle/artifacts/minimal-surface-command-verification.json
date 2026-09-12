@@ -1,0 +1,24 @@
+{
+  "sessionId": "3f2685e3-b594-5b6e-8176-21e436904e1c",
+  "runId": "4faba567-8aca-4703-a39a-0778edcac3e6",
+  "worktree": "C:/Users/example-user/.codex/worktrees/a50e/agent-friend",
+  "baseCommit": "16d9107eb9b7b334f14cd314a0e478c944a607b4",
+  "scope": "Tool catalog fix plus temporary two-line surface patch; not full requirement 126",
+  "surface": "desktop_chat",
+  "publicTools": 30,
+  "catalogTools": 30,
+  "missingTools": [],
+  "model": "gpt-5.6-luna",
+  "llmCalls": 2,
+  "command": "pwsh.exe -NoProfile -Command $PSVersionTable.PSVersion.ToString()",
+  "execution": "sandboxed",
+  "filesystem": "read_only",
+  "network": "disabled",
+  "exitCode": 0,
+  "stdout": "7.6.5\r\n",
+  "approvalMode": "session_auto",
+  "finalText": [
+    "实际执行结果：本地 PowerShell 版本是 7.6.5。"
+  ],
+  "uiLoading": "false"
+}
