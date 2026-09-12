@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from html import escape
 from typing import Literal
@@ -41,6 +41,71 @@ class ModelContextSnapshot:
 class ModelContextPlan:
     messages: tuple[Message, ...]
     next_snapshot: ModelContextSnapshot
+
+
+class ModelContextProjection:
+    """Complete a candidate history from current host facts, not remembered flags.
+
+    Candidate identities are allocated once per build so budgeting and rendering
+    see identical additions. Existing equivalent facts keep their original place.
+    """
+
+    def __init__(self, snapshot: ModelContextPlan) -> None:
+        self.snapshot = snapshot
+        self.deltas = {
+            message.uuid: replace(
+                message, content=message.content.replace('kind="snapshot"', 'kind="delta"')
+            )
+            for message in snapshot.messages
+        }
+
+    @staticmethod
+    def _equivalent(left: Message, right: Message) -> bool:
+        return left.role == right.role and left.content.replace(
+            'kind="delta"', 'kind="snapshot"'
+        ) == right.content.replace('kind="delta"', 'kind="snapshot"')
+
+    def apply(self, messages: list[Message], *, at_end: bool = False) -> list[Message]:
+        latest = {
+            message.meta.get("model_context_contributor"): message
+            for message in messages
+            if message.meta.get("trusted_host_context") is True
+        }
+        additions = []
+        for desired in self.snapshot.messages:
+            previous = latest.get(desired.meta.get("model_context_contributor"))
+            if previous is not None and self._equivalent(previous, desired):
+                continue
+            additions.append(self.deltas[desired.uuid] if previous is not None else desired)
+        if not additions:
+            return list(messages)
+        index = len(messages)
+        if not at_end:
+            index = next(
+                (
+                    index
+                    for index in range(len(messages) - 1, -1, -1)
+                    if messages[index].meta.get("current_input") is True
+                ),
+                index,
+            )
+            # A historical delta after the user input must not override the new
+            # current fact. Completed tool results may precede this safe tail.
+            if any(message.meta.get("model_context_contributor") for message in messages[index:]):
+                index = len(messages)
+        return [*messages[:index], *additions, *messages[index:]]
+
+    def accepted_plan(self, messages: list[Message]) -> ModelContextPlan:
+        contributors = {
+            message.meta.get("model_context_contributor") for message in self.snapshot.messages
+        }
+        latest = {
+            message.meta.get("model_context_contributor"): message
+            for message in messages
+            if message.meta.get("trusted_host_context") is True
+            and message.meta.get("model_context_contributor") in contributors
+        }
+        return ModelContextPlan(tuple(latest.values()), self.snapshot.next_snapshot)
 
 
 @dataclass

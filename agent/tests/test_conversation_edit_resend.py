@@ -221,7 +221,6 @@ def test_memory_scope_freezes_business_boundary_independently_of_model_override(
         "no checkpoint",
         prior_summary_override=None,
         recall_boundary_override=None,
-        persist_compaction=False,
     )
     conv._build_openai_messages_first_turn(
         "prefix checkpoint",
@@ -231,7 +230,6 @@ def test_memory_scope_freezes_business_boundary_independently_of_model_override(
             scope="model",
         ),
         recall_boundary_override="prefix-assistant",
-        persist_compaction=False,
     )
 
     empty_scope = memory.retrieve_kwargs[0]["automatic_recall_scope"]
@@ -255,9 +253,7 @@ def test_valid_business_checkpoint_is_used_when_model_view_cannot_restore_it(
     )
     for event in (user, assistant, checkpoint):
         conv.session.append(event)
-    conv._build_openai_messages_first_turn(
-        "next", history_override=[], prior_summary_override=None, persist_compaction=False
-    )
+    conv._build_openai_messages_first_turn("next", history_override=[], prior_summary_override=None)
     assert (
         memory.retrieve_kwargs[0]["automatic_recall_scope"].recall_through_event_uuid
         == assistant.uuid

@@ -853,8 +853,10 @@ class SessionRolloutRecorder:
         boundary: RolloutBoundary,
         turn_terminal: bool,
         exact_ineligibility_reason: str | None = None,
+        context_events: list[Event] | None = None,
     ) -> None:
         with self._lock:
+            context_events = list(context_events or [])
             serialized_now = [serialize_message(item)[0] for item in history.items]
             candidate_hash = _digest("model-transcript", serialized_now)
             item_events: list[Event] = []
@@ -864,7 +866,10 @@ class SessionRolloutRecorder:
                     history.snapshot(),
                     reason="history_rewrite" if history.last_relation == "rewrite" else boundary,
                 )
-            compaction = self.session.latest_compaction()
+            compaction = next(
+                (event for event in reversed(context_events) if event.type == "compaction"),
+                self.session.latest_compaction(),
+            )
             epoch_manifest = serialize_epoch(
                 cache_epoch,
                 history_generation=history.generation,
@@ -891,7 +896,10 @@ class SessionRolloutRecorder:
                     "item_event_uuids": list(pending.item_event_uuids),
                     "item_count": len(pending.serialized),
                     "transcript_sha256": pending.candidate_hash,
-                    "active_event_uuids": list(history.active_event_uuids),
+                    "active_event_uuids": [
+                        *history.active_event_uuids,
+                        *(event.uuid for event in context_events),
+                    ],
                     "history_generation": history.generation,
                     "provider_request_count": history.provider_request_count,
                     "boundary": boundary,
@@ -905,7 +913,7 @@ class SessionRolloutRecorder:
                     "redacted_fields": redacted_fields,
                 },
             )
-            self._append([*item_events, commit])
+            self._append([*item_events, *context_events, commit])
             self.segment_id = pending.segment_id
             self.commit_id = new_commit_id
             self._committed_serialized = copy.deepcopy(pending.serialized)

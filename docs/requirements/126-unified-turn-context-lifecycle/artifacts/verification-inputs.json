@@ -1,0 +1,15 @@
+{
+  "captured_at": "2026-09-12T03:36:59.776959+00:00",
+  "base_commit": "16d9107eb9b7b334f14cd314a0e478c944a607b4",
+  "state": "uncommitted candidate; source frozen for final backend check",
+  "files": {
+    "agent/src/agent/conversation.py": "8e3c35b77b22d161da1f899a908f74f7b1e857a9ff8ea9aa2f48479e12dd5086",
+    "agent/src/agent/sessions/model_context.py": "4f08c5f808e67a18e7dbdc009a600c0e5fbe8575a541cda87a19b6935b8c4b70",
+    "agent/src/agent/sessions/rollout.py": "4de28d80e46a72cdbedb20280efeb583154c7deb82bb3849cd88de76c1d8ac09",
+    "agent/src/agent/sessions/turn_origin.py": "7e43cd2253c2e765f4714591a613279864422879bab6b41e4921487f819e1070",
+    "agent/tests/test_conversation_edit_resend.py": "3e1da696b4a0bf746297728f5b9492affdc850d44f558015c2049cd00ced7ff0",
+    "agent/tests/test_turn_context_lifecycle.py": "dac9882176ca05bb2a5031b93cb02f4bcb463941426a2529d45ce15dca9645cb",
+    "uv.lock": "ef4200b13dd2e43668413c573a02cb879bf8d0714bca5e2e621d91e031b57ea3",
+    "pyproject.toml": "452b3a107fca5735178974ad4caa210e0676c4b8a4c8aa6c291524552e8ea78f"
+  }
+}
