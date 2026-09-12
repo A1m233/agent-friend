@@ -110,28 +110,35 @@ class ToolRegistry:
         *,
         callable_names: Collection[str] | None = None,
     ) -> str:
-        """Render trusted namespace ownership for the tools visible in one model call.
+        """Render every registered tool visible in one model call.
 
         Provider function calling remains flat for OpenAI-compatible models.  The
         catalog is the lossless model-facing projection of the host's first-class
-        namespace relation; ``callable_as`` stays equal to the existing wire name.
+        namespace relation; tools without a namespace remain direct entries.
+        ``callable_as`` stays equal to the existing wire name.
         """
         allowed = set(callable_names) if callable_names is not None else None
         grouped: dict[str, list[ToolId]] = {}
+        unscoped: list[ToolId] = []
         for tool_id in self._tool_ids.values():
-            if tool_id.namespace is None:
-                continue
             if allowed is not None and tool_id.name not in allowed:
                 continue
+            if tool_id.namespace is None:
+                unscoped.append(tool_id)
+                continue
             grouped.setdefault(tool_id.namespace, []).append(tool_id)
-        if not grouped:
+        if not grouped and not unscoped:
             return ""
 
         lines = [
             "<tool_capability_catalog>",
-            "  <instruction>namespace 是工具相对于内置工具根目录的可信模块路径；"
+            "  <instruction>目录列出当前请求的可用工具；无 namespace 的工具直接列出。"
+            "namespace 是工具相对于内置工具根目录的可信模块路径；"
             "调用时仍使用 callable_as。</instruction>",
         ]
+        for tool_id in sorted(unscoped, key=lambda item: item.name):
+            escaped_name = escape(tool_id.name, quote=True)
+            lines.append(f'  <tool name="{escaped_name}" callable_as="{escaped_name}" />')
         for namespace in sorted(grouped):
             lines.append(f'  <namespace path="{escape(namespace, quote=True)}">')
             for tool_id in sorted(grouped[namespace], key=lambda item: item.name):

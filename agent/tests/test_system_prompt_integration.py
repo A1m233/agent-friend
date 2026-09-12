@@ -5,11 +5,14 @@
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
+from agent.command_runtime import CommandRuntime, make_command_tools
+from agent.filesystem import make_filesystem_tools
 from agent.system_prompt import DESKTOP_CHAT_SURFACE, IM_QQ_SURFACE
 from agent.tools.builtin.calculate import CalculateTool
 
@@ -48,6 +51,7 @@ class _FakeLLMClient:
 
     reply: str = "ok"
     received: list[list[dict[str, Any]]] = field(default_factory=list)
+    received_tools: list[list[dict[str, Any]]] = field(default_factory=list)
     context_window: int = 128000  # 009：Conversation 经此推导预算阈值
 
     def generate(self, request: ModelRequest) -> ModelResponse:
@@ -59,6 +63,7 @@ class _FakeLLMClient:
         request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
         self.received.append(request.messages)
+        self.received_tools.append(request.tools or [])
         yield LLMTextDelta(text=self.reply)
         yield LLMTurnDone(stop_reason="end_turn")
 
@@ -134,7 +139,13 @@ def test_registered_tool_namespace_catalog_is_visible_without_changing_wire_name
         persona_id=BUILTIN_DEFAULT_PERSONA_ID,
         catalog=catalog,
         fake_llm=fake,
-        tool_registry=ToolRegistry([CalculateTool()]),
+        tool_registry=ToolRegistry(
+            [
+                CalculateTool(),
+                *make_filesystem_tools(),
+                *make_command_tools(cast(CommandRuntime, object()), None),
+            ]
+        ),
     )
 
     conv.send("1+1 是多少？")
@@ -148,6 +159,12 @@ def test_registered_tool_namespace_catalog_is_visible_without_changing_wire_name
     assert '<namespace path="calculate">' not in system_head
     assert '<namespace path="calculate">' in catalog_context
     assert '<tool name="calculate" callable_as="calculate" />' in catalog_context
+    catalog_names = [
+        tool.attrib["callable_as"] for tool in ET.fromstring(catalog_context).iter("tool")
+    ]
+    wire_names = [tool["function"]["name"] for tool in fake.received_tools[0]]
+    assert {"exec_command", "host_process_start", "filesystem_read_text"} <= set(wire_names)
+    assert sorted(catalog_names) == sorted(wire_names)
 
 
 # ===== AC-4：切 persona 后下一轮 system_prompt 仍含切换策略段 =====
