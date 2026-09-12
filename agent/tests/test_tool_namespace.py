@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import xml.etree.ElementTree as ET
 from typing import Any, ClassVar, cast
 
+from agent.command_runtime import CommandRuntime, make_command_tools
+from agent.filesystem import make_filesystem_tools
 from agent.tools import Tool, ToolRegistry, ToolResult
 from agent.tools.builtin.calculate import CalculateTool
 from agent.tools.builtin.social_platforms import SocialReadTool, SocialSearchTool
@@ -72,7 +75,8 @@ def test_tools_in_one_capability_share_generated_namespace() -> None:
     assert registry.identity("social_read").qualified_name == "social_platforms/social_read"
     assert registry.render_capability_catalog() == (
         "<tool_capability_catalog>\n"
-        "  <instruction>namespace 是工具相对于内置工具根目录的可信模块路径；"
+        "  <instruction>目录列出当前请求的可用工具；无 namespace 的工具直接列出。"
+        "namespace 是工具相对于内置工具根目录的可信模块路径；"
         "调用时仍使用 callable_as。</instruction>\n"
         '  <namespace path="social_platforms">\n'
         '    <tool name="social_read" callable_as="social_read" />\n'
@@ -94,8 +98,30 @@ def test_injected_tool_outside_builtin_root_remains_callable_but_unscoped() -> N
     registry = ToolRegistry([_ExternalEchoTool()])
 
     assert registry.identity("echo") == ToolId(namespace=None, name="echo")
-    assert registry.render_capability_catalog() == ""
+    catalog = ET.fromstring(registry.render_capability_catalog())
+    assert [tool.attrib["callable_as"] for tool in catalog.findall("tool")] == ["echo"]
     assert registry.invoke("echo", {"value": "ok"}).text == "{'value': 'ok'}"
+
+
+def test_catalog_covers_public_file_and_command_tools_and_honors_filter() -> None:
+    # Construct the real tool definitions without starting a command runtime.
+    registry = ToolRegistry(
+        [
+            CalculateTool(),
+            *make_filesystem_tools(),
+            *make_command_tools(cast(CommandRuntime, object()), None),
+            _ExternalEchoTool(),
+        ]
+    )
+    wire_names = [spec["function"]["name"] for spec in registry.to_openai_tools()]
+    assert {"exec_command", "host_process_start", "filesystem_read_text"} <= set(wire_names)
+    catalog = ET.fromstring(registry.render_capability_catalog(callable_names=wire_names))
+    assert sorted(tool.attrib["callable_as"] for tool in catalog.iter("tool")) == sorted(wire_names)
+
+    selected = {"calculate", "exec_command", "filesystem_read_text", "echo"}
+    catalog = ET.fromstring(registry.render_capability_catalog(callable_names=selected))
+    assert {tool.attrib["callable_as"] for tool in catalog.iter("tool")} == selected
+    assert registry.render_capability_catalog(callable_names=set()) == ""
 
 
 def test_result_retention_defaults_to_recoverable_and_fails_safe() -> None:
