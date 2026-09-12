@@ -37,7 +37,7 @@ describe("execution disclosure without native assistant phases", () => {
   it("derives the final logical item without modifying source phases, text or identities", () => {
     const message = completed([text("before", "Checking"), tool("lookup"), text("answer", "The answer", "unknown")]);
     const original = structuredClone(message);
-    expect(executionDisclosurePolicy(message)).toEqual({ source: "inferred", finalTextId: "answer", collapse: true });
+    expect(executionDisclosurePolicy(message)).toMatchObject({ source: "inferred", retainedTextId: "answer", collapse: true });
     const { process, visible } = partition(message);
     expect(process.map((segment) => segment.kind)).toEqual(["block", "toolActivity"]);
     expect(visible).toMatchObject([{ kind: "block", block: { mid: "answer", text: "The answer", phase: "unknown" } }]);
@@ -56,7 +56,7 @@ describe("execution disclosure without native assistant phases", () => {
       text("before", "Progress one"), tool("lookup"), text("answer", "Answer one"),
       text("before", "Late progress fragment"), text("answer", "Answer two"),
     ]);
-    expect(executionDisclosurePolicy(message)).toMatchObject({ source: "inferred", finalTextId: "answer" });
+    expect(executionDisclosurePolicy(message)).toMatchObject({ source: "inferred", retainedTextId: "answer" });
     const { process, visible } = partition(message);
     expect(visible.filter((segment) => segment.kind === "block").map((segment) => segment.block))
       .toEqual([message.blocks[2], message.blocks[4]]);
@@ -66,12 +66,12 @@ describe("execution disclosure without native assistant phases", () => {
 
   it("does not promote a late fragment of an earlier item to the final item", () => {
     const message = completed([text("before", "First"), text("answer", "Answer"), text("before", "Late delta")]);
-    expect(executionDisclosurePolicy(message).finalTextId).toBe("answer");
+    expect(executionDisclosurePolicy(message).retainedTextId).toBe("answer");
   });
 
   it("skips a trailing whitespace-only item", () => {
     const message = completed([text("before", "Progress"), text("answer", "Answer"), text("empty", " \n\t")]);
-    expect(executionDisclosurePolicy(message)).toMatchObject({ source: "inferred", finalTextId: "answer" });
+    expect(executionDisclosurePolicy(message)).toMatchObject({ source: "inferred", retainedTextId: "answer" });
   });
 
   it.each([
@@ -83,7 +83,6 @@ describe("execution disclosure without native assistant phases", () => {
   });
 
   it.each([
-    { status: "streaming" },
     { status: "interrupted", runOutcome: "cancelled" },
     { status: "error", runOutcome: "failed" },
     { runOutcome: "skipped" },
@@ -115,10 +114,11 @@ describe("execution disclosure without native assistant phases", () => {
     expect(executionDisclosurePolicy(completed(blocks))).toMatchObject({ source: "none", collapse: false });
   });
 
-  it.each(["commentary", "final_answer"] as const)("does not mix inferred phases with legacy native metadata (%s)", (phase) => {
-    const message = completed([text("before", "Known native value", phase), text("answer", "Unknown answer")]);
-    expect(executionDisclosurePolicy(message)).toMatchObject({ source: "none", collapse: false });
-    expect(message.blocks[0]).toMatchObject({ phase });
+  it("uses observed commentary even when the saved capability is legacy", () => {
+    const message = completed([text("before", "Progress", "commentary"), tool("lookup"), text("answer", "Unknown answer")]);
+    expect(executionDisclosurePolicy(message)).toMatchObject({ source: "mixed", collapse: true });
+    expect(partition(message).visible).toMatchObject([{ kind: "block", block: { mid: "answer" } }]);
+    expect(message.blocks[0]).toMatchObject({ phase: "commentary" });
   });
 
   it("folds finished request tools, warnings and errors while preserving fixed facts", () => {
@@ -178,11 +178,11 @@ describe("native disclosure remains authoritative", () => {
       .toEqual([message.blocks[1], message.blocks[2]]);
   });
 
-  it.each(["missing_final", "pending"] as const)("does not infer a final when native validation is %s", (validation) => {
+  it.each(["missing_final", "pending"] as const)("keeps the last unknown text visible when validation is %s", (validation) => {
     const message = completed([text("before", "Progress", "commentary"), text("last", "Unknown")], {
       assistantPhase: { mode: "native", validation },
     });
-    expect(executionDisclosurePolicy(message)).toMatchObject({ source: "native", collapse: false });
+    expect(executionDisclosurePolicy(message)).toMatchObject({ source: "mixed", collapse: validation !== "pending" });
     expect(partition(message).visible).toMatchObject([{ kind: "block", block: { mid: "last" } }]);
   });
 
@@ -210,7 +210,7 @@ describe("history and stream projection use the same fallback evidence", () => {
     expect(old.runOutcome).toBeUndefined();
     expect(executionDisclosurePolicy(old)).toMatchObject({ source: "none", collapse: false });
     expect(executionDisclosurePolicy(history({ status: "completed" })))
-      .toEqual({ source: "inferred", finalTextId: "answer", collapse: true });
+      .toMatchObject({ source: "inferred", retainedTextId: "answer", collapse: true });
     expect(executionDisclosurePolicy(history({ status: "interrupted", recovered: true })))
       .toMatchObject({ source: "none", collapse: false });
   });
@@ -223,7 +223,7 @@ describe("history and stream projection use the same fallback evidence", () => {
       event("run_terminal", "terminal", { status: "completed" }),
     ])[1];
     expect(message.assistantPhase).toBeUndefined();
-    expect(executionDisclosurePolicy(message)).toEqual({ source: "inferred", finalTextId: "answer", collapse: true });
+    expect(executionDisclosurePolicy(message)).toMatchObject({ source: "inferred", retainedTextId: "answer", collapse: true });
     expect(message.assistantPhase).toBeUndefined();
   });
 
@@ -235,14 +235,112 @@ describe("history and stream projection use the same fallback evidence", () => {
       pull = applyAguiEvent(pull, { type: EventType.TEXT_MESSAGE_CONTENT, messageId: mid, delta: value } as BaseEvent);
       push = applyPushConversationEvent(push, { type: "text_delta", message_id: mid, text: value }, "run");
     }
-    expect(executionDisclosurePolicy(pull).source).toBe("none");
-    expect(executionDisclosurePolicy(push).source).toBe("none");
+    expect(executionDisclosurePolicy(pull).collapse).toBe(false);
+    expect(executionDisclosurePolicy(push).collapse).toBe(false);
     push = applyPushConversationEvent(push, { type: "done", status: "completed" }, "run");
     expect(push.status).toBe("complete");
-    expect(executionDisclosurePolicy(push).source).toBe("none");
+    expect(executionDisclosurePolicy(push).collapse).toBe(false);
     pull = applyAguiEvent(pull, { type: EventType.RUN_FINISHED, threadId: "session", runId: "run", result: { status: "completed" } } as BaseEvent);
     expect(executionDisclosurePolicy(pull)).toEqual(executionDisclosurePolicy(history({ status: "completed" })));
     expect(partition(pull).sections.map((section) => ({ execution: section.execution, textIds: section.textIds })))
       .toEqual(partition(history({ status: "completed" })).sections.map((section) => ({ execution: section.execution, textIds: section.textIds })));
+  });
+});
+
+describe("unified execution disclosure", () => {
+  it.each([
+    ["commentary", "final_answer"],
+    ["commentary", "commentary"],
+    ["commentary", "unknown"],
+    ["unknown", "unknown"],
+  ] as const)("gives identical results for observed %s / %s regardless of declared mode", (before, after) => {
+    const base = completed([text("before", "Progress", before), tool("lookup"), text("answer", "Reply", after)]);
+    const projections = ["native", "legacy", undefined].map((mode) => {
+      const message = { ...base, assistantPhase: mode ? {
+        mode: mode as "native" | "legacy", validation: "missing_final" as const,
+      } : undefined };
+      const original = structuredClone(message);
+      const result = { policy: executionDisclosurePolicy(message), partition: partition(message) };
+      expect(message).toEqual(original);
+      return result;
+    });
+    expect(projections[1]).toEqual(projections[0]);
+    expect(projections[2]).toEqual(projections[0]);
+    expect(projections[0].policy.collapse).toBe(true);
+    expect(projections[0].partition.visible).toMatchObject([{ kind: "block", block: { mid: "answer" } }]);
+  });
+
+  it("folds a CPA-shaped commentary-only run without promoting its last item", () => {
+    const message = completed([
+      text("before", "Investigating", "commentary"), tool("lookup"),
+      text("answer", "Results", "commentary"), text("before", " late fragment", "commentary"),
+      text("answer", " continued", "commentary"),
+    ]);
+    const original = structuredClone(message);
+    expect(executionDisclosurePolicy(message)).toMatchObject({ source: "mixed", retainedTextId: "answer", collapse: true });
+    expect(partition(message).visible.map((segment) => segment.kind === "block" && segment.block))
+      .toEqual([message.blocks[2], message.blocks[4]]);
+    expect(message).toEqual(original);
+    expect(message.assistantPhase?.validation).toBe("missing_final");
+  });
+
+  it("keeps mixed unknown text and all explicit final items outside the process", () => {
+    const message = completed([
+      text("unknown", "Unclassified"), text("before", "Progress", "commentary"), tool("lookup"),
+      text("answer1", "First result", "final_answer"), text("answer2", "Second result", "final_answer"),
+    ]);
+    expect(partition(message).visible.map((segment) => segment.kind === "block" && segment.block))
+      .toEqual([message.blocks[0], message.blocks[3], message.blocks[4]]);
+  });
+
+  it.each(["unknown", "commentary", "final_answer"] as const)("never collapses running %s work or pending metadata", (phase) => {
+    const base = completed([text("before", "Progress", "commentary"), tool("lookup"), text("answer", "Reply", phase)]);
+    const streaming = { ...base, status: "streaming" as const, runOutcome: undefined };
+    expect(executionDisclosurePolicy(streaming).collapse).toBe(false);
+    expect(partition(streaming).process.some((part) => part.kind === "toolActivity")).toBe(true);
+    for (const changed of [
+      { ...base, blocks: [tool("lookup", { status: "running" }), text("answer", "Reply", phase)] },
+      { ...base, assistantPhase: { mode: "legacy" as const, validation: "pending" as const } },
+      { ...base, status: "interrupted" as const, runOutcome: "cancelled" as const },
+      { ...base, status: "error" as const, runOutcome: "failed" as const, error: "Failed" },
+    ]) expect(executionDisclosurePolicy(changed).collapse).toBe(false);
+  });
+
+  it.each([
+    [text("same", "Earlier", "commentary"), text("same", "Later", "final_answer")],
+    [text("answer", "Done", "final_answer"), tool("lookup")],
+    [text("answer", "Done", "final_answer"), text("later", "More", "commentary")],
+    [text("answer", "Done", "final_answer"), text("later", "More")],
+    [text("", "Missing identity"), tool("lookup"), text("answer", "Reply")],
+  ])("keeps locally detectable inconsistencies visible without a validation event (%#)", (...blocks) => {
+    const message = completed(blocks, { assistantPhase: undefined });
+    expect(executionDisclosurePolicy(message)).toMatchObject({ source: "none", collapse: false });
+    expect(partition(message).process).toHaveLength(0);
+  });
+
+  it("reconciles corrected phases identically through pull, push and durable history", () => {
+    const blocks = [text("before", "Progress", "final_answer"), tool("lookup"), text("answer", "Reply", "commentary")];
+    let pull = completed(blocks);
+    let push = structuredClone(pull);
+    expect(executionDisclosurePolicy(pull).source).toBe("none");
+    for (const [mid, phase] of [["before", "commentary"], ["answer", "final_answer"]]) {
+      pull = applyAguiEvent(pull, { type: EventType.CUSTOM, name: "agent_friend.assistant_message_phase",
+        value: { messageId: mid, phase } } as BaseEvent);
+      push = applyPushConversationEvent(push, { type: "assistant_message_phase", message_id: mid, phase }, "run");
+    }
+    const history = projectSessionEvents([
+      event("user_message", "user", { content: "Question" }),
+      event("assistant_phase", "phase", { mode: "legacy", validation: "valid" }),
+      event("assistant_message", "before", { content: "Progress", phase: "commentary" }),
+      event("tool_call_request", "tool", { event_tool_call_id: "lookup", tool_call_id: "lookup", name: "calculate", arguments: {} }),
+      event("tool_call_result", "result", { event_tool_call_id: "lookup", content: "1" }),
+      event("assistant_message", "answer", { content: "Reply", phase: "final_answer" }),
+      event("run_terminal", "terminal", { status: "completed" }),
+    ]).find((message) => message.role === "assistant")!;
+    expect(executionDisclosurePolicy(pull).collapse).toBe(true);
+    expect(executionDisclosurePolicy(push)).toEqual(executionDisclosurePolicy(pull));
+    expect(executionDisclosurePolicy(history)).toEqual(executionDisclosurePolicy(pull));
+    expect(partition(history).sections.map(({ execution }) => execution))
+      .toEqual(partition(pull).sections.map(({ execution }) => execution));
   });
 });

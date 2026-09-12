@@ -4,8 +4,8 @@ import type { ChatMessage } from "@/types/chat";
 import type { SessionEvent } from "@/types/meta";
 import { applyAguiEvent, applyPushConversationEvent } from "./conversationReducer";
 import { projectSessionEvents } from "./sessionProjection";
-import { canDiscloseExecution, normalizeAssistantPhase, shouldCollapseExecution } from "./assistantPhase";
-import { executionSections } from "@/pages/chat/components/executionDisclosurePolicy";
+import { normalizeAssistantPhase } from "./assistantPhase";
+import { executionDisclosurePolicy, executionSections } from "@/pages/chat/components/executionDisclosurePolicy";
 import { buildMessagePresentationSegments } from "@/pages/chat/components/toolActivityPresentation";
 
 const empty = (): ChatMessage => ({ id: "m", role: "assistant", runId: "r", createdAt: "t", blocks: [], status: "streaming" });
@@ -71,10 +71,10 @@ describe("per-run assistant phases", () => {
     ];
     const messages = projectSessionEvents(events).filter((message) => message.role === "assistant");
     expect(messages).toHaveLength(2);
-    expect(shouldCollapseExecution(messages[0])).toBe(true);
-    expect(canDiscloseExecution(messages[1])).toBe(false);
+    expect(executionDisclosurePolicy(messages[0]).collapse).toBe(true);
+    expect(executionDisclosurePolicy(messages[1]).collapse).toBe(false);
     expect(JSON.stringify(messages)).not.toContain("not UI");
-    expect(shouldCollapseExecution(projectSessionEvents(events)[1])).toBe(true);
+    expect(executionDisclosurePolicy(projectSessionEvents(events)[1]).collapse).toBe(true);
   });
 
   it("pull and push retain the same IDs and source ordering for interleaved items", () => {
@@ -111,10 +111,10 @@ describe("per-run assistant phases", () => {
     expect(executionSections(message, buildMessagePresentationSegments(message.blocks), undefined, ["auth"]).map((s) => s.execution))
       .toEqual([true, false, false, true, false]);
     for (const status of ["streaming", "interrupted", "error"] as const) {
-      expect(shouldCollapseExecution({ ...message, status })).toBe(false);
+      expect(executionDisclosurePolicy({ ...message, status }).collapse).toBe(false);
     }
-    for (const validation of ["missing_final", "conflict", "pending"] as const) {
-      expect(shouldCollapseExecution({ ...message, assistantPhase: { mode: "native", validation } })).toBe(false);
+    for (const validation of ["conflict", "pending"] as const) {
+      expect(executionDisclosurePolicy({ ...message, assistantPhase: { mode: "native", validation } }).collapse).toBe(false);
     }
     expect(normalizeAssistantPhase("final")).toBe("unknown");
   });
