@@ -1,6 +1,6 @@
 //! Input adapters only: observations must never become a second input controller.
 use super::{model, PetInputEvidence};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::sync::Mutex;
 use tauri::{Manager, WebviewWindow};
@@ -28,27 +28,49 @@ pub(crate) struct DprSnapshot {
     pub(crate) revision: u64,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, PartialOrd)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DprVersion {
+    page_started_at: f64,
+    sequence: u64,
+}
+
 #[derive(Default)]
 pub(crate) struct PetWebviewState {
-    dpr: Mutex<DprSnapshot>,
+    dpr: Mutex<(DprSnapshot, Option<DprVersion>)>,
 }
 
 impl PetWebviewState {
     pub(crate) fn snapshot(&self) -> Option<DprSnapshot> {
-        self.dpr.lock().ok().map(|value| *value)
+        self.dpr.lock().ok().map(|value| value.0)
     }
 
     /// Capture the result under the original business lock, enqueue only after unlocking.
-    pub(crate) fn apply(&self, dpr: f64) -> Option<(DprSnapshot, DprSnapshot, bool)> {
+    pub(crate) fn apply(
+        &self,
+        dpr: f64,
+        version: DprVersion,
+    ) -> Option<(DprSnapshot, DprSnapshot, bool)> {
         let mut current = self.dpr.lock().ok()?;
-        let before = *current;
-        let changed = (before.value - dpr).abs() >= f64::EPSILON || (before.value - dpr).is_nan();
-        // Preserve the previous early-return condition, including its non-finite behavior.
-        if changed {
-            current.value = dpr;
-            current.revision = current.revision.saturating_add(1);
+        let before = current.0;
+        if !dpr.is_finite()
+            || dpr <= 0.0
+            || !version.page_started_at.is_finite()
+            || version.page_started_at <= 0.0
+            || version.sequence == 0
+            || current.1.is_some_and(|previous| version <= previous)
+        {
+            return Some((before, before, false));
         }
-        Some((before, *current, changed))
+        // Equal DPR must still advance ordering, rejecting delayed intermediate values.
+        current.1 = Some(version);
+        let changed = (before.value - dpr).abs() >= f64::EPSILON || (before.value - dpr).is_nan();
+        // Value and ordering change under the same cursor-feed lock.
+        if changed {
+            current.0.value = dpr;
+            current.0.revision = current.0.revision.saturating_add(1);
+        }
+        Some((before, current.0, changed))
     }
 }
 
@@ -140,6 +162,7 @@ pub(crate) fn record_dpr(
     manager: Option<&PetInputEvidence>,
     state: &PetWebviewState,
     dpr: f64,
+    version: DprVersion,
     diagnostic: Option<&Value>,
 ) {
     record_native(
@@ -147,7 +170,7 @@ pub(crate) fn record_dpr(
         json!({"kind":"dpr-report","reportedDpr":dpr,"stage":"request"}),
         diagnostic,
     );
-    let fact = match state.apply(dpr) {
+    let fact = match state.apply(dpr, version) {
         Some((before, after, changed)) => {
             if changed {
                 log::info!("set_pet_webview_dpr: {dpr}");
@@ -205,22 +228,32 @@ pub(crate) fn record_window_event<R: tauri::Runtime>(
 mod tests {
     use super::*;
 
+    fn version(page: f64, sequence: u64) -> DprVersion {
+        DprVersion {
+            page_started_at: page,
+            sequence,
+        }
+    }
+
     #[test]
-    fn dpr_last_arrival_and_equal_value_behavior_are_unchanged() {
+    fn delayed_middle_report_cannot_overwrite_equal_latest_value() {
         let state = PetWebviewState::default();
-        let (_, first, changed) = state.apply(1.25).unwrap();
-        assert!(changed);
-        assert_eq!(first.revision, 1);
-        let (_, equal, changed) = state.apply(1.25).unwrap();
-        assert!(!changed);
-        assert_eq!(equal.revision, 1);
-        let (_, last, changed) = state.apply(1.75).unwrap();
-        assert!(changed);
-        assert_eq!(last.value, 1.75);
-        assert_eq!(last.revision, 2);
+        state.apply(1.25, version(100.0, 2));
+        state.apply(1.25, version(100.0, 4));
+        state.apply(1.75, version(100.0, 3));
+        assert_eq!(resolve_scale(state.snapshot(), 2.0), (1.25, 1, "webview"));
+        state.apply(1.75, version(100.0, 5));
         assert_eq!(resolve_scale(state.snapshot(), 2.0), (1.75, 2, "webview"));
-        state.apply(0.0);
-        assert_eq!(resolve_scale(state.snapshot(), 2.0), (2.0, 3, "fallback"));
+    }
+
+    #[test]
+    fn reload_rejects_old_page_and_duplicate_reports() {
+        let state = PetWebviewState::default();
+        state.apply(1.75, version(100.0, 20));
+        state.apply(1.25, version(200.0, 1));
+        state.apply(1.75, version(100.0, 21));
+        state.apply(2.0, version(200.0, 1));
+        assert_eq!(resolve_scale(state.snapshot(), 2.0), (1.25, 2, "webview"));
     }
 
     #[test]
@@ -244,12 +277,15 @@ mod tests {
     }
 
     #[test]
-    fn missing_snapshot_and_invalid_business_scale_keep_original_fallback() {
+    fn invalid_reports_do_not_poison_value_or_version() {
         assert_eq!(resolve_scale(None, 1.75), (1.75, 0, "fallback"));
         let state = PetWebviewState::default();
-        state.apply(-1.0);
-        assert_eq!(resolve_scale(state.snapshot(), 1.25), (1.25, 1, "fallback"));
-        state.apply(f64::NAN);
-        assert_eq!(resolve_scale(state.snapshot(), 1.25), (1.25, 2, "fallback"));
+        for dpr in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            state.apply(dpr, version(100.0, 99));
+        }
+        state.apply(2.0, version(f64::NAN, 99));
+        state.apply(2.0, version(100.0, 0));
+        state.apply(1.25, version(100.0, 1));
+        assert_eq!(resolve_scale(state.snapshot(), 2.0), (1.25, 1, "webview"));
     }
 }

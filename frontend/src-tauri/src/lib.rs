@@ -948,12 +948,13 @@ fn spawn_cursor_feed(app: &tauri::AppHandle) {
 /// 前端 mount 时 `invoke('set_pet_webview_dpr', { dpr: window.devicePixelRatio })` 写入，
 /// `spawn_cursor_feed` 60Hz 读用作 cursor scale。0.0 表示前端还没上报（默认 / 启动早期）→
 /// fallback `pet.scale_factor()`。
-/// 前端 mount 时调一次（matchMedia listener 在 DPR 变化时再调）。
+/// 前端在 DPR 变化时立即上报，并定期重新同步；版本保护拒绝迟到的旧值。
 #[tauri::command]
 fn set_pet_webview_dpr(
     app: tauri::AppHandle,
     state: tauri::State<PetWebviewState>,
     dpr: f64,
+    version: pet_input_evidence::integration::DprVersion,
     diagnostic: Option<serde_json::Value>,
 ) {
     let manager = app.try_state::<pet_input_evidence::PetInputEvidence>();
@@ -961,6 +962,7 @@ fn set_pet_webview_dpr(
         manager.as_deref(),
         &state,
         dpr,
+        version,
         diagnostic.as_ref(),
     );
 }

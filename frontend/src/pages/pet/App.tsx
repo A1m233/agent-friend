@@ -1,3 +1,4 @@
+import { startDprSync } from "./dprSync";
 import {
   useCallback,
   useEffect,
@@ -779,16 +780,19 @@ export function PetApp() {
   // 跟 PIXI canvas / spriteScreen 同坐标系。否则跨屏 drag 时 cursor scale 切换 →
   // cursor 数字范围跳跃 → 跟 spriteScreen 矩形错位 → drag 中断 + 完全穿透。
   //
-  // DPR 由上面的 WebView display context 统一观测；这里仅把当前快照分发给 Rust。
+  // Display context 变化时立即同步；定时读取实际 DPR，恢复漏报或失败的 IPC。
   useEffect(() => {
     if (!isTauri()) return;
-    const diagnostic = petInputEvidence.dprReport(displayContext.dpr);
-    void invoke("set_pet_webview_dpr", { dpr: displayContext.dpr, diagnostic })
-      .then(() => petInputEvidence.acknowledge("dpr-ack", diagnostic, true))
-      .catch((e: unknown) => {
-        petInputEvidence.acknowledge("dpr-ack", diagnostic, false);
-        console.warn("[pet] set_pet_webview_dpr failed:", e);
-      });
+    return startDprSync(() => window.devicePixelRatio, (dpr, version) => {
+      const diagnostic = petInputEvidence.dprReport(dpr);
+      return invoke("set_pet_webview_dpr", { dpr, version, diagnostic })
+        .then(() => petInputEvidence.acknowledge("dpr-ack", diagnostic, true))
+        .catch((e: unknown) => {
+          petInputEvidence.acknowledge("dpr-ack", diagnostic, false);
+          console.warn("[pet] set_pet_webview_dpr failed:", e);
+          throw e;
+        });
+    });
   }, [displayContext.dpr]);
 
   // 18 · 启动 push event 订阅 → petStateStore.ingest（与 015 startPetBubbleSubscriber 双独立 listen 对称）
