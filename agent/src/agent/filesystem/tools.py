@@ -39,7 +39,7 @@ FILESYSTEM_TOOL_NAMES = frozenset(
         "filesystem_delete",
     }
 )
-_PERMISSIONS = frozenset({"search_metadata", "read_text", "create", "edit"})
+_PERMISSIONS = frozenset({"search_metadata", "read_text", "read_image", "create", "edit"})
 _ACTIONS = frozenset({"overwrite", "move", "delete"})
 _LOCATOR_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -122,7 +122,7 @@ class RequestFilesystemAccessTool:
     description: ClassVar[str] = (
         "请求当前用户轮内的最小本地文件权限。普通会话默认没有任何用户文件权限；"
         "已知位置时请求准确文件或最小目录，不知道位置时先对合理的标准位置请求"
-        "search_metadata。search_metadata 只查名称/路径，read_text 读取已有文本，"
+        "search_metadata。search_metadata 只查名称/路径，read_text 读取已有文本，read_image 读取图片，二者不互相授权；"
         "目录级 read_text 不隐含列目录权限；文件名未知、需要先列出目录再读取时，"
         "必须在同一个目录 item 中同时申请 search_metadata 和 read_text，避免重复授权。"
         "create 用于新建文件、目录、备份及复制/移动目的地，edit 只修改已有目标且不"
@@ -168,7 +168,7 @@ class RequestFilesystemAccessTool:
                             "type": "array",
                             "minItems": 1,
                             "description": (
-                                "search_metadata 只查名称/路径；read_text 读取已有文本；"
+                                "search_metadata 只查名称/路径；read_text 读取已有文本；read_image 读取图片；"
                                 "目录内文件名未知且要先列出再读取时，两者必须同时申请；"
                                 "read_text 单独申请不会授权 filesystem_list_directory；"
                                 "create 新建文件、目录、备份或复制/移动目的地；edit 只修改"
@@ -176,7 +176,13 @@ class RequestFilesystemAccessTool:
                             ),
                             "items": {
                                 "type": "string",
-                                "enum": ["search_metadata", "read_text", "create", "edit"],
+                                "enum": [
+                                    "search_metadata",
+                                    "read_text",
+                                    "read_image",
+                                    "create",
+                                    "edit",
+                                ],
                             },
                             "uniqueItems": True,
                         },

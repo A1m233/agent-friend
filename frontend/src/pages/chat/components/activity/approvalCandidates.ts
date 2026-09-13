@@ -76,6 +76,7 @@ function commandDetailLines(request: CommandApprovalRequest): string[] {
 const FILESYSTEM_PERMISSION_LABELS = {
   search_metadata: "查找与查看元数据",
   read_text: "读取文本",
+  read_image: "读取图片",
   create: "创建",
   edit: "修改",
 } as const;

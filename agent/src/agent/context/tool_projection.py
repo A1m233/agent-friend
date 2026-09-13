@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 
+from ..attachments.models import TOOL_IMAGE_MAX_COUNT
 from ..messages import Message
 from .budget import CHARS_TO_TOKENS, estimate_request_tokens, estimate_tokens
 from .protocol import RuntimeContext, ToolContextEditRecord
@@ -63,7 +64,13 @@ def _project_message(
         "original_estimated_tokens": original_tokens,
         "projected_estimated_tokens": int(len(content) * CHARS_TO_TOKENS),
     }
-    return replace(message, content=content, meta=meta)
+    if message.images:
+        content += (
+            f"\n[工具图像已从模型上下文移除；result_ref={message.uuid}；"
+            "使用 recover_tool_result(mode=images) 恢复原图；当前不可见]"
+        )
+    meta["context_projection"]["projected_estimated_tokens"] = int(len(content) * CHARS_TO_TOKENS)
+    return replace(message, content=content, meta=meta, images=())
 
 
 def _cleared_placeholder(message: Message, original_tokens: int) -> str:
@@ -216,7 +223,12 @@ def project_tool_results(
     truncated = 0
     for message in projected:
         original_tokens = estimate_tokens([message])
-        if message.role != "tool" or message.uuid in prior_ids or original_tokens <= per_result_cap:
+        if (
+            message.role != "tool"
+            or message.images
+            or message.uuid in prior_ids
+            or original_tokens <= per_result_cap
+        ):
             capped.append(message)
             continue
         content = _truncate_middle(message.content, per_result_cap, original_tokens)
@@ -341,6 +353,9 @@ def project_tool_results(
             if estimate_request_tokens(projected, runtime) <= threshold:
                 break
 
+    projected, image_omissions = bound_tool_images(projected)
+    omitted += image_omissions
+
     return projected, ToolProjectionStats(
         truncated=truncated,
         omitted=omitted,
@@ -353,3 +368,24 @@ def project_tool_results(
             if message.role == "tool" and message.uuid in prior_ids
         ),
     )
+
+
+def bound_tool_images(messages: list[Message]) -> tuple[list[Message], int]:
+    """Hard request resource ceiling, independent of the chosen text budget strategy."""
+    projected = list(messages)
+    omitted = 0
+    remaining_images = TOOL_IMAGE_MAX_COUNT
+    for index in range(len(projected) - 1, -1, -1):
+        message = projected[index]
+        if len(message.images) > remaining_images:
+            projected[index] = _project_message(
+                message,
+                "[tool image omitted: request image count budget]",
+                stage="image_budget",
+                original_tokens=estimate_tokens([message]),
+            )
+            omitted += 1
+        else:
+            remaining_images -= len(message.images)
+
+    return projected, omitted

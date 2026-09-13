@@ -163,6 +163,7 @@ function SkillStatusCard({ block, embedded = false, isPrimaryActivity = true }: 
 const FILE_PERMISSION_LABELS: Record<FilesystemPermission, string> = {
   search_metadata: "查找名称与路径",
   read_text: "读取文本内容",
+  read_image: "读取图片内容",
   create: "创建文件或目录",
   edit: "修改文件",
 };

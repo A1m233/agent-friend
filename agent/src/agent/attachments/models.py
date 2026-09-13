@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
@@ -28,3 +30,30 @@ class AttachmentRef:
             size_bytes=int(value["size_bytes"]),
             sha256=str(value["sha256"]),
         )
+
+
+TOOL_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+TOOL_IMAGE_MAX_COUNT = 4
+TOOL_IMAGE_MEDIA_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
+
+
+def validate_image_refs(images: Sequence[AttachmentRef]) -> None:
+    if len(images) > TOOL_IMAGE_MAX_COUNT:
+        raise ValueError("too many tool images")
+    for ref in images:
+        if (
+            ref.kind != "image"
+            or ref.media_type not in TOOL_IMAGE_MEDIA_TYPES
+            or not 0 < ref.size_bytes <= TOOL_IMAGE_MAX_BYTES
+            or not re.fullmatch(r"[0-9a-f]{64}", ref.asset_id)
+            or ref.asset_id != ref.sha256
+        ):
+            raise ValueError("invalid tool image reference")
+
+
+def parse_image_refs(value: Any) -> tuple[AttachmentRef, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("images must be an array")
+    refs = tuple(AttachmentRef.from_dict(item) for item in value)
+    validate_image_refs(refs)
+    return refs

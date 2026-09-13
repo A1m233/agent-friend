@@ -17,6 +17,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from .attachments import AttachmentRef
+from .attachments.models import parse_image_refs, validate_image_refs
 from .message_references import (
     QuotedTextReference,
     parse_quoted_text_references,
@@ -92,6 +93,13 @@ class Message:
     attachments: list[AttachmentRef] = field(default_factory=list)
     references: list[QuotedTextReference] = field(default_factory=list)
 
+    images: tuple[AttachmentRef, ...] = ()
+
+    def __post_init__(self) -> None:
+        validate_image_refs(self.images)
+        if self.images and self.role != "tool":
+            raise ValueError("images are tool-result content")
+
     def to_openai(self) -> dict[str, Any]:
         """转为 OpenAI / LiteLLM 期望的消息格式。
 
@@ -125,6 +133,8 @@ class Message:
                 for item in self.attachments
             )
             content = f"{content}\n{markers}".strip()
+        if self.images:
+            content += "\n[工具图像未提供给模型：需要多模态投递适配器；不能据此推断图像内容]"
         out: dict[str, Any] = {"role": self.role, "content": content}
 
         if self.role == "tool":
@@ -159,6 +169,8 @@ class Message:
         """转为可序列化的 dict。"""
         d = asdict(self)
         d["timestamp"] = self.timestamp.isoformat()
+        if not self.images:
+            d.pop("images", None)
         return d
 
     @classmethod
@@ -180,6 +192,7 @@ class Message:
                 if isinstance(item, dict)
             ],
             "references": parse_quoted_text_references(data.get("references", [])),
+            "images": parse_image_refs(data.get("images", [])),
         }
         if "uuid" in data:
             kwargs["uuid"] = data["uuid"]

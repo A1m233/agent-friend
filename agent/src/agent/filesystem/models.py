@@ -17,7 +17,7 @@ from ..approvals.models import (
     SessionApprovalMode,
 )
 
-FilesystemPermission = Literal["search_metadata", "read_text", "create", "edit"]
+FilesystemPermission = Literal["search_metadata", "read_text", "read_image", "create", "edit"]
 DestructiveAction = Literal["overwrite", "move", "delete"]
 FilesystemApprovalStatus = ApprovalStatus
 

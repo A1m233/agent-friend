@@ -332,6 +332,46 @@ class FilesystemService:
             **({"content_snippet_chars": content_snippet_chars} if mode == "content" else {}),
         }
 
+    def read_image_bytes(
+        self,
+        ledger: FilesystemAuthorizationLedger,
+        *,
+        scope_id: str,
+        relative_path: str,
+        max_bytes: int,
+    ) -> tuple[bytes, str]:
+        resolved = self.resolve(ledger, scope_id, relative_path, "read_image")
+        try:
+            before = resolved.path.stat()
+            if not stat.S_ISREG(before.st_mode):
+                raise FilesystemError("not_a_file", "图片路径必须是普通文件。")
+            if before.st_size > max_bytes:
+                raise FilesystemError("image_size_exceeded", "图片超过 8 MiB，请先缩小。")
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(resolved.path, flags)
+            with os.fdopen(fd, "rb") as source:
+                opened = os.fstat(source.fileno())
+                self._revalidate(resolved)
+                if not os.path.samestat(before, opened):
+                    raise FilesystemError("file_changed", "授权目标在打开前发生变化。")
+                data = source.read(max_bytes + 1)
+                after = os.fstat(source.fileno())
+                self._revalidate(resolved)
+                current = resolved.path.stat()
+                if (
+                    not os.path.samestat(opened, current)
+                    or (opened.st_size, opened.st_mtime_ns) != (after.st_size, after.st_mtime_ns)
+                    or (current.st_size, current.st_mtime_ns) != (after.st_size, after.st_mtime_ns)
+                ):
+                    raise FilesystemError("file_changed", "图片读取期间发生变化，请确认后重试。")
+            if len(data) > max_bytes:
+                raise FilesystemError("image_size_exceeded", "图片超过 8 MiB。")
+            return data, resolved.path.name
+        except OSError as exc:
+            raise FilesystemError(
+                "image_read_failed", "图片无法读取，请检查文件是否存在且可读。"
+            ) from exc
+
     def read_text(
         self,
         ledger: FilesystemAuthorizationLedger,

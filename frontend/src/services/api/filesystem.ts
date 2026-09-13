@@ -1,6 +1,6 @@
 import { http } from "@/services/http";
 
-export type FilesystemPermission = "search_metadata" | "read_text" | "create" | "edit";
+export type FilesystemPermission = "search_metadata" | "read_text" | "read_image" | "create" | "edit";
 export type FilesystemAction = "overwrite" | "move" | "delete";
 
 export interface FilesystemApprovalItem {

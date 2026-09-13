@@ -230,6 +230,7 @@ KIMI_MULTIMODAL_CAPABILITIES = ModelRouteCapabilities(
     max_attachments_per_turn=10,
 )
 DEEPSEEK_VISION_CAPABILITIES = ModelRouteCapabilities(
+    multimodal_tool_results=True,
     input_modalities=("text", "image"),
     accepted_media_types=("image/jpeg", "image/png", "image/webp"),
     max_attachment_bytes=64 * 1024 * 1024,

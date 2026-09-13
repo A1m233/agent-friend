@@ -38,6 +38,7 @@ REVIEWED_DIRECT_DEPENDENCIES = {
     "numpy": "pyinstaller-hook",
     "onnxruntime": "pyinstaller-hook-and-runtime-supplement",
     "openai": "module-graph",
+    "pillow": "pyinstaller-hook-and-capability-smoke",
     "platformdirs": "module-graph",
     "portalocker": "module-graph",
     "pydantic": "module-graph",

@@ -68,6 +68,32 @@ def _print_build_identity() -> int:
     return 0
 
 
+def _smoke_image_reading() -> dict[str, Any]:
+    """Decode all shipped image formats and persist/read a tool snapshot without network."""
+    import io
+
+    from agent.attachments import AttachmentStore
+    from agent.image_reading import ImageReadingService
+    from PIL import Image
+
+    with tempfile.TemporaryDirectory(prefix="image-smoke-") as directory:
+        store = AttachmentStore(Path(directory))
+        service = ImageReadingService(store)
+        formats = []
+        for format_name in ("PNG", "JPEG", "WEBP"):
+            buffer = io.BytesIO()
+            Image.new("RGB", (3, 2), "red").save(buffer, format=format_name)
+            snapshot = service.snapshot(buffer.getvalue(), display_name="smoke")
+            with store.open(snapshot.image.asset_id) as source:
+                if source.read() != buffer.getvalue() or (snapshot.width, snapshot.height) != (
+                    3,
+                    2,
+                ):
+                    raise RuntimeError("frozen image snapshot mismatch")
+            formats.append(format_name)
+        return {"formats": formats, "snapshot_roundtrip": True}
+
+
 def _smoke_skill_catalog() -> dict[str, Any]:
     """Exercise packaged builtin resources and the native hot-reload watcher."""
     from agent.skills import SkillCatalogService, SkillSelection
@@ -1139,6 +1165,17 @@ def _doctor() -> int:
         }
     else:
         checks["capability:tool_schema_validation"] = {"ok": True, **schema_details}
+
+    try:
+        image_details = _smoke_image_reading()
+    except Exception as exc:
+        checks["capability:image_reading"] = {
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+    else:
+        checks["capability:image_reading"] = {"ok": True, **image_details}
 
     try:
         scheduled_task_details = _smoke_scheduled_tasks()
