@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from llm_providers import ProviderAssistantTurn
 
+from ..attachments import AttachmentRef
 from ..messages import Message
 from .session import Session
 
@@ -327,6 +328,7 @@ class SessionModelHistory:
         timestamp: datetime,
         event_uuid: str,
         is_error: bool,
+        images: tuple[AttachmentRef, ...] = (),
         run_id: str | None = None,
     ) -> Message:
         meta: dict[str, object] = {
@@ -339,6 +341,7 @@ class SessionModelHistory:
         message = Message(
             role="tool",
             content=content,
+            images=images,
             timestamp=timestamp,
             uuid=event_uuid,
             meta=meta,
@@ -355,6 +358,7 @@ class SessionModelHistory:
         timestamp: datetime,
         event_uuid: str,
         is_error: bool,
+        images: tuple[AttachmentRef, ...] = (),
         run_id: str | None = None,
     ) -> Message:
         """Insert a repaired result next to its call instead of at the history tail."""
@@ -369,6 +373,7 @@ class SessionModelHistory:
         message = Message(
             role="tool",
             content=content,
+            images=images,
             timestamp=timestamp,
             uuid=event_uuid,
             meta=meta,

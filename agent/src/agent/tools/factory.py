@@ -63,6 +63,7 @@ from .protocol import Tool
 from .registry import ToolRegistry
 
 if TYPE_CHECKING:
+    from ..attachments import AttachmentStore
     from ..command_runtime import CommandRuntime
     from ..execution_environment import ExecutionEnvironmentManager
     from ..filesystem import FilesystemApprovalBroker, ProtectedPathPolicy
@@ -95,6 +96,7 @@ def make_default_registry(
     command_runtime: CommandRuntime | None = None,
     execution_environment_manager: ExecutionEnvironmentManager | None = None,
     tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
+    attachment_store: AttachmentStore | None = None,
     stderr_warn: bool = True,
 ) -> ToolRegistry:
     """构造默认 registry，确定性本地工具始终注册，网络/记忆工具按资源注册。
@@ -138,6 +140,17 @@ def make_default_registry(
             policy=filesystem_policy,
         )
     )
+    if attachment_store is not None:
+        from ..filesystem.service import FilesystemService
+        from ..image_reading import ImageReadingService
+        from .builtin.view_image import ViewImageTool
+
+        tools.append(
+            ViewImageTool(
+                FilesystemService(filesystem_policy), ImageReadingService(attachment_store)
+            )
+        )
+
     if command_runtime is not None:
         from ..command_runtime import make_command_tools
 

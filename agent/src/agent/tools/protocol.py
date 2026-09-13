@@ -11,6 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
+from ..attachments import AttachmentRef
+from ..attachments.models import validate_image_refs
+
+IMAGE_INPUT_SUPPORTED_ARG = "__agent_friend_tool_images_supported"
+
 
 @dataclass(frozen=True)
 class ToolResult:
@@ -18,8 +23,7 @@ class ToolResult:
 
     Attributes:
         text: 喂回 LLM 的纯文本（即使 tool 内部产生结构化数据，也要在这里
-            序列化成文本）。协议上 OpenAI / Anthropic 的 ``tool_result.content``
-            必须是字符串。
+            序列化成文本）。图像通过 images 独立传递，由 provider 投影内容块。
         is_error: ``True`` 表示业务级失败（网络错 / key 错 / 限流等）；
             ``False`` 表示正常结果。失败时 ``text`` 仍要给出失败描述，
             交由 LLM 决定是否再试或换路。
@@ -30,6 +34,12 @@ class ToolResult:
     text: str
     is_error: bool = False
     meta: dict[str, Any] = field(default_factory=dict)
+    images: tuple[AttachmentRef, ...] = ()
+
+    def __post_init__(self) -> None:
+        validate_image_refs(self.images)
+        if self.is_error and self.images:
+            raise ValueError("failed tool results cannot contain images")
 
 
 @runtime_checkable

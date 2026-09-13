@@ -96,7 +96,13 @@ def render_transcript(messages: list[Message]) -> str:
                 lines.append(f"AI[调用工具 {tc.get('name', '')}]: {tc.get('args', {})}")
         elif m.role == "tool":
             tool_name = m.meta.get("tool_name", "") if m.meta else ""
-            lines.append(f"[工具结果 {tool_name}]: {m.content}")
+            image_note = (
+                f" [图像未提供给摘要器；result_ref={m.uuid}；"
+                "仅保留已有文字观察，不得推断原图；需要时使用 recover_tool_result(mode=images)]"
+                if m.images
+                else ""
+            )
+            lines.append(f"[工具结果 {tool_name}]: {m.content}{image_note}")
         elif m.role == "system":
             lines.append(f"[系统/摘要]: {m.content}")
     return "\n".join(lines)

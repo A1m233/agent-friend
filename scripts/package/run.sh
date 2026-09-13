@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Runtime doctor includes offline PNG/JPEG/WebP decoding and snapshot verification.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 

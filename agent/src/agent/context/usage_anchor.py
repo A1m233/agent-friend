@@ -12,7 +12,12 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from .budget import CHARS_TO_TOKENS, DOCUMENT_ATTACHMENT_TOKEN_CAP, IMAGE_ATTACHMENT_TOKENS
+from .budget import (
+    CHARS_TO_TOKENS,
+    DOCUMENT_ATTACHMENT_TOKEN_CAP,
+    IMAGE_ATTACHMENT_TOKENS,
+    TOOL_IMAGE_TOKENS,
+)
 
 
 def digest(value: Any) -> str:
@@ -33,7 +38,7 @@ def estimate_rendered_tokens(
     attachment allowance rather than their encoded payload length.
     """
 
-    def cost(value: Any) -> float:
+    def cost(value: Any, image_tokens: int = IMAGE_ATTACHMENT_TOKENS) -> float:
         if value is None:
             return 0
         if isinstance(value, str):
@@ -42,17 +47,20 @@ def estimate_rendered_tokens(
             if value.get("type") in {"file", "input_file"}:
                 return float(file_tokens)
             if value.get("type") in {"image_url", "input_image"}:
-                return float(IMAGE_ATTACHMENT_TOKENS)
+                return float(image_tokens)
             if "text" in value:
                 return cost(value["text"])
             return len(str(value)) * CHARS_TO_TOKENS
         if isinstance(value, list):
-            return sum(cost(item) for item in value)
+            return sum(cost(item, image_tokens) for item in value)
         return len(str(value)) * CHARS_TO_TOKENS
 
     return int(
         sum(
-            cost(message.get("content"))
+            cost(
+                message.get("content"),
+                TOOL_IMAGE_TOKENS if message.get("role") == "tool" else IMAGE_ATTACHMENT_TOKENS,
+            )
             + (
                 len(str(message["tool_calls"])) * CHARS_TO_TOKENS
                 if message.get("tool_calls")

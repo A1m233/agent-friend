@@ -39,6 +39,9 @@ BUFFER_RATIO = 0.1
 IMAGE_ATTACHMENT_TOKENS = 1536
 """图片输入的保守固定预算；具体视觉切片成本由 provider 决定。"""
 
+TOOL_IMAGE_TOKENS = 16_384
+"""Uncalibrated allowance for bounded tool snapshots; not a universal token upper bound."""
+
 DOCUMENT_BYTES_TO_TOKENS = 0.25
 DOCUMENT_ATTACHMENT_TOKEN_CAP = 64_000
 """文档预估只用于压缩预检；实际抽取文本会在 provider 适配层再次按窗口校验。"""
@@ -76,7 +79,10 @@ def estimate_tokens(messages: list[Message]) -> int:
                     DOCUMENT_ATTACHMENT_TOKEN_CAP,
                     max(256, int(attachment.size_bytes * DOCUMENT_BYTES_TO_TOKENS)),
                 )
-    return int(total_chars * CHARS_TO_TOKENS) + attachment_tokens
+    # Tool images have bounded bytes/pixels, but their actual token cost is model-specific.
+    # Reserve more than thumbnail attachments; real request usage still owns calibration.
+    image_tokens = sum(len(msg.images) * TOOL_IMAGE_TOKENS for msg in messages)
+    return int(total_chars * CHARS_TO_TOKENS) + attachment_tokens + image_tokens
 
 
 def estimate_tool_schema_tokens(tool_specs: list[dict[str, Any]] | None) -> int:

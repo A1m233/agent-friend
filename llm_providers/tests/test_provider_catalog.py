@@ -150,7 +150,7 @@ def test_public_model_catalog_is_the_capability_source_of_truth() -> None:
     assert vision["capabilities"]["maxAttachmentBytes"] == 64 * 1024 * 1024
     assert vision["capabilities"]["maxTotalAttachmentBytes"] == 100 * 1024 * 1024
     assert vision["capabilities"]["maxAttachmentsPerTurn"] == 10
-    assert vision["capabilities"]["multimodalToolResults"] is False
+    assert vision["capabilities"]["multimodalToolResults"] is True
     assert vision["reasoning"] == {
         "control": "effort",
         "defaultPreset": "off",

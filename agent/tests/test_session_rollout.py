@@ -161,6 +161,7 @@ def _manager(
     memory: _SequencedMemory | None = None,
     registry: ToolRegistry | None = None,
     store: JsonlSessionStore | None = None,
+    message_renderer: Any = None,
 ) -> SessionManager:
     catalog = PersonaCatalog(external_dir=root / "personas")
     return SessionManager(
@@ -173,6 +174,7 @@ def _manager(
         context_manager_factory=NaiveContextManager,
         memory=cast(Any, memory),
         tool_registry=registry,
+        message_renderer=message_renderer,
     )
 
 
@@ -898,3 +900,71 @@ def test_restored_epoch_detects_each_incompatible_identity(
     assert update.changed is True
     assert update.reason == expected_reason
     assert restored.cache_epoch.epoch_id != previous_epoch_id
+
+
+def test_image_tool_result_survives_rollout_restart_and_route_change(tmp_path: Path) -> None:
+    import io
+    from dataclasses import replace
+
+    from agent.attachments import AttachmentStore
+    from agent.image_reading import ImageReadingService
+    from llm_providers.catalog import DEEPSEEK_VISION_CAPABILITIES
+    from llm_providers.spec import ResponsesRoute
+    from PIL import Image
+
+    from llm_providers import LLMClient, MultimodalInputAdapter, ProviderSpec
+
+    image_bytes = io.BytesIO()
+    Image.new("RGB", (3, 2), "red").save(image_bytes, format="PNG")
+    assets = AttachmentStore(tmp_path / "assets")
+    image = (
+        ImageReadingService(assets)
+        .snapshot(image_bytes.getvalue(), display_name="sample.png")
+        .image
+    )
+    spec = ProviderSpec(
+        model="openai/test",
+        api_key="test",
+        context_window=128000,
+        attachment_capabilities=DEEPSEEK_VISION_CAPABILITIES,
+        responses=ResponsesRoute("test", "https://example.test", "deepseek"),
+    )
+    client = LLMClient(spec)
+    adapter = MultimodalInputAdapter(open_asset=assets.open, cache_dir=tmp_path / "cache")
+
+    class ImageEcho(_CountingEcho):
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            self.invocations += 1
+            return ToolResult("snapshot", images=(image,))
+
+    tool = ImageEcho()
+    first_llm = _ToolLoopLLM()
+    manager = _manager(
+        tmp_path,
+        first_llm,
+        registry=ToolRegistry([tool]),
+        message_renderer=lambda m, _c: adapter.render_message(m, client),
+    )
+    session_id = _create(manager)
+    _run(manager, session_id, "use the tool")
+    sent = next(item for item in first_llm.received[-1] if item["role"] == "tool")
+    assert sent["content"][1]["type"] == "image_url"
+    assert tool.invocations == 1
+    manager.close()
+
+    second_llm = _RecordingLLM()
+    unsupported = LLMClient(replace(spec, responses=None))
+    second = _manager(
+        tmp_path,
+        second_llm,
+        registry=ToolRegistry([tool]),
+        message_renderer=lambda m, _c: adapter.render_message(m, unsupported),
+    )
+    conversation = second.start_conversation(second.open(session_id))
+    assert any(item.images == (image,) for item in conversation._session_model_history.items)
+    list(conversation.stream("continue", surface=DESKTOP_CHAT_SURFACE))
+    old_result = next(item for item in second_llm.received[-1] if item["role"] == "tool")
+    assert isinstance(old_result["content"], str) and "未提供" in old_result["content"]
+    assert tool.invocations == 1
+    assert any(item.images == (image,) for item in conversation._session_model_history.items)
+    second.close()

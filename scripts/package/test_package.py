@@ -1710,3 +1710,11 @@ def test_formal_build_rejects_dirty_source(tmp_path) -> None:
         assert "clean worktree" in str(exc)
     else:
         raise AssertionError("dirty formal build must fail closed")
+
+
+def test_frozen_image_capability_runs_all_static_decoders() -> None:
+    entry = _load("image_smoke_runtime_entry", PACKAGE_DIR / "runtime_entry.py")
+    assert entry._smoke_image_reading() == {
+        "formats": ["PNG", "JPEG", "WEBP"],
+        "snapshot_roundtrip": True,
+    }

@@ -3,6 +3,7 @@
 from collections.abc import Iterable
 from dataclasses import replace
 from types import MappingProxyType
+from urllib.parse import urlsplit
 
 from ..catalog import (
     CUSTOM_REASONING,
@@ -48,7 +49,15 @@ class ModelDirectory:
                     api_base=connection.base_url,
                     reasoning=CUSTOM_REASONING,
                     processing_profile="openai-attachments-v1",
-                    capabilities=custom_attachment_capabilities(custom.images, custom.documents),
+                    capabilities=replace(
+                        custom_attachment_capabilities(custom.images, custom.documents),
+                        multimodal_tool_results=(
+                            custom.images
+                            and connection.protocol == "responses"
+                            and urlsplit(connection.base_url).scheme == "https"
+                            and urlsplit(connection.base_url).netloc == "api.openai.com"
+                        ),
+                    ),
                     responses=(
                         ResponsesRoute(custom.name, connection.base_url)
                         if connection.protocol == "responses"

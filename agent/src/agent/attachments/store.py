@@ -202,29 +202,63 @@ class AttachmentStore:
                 size_bytes=size,
                 sha256=sha256,
             )
-            with self._lock:
-                blob = self._blob_path(sha256)
-                blob.parent.mkdir(parents=True, exist_ok=True)
-                if blob.exists():
-                    tmp.unlink(missing_ok=True)
-                else:
-                    os.replace(tmp, blob)
-                self._write_json_atomic(self._metadata_path(sha256), ref.to_dict())
-                draft_id = secrets.token_urlsafe(24)
-                created_at = time.time()
-                self._write_json_atomic(
-                    self.drafts_dir / f"{draft_id}.json",
-                    {
-                        "draft_id": draft_id,
-                        "created_at": created_at,
-                        "expires_at": created_at + self.draft_ttl_seconds,
-                        "attachment": ref.to_dict(),
-                    },
-                )
-            return draft_id, ref
+            return self._commit_import(tmp, ref)
         except Exception:
             tmp.unlink(missing_ok=True)
             raise
+
+    def import_image_bytes(self, data: bytes, *, display_name: str) -> tuple[str, AttachmentRef]:
+        """Persist already decoded image bytes; keep a lease until event publication."""
+        if not data or len(data) > self.max_attachment_bytes:
+            raise AttachmentError("attachment_file_too_large", "图片为空或超过资产大小限制。")
+        media_type, kind = _detect_media_type(data[:8192], valid_utf8_text=False)
+        if kind != "image":
+            raise AttachmentError("attachment_type_unsupported", "需要图像内容。")
+        digest = hashlib.sha256(data).hexdigest()
+        ref = AttachmentRef(
+            digest,
+            _canonical_image_name(display_name, media_type),
+            kind,
+            media_type,
+            len(data),
+            digest,
+        )
+        fd, name = tempfile.mkstemp(prefix="image-", dir=self.tmp_dir)
+        tmp = Path(name)
+        try:
+            with os.fdopen(fd, "wb") as output:
+                output.write(data)
+                output.flush()
+                os.fsync(output.fileno())
+            return self._commit_import(tmp, ref)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    def _commit_import(self, tmp: Path, ref: AttachmentRef) -> tuple[str, AttachmentRef]:
+        with self._lock:
+            blob = self._blob_path(ref.sha256)
+            blob.parent.mkdir(parents=True, exist_ok=True)
+            if (
+                blob.exists()
+                and blob.stat().st_size == ref.size_bytes
+                and hashlib.sha256(blob.read_bytes()).hexdigest() == ref.sha256
+            ):
+                tmp.unlink(missing_ok=True)
+            else:
+                os.replace(tmp, blob)
+            self._write_json_atomic(self._metadata_path(ref.sha256), ref.to_dict())
+            draft_id = secrets.token_urlsafe(24)
+            created_at = time.time()
+            self._write_json_atomic(
+                self.drafts_dir / f"{draft_id}.json",
+                {
+                    "draft_id": draft_id,
+                    "created_at": created_at,
+                    "expires_at": created_at + self.draft_ttl_seconds,
+                    "attachment": ref.to_dict(),
+                },
+            )
+        return draft_id, ref
 
     def consume_draft(self, draft_id: str) -> AttachmentRef:
         return self.consume_drafts([draft_id])[0]

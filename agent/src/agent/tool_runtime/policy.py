@@ -209,7 +209,7 @@ class ToolProgressTracker:
                 key: count for key, count in self._error_family_counts.items() if key[0] != name
             }
         empty = (
-            not result.text.strip()
+            (not result.text.strip() and not result.images)
             or error_kind in {"empty_content", "no_results"}
             or result.meta.get("result_count") == 0
         )
