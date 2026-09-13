@@ -18,6 +18,7 @@ dependencies = [
     "python-dateutil>=2.9.0",
     "tzdata>=2025.2",
     "pypdf>=5.0.0",
+    "Pillow>=12.3.0,<13",
     "trafilatura==2.1.0",
     "watchfiles>=1.0.0",
 ]

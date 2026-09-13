@@ -260,3 +260,13 @@ def test_social_tools_share_explicit_service() -> None:
     assert search._service is service
     assert read._service is service
     assert auth._service is service
+
+
+def test_image_tool_is_composed_separately_from_generic_filesystem_tools(tmp_path: Path) -> None:
+    from agent.attachments import AttachmentStore
+
+    plain = make_default_registry(stderr_warn=False)
+    images = make_default_registry(attachment_store=AttachmentStore(tmp_path), stderr_warn=False)
+    assert "view_image" not in {tool.name for tool in plain.all_tools()}
+    assert sum(tool.name == "view_image" for tool in images.all_tools()) == 1
+    assert {tool.name for tool in images.all_tools()} >= FILESYSTEM_TOOL_NAMES

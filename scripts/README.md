@@ -1,5 +1,7 @@
 # scripts/
 
+> `package/run.* runtime` 的 frozen doctor 会实际解码静态 PNG/JPEG/WebP 并验证图像资产快照往返；不访问网络或调用视觉模型。
+
 > `package/run.* runtime` 校验 Codex 配套助手及 bin 哈希清单，旧缓存缺清单时重新从锁定官方归档准备；frozen doctor 额外以无参数启动 setup helper 验证可加载性，不执行初始化或修改系统状态。
 
 > `session-latency/run.* prepare --session-id ID --directory PATH` 在新建的项目外副本中剖析 `manager.open` 与 `start_conversation`，随后测量三次驻留准备，保存不含消息正文的 cProfile 和分阶段耗时；`--source-root DATA_PATH` 可复用固定隔离夹具。关闭 memory/IM，不启动回合或应用后台任务，禁止 HTTPX 请求及非 loopback 连接。仅复制 JSONL/persona，不能替代真实执行验收；两个平台入口参数一致。
@@ -26,6 +28,7 @@
 
 | 验收入口 | 用途 | mac / linux | windows |
 | --- | --- | --- | --- |
+| `image-reading-visual/` | 已核验身份的真实 Tauri 空会话中注入仅 UI 的 read_image 授权夹具、截图并验证拒绝按钮，恢复原状态；不调用模型、不验证后端授权 | `./scripts/image-reading-visual/run.sh --output-dir NEW_DIR` | `.\scripts\image-reading-visual\run.ps1 --output-dir NEW_DIR` |
 | `session-latency/` | 经授权附着真实 Tauri dev CDP，交替点击两个已有会话，记录首次内容与就绪时间、请求时间；不发送模型消息，报告拒绝覆盖 | `./scripts/session-latency/run.sh --title-a A --title-b B --output PATH` | `.\scripts\session-latency\run.ps1 --title-a A --title-b B --output PATH` |
 | `notification-visual/` | 经授权连接已有 Tauri WebView2/CDP，检查通知几何、点击 ActionBar 调试按钮、拖动与截图；不启动/关闭桌面主程序、不调用 LLM。显式 `restart-bridge` 可经既有supervisor重载Python。Windows 额外同步系统光标以匹配桌宠穿透；其它平台只使用 CDP 输入，未提供原生光标适配。 | `./scripts/notification-visual/run.sh inspect\|hover\|action short\|action long\|action stack\|action clear\|drag X Y\|restart-bridge` | `.\scripts\notification-visual\run.ps1 inspect\|hover\|action short\|action long\|action stack\|action clear\|drag X Y\|restart-bridge` |
 

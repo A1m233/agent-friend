@@ -21,6 +21,7 @@ from llm_providers import (
 )
 
 from ..attachments import AttachmentRef
+from ..attachments.models import parse_image_refs
 from ..message_references import parse_quoted_text_references
 from ..messages import Message
 from .errors import SessionCorruptError
@@ -609,6 +610,7 @@ class Session:
                     Message(
                         role="tool",
                         content=ev.payload.get("content", ""),
+                        images=parse_image_refs(ev.payload.get("images", [])),
                         timestamp=ev.ts,
                         meta=tool_meta,
                         uuid=ev.uuid,

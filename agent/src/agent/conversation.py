@@ -42,6 +42,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from uuid import uuid4
 
+from llm_providers.multimodal.tool_images import supports_tool_images
+
 from llm_providers import (
     LanguageModel,
     LanguageModelFactory,
@@ -80,6 +82,7 @@ from memory import (
 from .approvals.models import SessionApprovalModeState
 from .assistant_phase import PhaseRun, normalize_phase
 from .attachments import AttachmentRef
+from .attachments.models import parse_image_refs
 from .command_runtime.tools import (
     COMMAND_EXECUTION_CHECKPOINT_ARG,
     COMMAND_RUN_CONTEXT_ARG,
@@ -208,6 +211,7 @@ from .tools.builtin.skills import (
     SKILL_READ_TOOL_NAME,
     SKILL_RUNTIME_CAPABILITIES_ARG,
 )
+from .tools.protocol import IMAGE_INPUT_SUPPORTED_ARG
 
 if TYPE_CHECKING:
     PromptBuilderFactory = Callable[[str], PromptBuilder]
@@ -1360,7 +1364,7 @@ class Conversation:
 
             def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
                 nonlocal trigger_appended
-                tool_specs = self._tool_registry.to_openai_tools() if self._tool_registry else None
+                tool_specs = self._current_tool_specs()
                 messages = yield from self._assemble_stream(
                     trailing_user=system_prompt_addendum,
                     tool_specs=tool_specs,
@@ -3317,7 +3321,7 @@ class Conversation:
 
         # Rendering attachments can upload files. Budget candidate selection must
         # remain pure and must not upload content that will subsequently be cut.
-        if any(message.attachments for message in messages):
+        if any(message.attachments or message.images for message in messages):
             return InputEstimate(fallback(), "full_estimate", "attachments_pending_render")
         rendered = [self._render_context_message(message) for message in messages]
         return self._estimate_rendered_input(rendered, tools, fallback_floor=fallback)
@@ -3473,7 +3477,10 @@ class Conversation:
         """返回本轮真正会发送的工具定义，供预算和 provider 请求共用。"""
         if self._voice_latency_disable_tools or self._tool_registry is None:
             return None
-        return self._tool_registry.to_openai_tools()
+        specs = self._tool_registry.to_openai_tools()
+        if self._message_renderer is None or not supports_tool_images(self._active_llm_client()):
+            specs = [spec for spec in specs if spec["function"]["name"] != "view_image"]
+        return specs
 
     def _restore_context_usage(self) -> None:
         """从 active assistant event 恢复各模型最近的 usage 校准。"""
@@ -3655,7 +3662,9 @@ class Conversation:
                     request_overrides,
                     fallback_floor=(
                         int(self._last_context_notes.get("token_estimate") or 0)
-                        if any(m.attachments for m in self._last_built_model_messages or [])
+                        if any(
+                            m.attachments or m.images for m in self._last_built_model_messages or []
+                        )
                         else 0
                     ),
                 )
@@ -4940,6 +4949,11 @@ class Conversation:
     ) -> dict[str, Any]:
         """给内置工具补运行时隐藏上下文；不改变 LLM 原始 tool args。"""
         invocation_args = dict(args)
+        if name == "view_image" or (name == "recover_tool_result" and args.get("mode") == "images"):
+            invocation_args[IMAGE_INPUT_SUPPORTED_ARG] = (
+                self._message_renderer is not None
+                and supports_tool_images(self._active_llm_client())
+            )
         action_time: tuple[datetime, str] | None = None
         if tool_run_context is not None and name in {
             "datetime_calculate",
@@ -4970,7 +4984,7 @@ class Conversation:
                     ),
                 }
             )
-        if name in FILESYSTEM_TOOL_NAMES:
+        if name in FILESYSTEM_TOOL_NAMES or name == "view_image":
             invocation_args.update(
                 {
                     FILESYSTEM_LEDGER_ARG: (
@@ -5144,7 +5158,7 @@ class Conversation:
             tool_specs = (
                 None
                 if self._voice_latency_disable_tools
-                else self._tool_registry.to_openai_tools()
+                else self._current_tool_specs()
                 if self._tool_registry
                 else None
             )
@@ -6125,6 +6139,7 @@ class Conversation:
             if existing_result is not None:
                 self._session_model_history.insert_tool_result_after_call(
                     content=str(existing_result.payload.get("content") or ""),
+                    images=parse_image_refs(existing_result.payload.get("images", [])),
                     tool_call_id=tool_call_id,
                     tool_name=str(request.payload.get("tool_name") or tool_name),
                     timestamp=existing_result.ts,
@@ -6277,6 +6292,7 @@ class Conversation:
             "event_tool_call_id": tc["event_id"],
             "tool_name": tc["name"],
             "content": result.text,
+            **({"images": [image.to_dict() for image in result.images]} if result.images else {}),
             "is_error": result.is_error,
             "executed": result.meta.get("executed", True),
             "authorization_requested": result.meta.get("authorization_requested", False),
@@ -6309,6 +6325,7 @@ class Conversation:
         )
         append_history_result(
             content=result.text,
+            images=result.images,
             tool_call_id=str(tc["id"]),
             tool_name=str(tc["name"]),
             timestamp=event.ts,

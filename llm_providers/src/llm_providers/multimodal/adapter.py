@@ -21,6 +21,7 @@ from ..catalog import (
 from ..client import LLMClient
 from ..errors import LLMBadRequestError, LLMProviderError
 from ..protocol import LanguageModel
+from .tool_images import supports_tool_images
 
 OpenAsset = Callable[[str], BinaryIO]
 
@@ -39,6 +40,8 @@ class MultimodalInputAdapter:
         self._locks: dict[str, threading.Lock] = {}
 
     def render_message(self, message: Any, client: LanguageModel) -> dict[str, Any]:
+        if getattr(message, "images", ()):
+            return self._render_tool_images(message, client)
         attachments = list(getattr(message, "attachments", []) or [])
         if not attachments or getattr(message, "role", None) != "user":
             return cast(dict[str, Any], message.to_openai())
@@ -102,12 +105,7 @@ class MultimodalInputAdapter:
                         }
                     )
                 else:
-                    encoded = (
-                        "data:"
-                        + attachment.media_type
-                        + ";base64,"
-                        + base64.b64encode(data).decode("ascii")
-                    )
+                    encoded = self._data_url(attachment.media_type, data)
                     if attachment.kind == "image":
                         content.append({"type": "image_url", "image_url": {"url": encoded}})
                     else:
@@ -150,6 +148,63 @@ class MultimodalInputAdapter:
                     }
                 )
         return {"role": "user", "content": content}
+
+    @staticmethod
+    def _data_url(media_type: str, data: bytes) -> str:
+        return f"data:{media_type};base64," + base64.b64encode(data).decode("ascii")
+
+    def _render_tool_images(self, message: Any, client: LanguageModel) -> dict[str, Any]:
+        if message.role != "tool":
+            raise LLMBadRequestError("image_source_invalid: images require tool origin")
+        result = {"role": "tool", "tool_call_id": message.meta.get("tool_call_id", "")}
+        text = str(message.content or "")
+        if not supports_tool_images(client):
+            return {
+                **result,
+                "content": text
+                + "\n[工具图像当前未提供：当前模型路由不支持图像工具结果，不能推断原图内容]",
+            }
+        concrete = self._concrete_client(client)
+        caps = concrete.spec.attachment_capabilities or model_capabilities(
+            self._canonical_model_id(concrete)
+        )
+        images = message.images
+        if len(images) > min(4, caps.max_attachments_per_turn):
+            raise LLMBadRequestError("image_count_exceeded: too many tool images")
+        content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+        limit = min(8 * 1024 * 1024, caps.max_attachment_bytes)
+        if sum(item.size_bytes for item in images) > caps.max_total_attachment_bytes:
+            raise LLMBadRequestError("image_total_size_exceeded")
+        for ref in images:
+            if ref.kind != "image" or ref.media_type not in caps.accepted_media_types:
+                content.append({"type": "text", "text": "[工具图像未提供：当前模型不支持此格式]"})
+                continue
+            if not 0 < ref.size_bytes <= limit:
+                content.append({"type": "text", "text": "[工具图像未提供：大小超过当前模型限制]"})
+                continue
+            try:
+                with self._open_asset(ref.asset_id) as source:
+                    data = source.read(limit + 1)
+                if len(data) != ref.size_bytes or hashlib.sha256(data).hexdigest() != ref.sha256:
+                    raise ValueError("image_integrity_failed")
+            except (OSError, ValueError):
+                content.append(
+                    {
+                        "type": "text",
+                        "text": "[工具图像未提供：原资产缺失或损坏，请重新读取有效图片]",
+                    }
+                )
+                continue
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": self._data_url(ref.media_type, data),
+                        "detail": "auto",
+                    },
+                }
+            )
+        return {**result, "content": content}
 
     @staticmethod
     def _canonical_model_id(client: LLMClient) -> str:

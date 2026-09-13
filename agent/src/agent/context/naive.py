@@ -13,6 +13,7 @@ from __future__ import annotations
 from ..attachments import AttachmentRef
 from ..messages import Message
 from .protocol import BuildResult, RuntimeContext, assemble_messages
+from .tool_projection import bound_tool_images
 
 
 class NaiveContextManager:
@@ -42,4 +43,5 @@ class NaiveContextManager:
             trailing_user=trailing_user,
             trailing_system=trailing_system,
         )
+        messages, _ = bound_tool_images(messages)
         return BuildResult(messages=messages)

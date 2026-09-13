@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..assembly import BridgeRuntime
 
-PermissionName = Literal["search_metadata", "read_text", "create", "edit"]
+PermissionName = Literal["search_metadata", "read_text", "read_image", "create", "edit"]
 
 
 class FilesystemApprovalDecisionBody(BaseModel):

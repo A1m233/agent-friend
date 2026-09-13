@@ -655,6 +655,7 @@ def build_runtime(
         command_runtime=command_runtime,
         execution_environment_manager=execution_environment_manager,
         tool_execution_evidence_store=tool_evidence_store,
+        attachment_store=attachment_store,
     )
 
     llm_client_factory = runtime_config.llm_client_factory

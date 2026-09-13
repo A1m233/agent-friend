@@ -20,7 +20,10 @@ def reconcile_attachments(runtime: BridgeRuntime) -> dict[str, int] | None:
         for summary in summaries:
             session = manager.open(summary.session_id)
             for event in session.events:
-                attachments = event.payload.get("attachments", [])
+                attachments = [
+                    *(event.payload.get("attachments") or []),
+                    *(event.payload.get("images") or []),
+                ]
                 if not isinstance(attachments, list):
                     continue
                 for attachment in attachments:

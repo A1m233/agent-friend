@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+from ....attachments.models import parse_image_refs
 from ....sessions.errors import SessionNotFoundError
 from ....sessions.store import SessionStore
 from ....sessions.tool_execution_evidence import (
@@ -11,7 +12,7 @@ from ....sessions.tool_execution_evidence import (
     ToolExecutionEvidenceStore,
     render_recoverable_evidence,
 )
-from ...protocol import ToolResult
+from ...protocol import IMAGE_INPUT_SUPPORTED_ARG, ToolResult
 
 _CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
 _DEFAULT_MAX_CHARS = 6_000
@@ -27,13 +28,19 @@ class ToolResultRecoveryTool:
     description: ClassVar[str] = (
         "仅当上下文原样给出了 result_ref 或中断命令结果原样给出了 "
         "evidence_ref、且回答确实需要其中的精确细节时使用。"
-        "它只读当前会话，按 query 或 offset 分页返回有限片段；不要为了概览恢复整份结果，"
+        "它只读当前会话，默认按 query 或 offset 分页返回有限文本片段；图像占位引用使用 mode=images 恢复原图，不能同时传文本分页参数。不要为了概览恢复整份结果，"
         "也不要猜测或传入其他会话标识。优先给 query 缩小范围；需要下一页时使用返回的 "
         "next_offset。"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
         "properties": {
+            "mode": {
+                "type": "string",
+                "enum": ["text", "images"],
+                "default": "text",
+                "description": "text 恢复文本片段；images 仅按 result_ref 恢复工具图像，不接受 query/offset/max_chars/evidence_ref。",
+            },
             "result_ref": {
                 "type": "string",
                 "description": "清理占位符中原样给出的 result_ref。",
@@ -63,6 +70,20 @@ class ToolResultRecoveryTool:
         "oneOf": [
             {"required": ["result_ref"], "not": {"required": ["evidence_ref"]}},
             {"required": ["evidence_ref"], "not": {"required": ["result_ref"]}},
+        ],
+        "allOf": [
+            {
+                "if": {"properties": {"mode": {"const": "images"}}, "required": ["mode"]},
+                "then": {
+                    "required": ["result_ref"],
+                    "not": {
+                        "anyOf": [
+                            {"required": [key]}
+                            for key in ("query", "offset", "max_chars", "evidence_ref")
+                        ]
+                    },
+                },
+            }
         ],
         "additionalProperties": False,
     }
@@ -133,6 +154,35 @@ class ToolResultRecoveryTool:
             return ToolResult(
                 "当前会话的有效历史中没有这个引用。",
                 is_error=True,
+            )
+
+        mode = args.get("mode", "text")
+        if mode not in {"text", "images"}:
+            return ToolResult("invalid_arguments: mode 必须是 text 或 images。", is_error=True)
+        if mode == "images":
+            if not has_result_ref or any(
+                key in args for key in ("query", "offset", "max_chars", "evidence_ref")
+            ):
+                return ToolResult(
+                    "invalid_arguments: images 模式仅接受 result_ref。", is_error=True
+                )
+            if args.get(IMAGE_INPUT_SUPPORTED_ARG) is not True:
+                return ToolResult(
+                    "image_model_unsupported: 当前模型无法接收图像工具结果，请切换支持的模型。",
+                    is_error=True,
+                )
+            try:
+                images = parse_image_refs(event.payload.get("images", []))
+            except (ValueError, TypeError, KeyError):
+                return ToolResult("image_reference_invalid: 原图引用损坏。", is_error=True)
+            if not images:
+                return ToolResult(
+                    "image_not_found: 该结果没有图像，请检查 result_ref。", is_error=True
+                )
+            return ToolResult(
+                f"[恢复工具图像；原始结果 result_ref={result_ref}；来源工具={event.payload.get('tool_name', '')}]",
+                images=images,
+                meta={"context_retention": "recoverable"},
             )
 
         reference_label: str
