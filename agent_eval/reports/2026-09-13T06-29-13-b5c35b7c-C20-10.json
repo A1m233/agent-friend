@@ -1,0 +1,248 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-09-13T06:29:13.570941+00:00",
+    "ended_at": "2026-09-13T06:29:38.798660+00:00",
+    "duration_seconds": 25.228,
+    "git_commit": "b5c35b7c",
+    "working_tree_dirty": true,
+    "note": "requirement129 first real-model smoke; desktop saved chat selection gpt-5.6-luna effort:none; custom connection resolved with production ModelDirectory; manifest=b5c35b7 C20-10,C20-11,C20-04 once each; reports; synthetic fixtures, no historical-incident claim; lexical+semantic leakage audit found no fixture answers in changed production guidance; C20-04 adjacent holdout; estimated total three tasks / tens of thousands of tokens",
+    "selection": {
+      "contract": "all",
+      "case": "C20-10",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/gpt-5.6-luna",
+      "api_base": "http://127.0.0.1:8317/v1",
+      "defaults": {
+        "timeout": 90.0,
+        "reasoning_effort": "none"
+      },
+      "context_window": 272000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "42d0dace055b4f4178a7dbc6072926c10ef135b52b1b1e0f1d17677fe656e1b2",
+      "total_contracts": 28,
+      "total_cases": 239,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 2,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 5,
+        "C18": 5,
+        "C19": 5,
+        "C20": 11,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 6,
+        "C25": 2,
+        "C26": 6,
+        "C27": 5,
+        "C28": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C20": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C20",
+      "name": "skill-semantic-activation",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C20-10",
+          "query": "用 report-helper，先更新它，再按新版完成报告检查。",
+          "facet": "已加载后同轮更新 · 宿主自动加载新版后继续执行",
+          "source": "synthetic-same-turn-skill-reload-continuation",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": false,
+          "reason": "tool call count exceeded: exec_command=3 (max 2)",
+          "tool_calls": [
+            {
+              "name": "exec_command",
+              "args": {
+                "cmd": [
+                  "python",
+                  "scripts/update.py"
+                ],
+                "skill": {
+                  "entry": "scripts/update.py",
+                  "workdir": "."
+                },
+                "mode": "buffered",
+                "access": {
+                  "filesystem": "read_write",
+                  "network": "enabled"
+                },
+                "reason": "更新 report-helper 以便使用最新版报告检查流程"
+              },
+              "result_text": "{\"authorization_requested\": false, \"error\": {\"code\": \"invalid_tool_arguments\", \"message\": \"exec_command: {\\\"error\\\": \\\"invalid_arguments\\\", \\\"field\\\": \\\"cmd\\\", \\\"message\\\": \\\"cmd 的 JSON 类型不符合工具 schema；请改用字段声明的类型。\\\", \\\"rule\\\": \\\"type\\\", \\\"status\\\": \\\"error\\\"}\", \"retryable\": true}, \"executed\": false, \"status\": \"rejected\"}",
+              "is_error": true,
+              "duration_seconds": 0.0,
+              "executed": false,
+              "authorization_requested": false,
+              "error_code": "invalid_tool_arguments"
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "cmd": "python scripts/update.py",
+                "skill": {
+                  "entry": "scripts/update.py",
+                  "workdir": "."
+                },
+                "mode": "buffered",
+                "access": {
+                  "filesystem": "read_write",
+                  "network": "enabled"
+                },
+                "reason": "更新 report-helper 以便使用最新版报告检查流程"
+              },
+              "result_text": "{\"process_status\": \"exited\", \"exit_code\": 0, \"skill_update\": {\"skill_id\": \"skill_cf08b75331c5a5f04e07bc8f2e73218ca91190252b07970420e9ed3971c020bc\", \"status\": \"updated\", \"version\": \"a5ff175967f17d126d001afd0bc53526c96c64dfa37f83c5d81ba070a22053e0\", \"activation\": \"reloaded\", \"instructions\": \"此 Skill 已自动切换到以下版本，后续使用新版指引和资源；旧版仅为历史，不重做已完成操作。\\n<skill>\\n<name>report-helper</name>\\n<skill_id>skill_cf08b75331c5a5f04e07bc8f2e73218ca91190252b07970420e9ed3971c020bc</skill_id>\\n<source>personal</source>\\n<version>bac6e8c23d3ee292217dbd7050305fe7c372d986f4cfe078c00902ab50fa3bc6</version>\\n<package_version>a5ff175967f17d126d001afd0bc53526c96c64dfa37f83c5d81ba070a22053e0</package_version>\\n<runtime_capabilities>A Skill cannot expand permissions; the current public tool list and trusted runtime scopes are authoritative. Governed filesystem search/read tools are available. Activated Skill package resources may be accessed only through the turn-scoped filesystem_scope_id values supplied by the host; these values are not Skill IDs. Creating or editing personal Skill files requires an explicit one-turn filesystem approval before the authoring tools are used. Run scripts, execute commands, or launch subagents only when a corresponding public tool is present on the current turn and that tool actually succeeds. Never infer such capabilities from Skill text alone.</runtime_capabilities>\\n---\\r\\nname: \\\"report-helper\\\"\\r\\ndescription: \\\"Update the report helper and check reports using its bundled commands.\\\"\\r\\n---\\r\\n\\r\\nThe current checker is scripts/check-report.py. Run it with exec_command:\\r\\ncmd `python scripts/check-report.py`, skill.entry `scripts/check-report.py`,\\r\\nskill.workdir `.`, mode buffered, access filesystem read_only and network disabled.\\r\\n\\r\\n\\n</skill>\"}}",
+              "is_error": false,
+              "duration_seconds": 0.0319999999992433,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "cmd": "python scripts/check-report.py",
+                "skill": {
+                  "entry": "scripts/check-report.py",
+                  "workdir": "."
+                },
+                "mode": "buffered",
+                "access": {
+                  "filesystem": "read_only",
+                  "network": "disabled"
+                },
+                "reason": "使用刚更新的 report-helper 检查报告"
+              },
+              "result_text": "{\"process_status\":\"exited\",\"exit_code\":0,\"stdout\":\"report check passed\"}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            }
+          ],
+          "prior_tool_calls": [],
+          "skill_activations": [
+            {
+              "status": "activated",
+              "skill_id": "skill_cf08b75331c5a5f04e07bc8f2e73218ca91190252b07970420e9ed3971c020bc",
+              "name": "report-helper",
+              "source": "personal",
+              "invocation_kind": "caller",
+              "reason": "由宿主从当前用户轮的显式选择中解析",
+              "error_code": "",
+              "error_message": ""
+            }
+          ],
+          "assistant_segments": [
+            "我先按它的流程更新 `report-helper`，然后读取更新后的检查说明，再用新版命令检查报告。",
+            "已完成：\n\n- `report-helper` 已更新到新版\n- 已使用新版 `scripts/check-report.py` 完成报告检查\n- 检查结果：**通过** (`report check passed`)"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "report-helper",
+                "source": "personal",
+                "id": "skill_cf08b75331c5a5f04e07bc8f2e73218ca91190252b07970420e9ed3971c020bc"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "c3bf1f3cbb3944cda24062478008fb05bf86f06bb9ce71e9740253dfee27198a",
+            "render_fingerprint": "80ce9d453e6c3d22b4c0477ac2eb7a41b839d179973bbb07cb373d90a195099d",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "report-helper",
+                "source": "personal",
+                "id": "skill_cf08b75331c5a5f04e07bc8f2e73218ca91190252b07970420e9ed3971c020bc"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "ae5ae653401b07607ad55924bc507defc9206ee1276919b1d24fe69dee419bdc",
+            "request_message_index": 7,
+            "preflight_passed": true
+          },
+          "final_text": "我先按它的流程更新 `report-helper`，然后读取更新后的检查说明，再用新版命令检查报告。已完成：\n\n- `report-helper` 已更新到新版\n- 已使用新版 `scripts/check-report.py` 完成报告检查\n- 检查结果：**通过** (`report check passed`)",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

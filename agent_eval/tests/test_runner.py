@@ -49,6 +49,50 @@ FIXTURE_IMAGE = (
 )
 
 
+@pytest.mark.parametrize("fail", [False, True])
+def test_run_case_releases_writer_before_temp_cleanup(
+    monkeypatch: pytest.MonkeyPatch, fail: bool
+) -> None:
+    import agent_eval.runner as runner
+
+    from agent import SessionManager
+    from llm_providers import LanguageModelCapabilities, LLMTextDelta, LLMTurnDone
+
+    class LocalModel:
+        context_window = 128000
+        capabilities = LanguageModelCapabilities()
+
+        def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+            if fail:
+                raise RuntimeError("fixture provider failure")
+            yield LLMTextDelta(text="fixture answer")
+            yield LLMTurnDone(stop_reason="end_turn")
+
+    roots: list[Path] = []
+    close = SessionManager.close
+
+    def tracked_close(manager: SessionManager) -> None:
+        assert isinstance(manager._store, JsonlSessionStore)
+        roots.append(manager._store.base_dir.parent)
+        assert manager._runtime_states
+        close(manager)
+        assert not manager._runtime_states
+
+    monkeypatch.setattr(runner, "LLMClient", lambda spec: LocalModel())
+    monkeypatch.setattr(SessionManager, "close", tracked_close)
+    trace = runner.run_case(
+        Case(id="cleanup", query="hello", facet="writer cleanup", source="synthetic"),
+        ProviderSpec(model="openai/test", api_key="fixture"),
+    )
+    assert len(roots) == 1
+    assert not roots[0].exists()
+    assert "WinError" not in (trace.error or "")
+    if not fail:
+        assert trace.error is None
+        assert trace.final_text == "fixture answer"
+        assert trace.stop_reason == "end_turn"
+
+
 def test_fixture_skill_update_runs_production_reload(tmp_path: Path) -> None:
     from agent.skills.lifecycle import apply_skill_update
     from agent.tool_runtime import ToolRunContext

@@ -1,0 +1,164 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-09-13T06:19:00.022960+00:00",
+    "ended_at": "2026-09-13T06:19:35.832264+00:00",
+    "duration_seconds": 35.809,
+    "git_commit": "b5c35b7c",
+    "working_tree_dirty": false,
+    "note": "requirement129 first real-model smoke; desktop saved chat selection gpt-5.6-luna effort:none; custom connection resolved with production ModelDirectory; manifest=b5c35b7 C20-10,C20-11,C20-04 once each; reports; synthetic fixtures, no historical-incident claim; lexical+semantic leakage audit found no fixture answers in changed production guidance; C20-04 adjacent holdout; estimated total three tasks / tens of thousands of tokens",
+    "selection": {
+      "contract": "all",
+      "case": "C20-10",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/gpt-5.6-luna",
+      "api_base": "http://127.0.0.1:8317/v1",
+      "defaults": {
+        "timeout": 90.0,
+        "reasoning_effort": "none"
+      },
+      "context_window": 272000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "42d0dace055b4f4178a7dbc6072926c10ef135b52b1b1e0f1d17677fe656e1b2",
+      "total_contracts": 28,
+      "total_cases": 239,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 2,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 5,
+        "C18": 5,
+        "C19": 5,
+        "C20": 11,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 6,
+        "C25": 2,
+        "C26": 6,
+        "C27": 5,
+        "C28": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 1,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C20": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 1,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C20",
+      "name": "skill-semantic-activation",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C20-10",
+          "query": "用 report-helper，先更新它，再按新版完成报告检查。",
+          "facet": "已加载后同轮更新 · 宿主自动加载新版后继续执行",
+          "source": "synthetic-same-turn-skill-reload-continuation",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": false,
+          "reason": "runtime error: PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\\\Users\\\\example-user\\\\AppData\\\\Local\\\\Temp\\\\agent-eval-jw12wmo1\\\\sessions\\\\.96529854-6fcc-428d-b923-420d408287fa.writer.lock'",
+          "tool_calls": [],
+          "prior_tool_calls": [],
+          "skill_activations": [],
+          "assistant_segments": [],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "report-helper",
+                "source": "personal",
+                "id": "skill_84fb1294d0d480fe81f4c71d8f8231d48ffc9ab606cf3d3093eae868067cd70e"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "ec2990cce880fd596f848e9b55333f10ed1dd6892691c97d7a7cac2e29fe05fd",
+            "render_fingerprint": "f76ab793c816df80a6b2d9c40729c72ff861f259b1b094835ff9b3ed4ffc77b2",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "report-helper",
+                "source": "personal",
+                "id": "skill_84fb1294d0d480fe81f4c71d8f8231d48ffc9ab606cf3d3093eae868067cd70e"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "63504178cdd745d48a7c8971e813238e914ac1519ab74cc9ec6153fbb274b4a7",
+            "request_message_index": 7,
+            "preflight_passed": true
+          },
+          "final_text": "",
+          "stop_reason": "error",
+          "error": "PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。: 'C:\\\\Users\\\\example-user\\\\AppData\\\\Local\\\\Temp\\\\agent-eval-jw12wmo1\\\\sessions\\\\.96529854-6fcc-428d-b923-420d408287fa.writer.lock'"
+        }
+      ]
+    }
+  ]
+}

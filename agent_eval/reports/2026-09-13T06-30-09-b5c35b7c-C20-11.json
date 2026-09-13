@@ -1,0 +1,249 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-09-13T06:30:09.908737+00:00",
+    "ended_at": "2026-09-13T06:30:45.663642+00:00",
+    "duration_seconds": 35.755,
+    "git_commit": "b5c35b7c",
+    "working_tree_dirty": true,
+    "note": "requirement129 pending case first real-model smoke after authorized cleanup fix; desktop saved chat selection gpt-5.6-luna effort:none; custom connection resolved with production ModelDirectory; manifest=b5c35b7 C20-10,C20-11,C20-04 once each; reports; synthetic fixtures, no historical-incident claim; lexical+semantic leakage audit found no fixture answers in changed production guidance; C20-04 adjacent holdout; estimated total three tasks / tens of thousands of tokens",
+    "selection": {
+      "contract": "all",
+      "case": "C20-11",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/gpt-5.6-luna",
+      "api_base": "http://127.0.0.1:8317/v1",
+      "defaults": {
+        "timeout": 90.0,
+        "reasoning_effort": "none"
+      },
+      "context_window": 272000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "42d0dace055b4f4178a7dbc6072926c10ef135b52b1b1e0f1d17677fe656e1b2",
+      "total_contracts": 28,
+      "total_cases": 239,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 2,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 5,
+        "C18": 5,
+        "C19": 5,
+        "C20": 11,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 6,
+        "C25": 2,
+        "C26": 6,
+        "C27": 5,
+        "C28": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C20": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C20",
+      "name": "skill-semantic-activation",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C20-11",
+          "query": "用 report-helper，先更新它，再按新版完成报告检查。",
+          "facet": "更新失败 control · 不执行旧版冒充新版",
+          "source": "synthetic-same-turn-skill-update-failure-control",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": false,
+          "reason": "tool call count exceeded: exec_command=3 (max 1)",
+          "tool_calls": [
+            {
+              "name": "exec_command",
+              "args": {
+                "cmd": [
+                  "python",
+                  "scripts/update.py"
+                ],
+                "skill": {
+                  "entry": "scripts/update.py",
+                  "workdir": "."
+                },
+                "mode": "buffered",
+                "access": {
+                  "filesystem": "read_write",
+                  "network": "enabled"
+                },
+                "reason": "先更新 report-helper，再使用更新后的检查流程完成报告检查。"
+              },
+              "result_text": "{\"authorization_requested\": false, \"error\": {\"code\": \"invalid_tool_arguments\", \"message\": \"exec_command: {\\\"error\\\": \\\"invalid_arguments\\\", \\\"field\\\": \\\"cmd\\\", \\\"message\\\": \\\"cmd 的 JSON 类型不符合工具 schema；请改用字段声明的类型。\\\", \\\"rule\\\": \\\"type\\\", \\\"status\\\": \\\"error\\\"}\", \"retryable\": true}, \"executed\": false, \"status\": \"rejected\"}",
+              "is_error": true,
+              "duration_seconds": 0.0,
+              "executed": false,
+              "authorization_requested": false,
+              "error_code": "invalid_tool_arguments"
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "cmd": "python scripts/update.py",
+                "skill": {
+                  "entry": "scripts/update.py",
+                  "workdir": "."
+                },
+                "mode": "buffered",
+                "access": {
+                  "filesystem": "read_write",
+                  "network": "enabled"
+                },
+                "reason": "先更新 report-helper，再使用更新后的检查流程完成报告检查。"
+              },
+              "result_text": "{\"process_status\":\"exited\",\"exit_code\":1,\"error\":\"download_failed\",\"message\":\"The source is unavailable. No update was committed; retry is unavailable in this run.\"}",
+              "is_error": true,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "cmd": "python scripts/old-check.py",
+                "skill": {
+                  "entry": "scripts/old-check.py",
+                  "workdir": "."
+                },
+                "mode": "buffered",
+                "access": {
+                  "filesystem": "read_only",
+                  "network": "disabled"
+                },
+                "reason": "新版更新失败后，使用当前已有检查命令完成本轮报告检查。"
+              },
+              "result_text": "{\"process_status\":\"exited\",\"exit_code\":1,\"error\":\"download_failed\",\"message\":\"The source is unavailable. No update was committed; retry is unavailable in this run.\"}",
+              "is_error": true,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            }
+          ],
+          "prior_tool_calls": [],
+          "skill_activations": [
+            {
+              "status": "activated",
+              "skill_id": "skill_49b34ec8f0c96a800825fb46c8c9be91f1878564a05fc8dff0275b9f0f0a0e1e",
+              "name": "report-helper",
+              "source": "personal",
+              "invocation_kind": "caller",
+              "reason": "由宿主从当前用户轮的显式选择中解析",
+              "error_code": "",
+              "error_message": ""
+            }
+          ],
+          "assistant_segments": [
+            "我先按 `report-helper` 的新版流程更新它，更新完成后再用新版检查报告。",
+            "更新没有成功，也没有提交任何改动，所以这轮拿不到新版检查器。我先用当前已有的检查命令跑一遍，结果会明确标注为旧版。",
+            "这轮没完成：\n\n- `report-helper` 更新失败，源不可用，未提交任何更新。\n- 随后执行现有报告检查也失败，未取得检查结果。\n\n因此不能声称已经按新版完成报告检查。"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "report-helper",
+                "source": "personal",
+                "id": "skill_49b34ec8f0c96a800825fb46c8c9be91f1878564a05fc8dff0275b9f0f0a0e1e"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "7823803314bcc7851bd8c500af588df293e3802f2d5a63c8ae75b2c62bd762a4",
+            "render_fingerprint": "68b706892eeb6a96f08c1f3f7ab1d3ab9a41b71069f289c7804976a259c895b5",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "report-helper",
+                "source": "personal",
+                "id": "skill_49b34ec8f0c96a800825fb46c8c9be91f1878564a05fc8dff0275b9f0f0a0e1e"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "911351fdbace91114d71348a6fee2d0edab12ddbc7ab0e58f1b3375abbf73211",
+            "request_message_index": 7,
+            "preflight_passed": true
+          },
+          "final_text": "我先按 `report-helper` 的新版流程更新它，更新完成后再用新版检查报告。更新没有成功，也没有提交任何改动，所以这轮拿不到新版检查器。我先用当前已有的检查命令跑一遍，结果会明确标注为旧版。这轮没完成：\n\n- `report-helper` 更新失败，源不可用，未提交任何更新。\n- 随后执行现有报告检查也失败，未取得检查结果。\n\n因此不能声称已经按新版完成报告检查。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

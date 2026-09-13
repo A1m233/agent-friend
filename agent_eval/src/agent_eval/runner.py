@@ -9,6 +9,7 @@ import re
 import shutil
 import tempfile
 from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -743,7 +744,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
     """跑一个 case，返回完整 Trace；异常以 ``Trace.error`` 形式返回。"""
     catalog_guard: _SkillCatalogRequestGuard | None = None
     try:
-        with tempfile.TemporaryDirectory(prefix="agent-eval-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="agent-eval-") as tmp, ExitStack() as cleanup:
             temp_root = Path(tmp)
             store = JsonlSessionStore(temp_root / "sessions")
             attachment_store = AttachmentStore(temp_root / "attachments")
@@ -809,6 +810,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 skill_catalog_request_guard=catalog_guard,
                 self_presentation_mode=case.self_presentation_mode,
             )
+            cleanup.callback(manager.close)
             session = manager.create(
                 persona="default",
                 model=runtime_config.model_id,

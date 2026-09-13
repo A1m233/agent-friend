@@ -1,0 +1,181 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-09-13T06:31:44.843623+00:00",
+    "ended_at": "2026-09-13T06:32:58.258577+00:00",
+    "duration_seconds": 73.415,
+    "git_commit": "b5c35b7c",
+    "working_tree_dirty": true,
+    "note": "requirement129 pending case first real-model smoke after authorized cleanup fix; desktop saved chat selection gpt-5.6-luna effort:none; custom connection resolved with production ModelDirectory; manifest=b5c35b7 C20-10,C20-11,C20-04 once each; reports; synthetic fixtures, no historical-incident claim; lexical+semantic leakage audit found no fixture answers in changed production guidance; C20-04 adjacent holdout; estimated total three tasks / tens of thousands of tokens",
+    "selection": {
+      "contract": "all",
+      "case": "C20-04",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/gpt-5.6-luna",
+      "api_base": "http://127.0.0.1:8317/v1",
+      "defaults": {
+        "timeout": 90.0,
+        "reasoning_effort": "none"
+      },
+      "context_window": 272000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "42d0dace055b4f4178a7dbc6072926c10ef135b52b1b1e0f1d17677fe656e1b2",
+      "total_contracts": 28,
+      "total_cases": 239,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 2,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 5,
+        "C18": 5,
+        "C19": 5,
+        "C20": 11,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 6,
+        "C25": 2,
+        "C26": 6,
+        "C27": 5,
+        "C28": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C20": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C20",
+      "name": "skill-semantic-activation",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C20-04",
+          "query": "帮我设计一次 baseline/candidate 的盲审实验，要能复查证据",
+          "facet": "description 隐式匹配 isolation · 未点名但任务明确匹配时应读取",
+          "source": "synthetic-skill-implicit-description-match",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "skill_id": "skill_cbeb4bc5103d8a851da0c9436fbb0357ffc1dc89723ad35fd22bff918811be1f",
+                "reason": "设计 baseline/candidate 盲审实验，并建立可复查的证据与评价流程。"
+              },
+              "result_text": "<skill>\n<name>experiment-review</name>\n<skill_id>skill_cbeb4bc5103d8a851da0c9436fbb0357ffc1dc89723ad35fd22bff918811be1f</skill_id>\n<source>personal</source>\n<version>f2b608fd880ec4a6be4fbff73fae16adaaf83119dfd4f09a8d34a87265ef3d2e</version>\n<package_version>cf269de86161f9755e09f2289ad9cee6ddafd50ef85aa13504f6f7276deb871a</package_version>\n<runtime_capabilities>A Skill cannot expand permissions; the current public tool list and trusted runtime scopes are authoritative. Governed filesystem search/read tools are available. Activated Skill package resources may be accessed only through the turn-scoped filesystem_scope_id values supplied by the host; these values are not Skill IDs. Creating or editing personal Skill files requires an explicit one-turn filesystem approval before the authoring tools are used. Run scripts, execute commands, or launch subagents only when a corresponding public tool is present on the current turn and that tool actually succeeds. Never infer such capabilities from Skill text alone.</runtime_capabilities>\n---\r\nname: \"experiment-review\"\r\ndescription: \"Use when designing baseline/candidate experiments, blind review, or evidence-based evaluation.\"\r\n---\r\n\r\nProvide a minimal reproducible baseline/candidate experiment with a blind comparison.\r\n\n</skill>",
+              "is_error": false,
+              "duration_seconds": 0.031000000000858563,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            }
+          ],
+          "prior_tool_calls": [],
+          "skill_activations": [],
+          "assistant_segments": [
+            "我会按“可盲审、可复核证据链”的目标来设计：先把实验协议、盲化方式、评分表和证据留存规则搭起来，再给你一套能直接执行的流程。",
+            "可以。下面给你一套**最小可复现、双盲、证据可复查**的 baseline/candidate 实验方案。适用于模型、提示词、检索策略、分类器或工作流的对比。\n\n## 1. 实验目标\n\n明确写成一个可证伪的问题：\n\n> 在固定输入、固定资源和固定评审标准下，candidate 是否优于 baseline？\n\n不要只写“candidate 效果更好”，而要提前规定：\n\n- **主指标**：例如任务成功率、盲审胜率、事实准确性\n- **次指标**：完整性、格式遵循、延迟、成本、异常率\n- **改进门槛**：例如主指标至少提升 5%，且 95% 置信区间不跨越 0\n- **允许的代价**：例如成本最多增加 10%，延迟最多增加 20%\n\n建议事先写成：\n\n```text\n主假设 H1：\ncandidate 相对 baseline 的平均评分更高。\n\n无效假设 H0：\ncandidate 与 baseline 的平均评分没有差异。\n\n成功标准：\n1. candidate 的盲审胜率 > 50%；\n2. 配对得分差的 95% CI 下界 > 0，或预注册的显著性检验通过；\n3. 不得违反成本、延迟和安全性约束；\n4. 关键子集上不能出现明显退化。\n```\n\n## 2. 固定实验对象\n\n### 数据集\n\n准备一个冻结版本，例如：\n\n```text\ndataset_name: customer_support_v3\ndataset_version: 2026-09-13\nitem_count: 300\n```\n\n每条样本包含：\n\n```json\n{\n  \"item_id\": \"q_0001\",\n  \"input\": \"...\",\n  \"reference\": \"...\",\n  \"tags\": [\"退款\", \"多步骤\"],\n  \"difficulty\": \"medium\"\n}\n```\n\n注意：\n\n- `item_id` 必须稳定且不泄露答案；\n- 评审时隐藏 `reference`，只有评分阶段按规则使用；\n- 不要在实验结束后临时删样本，除非按预先写好的排除规则执行；\n- 如果数据来自人工抽样，记录抽样方法和随机种子。\n\n### 样本分层\n\n如果任务类型不止一种，先分层：\n\n- 简单 / 中等 / 困难\n- 事实问答 / 推理 / 格式转换\n- 高频 / 低频\n- 安全敏感 / 普通\n\n最终报告既给总体结果，也给每个预先定义的子集结果，避免平均数掩盖局部退化。\n\n## 3. 运行条件冻结\n\nbaseline 和 candidate 必须尽量只差一个变量。\n\n固定并记录：\n\n- 模型名称和版本\n- system prompt\n- user prompt 模板\n- 工具和检索资源\n- 工具调用权限\n- 温度、top-p、最大输出长度\n- 随机种子\n- 超时和重试规则\n- 并发数\n- 运行日期\n- 依赖包或服务版本\n- 计费和限流策略\n\n如果是随机生成任务，建议每个样本运行 `k=3` 次，并提前决定最终取值方式：\n\n- 取平均分；\n- 取多数结果；\n- 或把每次运行都作为独立评审单元。\n\n不要看到结果后才决定。\n\n## 4. 生成阶段：保留完整原始证据\n\n对每个样本、每个系统保存一条不可变记录：\n\n```json\n{\n  \"item_id\": \"q_0001\",\n  \"system_id\": \"baseline\",\n  \"run_id\": \"run_20260913_001\",\n  \"seed\": 42,\n  \"input_hash\": \"...\",\n  \"config_hash\": \"...\",\n  \"output\": \"...\",\n  \"tool_trace\": [],\n  \"latency_ms\": 1830,\n  \"token_usage\": {\n    \"input\": 500,\n    \"output\": 220\n  },\n  \"status\": \"success\",\n  \"timestamp\": \"2026-09-13T...\"\n}\n```\n\n至少保留：\n\n1. 原始输入；\n2. 实际发送的完整 prompt；\n3. 原始输出；\n4. 工具调用和返回内容；\n5. 错误、重试和超时记录；\n6. 配置文件；\n7. 运行日志；\n8. 结果文件的哈希值。\n\n推荐目录结构：\n\n```text\nexperiment/\n├── protocol/\n│   ├── experiment_plan.md\n│   ├── rubric_v1.md\n│   └── exclusion_rules.md\n├── data/\n│   ├── dataset.jsonl\n│   └── dataset.sha256\n├── configs/\n│   ├── baseline.yaml\n│   └── candidate.yaml\n├── raw/\n│   ├── baseline.jsonl\n│   └── candidate.jsonl\n├── blind/\n│   ├── mapping.json\n│   ├── review_items.jsonl\n│   └── manifest.sha256\n├── reviews/\n│   ├── reviewer_01.jsonl\n│   └── reviewer_02.jsonl\n└── reports/\n    ├── analysis.md\n    └── final_results.json\n```\n\n## 5. 盲化设计\n\n### 标签盲化\n\n生成结束后，由不参与评分的人或独立脚本随机映射：\n\n```text\nA7F3 -> baseline\nB2C9 -> candidate\n```\n\n评审者只能看到：\n\n```json\n{\n  \"review_item_id\": \"q_0001_r1\",\n  \"prompt\": \"...\",\n  \"answer_a\": \"...\",\n  \"answer_b\": \"...\"\n}\n```\n\n不要使用固定的 A=baseline、B=candidate。\n\n### 顺序随机化\n\n每个样本独立随机决定：\n\n- candidate 放在左侧还是右侧；\n- 样本展示顺序；\n- 如果可能，评审者顺序。\n\n随机化信息单独保存，并在盲审完成前封存：\n\n```json\n{\n  \"item_id\": \"q_0001\",\n  \"left_label\": \"B2C9\",\n  \"right_label\": \"A7F3\",\n  \"random_seed\": 918273\n}\n```\n\n### 盲审期间禁止泄露\n\n评审界面或文件中不要出现：\n\n- baseline / candidate；\n- 模型名称；\n- 提示词版本名称；\n- 运行时间；\n- 成本；\n- 文件路径中的系统名；\n- 能明显暴露来源的特殊格式。\n\n如果输出风格本身会泄露身份，应在协议中说明是否允许做统一格式化。格式化必须对两组完全一致，并保留未经处理的原始输出。\n\n## 6. 评分表\n\n建议采用“偏好 + 维度分数”两层设计。\n\n### 主判断：总体偏好\n\n```text\n哪一个答案更好？\n\n□ 左侧明显更好\n□ 左侧略好\n□ 大致相同\n□ 右侧略好\n□ 右侧明显更好\n□ 无法判断\n```\n\n分析时将结果转换为：\n\n- 左胜：+1\n- 平局：0\n- 右胜：-1\n\n再根据盲化映射还原为 candidate 相对 baseline 的胜负。\n\n### 维度评分\n\n每个答案分别 1–5 分：\n\n| 维度 | 评分标准 |\n|---|---|\n| 正确性 | 是否包含错误、幻觉或错误推断 |\n| 完整性 | 是否覆盖任务要求和关键要点 |\n| 相关性 | 是否直接回答问题、无明显跑题 |\n| 可执行性 | 用户是否能据此采取正确行动 |\n| 表达质量 | 清晰、简洁、结构合理 |\n| 安全/合规 | 是否存在危险、违规或不当建议 |\n\n为减少主观漂移，rubric 中给出正反例。评分者应先看 rubric，再开始正式评分。\n\n## 7. 评审者安排\n\n理想配置：\n\n- 至少 2 名独立评审者；\n- 评审者不知道系统身份；\n- 先独立评分，不互相讨论；\n- 对分歧样本进行第三人仲裁；\n- 仲裁只能解决“如何分类”，不能修改原始答案。\n\n可以先拿 20 个样本做校准，但要注意：\n\n- 校准样本不能混入正式结果；\n- 校准时可以讨论；\n- 正式盲审时不能讨论。\n\n记录每名评审者的：\n\n```json\n{\n  \"reviewer_id\": \"reviewer_01\",\n  \"item_id\": \"q_0001\",\n  \"preference\": \"left\",\n  \"scores_left\": {\n    \"correctness\": 4,\n    \"completeness\": 5\n  },\n  \"scores_right\": {\n    \"correctness\": 3,\n    \"completeness\": 4\n  },\n  \"confidence\": 4,\n  \"reason_codes\": [\"遗漏关键步骤\"],\n  \"comment\": \"...\"\n}\n```\n\n尽量使用预定义的 `reason_codes`，同时允许补充自由文本。\n\n## 8. 证据可复查设计\n\n核心原则是：任何最终结论都能追溯到原始样本。\n\n建立如下链路：\n\n```text\n最终结论\n  ↓\n统计分析文件\n  ↓\n评审记录\n  ↓\n盲化记录\n  ↓\n脱盲映射\n  ↓\n原始输出\n  ↓\n实际输入、配置和工具轨迹\n```\n\n每个文件保存：\n\n- 内容哈希；\n- 创建时间；\n- 版本号；\n- 生成者；\n- 上游文件哈希。\n\n例如：\n\n```text\ndataset.jsonl\nsha256: 91b...\n\nbaseline.jsonl\nsha256: 2a4...\n\ncandidate.jsonl\nsha256: 8f1...\n\nblind_manifest.json\nsha256: c73...\n```\n\n推荐额外建立一份 manifest：\n\n```json\n{\n  \"protocol_sha256\": \"...\",\n  \"dataset_sha256\": \"...\",\n  \"baseline_raw_sha256\": \"...\",\n  \"candidate_raw_sha256\": \"...\",\n  \"blind_mapping_sha256\": \"...\",\n  \"review_files\": {\n    \"reviewer_01\": \"...\"\n  }\n}\n```\n\n这样复查者可以确认评审后是否替换过数据。\n\n## 9. 预先规定的排除规则\n\n在看到结果前写好：\n\n```text\n排除条件：\n1. 输入无法解析；\n2. 服务返回空结果；\n3. 两个系统都因同一基础设施故障失败；\n4. 样本被发现存在重复，且重复比例超过预设阈值。\n\n不排除：\n1. candidate 输出错误；\n2. baseline 输出错误；\n3. 单个系统超时；\n4. 输出过长；\n5. 评审者不喜欢但符合任务要求的风格。\n\n所有排除样本必须保留，并报告数量和 item_id。\n```\n\n不要用“明显异常”这种没有操作定义的说法。\n\n## 10. 统计分析\n\n### 二选一偏好\n\n主要报告：\n\n```text\ncandidate 胜率\nbaseline 胜率\n平局率\ncandidate 相对胜率\n```\n\n其中：\n\n```text\ncandidate 相对胜率 =\ncandidate 胜场数 /\n(candidate 胜场数 + baseline 胜场数)\n```\n\n平局不要悄悄丢掉，应同时报告“含平局”和“不含平局”的结果。\n\n### 配对分数\n\n对同一个样本的 candidate 和 baseline 做配对比较：\n\n```text\n差值 = candidate 总分 - baseline 总分\n```\n\n报告：\n\n- 平均差；\n- 中位数差；\n- 95% 置信区间；\n- 每个子集的差值；\n- 退化样本数；\n- 效应量，而不只报告显著性。\n\n如果评分者数量较少，优先使用配对置换检验或 bootstrap，并在报告中写清楚方法和随机种子。\n\n### 评审一致性\n\n至少报告：\n\n- 评审者间一致率；\n- Cohen’s kappa 或 Krippendorff’s alpha；\n- 分歧样本数量；\n- 仲裁前和仲裁后的结果。\n\n一致性低时，不应该只给出一个看似精确的总分，还要解释 rubric 是否不够清楚。\n\n## 11. 防止常见偏差\n\n特别注意这些问题：\n\n- **位置偏差**：总把左边判好，所以要随机左右位置；\n- **长度偏差**：更长不一定更完整，评分标准要区分；\n- **首因/近因偏差**：随机样本顺序；\n- **风格泄露**：统一展示格式；\n- **选择性报告**：同时报告总体、子集和失败案例；\n- **多次尝试后挑最好结果**：记录所有运行；\n- **数据泄露**：确认 candidate 没有使用 baseline 的答案；\n- **停止规则偏差**：提前规定样本量，不能看结果后决定何时停止；\n- **评审疲劳**：每轮控制在合理数量，必要时分批并随机分配。\n\n## 12. 建议的实验规模\n\n一个实用的起点：\n\n```text\n正式样本：300 条\n每条样本：baseline 1 次 + candidate 1 次\n评审者：2–3 人\n每名评审者：150–300 个盲审对\n校准样本：20 条，另计\n困难/安全敏感子集：全量纳入\n```\n\n如果预算有限，可以先做：\n\n```text\n探索实验：50 条\n正式实验：200–300 条\n```\n\n探索实验只用于发现协议问题，不能和正式结果混报。\n\n## 13. 最终报告模板\n\n```text\n# Baseline/Candidate Blind Review Report\n\n## 实验版本\n- protocol:\n- dataset:\n- baseline:\n- candidate:\n- run date:\n- random seeds:\n\n## 预注册假设\n- primary metric:\n- success threshold:\n- exclusion rules:\n\n## 样本\n- total:\n- included:\n- excluded:\n- exclusion reasons:\n\n## 盲审设置\n- reviewer count:\n- left/right randomized: yes/no\n- item order randomized: yes/no\n- labels revealed before scoring: yes/no\n\n## 结果\n- candidate wins:\n- baseline wins:\n- ties:\n- candidate win rate:\n- paired score difference:\n- 95% CI:\n- inter-rater agreement:\n\n## 子集结果\n- by difficulty:\n- by task type:\n- by safety sensitivity:\n\n## 失败案例\n- candidate regressions:\n- baseline regressions:\n- unresolved cases:\n\n## 结论\n- whether success criteria were met:\n- limitations:\n- reproducibility instructions:\n\n## 证据清单\n- protocol hash:\n- dataset hash:\n- raw output hashes:\n- blind mapping hash:\n- review file hashes:\n```\n\n## 最关键的三条\n\n1. **先冻结协议，再运行实验**，尤其是成功标准和排除规则。  \n2. **评审者只看匿名化的 A/B 输出**，系统身份和成本延迟都不要泄露。  \n3. **保存从结论到原始输出的完整链路，并为每个中间文件生成哈希**。\n\n这样最后即使有人质疑“是不是挑了样本”“是不是位置偏差”“结果有没有被改过”，都能沿着证据链复查。"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "experiment-review",
+                "source": "personal",
+                "id": "skill_cbeb4bc5103d8a851da0c9436fbb0357ffc1dc89723ad35fd22bff918811be1f"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "1f142dd22fd4d1564a881cdd12620f9d0bf8811de3596af7d9e2233f41a8c0ef",
+            "render_fingerprint": "bff27ba57b7f0066314e62555e1fcdd0b16bcabb3b0816d223dbbab0e109dcac",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "experiment-review",
+                "source": "personal",
+                "id": "skill_cbeb4bc5103d8a851da0c9436fbb0357ffc1dc89723ad35fd22bff918811be1f"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "f18d840598c55d1a7d1563cce4c6e06836a239d31dcaa99a22325d08b032a675",
+            "request_message_index": 7,
+            "preflight_passed": true
+          },
+          "final_text": "我会按“可盲审、可复核证据链”的目标来设计：先把实验协议、盲化方式、评分表和证据留存规则搭起来，再给你一套能直接执行的流程。可以。下面给你一套**最小可复现、双盲、证据可复查**的 baseline/candidate 实验方案。适用于模型、提示词、检索策略、分类器或工作流的对比。\n\n## 1. 实验目标\n\n明确写成一个可证伪的问题：\n\n> 在固定输入、固定资源和固定评审标准下，candidate 是否优于 baseline？\n\n不要只写“candidate 效果更好”，而要提前规定：\n\n- **主指标**：例如任务成功率、盲审胜率、事实准确性\n- **次指标**：完整性、格式遵循、延迟、成本、异常率\n- **改进门槛**：例如主指标至少提升 5%，且 95% 置信区间不跨越 0\n- **允许的代价**：例如成本最多增加 10%，延迟最多增加 20%\n\n建议事先写成：\n\n```text\n主假设 H1：\ncandidate 相对 baseline 的平均评分更高。\n\n无效假设 H0：\ncandidate 与 baseline 的平均评分没有差异。\n\n成功标准：\n1. candidate 的盲审胜率 > 50%；\n2. 配对得分差的 95% CI 下界 > 0，或预注册的显著性检验通过；\n3. 不得违反成本、延迟和安全性约束；\n4. 关键子集上不能出现明显退化。\n```\n\n## 2. 固定实验对象\n\n### 数据集\n\n准备一个冻结版本，例如：\n\n```text\ndataset_name: customer_support_v3\ndataset_version: 2026-09-13\nitem_count: 300\n```\n\n每条样本包含：\n\n```json\n{\n  \"item_id\": \"q_0001\",\n  \"input\": \"...\",\n  \"reference\": \"...\",\n  \"tags\": [\"退款\", \"多步骤\"],\n  \"difficulty\": \"medium\"\n}\n```\n\n注意：\n\n- `item_id` 必须稳定且不泄露答案；\n- 评审时隐藏 `reference`，只有评分阶段按规则使用；\n- 不要在实验结束后临时删样本，除非按预先写好的排除规则执行；\n- 如果数据来自人工抽样，记录抽样方法和随机种子。\n\n### 样本分层\n\n如果任务类型不止一种，先分层：\n\n- 简单 / 中等 / 困难\n- 事实问答 / 推理 / 格式转换\n- 高频 / 低频\n- 安全敏感 / 普通\n\n最终报告既给总体结果，也给每个预先定义的子集结果，避免平均数掩盖局部退化。\n\n## 3. 运行条件冻结\n\nbaseline 和 candidate 必须尽量只差一个变量。\n\n固定并记录：\n\n- 模型名称和版本\n- system prompt\n- user prompt 模板\n- 工具和检索资源\n- 工具调用权限\n- 温度、top-p、最大输出长度\n- 随机种子\n- 超时和重试规则\n- 并发数\n- 运行日期\n- 依赖包或服务版本\n- 计费和限流策略\n\n如果是随机生成任务，建议每个样本运行 `k=3` 次，并提前决定最终取值方式：\n\n- 取平均分；\n- 取多数结果；\n- 或把每次运行都作为独立评审单元。\n\n不要看到结果后才决定。\n\n## 4. 生成阶段：保留完整原始证据\n\n对每个样本、每个系统保存一条不可变记录：\n\n```json\n{\n  \"item_id\": \"q_0001\",\n  \"system_id\": \"baseline\",\n  \"run_id\": \"run_20260913_001\",\n  \"seed\": 42,\n  \"input_hash\": \"...\",\n  \"config_hash\": \"...\",\n  \"output\": \"...\",\n  \"tool_trace\": [],\n  \"latency_ms\": 1830,\n  \"token_usage\": {\n    \"input\": 500,\n    \"output\": 220\n  },\n  \"status\": \"success\",\n  \"timestamp\": \"2026-09-13T...\"\n}\n```\n\n至少保留：\n\n1. 原始输入；\n2. 实际发送的完整 prompt；\n3. 原始输出；\n4. 工具调用和返回内容；\n5. 错误、重试和超时记录；\n6. 配置文件；\n7. 运行日志；\n8. 结果文件的哈希值。\n\n推荐目录结构：\n\n```text\nexperiment/\n├── protocol/\n│   ├── experiment_plan.md\n│   ├── rubric_v1.md\n│   └── exclusion_rules.md\n├── data/\n│   ├── dataset.jsonl\n│   └── dataset.sha256\n├── configs/\n│   ├── baseline.yaml\n│   └── candidate.yaml\n├── raw/\n│   ├── baseline.jsonl\n│   └── candidate.jsonl\n├── blind/\n│   ├── mapping.json\n│   ├── review_items.jsonl\n│   └── manifest.sha256\n├── reviews/\n│   ├── reviewer_01.jsonl\n│   └── reviewer_02.jsonl\n└── reports/\n    ├── analysis.md\n    └── final_results.json\n```\n\n## 5. 盲化设计\n\n### 标签盲化\n\n生成结束后，由不参与评分的人或独立脚本随机映射：\n\n```text\nA7F3 -> baseline\nB2C9 -> candidate\n```\n\n评审者只能看到：\n\n```json\n{\n  \"review_item_id\": \"q_0001_r1\",\n  \"prompt\": \"...\",\n  \"answer_a\": \"...\",\n  \"answer_b\": \"...\"\n}\n```\n\n不要使用固定的 A=baseline、B=candidate。\n\n### 顺序随机化\n\n每个样本独立随机决定：\n\n- candidate 放在左侧还是右侧；\n- 样本展示顺序；\n- 如果可能，评审者顺序。\n\n随机化信息单独保存，并在盲审完成前封存：\n\n```json\n{\n  \"item_id\": \"q_0001\",\n  \"left_label\": \"B2C9\",\n  \"right_label\": \"A7F3\",\n  \"random_seed\": 918273\n}\n```\n\n### 盲审期间禁止泄露\n\n评审界面或文件中不要出现：\n\n- baseline / candidate；\n- 模型名称；\n- 提示词版本名称；\n- 运行时间；\n- 成本；\n- 文件路径中的系统名；\n- 能明显暴露来源的特殊格式。\n\n如果输出风格本身会泄露身份，应在协议中说明是否允许做统一格式化。格式化必须对两组完全一致，并保留未经处理的原始输出。\n\n## 6. 评分表\n\n建议采用“偏好 + 维度分数”两层设计。\n\n### 主判断：总体偏好\n\n```text\n哪一个答案更好？\n\n□ 左侧明显更好\n□ 左侧略好\n□ 大致相同\n□ 右侧略好\n□ 右侧明显更好\n□ 无法判断\n```\n\n分析时将结果转换为：\n\n- 左胜：+1\n- 平局：0\n- 右胜：-1\n\n再根据盲化映射还原为 candidate 相对 baseline 的胜负。\n\n### 维度评分\n\n每个答案分别 1–5 分：\n\n| 维度 | 评分标准 |\n|---|---|\n| 正确性 | 是否包含错误、幻觉或错误推断 |\n| 完整性 | 是否覆盖任务要求和关键要点 |\n| 相关性 | 是否直接回答问题、无明显跑题 |\n| 可执行性 | 用户是否能据此采取正确行动 |\n| 表达质量 | 清晰、简洁、结构合理 |\n| 安全/合规 | 是否存在危险、违规或不当建议 |\n\n为减少主观漂移，rubric 中给出正反例。评分者应先看 rubric，再开始正式评分。\n\n## 7. 评审者安排\n\n理想配置：\n\n- 至少 2 名独立评审者；\n- 评审者不知道系统身份；\n- 先独立评分，不互相讨论；\n- 对分歧样本进行第三人仲裁；\n- 仲裁只能解决“如何分类”，不能修改原始答案。\n\n可以先拿 20 个样本做校准，但要注意：\n\n- 校准样本不能混入正式结果；\n- 校准时可以讨论；\n- 正式盲审时不能讨论。\n\n记录每名评审者的：\n\n```json\n{\n  \"reviewer_id\": \"reviewer_01\",\n  \"item_id\": \"q_0001\",\n  \"preference\": \"left\",\n  \"scores_left\": {\n    \"correctness\": 4,\n    \"completeness\": 5\n  },\n  \"scores_right\": {\n    \"correctness\": 3,\n    \"completeness\": 4\n  },\n  \"confidence\": 4,\n  \"reason_codes\": [\"遗漏关键步骤\"],\n  \"comment\": \"...\"\n}\n```\n\n尽量使用预定义的 `reason_codes`，同时允许补充自由文本。\n\n## 8. 证据可复查设计\n\n核心原则是：任何最终结论都能追溯到原始样本。\n\n建立如下链路：\n\n```text\n最终结论\n  ↓\n统计分析文件\n  ↓\n评审记录\n  ↓\n盲化记录\n  ↓\n脱盲映射\n  ↓\n原始输出\n  ↓\n实际输入、配置和工具轨迹\n```\n\n每个文件保存：\n\n- 内容哈希；\n- 创建时间；\n- 版本号；\n- 生成者；\n- 上游文件哈希。\n\n例如：\n\n```text\ndataset.jsonl\nsha256: 91b...\n\nbaseline.jsonl\nsha256: 2a4...\n\ncandidate.jsonl\nsha256: 8f1...\n\nblind_manifest.json\nsha256: c73...\n```\n\n推荐额外建立一份 manifest：\n\n```json\n{\n  \"protocol_sha256\": \"...\",\n  \"dataset_sha256\": \"...\",\n  \"baseline_raw_sha256\": \"...\",\n  \"candidate_raw_sha256\": \"...\",\n  \"blind_mapping_sha256\": \"...\",\n  \"review_files\": {\n    \"reviewer_01\": \"...\"\n  }\n}\n```\n\n这样复查者可以确认评审后是否替换过数据。\n\n## 9. 预先规定的排除规则\n\n在看到结果前写好：\n\n```text\n排除条件：\n1. 输入无法解析；\n2. 服务返回空结果；\n3. 两个系统都因同一基础设施故障失败；\n4. 样本被发现存在重复，且重复比例超过预设阈值。\n\n不排除：\n1. candidate 输出错误；\n2. baseline 输出错误；\n3. 单个系统超时；\n4. 输出过长；\n5. 评审者不喜欢但符合任务要求的风格。\n\n所有排除样本必须保留，并报告数量和 item_id。\n```\n\n不要用“明显异常”这种没有操作定义的说法。\n\n## 10. 统计分析\n\n### 二选一偏好\n\n主要报告：\n\n```text\ncandidate 胜率\nbaseline 胜率\n平局率\ncandidate 相对胜率\n```\n\n其中：\n\n```text\ncandidate 相对胜率 =\ncandidate 胜场数 /\n(candidate 胜场数 + baseline 胜场数)\n```\n\n平局不要悄悄丢掉，应同时报告“含平局”和“不含平局”的结果。\n\n### 配对分数\n\n对同一个样本的 candidate 和 baseline 做配对比较：\n\n```text\n差值 = candidate 总分 - baseline 总分\n```\n\n报告：\n\n- 平均差；\n- 中位数差；\n- 95% 置信区间；\n- 每个子集的差值；\n- 退化样本数；\n- 效应量，而不只报告显著性。\n\n如果评分者数量较少，优先使用配对置换检验或 bootstrap，并在报告中写清楚方法和随机种子。\n\n### 评审一致性\n\n至少报告：\n\n- 评审者间一致率；\n- Cohen’s kappa 或 Krippendorff’s alpha；\n- 分歧样本数量；\n- 仲裁前和仲裁后的结果。\n\n一致性低时，不应该只给出一个看似精确的总分，还要解释 rubric 是否不够清楚。\n\n## 11. 防止常见偏差\n\n特别注意这些问题：\n\n- **位置偏差**：总把左边判好，所以要随机左右位置；\n- **长度偏差**：更长不一定更完整，评分标准要区分；\n- **首因/近因偏差**：随机样本顺序；\n- **风格泄露**：统一展示格式；\n- **选择性报告**：同时报告总体、子集和失败案例；\n- **多次尝试后挑最好结果**：记录所有运行；\n- **数据泄露**：确认 candidate 没有使用 baseline 的答案；\n- **停止规则偏差**：提前规定样本量，不能看结果后决定何时停止；\n- **评审疲劳**：每轮控制在合理数量，必要时分批并随机分配。\n\n## 12. 建议的实验规模\n\n一个实用的起点：\n\n```text\n正式样本：300 条\n每条样本：baseline 1 次 + candidate 1 次\n评审者：2–3 人\n每名评审者：150–300 个盲审对\n校准样本：20 条，另计\n困难/安全敏感子集：全量纳入\n```\n\n如果预算有限，可以先做：\n\n```text\n探索实验：50 条\n正式实验：200–300 条\n```\n\n探索实验只用于发现协议问题，不能和正式结果混报。\n\n## 13. 最终报告模板\n\n```text\n# Baseline/Candidate Blind Review Report\n\n## 实验版本\n- protocol:\n- dataset:\n- baseline:\n- candidate:\n- run date:\n- random seeds:\n\n## 预注册假设\n- primary metric:\n- success threshold:\n- exclusion rules:\n\n## 样本\n- total:\n- included:\n- excluded:\n- exclusion reasons:\n\n## 盲审设置\n- reviewer count:\n- left/right randomized: yes/no\n- item order randomized: yes/no\n- labels revealed before scoring: yes/no\n\n## 结果\n- candidate wins:\n- baseline wins:\n- ties:\n- candidate win rate:\n- paired score difference:\n- 95% CI:\n- inter-rater agreement:\n\n## 子集结果\n- by difficulty:\n- by task type:\n- by safety sensitivity:\n\n## 失败案例\n- candidate regressions:\n- baseline regressions:\n- unresolved cases:\n\n## 结论\n- whether success criteria were met:\n- limitations:\n- reproducibility instructions:\n\n## 证据清单\n- protocol hash:\n- dataset hash:\n- raw output hashes:\n- blind mapping hash:\n- review file hashes:\n```\n\n## 最关键的三条\n\n1. **先冻结协议，再运行实验**，尤其是成功标准和排除规则。  \n2. **评审者只看匿名化的 A/B 输出**，系统身份和成本延迟都不要泄露。  \n3. **保存从结论到原始输出的完整链路，并为每个中间文件生成哈希**。\n\n这样最后即使有人质疑“是不是挑了样本”“是不是位置偏差”“结果有没有被改过”，都能沿着证据链复查。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}
