@@ -36,6 +36,7 @@
 - **E-009 / observed / confirmed / retained**：首次 local-test runtime 命令被 `guide_baseline.transient_baseline` 拒绝：本需求修改的 builtin manifest 尚未提交。没有执行覆盖或绕过门禁；采用本地实现提交建立可构建基线，不合入主干。
 - **E-010 / official-release / confirmed / active**：打包共同前置检查取得 Guide `agent-friend-guide-r42`，GitHub API 为 published、非 prerelease、immutable，目标 commit `0007ae65a3cc684f72d7014c75319f9e1503b6b5`；verify 通过，snapshot `b38f9626ce410eca17f5b3350ac9698e9d3bcf5abf3f3401dee6b6b9501206bd`。公开 `using-agent-friend.md` 仍有“更新通常下一轮可用”的旧说明，本需求发布时需由 Guide 维护流程更新；本次 package-baseline 不授权公开修改或发布。
 - **E-011 / deterministic-judge / confirmed / active**：C20-10/11 使用 case-local Skill 更新效果，经生产自动激活链路验证 continuation/control 的 fixture 与 judge。它们为 synthetic，不作为 108 历史事故模型复验；尚未运行真实模型。
+- **E-012 / frozen-runtime / confirmed / active**：实现提交 `3fbdddc204663807ca46322257cb551427a34682`，叠加 E-010 的受治理临时 Guide baseline，构建 local-test 0.3.0，build ID `20260913T055842Z-3fbdddc20466-52444582`。`package-sensitive` doctor 全部通过，`capability:skill_catalog_hot_reload.same_turn_update_activation` 为 `reloaded-with-version-isolation`；服务 smoke 通过，完整命令退出码 0。build 内 `package-timings.json` 记录 pyinstaller 279.656 秒、runtime-stage-and-smoke 278.047 秒，制品为 `runtime-stage/python/agent-friend-runtime.exe`，清单位于 `runtime-stage/runtime-inventory.json`。构建后 Git 工作区干净，证实临时 baseline 恢复；E-009 阻塞已解除。仅为冻结能力证据，未构建安装器、安装或调用真实 LLM。
 
 ## 决策影响
 
@@ -45,10 +46,11 @@
 
 ## Artifact 映射
 
-- 代码可由上述完整 SHA 定位；没有新增运行实验、截图或原始日志包。
+- 实现由 E-012 完整 SHA 定位；E-008 为提交前 overlay 验证。冻结制品由 E-012 build ID 定位，保留在 package runner 管理的当前 worktree build 区域；没有真实模型运行实验、截图或原始诊断包。
 - 官方文档通过 OpenAI Docs、Context7 与网页读取核验；本目录保留链接和结论摘要，未保存页面完整快照或声称有内容哈希。
 - 用户决定仅保存产品范围摘要，不保存完整对话、私人数据或凭据。
 
 ## 对账记录
 
 - 2026-09-13：129 编号已确认；需求为 CONFIRMED，技术方案、实现和验证尚未开展。外部资料的机制事实与本项目自动重载决定已分开记录。
+- 2026-09-13：技术方案已确认，实现、确定性项目检查与冻结 runtime 验证完成；用户验收待进行，真实模型 eval 未执行，需求仍为 IN_PROGRESS。
