@@ -1,4 +1,4 @@
-"""Request-bound input usage; only an unchanged prefix can spend a measured anchor.
+"""Request-bound input usage with conservative reuse of unchanged content.
 
 Persist hashes and counts, never another copy of model-visible content. Output
 usage only bounds matching replayed reasoning, never unconditionally adds input.
@@ -6,8 +6,7 @@ usage only bounds matching replayed reasoning, never unconditionally adds input.
 
 from __future__ import annotations
 
-import hashlib
-import json
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -17,13 +16,10 @@ from .budget import (
     DOCUMENT_ATTACHMENT_TOKEN_CAP,
     IMAGE_ATTACHMENT_TOKENS,
     TOOL_IMAGE_TOKENS,
+    estimate_tool_schema_tokens,
 )
-
-
-def digest(value: Any) -> str:
-    return hashlib.sha256(
-        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+from .usage_components import components, valid_digest
+from .usage_components import digest as digest
 
 
 def estimate_rendered_tokens(
@@ -78,10 +74,25 @@ class RequestMeasurement:
     scope: str
     prefix: str
     message_count: int
+    compatibility_scope: str | None = None
+    component_digests: tuple[str, ...] = ()
 
     @classmethod
-    def capture(cls, messages: list[dict[str, Any]], scope: str) -> RequestMeasurement:
-        return cls(scope, digest(messages), len(messages))
+    def capture(
+        cls,
+        messages: list[dict[str, Any]],
+        scope: str,
+        *,
+        compatibility_scope: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> RequestMeasurement:
+        return cls(
+            scope,
+            digest(messages),
+            len(messages),
+            compatibility_scope,
+            tuple(key for key, _ in components(messages, tools)) if compatibility_scope else (),
+        )
 
 
 @dataclass(frozen=True)
@@ -93,6 +104,8 @@ class UsageAnchor:
     version: int = 2
     output_reasoning_digest: str | None = None
     output_reasoning_tokens: int | None = None
+    compatibility_scope: str | None = None
+    component_digests: tuple[str, ...] = ()
 
     @classmethod
     def from_usage(
@@ -124,8 +137,11 @@ class UsageAnchor:
             request.prefix,
             request.message_count,
             tokens,
+            version=3 if request.compatibility_scope is not None else 2,
             output_reasoning_digest=digest(reasoning_details) if has_bound else None,
             output_reasoning_tokens=output if has_bound else None,
+            compatibility_scope=request.compatibility_scope,
+            component_digests=request.component_digests,
         )
 
     def payload(self) -> dict[str, Any]:
@@ -135,7 +151,7 @@ class UsageAnchor:
     def restore(cls, value: Any) -> UsageAnchor | None:
         if not isinstance(value, dict) or type(value.get("version")) is not int:
             return None
-        if value["version"] not in {1, 2}:
+        if value["version"] not in {1, 2, 3}:
             return None
         for key in ("scope", "prefix"):
             field = value.get(key)
@@ -146,8 +162,8 @@ class UsageAnchor:
         for key in ("message_count", "input_tokens"):
             if type(value.get(key)) is not int or value[key] <= 0:
                 return None
-        reasoning_digest = value.get("output_reasoning_digest") if value["version"] == 2 else None
-        reasoning_tokens = value.get("output_reasoning_tokens") if value["version"] == 2 else None
+        reasoning_digest = value.get("output_reasoning_digest") if value["version"] >= 2 else None
+        reasoning_tokens = value.get("output_reasoning_tokens") if value["version"] >= 2 else None
         if (reasoning_digest is not None or reasoning_tokens is not None) and (
             not isinstance(reasoning_digest, str)
             or len(reasoning_digest) != 64
@@ -156,13 +172,25 @@ class UsageAnchor:
             or reasoning_tokens <= 0
         ):
             return None
+        compatibility_scope = value.get("compatibility_scope") if value["version"] == 3 else None
+        keys = value.get("component_digests") if value["version"] == 3 else ()
+        if value["version"] == 3 and (
+            not valid_digest(compatibility_scope)
+            or not isinstance(keys, (list, tuple))
+            or not keys
+            or not all(valid_digest(key) for key in keys)
+        ):
+            return None
         return cls(
             value["scope"],
             value["prefix"],
             value["message_count"],
             value["input_tokens"],
+            version=3 if value["version"] == 3 else 2,
             output_reasoning_digest=reasoning_digest,
             output_reasoning_tokens=reasoning_tokens,
+            compatibility_scope=compatibility_scope,
+            component_digests=tuple(keys or ()),
         )
 
 
@@ -211,6 +239,10 @@ class InputEstimate:
     anchor_tokens: int = 0
     covered_messages: int = 0
     delta_tokens: int = 0
+    reused_components: int = 0
+    added_components: int = 0
+    retained_components: int = 0
+    unknown_tokens: int = 0
 
     def notes(self) -> dict[str, Any]:
         return {
@@ -220,6 +252,10 @@ class InputEstimate:
             "anchor_input_tokens": self.anchor_tokens,
             "anchor_covered_messages": self.covered_messages,
             "incremental_tokens": self.delta_tokens,
+            "reused_components": self.reused_components,
+            "added_components": self.added_components,
+            "retained_components": self.retained_components,
+            "unknown_input_tokens": self.unknown_tokens,
         }
 
 
@@ -229,9 +265,20 @@ def estimate_input(
     scope: str,
     anchor: UsageAnchor | None,
     fallback_tokens: int | Callable[[], int],
+    compatibility_scope: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    unknown_token_reserve: int = 1_000_000,
+    fallback_threshold: int | None = None,
 ) -> InputEstimate:
     reason = "no_trusted_usage"
     if anchor is not None:
+        if anchor.version == 3:
+            if anchor.compatibility_scope != compatibility_scope:
+                fallback = fallback_tokens() if callable(fallback_tokens) else fallback_tokens
+                return InputEstimate(fallback, "full_estimate", "request_scope_changed")
+            return _estimate_components(
+                messages, tools, anchor, fallback_tokens, unknown_token_reserve, fallback_threshold
+            )
         reason = "request_scope_changed"
         if anchor.scope == scope:
             reason = "request_prefix_changed"
@@ -252,3 +299,93 @@ def estimate_input(
                 reason = "unmeasured_reasoning_delta"
     fallback = fallback_tokens() if callable(fallback_tokens) else fallback_tokens
     return InputEstimate(fallback, "full_estimate", reason)
+
+
+def _estimate_components(
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    anchor: UsageAnchor,
+    fallback_tokens: int | Callable[[], int],
+    unknown_token_reserve: int,
+    fallback_threshold: int | None,
+) -> InputEstimate:
+    remaining = Counter(anchor.component_digests)
+    added = reused = delta = unknown = 0
+    for key, payload in components(messages, tools):
+        if remaining[key] > 0:
+            remaining[key] -= 1
+            reused += 1
+            continue
+        added += 1
+        if "_tool_schema" in payload:
+            delta += estimate_tool_schema_tokens([payload["_tool_schema"]])
+            continue
+        cost = _estimate_delta([payload], anchor)
+        if cost is None:
+            # Ciphertext length is not a bound on the underlying reasoning.
+            # Reserve a full window, forcing the existing recovery path.
+            unknown += unknown_token_reserve
+        else:
+            delta += cost
+    retained = sum(remaining.values())
+    tokens = anchor.input_tokens + delta + unknown
+    mode = "usage_anchor" if not retained else "usage_anchor_partial"
+    reason = "unmeasured_reasoning_delta" if unknown else "none"
+    # A shorter candidate must be able to shed retained slack after compaction
+    # or FIFO trimming. Never subtract an estimated old fragment from real usage.
+    if not unknown and (
+        len(messages) < anchor.message_count
+        or (retained and fallback_threshold is not None and tokens > fallback_threshold)
+    ):
+        fallback = fallback_tokens() if callable(fallback_tokens) else fallback_tokens
+        if fallback < tokens:
+            return InputEstimate(fallback, "full_estimate", "rewritten_candidate")
+    return InputEstimate(
+        tokens,
+        mode,
+        reason,
+        anchor.input_tokens,
+        0,
+        delta + unknown,
+        reused,
+        added,
+        retained,
+        unknown,
+    )
+
+
+def estimate_full_input(
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    *,
+    unknown_token_reserve: int,
+    anchor: UsageAnchor | None = None,
+) -> int:
+    """Independent candidate estimate without pricing opaque reasoning ciphertext.
+
+    A compatible input measurement bounds all retained opaque components together;
+    an output measurement bounds its matching reasoning. Neither is a per-item
+    exact count. Unmeasured opaque content reserves a whole context window.
+    """
+    remaining = Counter(anchor.component_digests if anchor is not None else ())
+    empty = UsageAnchor("", "", 0, 0)
+    bound = anchor or empty
+    tokens = 0
+    retained_opaque = False
+    for key, payload in components(messages, tools):
+        matched = remaining[key] > 0
+        if matched:
+            remaining[key] -= 1
+        if "_tool_schema" in payload:
+            tokens += estimate_tool_schema_tokens([payload["_tool_schema"]])
+            continue
+        cost = _estimate_delta([payload], bound)
+        if cost is not None:
+            tokens += cost
+        elif matched:
+            retained_opaque = True
+        else:
+            tokens += unknown_token_reserve
+    if retained_opaque:
+        tokens += bound.input_tokens
+    return tokens

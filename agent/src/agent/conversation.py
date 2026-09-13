@@ -112,6 +112,7 @@ from .context.usage_anchor import (
     RequestMeasurement,
     UsageAnchor,
     digest,
+    estimate_full_input,
     estimate_input,
     estimate_rendered_tokens,
 )
@@ -3318,7 +3319,11 @@ class Conversation:
         return rendered
 
     def _usage_scope(
-        self, tools: list[dict[str, Any]] | None, settings: dict[str, Any] | None = None
+        self,
+        tools: list[dict[str, Any]] | None,
+        settings: dict[str, Any] | None = None,
+        *,
+        compatibility_only: bool = False,
     ) -> str:
         client = self._active_llm_client()
         spec = getattr(client, "spec", None)
@@ -3332,7 +3337,7 @@ class Conversation:
                 "defaults": getattr(spec, "defaults", None),
                 "responses": repr(getattr(spec, "responses", None)),
                 "input_usage_scope": get_model_capabilities(client).input_usage_scope,
-                "tools": tools or [],
+                **({} if compatibility_only else {"tools": tools or []}),
                 "settings": settings or {},
             }
         )
@@ -3352,7 +3357,34 @@ class Conversation:
         # Rendering attachments can upload files. Budget candidate selection must
         # remain pure and must not upload content that will subsequently be cut.
         if any(message.attachments or message.images for message in messages):
-            return InputEstimate(fallback(), "full_estimate", "attachments_pending_render")
+            if self._usage_anchor is None or self._usage_anchor.version < 3:
+                return InputEstimate(fallback(), "full_estimate", "attachments_pending_render")
+            # Pure candidate projection: only unresolved attachment-bearing messages
+            # receive a source allowance; unchanged text history can still reuse usage.
+            rendered = []
+            allowance = 0
+            for message in messages:
+                if message.attachments or message.images:
+                    rendered.append(message.to_openai())
+                    allowance += estimate_tokens(
+                        [
+                            Message(
+                                role=message.role,
+                                content="",
+                                attachments=message.attachments,
+                                images=message.images,
+                            )
+                        ]
+                    )
+                else:
+                    rendered.append(self._render_context_message(message))
+            estimate = self._estimate_rendered_input(rendered, tools)
+            return replace(
+                estimate,
+                tokens=estimate.tokens + allowance,
+                delta_tokens=estimate.delta_tokens + allowance,
+                reason="attachments_pending_render",
+            )
         rendered = [self._render_context_message(message) for message in messages]
         return self._estimate_rendered_input(rendered, tools, fallback_floor=fallback)
 
@@ -3372,7 +3404,7 @@ class Conversation:
             for block in (message["content"] if isinstance(message.get("content"), list) else [])
             if isinstance(block, dict) and block.get("type") in {"file", "input_file"}
         )
-        if native_files:
+        if native_files and (self._usage_anchor is None or self._usage_anchor.version < 3):
             from .context import estimate_tokens
             from .context.budget import DOCUMENT_ATTACHMENT_TOKEN_CAP
 
@@ -3402,6 +3434,19 @@ class Conversation:
             )
 
         def fallback() -> int:
+            if self._usage_anchor is not None and self._usage_anchor.version == 3:
+                compatible = self._usage_anchor.compatibility_scope == self._usage_scope(
+                    tools, settings, compatibility_only=True
+                )
+                return math.ceil(
+                    estimate_full_input(
+                        messages,
+                        tools,
+                        unknown_token_reserve=max(1, self._active_llm_client().context_window),
+                        anchor=self._usage_anchor if compatible else None,
+                    )
+                    * factor
+                )
             floor = fallback_floor() if callable(fallback_floor) else fallback_floor
             return max(
                 floor,
@@ -3420,6 +3465,14 @@ class Conversation:
             scope=self._usage_scope(tools, settings),
             anchor=self._usage_anchor,
             fallback_tokens=fallback,
+            compatibility_scope=self._usage_scope(tools, settings, compatibility_only=True),
+            tools=tools,
+            unknown_token_reserve=max(1, self._active_llm_client().context_window),
+            fallback_threshold=make_budget_snapshot(
+                self._active_llm_client().context_window,
+                self._last_input_tokens,
+                emergency_ratio=self._context_emergency_ratio,
+            ).trigger_threshold,
         )
 
     def _record_context_notes(
@@ -3460,7 +3513,8 @@ class Conversation:
         self._last_context_notes = notes
         logger.info(
             "context_input_estimate session_id=%s mode=%s tokens=%s anchor=%s "
-            "covered_messages=%s delta=%s fallback=%s",
+            "covered_messages=%s delta=%s fallback=%s reused_components=%s "
+            "added_components=%s retained_components=%s unknown_tokens=%s",
             self._session.session_id,
             estimate.mode,
             estimate.tokens,
@@ -3468,6 +3522,10 @@ class Conversation:
             estimate.covered_messages,
             estimate.delta_tokens,
             estimate.reason,
+            estimate.reused_components,
+            estimate.added_components,
+            estimate.retained_components,
+            estimate.unknown_tokens,
         )
         prior = runtime.prior_summary
         compaction = build.new_compaction
@@ -3710,6 +3768,10 @@ class Conversation:
                 self._pending_request_measurement = RequestMeasurement.capture(
                     current_messages,
                     self._usage_scope(tools, request_overrides),
+                    compatibility_scope=self._usage_scope(
+                        tools, request_overrides, compatibility_only=True
+                    ),
+                    tools=tools,
                 )
                 if request_observer is not None:
                     request_observer(current_messages, request_attempt, request_overrides)
