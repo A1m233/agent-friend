@@ -102,6 +102,7 @@ class FakeToolResponse:
     result_text: str
     is_error: bool = False
     source_urls: list[str] = field(default_factory=list)
+    skill_update: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,7 @@ class FakeTool:
     is_error: bool = False
     source_urls: list[str] = field(default_factory=list)
     responses: list[FakeToolResponse] = field(default_factory=list)
+    skill_update: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)

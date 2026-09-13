@@ -26,6 +26,12 @@ from ..filesystem.policy import resolve_locator
 from ..paths import command_workspaces_dir, skills_dir
 from ..sessions.tool_execution_evidence import ToolExecutionEvidenceStore
 from ..skills.models import SkillTurnSnapshot
+from ..skills.update_receipts import (
+    NONCE_ENV,
+    RECEIPT_ENV,
+    consume_process_update,
+    prepare_update_receipt,
+)
 from ..tool_runtime.context import ToolRunContext
 from ..tool_runtime.control import TOOL_INVOCATION_CONTROL_ARG, ToolInvocationControl
 from ..tools.protocol import Tool, ToolResult
@@ -735,8 +741,19 @@ class ExecCommandTool:
             )
         try:
             self._validate_path_identities(path_identities)
+            pending_update = prepare_update_receipt(
+                details,
+                args.get(COMMAND_SKILL_SNAPSHOT_ARG),
+                personal_root=self._personal_skills_root,
+                run_temp=run_temp,
+            )
         except CommandRuntimeError as exc:
             return _command_runtime_error_result(exc, fallback_status="failed")
+        except (OSError, ValueError) as exc:
+            return _result(
+                {"status": "failed", "error": "skill_update_preflight_failed", "message": str(exc)},
+                error=True,
+            )
         sandbox = (
             sandbox_context(
                 workdir=workdir,
@@ -758,6 +775,18 @@ class ExecCommandTool:
                     workdir, sandbox, operation_id=tool_call_id
                 )
             process_id = f"proc_{uuid4().hex}"
+            if pending_update is not None:
+                details.environment_overrides.update(
+                    {
+                        RECEIPT_ENV: str(pending_update.receipt),
+                        NONCE_ENV: pending_update.nonce,
+                    }
+                )
+                context.register_command_resource(
+                    f"skill-update:{process_id}",
+                    pending_update,
+                    lambda: pending_update.receipt.unlink(missing_ok=True),
+                )
             evidence_ref = (
                 self._tool_execution_evidence_store.new_reference()
                 if self._tool_execution_evidence_store is not None and details.mode == "buffered"
@@ -873,7 +902,10 @@ class ExecCommandTool:
                     "process": _bounded_process_result(snapshot),
                 },
                 error=True,
-                diagnostic_meta=_process_diagnostic_meta(snapshot),
+                diagnostic_meta={
+                    **_process_diagnostic_meta(snapshot),
+                    **consume_process_update(context, snapshot),
+                },
             )
         result_payload = _bounded_process_result(snapshot)
         result_payload.update(
@@ -957,7 +989,10 @@ class ExecCommandTool:
         return _result(
             result_payload,
             error=result_error,
-            diagnostic_meta=_process_diagnostic_meta(snapshot),
+            diagnostic_meta={
+                **_process_diagnostic_meta(snapshot),
+                **consume_process_update(context, snapshot),
+            },
         )
 
     @staticmethod
@@ -1133,6 +1168,11 @@ class ExecCommandTool:
                     )
             if not isinstance(skill_id, str):
                 raise ValueError("skill.skill_id 必须是字符串")
+            if skill_id in context.blocked_skills:
+                raise CommandRuntimeError(
+                    "skill_reload_required",
+                    "Skill 新版加载失败；先修正失败原因并通过 skill_read 重新加载，不得沿用旧版命令。",
+                )
             relative_workdir = self._parse_skill_workdir(raw_skill.get("workdir", "."))
             activation = next(
                 (item for item in activations if item.record.id == skill_id),
@@ -1510,9 +1550,13 @@ class ExecCommandTool:
 
     @staticmethod
     def _rewrite_skill_entry(cmd: str, snapshot: SkillExecutionSnapshot) -> str:
-        absolute_source = str(snapshot.source_root / Path(*snapshot.entry.split("/")))
-        if absolute_source in cmd:
-            return cmd.replace(absolute_source, str(snapshot.entry_path))
+        for root in (snapshot.source_root, snapshot.activation_root):
+            if root is None:
+                continue
+            absolute_source = root / Path(*snapshot.entry.split("/"))
+            for source in (str(absolute_source), absolute_source.as_posix()):
+                if source in cmd:
+                    return cmd.replace(source, str(snapshot.entry_path))
         native_entry = str(Path(*snapshot.entry.split("/")))
         if snapshot.entry not in cmd and native_entry not in cmd:
             raise CommandRuntimeError(
@@ -1525,21 +1569,15 @@ class ExecCommandTool:
         cmd: str, workdir: Path, snapshot: SkillTurnSnapshot | None
     ) -> None:
         for activation in snapshot.activations if snapshot is not None else ():
-            root = activation.record.package_root.resolve()
-            try:
-                workdir.relative_to(root)
-            except ValueError:
-                pass
-            else:
-                raise CommandRuntimeError(
-                    "skill_binding_required",
-                    "Commands using an activated Skill package must provide structured skill binding",
-                )
-            if str(root) in cmd or root.as_posix() in cmd:
-                raise CommandRuntimeError(
-                    "skill_binding_required",
-                    "Commands using an activated Skill path must provide structured skill binding",
-                )
+            for root in {
+                activation.record.package_root.resolve(),
+                activation.resource_root.resolve(),
+            }:
+                if workdir.is_relative_to(root) or str(root) in cmd or root.as_posix() in cmd:
+                    raise CommandRuntimeError(
+                        "skill_binding_required",
+                        "Commands using an activated Skill package must provide structured skill binding",
+                    )
 
     def _parse_roots(self, raw: object) -> tuple[tuple[Path, bool], ...]:
         if not isinstance(raw, list) or len(raw) > 8:
@@ -2021,7 +2059,10 @@ class WriteStdinTool:
                 context.release_command_handle(process_id)
             return _result(
                 _bounded_process_result(snapshot),
-                diagnostic_meta=_process_diagnostic_meta(snapshot),
+                diagnostic_meta={
+                    **_process_diagnostic_meta(snapshot),
+                    **consume_process_update(context, snapshot),
+                },
             )
         except (ValueError, CommandRuntimeError) as exc:
             return _result(
@@ -2154,7 +2195,13 @@ class TerminateCommandTool:
                     error=True,
                     diagnostic_meta=_process_diagnostic_meta(snapshot),
                 )
-            return _result(payload, diagnostic_meta=_process_diagnostic_meta(snapshot))
+            return _result(
+                payload,
+                diagnostic_meta={
+                    **_process_diagnostic_meta(snapshot),
+                    **consume_process_update(context, snapshot),
+                },
+            )
         except CommandRuntimeError as exc:
             return _command_runtime_error_result(exc, fallback_status="failed")
         except (TypeError, ValueError) as exc:

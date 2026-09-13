@@ -38,7 +38,6 @@ from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from uuid import uuid4
 
@@ -186,6 +185,7 @@ from .skills import (
     render_activation_issue,
     render_runtime_capability_notice,
 )
+from .skills.lifecycle import apply_skill_update, render_current_bindings
 from .system_prompt.assistant_phase import phase_instruction
 from .system_prompt.defaults import load_default_channel_instruction
 from .system_prompt.sections import PromptChannel
@@ -206,6 +206,7 @@ from .tools import ToolRegistry, ToolResult
 from .tools.builtin.skills import (
     SKILL_CATALOG_SNAPSHOT_ARG,
     SKILL_READ_TOOL_NAME,
+    SKILL_RUN_CONTEXT_ARG,
     SKILL_RUNTIME_CAPABILITIES_ARG,
 )
 
@@ -2991,6 +2992,23 @@ class Conversation:
             ),
             approval_mode=approval_state.mode if approval_state is not None else None,
             approval_version=approval_state.version if approval_state is not None else None,
+            skill_bindings=(
+                render_current_bindings(
+                    self._active_tool_run_context, self._skill_runtime_capability_notice()
+                )
+                if (
+                    self._active_tool_run_context is not None
+                    and (
+                        self._active_tool_run_context.skill_activations
+                        or self._active_tool_run_context.blocked_skills
+                    )
+                )
+                or any(
+                    message.meta.get("model_context_contributor") == "skill_bindings"
+                    for message in raw_history
+                )
+                else None
+            ),
             runtime_capabilities=render_runtime_capability_notice(
                 tuple(sorted(name for name in callable_names if name)),
                 surface=current_surface,
@@ -3017,8 +3035,20 @@ class Conversation:
                 projection.apply(messages), budget_runtime
             ),
         )
-        boundary_context = [*context_additions, *(pre_user_context or [])]
-        active_turn_context = list(turn_context or [])
+        skill_additions = [
+            m
+            for m in context_additions
+            if m.meta.get("model_context_contributor") == "skill_bindings"
+        ]
+        boundary_context = [
+            *(
+                m
+                for m in context_additions
+                if m.meta.get("model_context_contributor") != "skill_bindings"
+            ),
+            *(pre_user_context or []),
+        ]
+        active_turn_context = [*skill_additions, *(turn_context or [])]
         filesystem_scope_delta = self._filesystem_scope_delta_message()
         if filesystem_scope_delta is not None:
             active_turn_context.append(filesystem_scope_delta)
@@ -3887,7 +3917,11 @@ class Conversation:
                         for selection in self._active_skill_selections
                     ],
                     "activations": [
-                        {"id": activation.record.id, "version": activation.version}
+                        {
+                            "id": activation.record.id,
+                            "version": activation.version,
+                            "package_version": activation.package_version,
+                        }
                         for activation in skill_snapshot.activations
                     ],
                 }
@@ -4900,14 +4934,7 @@ class Conversation:
         context = self._tool_run_context_factory(user_input)
         if self._active_skill_turn_snapshot is not None:
             for activation in self._active_skill_turn_snapshot.activations:
-                context.filesystem_authorizations.grant_scope(
-                    root=activation.record.package_root.resolve(),
-                    root_kind="directory",
-                    permissions=frozenset({"search_metadata", "read_text"}),
-                    allow_protected=True,
-                    source="skill",
-                    label=f"Skill {activation.record.name}",
-                )
+                context.bind_skill(activation)
         source_events = self._session.active_events if events is None else events
         for event in source_events:
             if event.type == "user_message":
@@ -4986,6 +5013,7 @@ class Conversation:
             )
         if name == SKILL_READ_TOOL_NAME and self._active_skill_turn_snapshot is not None:
             invocation_args[SKILL_CATALOG_SNAPSHOT_ARG] = self._active_skill_turn_snapshot.catalog
+            invocation_args[SKILL_RUN_CONTEXT_ARG] = tool_run_context
             invocation_args[SKILL_RUNTIME_CAPABILITIES_ARG] = (
                 self._skill_runtime_capability_notice()
             )
@@ -5457,6 +5485,7 @@ class Conversation:
                     legacy_hook_invoker=legacy_hooks,
                     pre_hook=self._tool_pre_hook,
                     post_hook=self._tool_post_hook,
+                    result_transform=self._apply_skill_tool_result,
                 )
                 if allowed
                 else []
@@ -5570,17 +5599,6 @@ class Conversation:
                 result.meta.get("public_evidence"),
                 result.meta.get("ephemeral_evidence"),
             )
-            skill_root = result.meta.get("filesystem_package_root")
-            if tc["name"] == SKILL_READ_TOOL_NAME and isinstance(skill_root, str):
-                context.filesystem_authorizations.grant_scope(
-                    root=Path(skill_root).resolve(),
-                    root_kind="directory",
-                    permissions=frozenset({"search_metadata", "read_text"}),
-                    allow_protected=True,
-                    source="skill",
-                    label=f"Skill {result.meta.get('skill_activation', {}).get('name', '')}",
-                )
-            self._adopt_runtime_skill_activation(result)
             progress.observe(tc["name"], tc["args"], result)
             runtime.new_evidence_count = progress.new_evidence_count
             runtime.reused_evidence_count = progress.reused_evidence_count
@@ -5610,11 +5628,43 @@ class Conversation:
                 origin=tc.get("origin", "model"),
             )
 
+    def _apply_skill_tool_result(self, result: ToolResult) -> ToolResult:
+        if (
+            self._skill_service is not None
+            and self._active_skill_turn_snapshot is not None
+            and self._active_tool_run_context is not None
+        ):
+            result = apply_skill_update(
+                result,
+                service=self._skill_service,
+                snapshot=self._active_skill_turn_snapshot,
+                context=self._active_tool_run_context,
+                runtime_capabilities=self._skill_runtime_capability_notice(),
+            )
+        self._adopt_runtime_skill_activation(result)
+        return result
+
     def _adopt_runtime_skill_activation(self, result: ToolResult) -> None:
         """Make a successful semantic Skill activation available to later tools this turn."""
 
         activation = result.meta.get("_activated_skill")
         snapshot = self._active_skill_turn_snapshot
+        context = self._active_tool_run_context
+        if context is not None and snapshot is not None:
+            blocked = result.meta.get("_skill_blocked")
+            if isinstance(blocked, str):
+                context.block_skill(
+                    blocked, str(result.meta.get("error_kind", "skill_read_failed"))
+                )
+            if isinstance(activation, ActivatedSkill):
+                context.bind_skill(activation)
+            self._active_skill_turn_snapshot = SkillTurnSnapshot(
+                catalog=snapshot.catalog,
+                rendered_catalog=snapshot.rendered_catalog,
+                activations=tuple(context.skill_activations.values()),
+                activation_issues=snapshot.activation_issues,
+            )
+            return
         if not isinstance(activation, ActivatedSkill) or snapshot is None:
             return
         existing = tuple(

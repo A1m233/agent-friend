@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -525,6 +526,22 @@ def _run_update(args: Args, root: Path) -> None:
             expected_record=record,
             expected_current_sha256=current_sha256,
         )
+        receipt_path = os.environ.get("AGENT_FRIEND_SKILL_UPDATE_RECEIPT")
+        nonce = os.environ.get("AGENT_FRIEND_SKILL_UPDATE_NONCE")
+        if receipt_path and nonce:
+            receipt = Path(receipt_path)
+            payload = {
+                "schema_version": 1,
+                "nonce": nonce,
+                "root": str(root),
+                "skill_name": skill_name,
+                "status": result.status,
+                "old_sha256": result.previous_sha256,
+                "new_sha256": next_record.content_sha256,
+            }
+            temporary_receipt = receipt.with_suffix(".tmp")
+            temporary_receipt.write_text(json.dumps(payload), encoding="utf-8")
+            os.replace(temporary_receipt, receipt)
         if result.status == "already_up_to_date":
             actual = load_records(root)[skill_name]
             print(

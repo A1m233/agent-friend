@@ -32,7 +32,7 @@ def test_loads_builtin_cases() -> None:
         ("C17", "future-action-commitment-grounding", 5),
         ("C18", "clarification-action-consistency", 5),
         ("C19", "source-authority-calibration", 5),
-        ("C20", "skill-semantic-activation", 9),
+        ("C20", "skill-semantic-activation", 11),
         ("C21", "unified-skill-catalog-discovery", 4),
         ("C22", "skill-catalog-change-comparison", 3),
         ("C23", "self-presentation-and-transparency", 8),
@@ -432,12 +432,32 @@ def test_loads_fixture_session_and_case_judge() -> None:
     )
 
 
+def test_update_fixture_rejects_invalid_or_failed_update_payloads() -> None:
+    from agent_eval.loader import _parse_fake_tool
+
+    for update in ({"name": "x"}, {"name": "x", "instructions": "new", "path": "elsewhere"}):
+        with pytest.raises(ValueError):
+            _parse_fake_tool(
+                {"name": "exec_command", "result_text": "{}", "skill_update": update}, label="test"
+            )
+    with pytest.raises(ValueError, match="failed response"):
+        _parse_fake_tool(
+            {
+                "name": "exec_command",
+                "result_text": "{}",
+                "is_error": True,
+                "skill_update": {"name": "x", "instructions": "new"},
+            },
+            label="test",
+        )
+
+
 def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
     assert meta.total_contracts == 28
-    assert meta.total_cases == 237
+    assert meta.total_cases == 239
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -458,7 +478,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C17": 5,
         "C18": 5,
         "C19": 5,
-        "C20": 9,
+        "C20": 11,
         "C21": 4,
         "C22": 3,
         "C23": 8,

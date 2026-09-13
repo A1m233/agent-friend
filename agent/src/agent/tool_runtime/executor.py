@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
 
@@ -79,6 +79,7 @@ class ToolBatchExecutor:
         legacy_hook_invoker: ToolHookInvoker | None = None,
         pre_hook: PreToolHook | None = None,
         post_hook: PostToolHook | None = None,
+        result_transform: Callable[[ToolResult], ToolResult] | None = None,
     ) -> list[ExecutedToolCall]:
         results: list[ExecutedToolCall] = []
         for batch in self._batches(calls, registry, force_serial=legacy_hook_invoker is not None):
@@ -110,6 +111,8 @@ class ToolBatchExecutor:
                         item.invoke = None
                 for item in pending:
                     result = self._finish(item, cancel_check)
+                    if result_transform is not None:
+                        result = replace(result, result=result_transform(result.result))
                     if post_hook is not None and legacy_hook_invoker is None:
                         post_hook(item.call["name"], item.public_args, result.result)
                     results.append(result)

@@ -296,7 +296,12 @@ class _CatalogGuardedLanguageModel:
 class _FixtureTool:
     """agent_eval case 专用固定结果工具。"""
 
-    def __init__(self, fixture: FakeTool, template: Tool | None = None) -> None:
+    def __init__(
+        self,
+        fixture: FakeTool,
+        template: Tool | None = None,
+        skill_service: SkillCatalogService | None = None,
+    ) -> None:
         self.name = fixture.name
         if template is not None:
             self.description = template.description
@@ -338,6 +343,8 @@ class _FixtureTool:
             self.description = "读取完成当前请求所需的数据。"
             self.parameters_schema = {"type": "object", "properties": {}}
         self._fixture = fixture
+        self._skill_service = skill_service
+        self.execution_kind = "serial"
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
         selected: FakeTool | FakeToolResponse = self._fixture
@@ -355,7 +362,33 @@ class _FixtureTool:
                     meta={"error_kind": kind, "matching_response_count": len(matches)},
                 )
             selected = matches[0]
-        meta = {"source_urls": selected.source_urls} if selected.source_urls else {}
+        meta: dict[str, Any] = {"source_urls": selected.source_urls} if selected.source_urls else {}
+        if selected.skill_update is not None:
+            if self._skill_service is None or selected.is_error:
+                raise ValueError(
+                    "Skill update fixture requires a service and a successful response"
+                )
+            from agent.skills.package_snapshot import package_digest
+            from agent.skills.update_receipts import SkillUpdateResult
+
+            records = [
+                r
+                for r in self._skill_service.snapshot.entries
+                if r.name == selected.skill_update["name"] and r.source == "personal"
+            ]
+            if len(records) != 1:
+                raise ValueError("Skill update fixture must select one existing personal Skill")
+            record = records[0]
+            old = package_digest(record.package_root)
+            record.entry_path.write_text(
+                f"---\nname: {json.dumps(record.name)}\ndescription: {json.dumps(record.description)}\n---\n\n"
+                + selected.skill_update["instructions"]
+                + "\n",
+                encoding="utf-8",
+            )
+            meta["_skill_update"] = SkillUpdateResult(
+                record.id, old, package_digest(record.package_root)
+            )
         return ToolResult(
             text=selected.result_text,
             is_error=selected.is_error,
@@ -410,7 +443,8 @@ def _build_manager(
         templates = {tool.name: tool for tool in registry.all_tools()}
         tools = [tool for tool in registry.all_tools() if tool.name not in fixture_names]
         tools.extend(
-            cast(Any, _FixtureTool(fixture, templates.get(fixture.name))) for fixture in fake_tools
+            cast(Any, _FixtureTool(fixture, templates.get(fixture.name), skill_service))
+            for fixture in fake_tools
         )
         registry = ToolRegistry(tools)
 

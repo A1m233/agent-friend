@@ -304,6 +304,54 @@ def test_skill_activation_claim_requires_successful_skill_read() -> None:
     assert host_success.passed is True
 
 
+def test_same_turn_skill_reload_judge_requires_real_continuation_and_keeps_failure_control() -> (
+    None
+):
+    contract = next(c for c in load_contracts(CASES_DIR) if c.id == "C20")
+    case = next(c for c in contract.cases if c.id == "C20-10")
+    update = ToolCallTrace(
+        name="exec_command",
+        args={"cmd": "python scripts/update.py"},
+        result_text="updated",
+        is_error=False,
+    )
+    execute = ToolCallTrace(
+        name="exec_command",
+        args={"cmd": "python scripts/check-report.py"},
+        result_text="checked",
+        is_error=False,
+    )
+    valid = Trace(
+        case_id=case.id,
+        tool_calls=[update, execute],
+        final_text="检查完成。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, valid).passed
+    assert not judge_case(
+        case,
+        contract,
+        replace(valid, tool_calls=[update], final_text="已更新，请再发一条消息才能使用。"),
+    ).passed
+    assert not judge_case(
+        case,
+        contract,
+        replace(
+            valid,
+            tool_calls=[update, replace(execute, args={"cmd": "python scripts/old-check.py"})],
+        ),
+    ).passed
+    control = next(c for c in contract.cases if c.id == "C20-11")
+    failed = Trace(
+        case_id=control.id,
+        tool_calls=[replace(update, is_error=True)],
+        final_text="更新失败，尚未运行检查。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(control, contract, failed).passed
+    assert not judge_case(control, contract, replace(failed, tool_calls=[update, execute])).passed
+
+
 def test_required_first_tool_call_rejects_stale_activation_retry_order() -> None:
     case = _case(
         CaseJudge(

@@ -291,12 +291,66 @@ def _smoke_skill_catalog() -> dict[str, Any]:
                 or marker not in turn.activations[0].contents
             ):
                 raise RuntimeError("hot-loaded Skill could not be version-pinned and activated")
+            from agent.skills.lifecycle import apply_skill_update
+            from agent.skills.package_snapshot import package_digest
+            from agent.skills.update_receipts import PendingSkillUpdate
+            from agent.tool_runtime import ToolRunContext
+            from agent.tools.protocol import ToolResult
+
+            context = ToolRunContext.create("frozen same-turn Skill update")
+            old = context.bind_skill(turn.activations[0])
+            receipt_path = root / "update-receipt.json"
+            pending = PendingSkillUpdate(
+                live.id, package, receipt_path, "frozen-probe", package_digest(package)
+            )
+            try:
+                (package / "SKILL.md").write_text(
+                    (package / "SKILL.md").read_text(encoding="utf-8")
+                    + "\nUpdated in this turn.\n",
+                    encoding="utf-8",
+                )
+                receipt_path.write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "nonce": "frozen-probe",
+                            "root": str(personal_root),
+                            "skill_name": package.name,
+                            "status": "committed",
+                            "old_sha256": pending.before_digest,
+                            "new_sha256": package_digest(package),
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                update = pending.consume()
+                result = apply_skill_update(
+                    ToolResult("{}", meta={"_skill_update": update}),
+                    service=service,
+                    snapshot=turn,
+                    context=context,
+                    runtime_capabilities="frozen smoke",
+                )
+                active = context.skill_activations[live.id]
+                if (
+                    result.is_error
+                    or active.package_version == old.package_version
+                    or "Updated in this turn." not in active.contents
+                ):
+                    raise RuntimeError("packaged Skill same-turn reload failed")
+                if "Updated in this turn." in (old.resource_root / "SKILL.md").read_text(
+                    encoding="utf-8"
+                ):
+                    raise RuntimeError("packaged Skill reload mutated the old binding")
+            finally:
+                context.close_commands()
             return {
                 "builtin": builtin.name,
                 "builtin_resources": len(required_resources),
                 "installer": installer.name,
                 "installer_validation": "fail-closed",
                 "installer_managed_transaction": "rollback-ok",
+                "same_turn_update_activation": "reloaded-with-version-isolation",
                 "catalog_generation": turn.catalog.generation,
                 "watcher_status": service.watcher_state.status,
                 "activated": turn.activations[0].record.name,

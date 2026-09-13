@@ -215,6 +215,14 @@ class FilesystemAuthorizationLedger:
     def scope(self, scope_id: str) -> FilesystemCapability | None:
         return self._scopes.get(scope_id)
 
+    def revoke_skill_root(self, root: Path) -> None:
+        """Revoke only package-derived scopes, preserving independent user grants."""
+        self._scopes = {
+            key: scope
+            for key, scope in self._scopes.items()
+            if not (scope.source == "skill" and scope.root == root)
+        }
+
     def consume_action(
         self,
         action_id: str,

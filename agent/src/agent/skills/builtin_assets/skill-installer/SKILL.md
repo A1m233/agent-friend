@@ -108,7 +108,7 @@ scripts/install-skill-from-github.py --update skill-name --ref requested-ref
 
 ## 生效时机
 
-脚本成功后说明 catalog watcher 会自动刷新：后续用户轮可以发现新版本，无需重启；当前已经开始的用户轮仍使用轮次开始时冻结的旧 Skill snapshot。不要把“等待 watcher”说成尚未完成的未来更新，也不要声称历史中的旧 Skill 正文会被改写。
+受支持的更新命令完成后，宿主会核验结构化更新结果：本轮已加载的目标会自动重新加载新版；尚未加载的目标在本轮后续通过 `skill_read` 使用时加载新版。检查命令结果中的 `skill_update` 状态后继续原任务，不要求用户再发一条消息。若磁盘更新成功但激活失败，先处理报告的原因并重新激活，不以旧版冒充新版继续。首次安装的未知 Skill 仍在后续用户轮发现；历史中的旧 Skill 正文不会被改写。
 
 ## 列出官方 Skills
 

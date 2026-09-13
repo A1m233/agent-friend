@@ -16,6 +16,7 @@ _Contributor = Literal[
     "permission",
     "runtime_capabilities",
     "capability_catalog",
+    "skill_bindings",
 ]
 
 
@@ -35,6 +36,7 @@ class ModelContextSnapshot:
     approval_version: int | None = None
     runtime_capabilities: str | None = None
     capability_catalog: str | None = None
+    skill_bindings: str | None = None
 
 
 @dataclass(frozen=True)
@@ -93,7 +95,13 @@ class ModelContextProjection:
             # current fact. Completed tool results may precede this safe tail.
             if any(message.meta.get("model_context_contributor") for message in messages[index:]):
                 index = len(messages)
-        return [*messages[:index], *additions, *messages[index:]]
+        bindings = [
+            m for m in additions if m.meta.get("model_context_contributor") == "skill_bindings"
+        ]
+        other = [
+            m for m in additions if m.meta.get("model_context_contributor") != "skill_bindings"
+        ]
+        return [*messages[:index], *other, *messages[index:], *bindings]
 
     def accepted_plan(self, messages: list[Message]) -> ModelContextPlan:
         contributors = {
@@ -127,6 +135,7 @@ class SessionModelContext:
         approval_version: int | None,
         runtime_capabilities: str,
         capability_catalog: str | None,
+        skill_bindings: str | None = None,
     ) -> ModelContextPlan:
         """Return the immutable deltas needed at the next model boundary."""
 
@@ -261,6 +270,19 @@ class SessionModelContext:
             )
             initialized.add("capability_catalog")
 
+        if skill_bindings is not None and (
+            "skill_bindings" not in initialized or previous.skill_bindings != skill_bindings
+        ):
+            messages.append(
+                _context_message(
+                    "skill_bindings",
+                    "user",
+                    skill_bindings,
+                    current_time,
+                )
+            )
+            initialized.add("skill_bindings")
+
         return ModelContextPlan(
             messages=tuple(messages),
             next_snapshot=ModelContextSnapshot(
@@ -272,6 +294,7 @@ class SessionModelContext:
                 approval_version=approval_version,
                 runtime_capabilities=runtime_capabilities,
                 capability_catalog=normalized_catalog,
+                skill_bindings=skill_bindings,
             ),
         )
 

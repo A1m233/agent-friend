@@ -4,7 +4,7 @@ import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from agent.command_runtime.tools import (
@@ -233,6 +233,74 @@ def test_changed_catalog_keeps_trusted_prior_state_in_uncompacted_context(
     assert len(catalogs) == 2
     assert "later-skill" not in catalogs[0]
     assert "later-skill" in catalogs[1]
+
+
+def test_update_result_applies_before_next_serial_tool_in_same_model_batch(tmp_path: Path) -> None:
+    from agent.skills.package_snapshot import package_digest
+    from agent.skills.update_receipts import SkillUpdateResult
+    from agent.tools.protocol import ToolResult
+
+    conversation, _, service, selection = _conversation(tmp_path)
+    target = service.snapshot.by_id()[selection.id]
+    seen: list[str] = []
+
+    class UpdateAndRead:
+        name: ClassVar[str] = "exec_command"
+        description: ClassVar[str] = "Fixture command"
+        parameters_schema: ClassVar[dict[str, Any]] = {
+            "type": "object",
+            "properties": {"cmd": {"type": "string"}},
+            "required": ["cmd"],
+            "additionalProperties": False,
+        }
+        execution_kind = "serial"
+
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            if args["cmd"] == "update":
+                old_version = package_digest(target.package_root)
+                _write_skill(service.personal_root, "test-skill", "SECOND VERSION")
+                return ToolResult(
+                    "{}",
+                    meta={
+                        "_skill_update": SkillUpdateResult(
+                            target.id, old_version, package_digest(target.package_root)
+                        )
+                    },
+                )
+            snapshot = args[COMMAND_SKILL_SNAPSHOT_ARG]
+            seen.append(snapshot.activations[0].contents)
+            return ToolResult("checked current binding")
+
+    class UpdateLLM(_RecordingLLM):
+        def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+            self.received.append(request.messages)
+            if len(self.received) == 1:
+                for index, cmd in enumerate(("update", "read")):
+                    yield LLMToolCallDelta(
+                        index=index,
+                        tool_call_id=f"update-{index}",
+                        tool_name="exec_command",
+                        args_json_delta=json.dumps({"cmd": cmd}),
+                    )
+                yield LLMTurnDone(stop_reason="tool_use")
+            else:
+                yield LLMTextDelta("done")
+                yield LLMTurnDone(stop_reason="end_turn")
+
+    llm = UpdateLLM()
+    conversation._llm_client = llm
+    conversation._tool_registry = ToolRegistry([UpdateAndRead(), SkillReadTool(service)])
+    list(conversation.stream("update and continue", skill_selections=(selection,)))
+    assert len(seen) == 1 and "SECOND VERSION" in seen[0]
+    latest = [
+        m["content"] for m in llm.received[-1] if "<skill_bindings" in str(m.get("content", ""))
+    ][-1]
+    assert "SECOND VERSION" in latest and "FIRST VERSION" not in latest
+    list(conversation.stream("unrelated question"))
+    latest = [
+        m["content"] for m in llm.received[-1] if "<skill_bindings" in str(m.get("content", ""))
+    ][-1]
+    assert "No Skill is active" in latest
 
 
 @dataclass
