@@ -30,8 +30,9 @@ def reasoning(identity: str, size: int = 60_000) -> dict[str, Any]:
     return {"id": identity, "type": "reasoning", "summary": [], "encrypted_content": "x" * size}
 
 
+@pytest.mark.parametrize("changed_tools", [False, True])
 def test_responses_tool_loop_and_restart_use_actual_usage(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed_tools: bool
 ) -> None:
     requests: list[dict[str, Any]] = []
 
@@ -154,10 +155,12 @@ def test_responses_tool_loop_and_restart_use_actual_usage(
         session_model_context=restored.model_context,
         cache_epoch=restored.cache_epoch,
         catalog=conv._catalog,
-        tool_registry=ToolRegistry([CalculateTool()]),
+        tool_registry=ToolRegistry([] if changed_tools else [CalculateTool()]),
     )
     assert restarted.send("after restart") == "ok"
-    assert restarted.last_context_notes["estimation_mode"] == "usage_anchor"
+    assert restarted.last_context_notes["estimation_mode"] == (
+        "usage_anchor_partial" if changed_tools else "usage_anchor"
+    )
     assert restarted.last_context_notes["token_estimate"] < 110_000
     assert reasoning("r3") in requests[3]["input"]
 
