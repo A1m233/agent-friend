@@ -72,6 +72,7 @@ def render_activated_skill(
         f"<skill_id>{escape(record.id)}</skill_id>\n"
         f"<source>{record.source}</source>\n"
         f"<version>{activation.version}</version>\n"
+        f"<package_version>{activation.package_version}</package_version>\n"
         f"<runtime_capabilities>{escape(capabilities)}</runtime_capabilities>\n"
         f"{activation.contents}\n"
         "</skill>"

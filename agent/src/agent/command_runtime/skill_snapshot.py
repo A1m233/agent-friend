@@ -31,6 +31,7 @@ class SkillExecutionSnapshot:
     fingerprint: str
     file_count: int
     total_bytes: int
+    activation_root: Path | None = None
 
 
 def prepare_skill_snapshot(
@@ -43,7 +44,7 @@ def prepare_skill_snapshot(
     """Copy one activated package exactly once for the current run."""
 
     relative_entry = _relative_entry(entry)
-    cache_key = f"skill-snapshot:{activation.record.id}"
+    cache_key = f"skill-snapshot:{activation.record.id}:{activation.package_version}"
     cached = context.command_resource(cache_key)
     if isinstance(cached, SkillExecutionSnapshot):
         if cached.entry != relative_entry.as_posix():
@@ -57,7 +58,7 @@ def prepare_skill_snapshot(
             )
         return cached
 
-    source_root = activation.record.package_root.resolve(strict=True)
+    source_root = activation.resource_root.resolve(strict=True)
     execution_root.mkdir(parents=True, exist_ok=True)
     staging = execution_root / f".staging-{uuid4().hex}"
     target = execution_root / f"skill-{uuid4().hex}"
@@ -120,13 +121,14 @@ def prepare_skill_snapshot(
         staging.rename(target)
         snapshot = SkillExecutionSnapshot(
             skill_id=activation.record.id,
-            source_root=source_root,
+            source_root=activation.record.package_root.resolve(),
             snapshot_root=target,
             entry=relative_entry.as_posix(),
             entry_path=target / relative_entry,
             fingerprint=fingerprint,
             file_count=len(manifest),
             total_bytes=total_bytes,
+            activation_root=activation.resource_root.resolve(),
         )
         registered = context.register_command_resource(
             cache_key,

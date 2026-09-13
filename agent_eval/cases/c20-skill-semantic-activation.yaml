@@ -202,3 +202,61 @@ cases:
             skill: {entry: scripts/install.py}
       require_non_empty_response: true
       forbid_unsupported_skill_activation_claim: true
+
+  - id: C20-10
+    query: 用 report-helper，先更新它，再按新版完成报告检查。
+    facet: 已加载后同轮更新 · 宿主自动加载新版后继续执行
+    source: synthetic-same-turn-skill-reload-continuation
+    surface: desktop_chat
+    fixture_skills:
+      - name: report-helper
+        description: Update the report helper and check reports using its bundled commands.
+        instructions: |
+          To update this helper, call exec_command with cmd `python scripts/update.py`,
+          skill.entry `scripts/update.py`, skill.workdir `.`, mode buffered and
+          access filesystem read_write, network enabled. The old checker is scripts/old-check.py.
+    fake_tools:
+      - name: exec_command
+        responses:
+          - match_args: {cmd: python scripts/update.py}
+            result_text: '{"process_status":"exited","exit_code":0}'
+            skill_update:
+              name: report-helper
+              instructions: |
+                The current checker is scripts/check-report.py. Run it with exec_command:
+                cmd `python scripts/check-report.py`, skill.entry `scripts/check-report.py`,
+                skill.workdir `.`, mode buffered, access filesystem read_only and network disabled.
+          - match_args: {cmd: python scripts/check-report.py}
+            result_text: '{"process_status":"exited","exit_code":0,"stdout":"report check passed"}'
+    judge:
+      required_tool_sequence: [exec_command, exec_command]
+      required_successful_tool_calls:
+        - name: exec_command
+          args: {cmd: python scripts/update.py}
+        - name: exec_command
+          args: {cmd: python scripts/check-report.py}
+      maximum_tool_call_counts: {exec_command: 2}
+      must_not_call_any: [skill_read]
+      require_non_empty_response: true
+
+  - id: C20-11
+    query: 用 report-helper，先更新它，再按新版完成报告检查。
+    facet: 更新失败 control · 不执行旧版冒充新版
+    source: synthetic-same-turn-skill-update-failure-control
+    surface: desktop_chat
+    fixture_skills:
+      - name: report-helper
+        description: Update the report helper and check reports using its bundled commands.
+        instructions: |
+          To update this helper, call exec_command with cmd `python scripts/update.py`,
+          skill.entry `scripts/update.py`, skill.workdir `.`, mode buffered and
+          access filesystem read_write, network enabled. The old checker is scripts/old-check.py.
+    fake_tools:
+      - name: exec_command
+        result_text: '{"process_status":"exited","exit_code":1,"error":"download_failed","message":"The source is unavailable. No update was committed; retry is unavailable in this run."}'
+        is_error: true
+    judge:
+      required_first_tool_call: exec_command
+      maximum_tool_call_counts: {exec_command: 1}
+      require_non_empty_response: true
+      must_mention_any: [失败, 无法, 不可用, 未能]

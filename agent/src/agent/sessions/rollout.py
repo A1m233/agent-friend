@@ -139,6 +139,7 @@ def serialize_model_context(context: SessionModelContext | ModelContextSnapshot)
         "approval_version": snapshot.approval_version,
         "runtime_capabilities": snapshot.runtime_capabilities,
         "capability_catalog": snapshot.capability_catalog,
+        "skill_bindings": snapshot.skill_bindings,
     }
 
 
@@ -162,6 +163,7 @@ def deserialize_model_context(value: object) -> SessionModelContext:
         "permission",
         "runtime_capabilities",
         "capability_catalog",
+        "skill_bindings",
     }
     return SessionModelContext(
         ModelContextSnapshot(
@@ -192,6 +194,9 @@ def deserialize_model_context(value: object) -> SessionModelContext:
                 if isinstance(value.get("capability_catalog"), str)
                 else None
             ),
+            skill_bindings=value.get("skill_bindings")
+            if isinstance(value.get("skill_bindings"), str)
+            else None,
         )
     )
 

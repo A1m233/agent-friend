@@ -632,6 +632,104 @@ def test_successful_update_refreshes_later_turn_while_frozen_turn_keeps_old_cont
     assert frozen.activations[0].version != later.activations[0].version
 
 
+@pytest.mark.parametrize("mode", ["buffered", "streaming"])
+def test_real_installer_receipt_drives_same_turn_reload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    from types import SimpleNamespace
+
+    from agent.command_runtime.models import (
+        CommandApprovalDetails,
+        CommandMode,
+        CommandProcessSnapshot,
+    )
+    from agent.skills.lifecycle import apply_skill_update
+    from agent.skills.update_receipts import (
+        NONCE_ENV,
+        RECEIPT_ENV,
+        consume_process_update,
+        prepare_update_receipt,
+    )
+    from agent.tool_runtime import ToolRunContext
+    from agent.tools.protocol import ToolResult
+
+    module = _load_installer()
+    personal = tmp_path / "personal"
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    assert _install_fixture(module, monkeypatch, personal, downloads, _fixture_archive()) == 0
+    service = SkillCatalogService(
+        personal_root=personal, shared_root=tmp_path / "shared", watcher_enabled=False
+    )
+    service.initialize()
+    target = next(r for r in service.snapshot.entries if r.name == "fixture-skill")
+    turn = service.begin_turn(
+        (SkillSelection(target.id), SkillSelection("builtin/skill-installer"))
+    )
+    context = ToolRunContext.create("update and execute")
+    for activation in turn.activations:
+        context.bind_skill(activation)
+    installer = context.skill_activations["builtin/skill-installer"]
+    argv = (
+        "python",
+        "scripts/install-skill-from-github.py",
+        "--update",
+        "fixture-skill",
+        "--method",
+        "download",
+    )
+    details = cast(
+        CommandApprovalDetails,
+        SimpleNamespace(
+            launch_workdir=str(installer.resource_root),
+            skill=SimpleNamespace(
+                skill_id="builtin/skill-installer", entry="scripts/install-skill-from-github.py"
+            ),
+            managed_command=SimpleNamespace(
+                display_argv=argv,
+                provider=SimpleNamespace(identity=SimpleNamespace(provider="python")),
+            ),
+        ),
+    )
+    pending = prepare_update_receipt(details, turn, personal_root=personal, run_temp=tmp_path)
+    assert pending is not None
+    context.register_command_resource(
+        "skill-update:process", pending, lambda: pending.receipt.unlink(missing_ok=True)
+    )
+    monkeypatch.setenv(RECEIPT_ENV, str(pending.receipt))
+    monkeypatch.setenv(NONCE_ENV, pending.nonce)
+    monkeypatch.setattr(
+        module,
+        "_request",
+        lambda _url: _fixture_archive(description="New instructions", script="print('new')\n"),
+    )
+    assert module.main(["--update", "fixture-skill", "--method", "download"]) == 0
+    process = CommandProcessSnapshot(
+        "process", "session", context.run_id, "call", cast(CommandMode, mode)
+    )
+    if mode == "streaming":
+        assert consume_process_update(context, process) == {}
+    process.status = "exited"
+    process.exit_code = 0
+    result = apply_skill_update(
+        ToolResult('{"process_status":"exited"}', meta=consume_process_update(context, process)),
+        service=service,
+        snapshot=turn,
+        context=context,
+        runtime_capabilities="test",
+    )
+    assert not result.is_error
+    assert "New instructions" in result.text
+    assert (
+        "print('new')"
+        in (context.skill_activations[target.id].resource_root / "scripts/run.py").read_text()
+    )
+    assert consume_process_update(context, process) == {}
+    context.close_commands()
+
+
 def _wait_until(predicate: object, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

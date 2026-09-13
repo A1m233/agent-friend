@@ -11,6 +11,7 @@ from html import escape
 from uuid import uuid4
 
 from ..filesystem.models import FilesystemAuthorizationLedger
+from ..skills.models import ActivatedSkill, SkillInvocationKind
 from ..time_provider import (
     CallableTimeProvider,
     SystemTimeProvider,
@@ -92,6 +93,43 @@ class ToolRunContext:
     _command_resource_cleanups: dict[str, Callable[[], None]] = field(
         default_factory=dict, repr=False
     )
+    skill_activations: dict[str, ActivatedSkill] = field(default_factory=dict, repr=False)
+    skill_invocations: dict[str, SkillInvocationKind] = field(default_factory=dict, repr=False)
+    blocked_skills: dict[str, str] = field(default_factory=dict, repr=False)
+
+    def bind_skill(self, activation: ActivatedSkill) -> ActivatedSkill:
+        key = activation.record.id
+        previous = self.skill_activations.get(key)
+        if previous is not None and previous.package_version == activation.package_version:
+            if activation.package is not None and activation.package is not previous.package:
+                activation.package.close()
+            return previous
+        if previous is not None:
+            self.filesystem_authorizations.revoke_skill_root(previous.resource_root.resolve())
+        self.skill_activations[key] = activation
+        self.skill_invocations[key] = activation.invocation_kind
+        self.blocked_skills.pop(key, None)
+        if activation.package is not None:
+            self.register_command_resource(
+                f"skill-binding:{key}:{activation.resource_root}",
+                activation.package,
+                activation.package.close,
+            )
+        self.filesystem_authorizations.grant_scope(
+            root=activation.resource_root.resolve(),
+            root_kind="directory",
+            permissions=frozenset({"search_metadata", "read_text"}),
+            allow_protected=True,
+            source="skill",
+            label=f"Skill {activation.record.name}",
+        )
+        return activation
+
+    def block_skill(self, skill_id: str, reason: str) -> None:
+        previous = self.skill_activations.pop(skill_id, None)
+        if previous is not None:
+            self.filesystem_authorizations.revoke_skill_root(previous.resource_root.resolve())
+        self.blocked_skills[skill_id] = reason
 
     @classmethod
     def create(
@@ -166,6 +204,9 @@ class ToolRunContext:
                 cleanup()
             except Exception:
                 continue
+        self.skill_activations.clear()
+        self.skill_invocations.clear()
+        self.blocked_skills.clear()
 
     def command_resource(self, key: str) -> object | None:
         with self._command_handles_lock:

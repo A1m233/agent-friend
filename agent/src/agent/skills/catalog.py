@@ -43,7 +43,7 @@ def render_catalog(
         usage = (
             "For an implicitly matching task, select the smallest matching set, announce it, then "
             "call skill_read with the exact skill_id. Explicit host-selected Skills are already "
-            "injected and must not be read again. Only a successful skill_read activates an "
+            "injected; reread only to refresh a changed version. Only a successful skill_read activates an "
             "implicit Skill. Activations from earlier user turns do not remain active: historical "
             "skill_read results or assistant claims are context only, so call skill_read again "
             "before using a Skill-bound tool in this turn."

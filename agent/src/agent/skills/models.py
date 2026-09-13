@@ -8,6 +8,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
+from .package_snapshot import SkillPackageSnapshot
+
 SkillSource = Literal["builtin", "personal", "shared"]
 SkillInvocationKind = Literal["caller", "implicit"]
 
@@ -114,11 +116,21 @@ class SkillSelection:
 
 @dataclass(frozen=True)
 class ActivatedSkill:
-    """Full Skill body frozen for the lifetime of one user turn."""
+    """One successful activation; a later activation may replace the current version."""
 
     record: SkillRecord
     contents: str
     version: str
+    package: SkillPackageSnapshot | None = field(default=None, repr=False, compare=False)
+    invocation_kind: SkillInvocationKind = "implicit"
+
+    @property
+    def resource_root(self) -> Path:
+        return self.package.root if self.package is not None else self.record.package_root
+
+    @property
+    def package_version(self) -> str:
+        return self.package.fingerprint if self.package is not None else self.version
 
 
 @dataclass(frozen=True)
@@ -136,9 +148,9 @@ class RenderedSkillCatalog:
 class SkillTurnSnapshot:
     """Frozen catalog plus host-recorded activations for the current user turn.
 
-    The catalog is fixed before the first model assembly. Explicit selections start in
-    ``activations``; successful semantic ``skill_read`` calls append activation records
-    without refreshing or otherwise changing that catalog.
+    The catalog fixes candidate identities before the first model assembly. Each activation
+    binds current contents; successful rereads and verified updates replace that identity's
+    active version without rewriting the model's earlier discovery messages.
     """
 
     catalog: SkillCatalogSnapshot

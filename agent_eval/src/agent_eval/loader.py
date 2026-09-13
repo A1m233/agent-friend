@@ -496,13 +496,27 @@ def _parse_current_session_events(
     return events
 
 
+def _parse_skill_update(raw: Any, *, label: str) -> dict[str, str] | None:
+    if raw is None:
+        return None
+    data = _mapping(raw, label=label)
+    if set(data) != {"name", "instructions"}:
+        raise ValueError(f"{label} requires only name and instructions")
+    return {key: _required_str(data, key, label=label) for key in ("name", "instructions")}
+
+
 def _parse_fake_tool_response(raw: Any, *, label: str) -> FakeToolResponse:
     data = _mapping(raw, label=label)
+    if data.get("skill_update") is not None and _bool(
+        data.get("is_error"), label=f"{label}.is_error"
+    ):
+        raise ValueError(f"{label}: failed response cannot commit a Skill update")
     match_args = data.get("match_args")
     if not isinstance(match_args, dict) or not match_args:
         raise ValueError(f"{label}.match_args 必须是非空 mapping")
     return FakeToolResponse(
         match_args=dict(match_args),
+        skill_update=_parse_skill_update(data.get("skill_update"), label=f"{label}.skill_update"),
         result_text=_required_str(data, "result_text", label=label),
         is_error=_bool(data.get("is_error"), label=f"{label}.is_error"),
         source_urls=_str_list(data.get("source_urls"), label=f"{label}.source_urls"),
@@ -515,9 +529,9 @@ def _parse_fake_tool(raw: Any, *, label: str) -> FakeTool | None:
     data = _mapping(raw, label=label)
     name = _required_str(data, "name", label=label)
     if "responses" in data:
-        if any(key in data for key in ("result_text", "is_error", "source_urls")):
+        if any(key in data for key in ("result_text", "is_error", "source_urls", "skill_update")):
             raise ValueError(
-                f"{label} 配置 responses 时不能同时配置 result_text/is_error/source_urls"
+                f"{label} 配置 responses 时不能同时配置 result_text/is_error/source_urls/skill_update"
             )
         responses_raw = data.get("responses")
         if not isinstance(responses_raw, list) or not responses_raw:
@@ -530,8 +544,13 @@ def _parse_fake_tool(raw: Any, *, label: str) -> FakeTool | None:
             if any(response.match_args == previous.match_args for previous in responses[:index]):
                 raise ValueError(f"{label}.responses.match_args 不能重复")
         return FakeTool(name=name, responses=responses)
+    if data.get("skill_update") is not None and _bool(
+        data.get("is_error"), label=f"{label}.is_error"
+    ):
+        raise ValueError(f"{label}: failed response cannot commit a Skill update")
     return FakeTool(
         name=name,
+        skill_update=_parse_skill_update(data.get("skill_update"), label=f"{label}.skill_update"),
         result_text=_required_str(data, "result_text", label=label),
         is_error=_bool(data.get("is_error"), label=f"{label}.is_error"),
         source_urls=_str_list(data.get("source_urls"), label=f"{label}.source_urls"),

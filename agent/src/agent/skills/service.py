@@ -25,6 +25,7 @@ from .models import (
     SkillTurnSnapshot,
     SkillWatcherState,
 )
+from .package_snapshot import SkillPackageError, capture_package
 from .selection import resolve_explicit_skill_selections
 
 if TYPE_CHECKING:
@@ -205,15 +206,24 @@ class SkillCatalogService:
         self,
         snapshot: SkillCatalogSnapshot,
         selection: SkillSelection,
+        *,
+        invocation_kind: SkillInvocationKind = "implicit",
     ) -> tuple[ActivatedSkill | None, SkillActivationIssue | None]:
-        """Resolve one model-selected Skill as an implicit invocation."""
+        """Revalidate a known identity; only the host may retain a caller invocation."""
 
+        if selection.id not in snapshot.by_id():
+            return None, SkillActivationIssue(
+                code="skill_not_found",
+                message="Skill 不在当前轮候选中，未激活。",
+                skill_id=selection.id,
+            )
+        current = self.refresh()
         activation, issue, _ = self._activate_one(
-            snapshot,
+            current,
             selection,
-            invocation_kind="implicit",
+            invocation_kind=invocation_kind,
             final_attempt=True,
-            changed_code="skill_changed_during_turn",
+            changed_code="skill_changed_during_activation",
         )
         return activation, issue
 
@@ -352,7 +362,55 @@ class SkillCatalogService:
                 ),
                 False,
             )
-        return ActivatedSkill(record=record, contents=contents, version=version), None, False
+        try:
+            package = capture_package(record.package_root)
+            frozen = (package.root / "SKILL.md").read_bytes()
+            if hashlib.sha256(frozen).hexdigest() != version:
+                package.close()
+                raise SkillPackageError(
+                    "skill_changed_during_snapshot", "Skill 在加载时发生变化，请重试。"
+                )
+            frozen_catalog = SkillLoader().load((SkillRoot(record.source, package.root),))
+            frozen_record = next(
+                (
+                    r
+                    for r in frozen_catalog.entries
+                    if r.canonical_entry_path == package.root / "SKILL.md"
+                ),
+                None,
+            )
+            if frozen_record is None:
+                package.close()
+                raise SkillPackageError("skill_invalid", "Skill 包内容无效，未激活。")
+            if (frozen_record.version, frozen_record.allow_implicit_invocation) != (
+                record.version,
+                record.allow_implicit_invocation,
+            ):
+                package.close()
+                raise SkillPackageError(
+                    "skill_changed_during_snapshot", "Skill 在加载时发生变化，请重试。"
+                )
+        except (OSError, ValueError) as exc:
+            return (
+                None,
+                SkillActivationIssue(
+                    code=getattr(exc, "code", "skill_read_failed"),
+                    message=str(exc),
+                    skill_id=selection.id,
+                ),
+                False,
+            )
+        return (
+            ActivatedSkill(
+                record=record,
+                contents=contents,
+                version=version,
+                package=package,
+                invocation_kind=invocation_kind,
+            ),
+            None,
+            False,
+        )
 
     def _set_watcher_state(self, state: SkillWatcherState) -> None:
         with self._lock:
