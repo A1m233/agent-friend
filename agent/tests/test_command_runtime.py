@@ -504,6 +504,8 @@ def test_exec_server_environment_normalizes_windows_keys_case_insensitively(
             "systemroot": "C:\\Windows",
             "systemdrive": "C:",
             "comspec": "C:\\Windows\\System32\\cmd.exe",
+            "username": "alice",
+            "userdomain": "workstation",
         },
     )
 
@@ -512,6 +514,8 @@ def test_exec_server_environment_normalizes_windows_keys_case_insensitively(
     assert child["SystemRoot"] == "C:\\Windows"
     assert child["SystemDrive"] == "C:"
     assert child["ComSpec"].endswith("cmd.exe")
+    assert child["USERNAME"] == "alice"
+    assert child["USERDOMAIN"] == "workstation"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows sandbox setup is Windows-specific")

@@ -1273,6 +1273,12 @@ class CommandRuntime:
             "TMP": "TMP",
             "TEMP": "TEMP",
             "TMPDIR": "TMPDIR",
+            # Codex uses its own process environment (not process/start.env) to
+            # identify the real user when refreshing/recreating sandbox ACLs.
+            # Dropping USERNAME makes its setup helper grant Administrators
+            # access instead of the unelevated product user.
+            "USERNAME": "USERNAME",
+            "USERDOMAIN": "USERDOMAIN",
         }
         casefolded = {key.upper(): value for key, value in self._base_env.items()}
         env = {
@@ -1281,6 +1287,16 @@ class CommandRuntime:
             if key in casefolded
         }
         env["CODEX_HOME"] = str(self._codex_home)
+        if (
+            os.name == "nt"
+            and self._exec_server_command is None
+            and not env.get("USERNAME", "").strip()
+        ):
+            raise CommandRuntimeError(
+                "command_runtime_unavailable",
+                "Windows signed-in user identity is unavailable; refusing to start "
+                "the sandbox execution service with an administrator fallback",
+            )
         env.pop("CODEX_API_KEY", None)
         env.pop("CODEX_ACCESS_TOKEN", None)
         return env
