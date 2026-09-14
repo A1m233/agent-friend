@@ -25,6 +25,8 @@ CORE_ENTRIES = (
 CAPABILITY_HANDLERS = {
     "selected-sessions-v1": "sessions",
     "selected-sessions-v2": "sessions",
+    "selected-sessions-v3": "sessions",
+    "sandbox-incidents-v1": "sandboxIncidents",
     "model-catalog-v1": "modelCatalog",
     "bounded-log-tail-v1": "logs",
     "attachment-integrity-v1": "attachments",
@@ -1240,6 +1242,91 @@ def summarize_session(value: Any, entry: str) -> dict[str, Any]:
         "providerReasoningRedactedCount": provider_reasoning_redacted_count,
         "providerReasoningPayloadLeakCount": provider_reasoning_payload_leak_count,
         "activeEventsPresent": "active_events" in value,
+        "coverage": summarize_session_coverage(value.get("coverage")),
+    }
+
+
+def summarize_session_coverage(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"evidence": "not-collected"}
+    result: dict[str, Any] = {"evidence": "collected"}
+    mode = value.get("mode")
+    result["mode"] = mode if mode in ("all", "recent") else "unknown"
+    for key in ("requestedTurns", "includedTurns", "readBytes", "eventBytes", "snapshotBytes"):
+        raw = value.get(key)
+        result[key] = raw if type(raw) is int and raw >= 0 else None
+    result["completeWithinRequestedRange"] = value.get("completeWithinRequestedRange") is True
+    result["earlierHistoryOmitted"] = value.get("earlierHistoryOmitted") is True
+    result["gapCount"] = len(value["gaps"]) if isinstance(value.get("gaps"), list) else 0
+    return result
+
+
+def summarize_sandbox_incidents(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"evidence": "not-collected"}
+    records = value.get("incidents")
+    if not isinstance(records, list):
+        return {"evidence": "invalid"}
+    outcomes: Counter[str] = Counter()
+    errors: Counter[str] = Counter()
+    stages: Counter[str] = Counter()
+    invalid = 0
+    related = 0
+    for record in records[:32]:
+        if not isinstance(record, dict) or record.get("schemaVersion") != 1:
+            invalid += 1
+            continue
+        outcome, stage = record.get("outcome"), record.get("stage")
+        outcomes[outcome if outcome in ("ok", "failed", "in_progress") else "unknown"] += 1
+        stages[
+            stage
+            if stage in ("start", "visibility", "repair", "setup", "connection")
+            else "unknown"
+        ] += 1
+        related += bool(record.get("relatedIncidents"))
+        error = record.get("error")
+        if isinstance(error, dict) and isinstance(error.get("codes"), list):
+            for code in error.get("codes", []):
+                if isinstance(code, str) and code in {
+                    "orchestrator_sandbox_dir_create_failed",
+                    "orchestrator_elevation_check_failed",
+                    "orchestrator_elevation_required",
+                    "orchestrator_payload_serialize_failed",
+                    "orchestrator_helper_launch_failed",
+                    "orchestrator_helper_launch_canceled",
+                    "orchestrator_helper_exit_nonzero",
+                    "orchestrator_helper_report_read_failed",
+                    "orchestrator_helper_incomplete",
+                    "helper_request_args_failed",
+                    "helper_sandbox_dir_create_failed",
+                    "helper_log_failed",
+                    "helper_user_provision_failed",
+                    "helper_users_group_create_failed",
+                    "helper_user_create_or_update_failed",
+                    "helper_dpapi_protect_failed",
+                    "helper_users_file_write_failed",
+                    "helper_setup_marker_write_failed",
+                    "helper_sid_resolve_failed",
+                    "helper_capability_sid_failed",
+                    "helper_firewall_com_init_failed",
+                    "helper_firewall_policy_access_failed",
+                    "helper_firewall_policy_ineffective",
+                    "helper_firewall_rule_create_or_add_failed",
+                    "helper_firewall_rule_verify_failed",
+                    "helper_read_acl_helper_spawn_failed",
+                    "helper_sandbox_lock_failed",
+                    "helper_unknown_error",
+                }:
+                    errors[code] += 1
+    return {
+        "evidence": "collected",
+        "count": len(records),
+        "outcomes": dict(outcomes),
+        "stages": dict(stages),
+        "codes": dict(errors),
+        "repairLinkCount": related,
+        "invalidCount": invalid,
+        "gapCount": len(value["gaps"]) if isinstance(value.get("gaps"), list) else 0,
     }
 
 
@@ -1405,7 +1492,11 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 sessions.append(summarize_session(read_json(archive, name), name))
             except BundleError as error:
                 sessions.append({"entry": name, "error": str(error)})
-        if "selected-sessions-v2" in capabilities:
+        if "selected-sessions-v3" in capabilities:
+            for item in sessions:
+                if item.get("coverage", {}).get("evidence") != "collected":
+                    warnings.append(f"selected-sessions-v3 coverage unavailable: {item['entry']}")
+        if {"selected-sessions-v2", "selected-sessions-v3"}.intersection(capabilities):
             leaked_reasoning_entries = [
                 item["entry"]
                 for item in sessions
@@ -1561,6 +1652,12 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 else None,
                 collected="command-runtime-health-v1" in capabilities
                 or "diagnostics/command-runtime.json" in names,
+            ),
+            "sandboxIncidents": summarize_sandbox_incidents(
+                optional_json(archive, "diagnostics/command-runtime-incidents.json", warnings)
+                if "sandbox-incidents-v1" in capabilities
+                or "diagnostics/command-runtime-incidents.json" in names
+                else None
             ),
             "petInputEvidence": summarize_pet_input(archive, manifest, warnings),
             "petRenderEvidence": summarize_pet_render(archive, manifest, warnings),
@@ -1878,6 +1975,7 @@ def print_human(summary: dict[str, Any]) -> None:
         f"payloadValidated={execution_environments.get('validatedPayloadCount')}"
     )
     print("Command runtime: " + json.dumps(summary["commandRuntime"], ensure_ascii=False))
+    print("Sandbox incidents: " + json.dumps(summary["sandboxIncidents"], ensure_ascii=False))
     render = summary["petRenderEvidence"]
     print(
         f"Pet render evidence: evidence={render.get('evidence')} "

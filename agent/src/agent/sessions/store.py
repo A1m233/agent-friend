@@ -712,6 +712,20 @@ class JsonlSessionStore:
         with observe_session_query(session_id) as observation:
             return self._query_snapshot(session_id, cancel_check, observation)
 
+    def diagnostic_export(self, session_id: str, *, turn_limit: int | None) -> dict[str, object]:
+        from .diagnostic_export import export_prefix
+
+        path = self._existing_path(session_id)
+        if path is None:
+            raise SessionNotFoundError(f"会话不存在: {session_id}")
+        with self._read_lock(path, None) as locked:
+            version = self._handle_version(locked, path)
+            descriptor = os.dup(locked.fileno())
+        with os.fdopen(descriptor, "rb") as snapshot:
+            result = export_prefix(snapshot, version[2], turn_limit)
+        result["session_id"] = session_id
+        return result
+
     def _query_snapshot(
         self,
         session_id: str,
@@ -1179,6 +1193,12 @@ class NotifyingSessionStore:
 
     def query(self, session_id: str, *, cancel_check: CancelCheck = None) -> SessionQuerySnapshot:
         return query_session(self._inner, session_id, cancel_check=cancel_check)
+
+    def diagnostic_export(self, session_id: str, *, turn_limit: int | None) -> dict[str, object]:
+        method = getattr(self._inner, "diagnostic_export", None)
+        if method is None:
+            raise NotImplementedError("store does not support bounded diagnostic export")
+        return cast(dict[str, object], method(session_id, turn_limit=turn_limit))
 
     def list_activity(
         self,

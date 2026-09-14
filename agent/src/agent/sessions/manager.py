@@ -20,7 +20,7 @@ import shutil
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from llm_providers import (
@@ -307,6 +307,12 @@ class SessionManager:
 
     def query(self, session_id: str, *, cancel_check: CancelCheck = None) -> SessionQuerySnapshot:
         return query_session(self._store, session_id, cancel_check=cancel_check)
+
+    def diagnostic_export(self, session_id: str, *, turn_limit: int | None) -> dict[str, Any]:
+        method = getattr(self._store, "diagnostic_export", None)
+        if method is None:
+            raise NotImplementedError("store does not support bounded diagnostic export")
+        return cast(dict[str, Any], method(session_id, turn_limit=turn_limit))
 
     def open_for_execution(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
         """Acquire the session used by the serialized execution owner.

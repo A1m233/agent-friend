@@ -16,6 +16,7 @@ export interface GenerateDiagnosticBundleResult {
 export interface GenerateDiagnosticBundleInput {
   description?: string;
   sessionIds: string[];
+  sessionTurnLimit?: number | null;
   includeAttachmentOriginals?: boolean;
   includeRenderEvidence?: boolean;
 }
@@ -48,6 +49,7 @@ export function generateDiagnosticBundle(
     request: {
       description: input.description || null,
       sessionIds: input.sessionIds,
+      sessionTurnLimit: input.sessionTurnLimit === undefined ? 10 : input.sessionTurnLimit,
       locale: navigator.language || null,
       timezone: resolved.timeZone || null,
       includeAttachmentOriginals: input.includeAttachmentOriginals ?? false,

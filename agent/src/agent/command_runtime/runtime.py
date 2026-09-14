@@ -32,6 +32,7 @@ from .models import (
     decode_process_output,
 )
 from .network import network_decision, valid_network_request
+from .sandbox_evidence import SandboxEvidence
 from .vendor import probe_setup_helper
 from .windows_state import compatible_state, read_state
 
@@ -391,6 +392,13 @@ class CommandRuntime:
         self._diagnostics = CommandDiagnostics(
             diagnostics_path, runtime_instance_id or uuid4().hex, build_id
         )
+        self._sandbox_evidence = SandboxEvidence(
+            diagnostics_path,
+            self._codex_home,
+            self._codex_executable,
+            runtime_instance_id or uuid4().hex,
+            build_id,
+        )
         self._payload_status = (
             payload_status if payload_status in {"validated", "rejected"} else "unknown"
         )
@@ -549,6 +557,8 @@ class CommandRuntime:
                 "command_runtime_unavailable", "product Codex executable is unavailable"
             )
         with self._setup_lock:
+            evidence = self._sandbox_evidence.begin("repair")
+            self._sandbox_evidence.repair_started(evidence)
             was_ready = self.windows_sandbox_ready
             with self._lock:
                 self._setup_active = True
@@ -556,6 +566,7 @@ class CommandRuntime:
             self.refresh_sandbox_capability()
             try:
                 helper = probe_setup_helper(executable)
+                evidence["helperProbe"] = helper
                 native = helper.get("nativeCode", helper.get("exitCode"))
                 helper_ready = helper["status"] in {"ready", "not_applicable"}
                 self._diagnostics.record(
@@ -569,14 +580,17 @@ class CommandRuntime:
                         "Windows 沙箱初始化助手无法加载，未执行系统初始化。请导出诊断检查安装与系统依赖。",
                     )
                 if was_ready:
+                    evidence["repairPath"] = "probe_existing"
                     try:
                         self._probe_windows_sandbox()
                     except CommandRuntimeError:
+                        evidence["repairPath"] = "probe_then_setup"
                         self._perform_windows_sandbox_setup(
                             executable, timeout_seconds=timeout_seconds
                         )
                         self._probe_windows_sandbox()
                 else:
+                    evidence["repairPath"] = "setup_then_probe"
                     self._perform_windows_sandbox_setup(executable, timeout_seconds=timeout_seconds)
                     self._probe_windows_sandbox()
             except Exception as exc:
@@ -595,16 +609,27 @@ class CommandRuntime:
                         "message": str(runtime_error),
                     }
                 self._diagnostics.record("setup", "failed")
+                self._sandbox_evidence.finish(evidence, str(runtime_error))
                 self.refresh_sandbox_capability()
                 raise runtime_error from exc
             with self._lock:
                 self._setup_active = False
                 self._setup_error = None
             self._diagnostics.record("setup", "ok")
+            self._sandbox_evidence.finish(evidence, persist_success=True)
             self.refresh_sandbox_capability()
             return self.status()
 
     def _perform_windows_sandbox_setup(self, executable: Path, *, timeout_seconds: float) -> None:
+        evidence = self._sandbox_evidence.begin("setup")
+        try:
+            self._run_windows_sandbox_setup(executable, timeout_seconds=timeout_seconds)
+        except Exception as exc:
+            self._sandbox_evidence.finish(evidence, str(exc))
+            raise
+        self._sandbox_evidence.finish(evidence, persist_success=True)
+
+    def _run_windows_sandbox_setup(self, executable: Path, *, timeout_seconds: float) -> None:
         self._execution_root.mkdir(parents=True, exist_ok=True)
         diagnostic_path = self._execution_root / f"windows-sandbox-setup-{uuid4().hex}.log"
         try:
@@ -730,6 +755,7 @@ class CommandRuntime:
         error = capability.get("last_error")
         return {
             **self._diagnostics.snapshot(),
+            "incidentEvidence": self._sandbox_evidence.snapshot(),
             "status": capability["state"],
             "payloadStatus": self._payload_status,
             "errorCode": error.get("error") if isinstance(error, dict) else None,
@@ -897,6 +923,7 @@ class CommandRuntime:
             ):
                 self._network_grants.add(process_id)
         self._diagnostics.record("start", "requested", operation=process_id, proxy=proxy)
+        evidence = self._sandbox_evidence.begin("start") if os.name == "nt" else None
         try:
             # The elevated Windows backend may need to establish or refresh its
             # dedicated sandbox identities before the first process starts.
@@ -908,6 +935,8 @@ class CommandRuntime:
             stderr = client.stderr_tail.strip()
             detail = f"{exc}; exec-server stderr: {stderr}" if stderr else str(exc)
             self._record_sandbox_failure("start", str(exc), operation=process_id)
+            if evidence is not None:
+                self._sandbox_evidence.finish(evidence, detail)
             raise CommandRuntimeError("process_start_failed", detail) from exc
         sandbox_type = response.get("sandboxType") if isinstance(response, dict) else None
         if sandbox is not None and (
@@ -918,10 +947,14 @@ class CommandRuntime:
             with suppress(ExecServerError):
                 client.request("process/terminate", {"processId": process_id}, timeout_seconds=5)
             self._finish(state, "runtime_lost", "sandbox_visibility_unavailable")
+            if evidence is not None:
+                self._sandbox_evidence.finish(evidence, "sandbox_visibility_unavailable")
             raise CommandRuntimeError(
                 "sandbox_visibility_unavailable",
                 "exec-server did not confirm an enforced sandbox",
             )
+        if evidence is not None:
+            self._sandbox_evidence.finish(evidence)
         with state.condition:
             state.snapshot.sandbox_type = sandbox_type if isinstance(sandbox_type, str) else "none"
             state.snapshot.version += 1
@@ -963,6 +996,7 @@ class CommandRuntime:
                 break
         if not matched:
             return
+        evidence = self._sandbox_evidence.begin("visibility") if os.name == "nt" else None
         try:
             self._ensure_client().request(
                 "fs/getMetadata",
@@ -971,10 +1005,14 @@ class CommandRuntime:
             )
         except ExecServerError as exc:
             self._record_sandbox_failure("visibility", str(exc), operation=operation_id)
+            if evidence is not None:
+                self._sandbox_evidence.finish(evidence, str(exc))
             raise CommandRuntimeError(
                 "sandbox_visibility_unavailable",
                 f"failed to prepare product-owned read-only workdir {target_uri}: {exc}",
             ) from exc
+        if evidence is not None:
+            self._sandbox_evidence.finish(evidence)
 
     def wait(
         self,
@@ -1188,11 +1226,16 @@ class CommandRuntime:
                 server_request=self._handle_server_request,
                 stderr_observer=self._observe_exec_stderr,
             )
+            evidence = self._sandbox_evidence.begin("connection") if os.name == "nt" else None
             try:
                 client.start()
             except ExecServerError as exc:
                 client.close()
+                if evidence is not None:
+                    self._sandbox_evidence.finish(evidence, str(exc))
                 raise CommandRuntimeError("exec_server_start_failed", str(exc)) from exc
+            if evidence is not None:
+                self._sandbox_evidence.finish(evidence)
             self._client = client
             return client
 

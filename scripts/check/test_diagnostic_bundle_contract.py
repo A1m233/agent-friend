@@ -57,6 +57,26 @@ def test_command_inventory_is_bounded_to_codes_and_counts() -> None:
     )
 
 
+def test_incident_consumer_is_content_free_and_tolerates_bad_fields() -> None:
+    summary = INSPECTOR.summarize_sandbox_incidents(
+        {
+            "incidents": [
+                {
+                    "schemaVersion": 1,
+                    "outcome": {},
+                    "stage": [],
+                    "error": {"codes": ["helper_private_secret", "orchestrator_helper_incomplete"]},
+                    "message": "private secret",
+                }
+            ],
+            "gaps": None,
+        }
+    )
+    assert summary["codes"] == {"orchestrator_helper_incomplete": 1}
+    assert "secret" not in json.dumps(summary)
+    assert summary["gapCount"] == 0
+
+
 def _load_contract() -> dict[str, object]:
     return json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
 
@@ -347,6 +367,19 @@ def _build_bundle(
             "events": [{"code": "helper_launch_failed"}],
             "gaps": [],
         },
+        "diagnostics/command-runtime-incidents.json": {
+            "schemaVersion": 1,
+            "incidents": [
+                {
+                    "schemaVersion": 1,
+                    "id": "fixture",
+                    "stage": "start",
+                    "outcome": "failed",
+                    "error": {"codes": ["orchestrator_helper_incomplete"]},
+                }
+            ],
+            "gaps": [],
+        },
         "diagnostics/execution-environments.json": {
             "schemaVersion": 1,
             "status": "ready",
@@ -595,6 +628,14 @@ def _build_bundle(
         "diagnostics/windows-shell/current.json": shell_snapshot,
         "sessions/session-001.json": {
             "session_id": "session-1",
+            "coverage": {
+                "schemaVersion": 1,
+                "mode": "recent",
+                "requestedTurns": 10,
+                "includedTurns": 1,
+                "completeWithinRequestedRange": True,
+                "gaps": [],
+            },
             "events": [
                 {"type": "user_message", "payload": {"content": "private"}},
                 {

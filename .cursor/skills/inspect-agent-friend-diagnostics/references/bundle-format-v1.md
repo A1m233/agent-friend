@@ -85,6 +85,33 @@ History is persisted as a bounded 64 KiB JSON snapshot under the canonical log d
 
 ## Session Evidence
 
+`selected-sessions-v3` adds a bounded diagnostic projection. The default is the
+latest 10 effective user/system-trigger turns per selected session; `all` requests
+all turns subject to the same byte guards. An ongoing turn includes only its
+persisted prefix. `coverage` records requested/included turns, source offsets,
+read/output bytes, completeness, exclusions and gaps. Do not treat the selected
+range as full history. Tool sequences within the range are retained; references
+to earlier rewrites/compactions are not recursively expanded. Internal rollout
+snapshots are summarized to prevent older chat or private continuation content
+from re-entering the range. Original attachments are derived from included events.
+An oversized or corrupt boundary makes the range partial, without preventing
+system evidence export. The maximum scan is 64 MiB, decoded event 4 MiB and event
+output 16 MiB per session; full JSON envelope overhead is additional. Older
+capabilities retain their original semantics.
+
+`sandbox-incidents-v1` adds `diagnostics/command-runtime-incidents.json`. Failure
+records are independent of the 128-event health queue: up to 32 records, 128 KiB
+each, at most 30 days. Repair records retain their before state, related incident
+IDs, chosen repair path and result; a later ready snapshot does not erase a
+failure. Tauri can read persisted records when Bridge is unavailable. Read each
+record's build/runtime identity and report attribution: unchanged reports and
+concurrent observations are not uniquely attributable. `expectedHelpers` refers
+to expected packaged images, not observed loaded modules. Extracted log error
+codes are candidates from a bounded tail, not per-operation causality. No raw
+secrets, arbitrary error text, commands or helper logs are exported in this family.
+An in-progress record after restart means the final result was not retained; it
+does not prove setup failed. Durability is limited to persisted records.
+
 Session files normally contain `session_id`, title, model, persona, and ordered `events`. Common event types include:
 
 - `session_meta`: initial model/persona/title/schema context;
