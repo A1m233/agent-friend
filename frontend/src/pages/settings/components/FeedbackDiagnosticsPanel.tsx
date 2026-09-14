@@ -13,7 +13,7 @@ import dayjs from "dayjs";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 
-import { Button, Checkbox, ScrollArea, Textarea } from "@/components/ui";
+import { Button, Checkbox, Input, ScrollArea, Textarea } from "@/components/ui";
 import {
   captureRenderEvidenceNow,
   clearRenderEvidence,
@@ -47,6 +47,9 @@ export function FeedbackDiagnosticsPanel({
   const [description, setDescription] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [generating, setGenerating] = useState(false);
+  const [allTurns, setAllTurns] = useState(false);
+  const [turnLimit, setTurnLimit] = useState("10");
+  const validTurnLimit = /^\d+$/.test(turnLimit) && Number(turnLimit) >= 1 && Number(turnLimit) <= 100;
   const [includeAttachmentOriginals, setIncludeAttachmentOriginals] = useState(false);
   const [includeRenderEvidence, setIncludeRenderEvidence] = useState(false);
   const [renderEvidenceStatus, setRenderEvidenceStatus] =
@@ -116,12 +119,14 @@ export function FeedbackDiagnosticsPanel({
   };
 
   const generate = async () => {
+    if (selectedIds.size > 0 && !allTurns && !validTurnLimit) return;
     setGenerating(true);
     setResult(null);
     try {
       const next = await generateDiagnosticBundle({
         description: description.trim() || undefined,
         sessionIds: [...selectedIds],
+        sessionTurnLimit: allTurns ? null : selectedIds.size === 0 ? 10 : Number(turnLimit),
         includeAttachmentOriginals,
         includeRenderEvidence,
       });
@@ -395,6 +400,38 @@ export function FeedbackDiagnosticsPanel({
         ) : null}
 
         {selectedIds.size > 0 ? (
+          <div className="flex flex-col gap-3 rounded-md border border-border p-3">
+            <label className="flex items-center gap-3">
+              <span className="text-sm font-medium text-fg">每个所选会话最近</span>
+              <Input
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                value={turnLimit}
+                disabled={allTurns || generating}
+                onChange={(event) => setTurnLimit(event.target.value)}
+                aria-label="采集最近轮数"
+                aria-invalid={!allTurns && !validTurnLimit}
+                className="w-24"
+              />
+              <span className="text-sm text-fg">轮</span>
+            </label>
+            <label className="flex items-center gap-3">
+              <Checkbox checked={allTurns} disabled={generating}
+                onCheckedChange={(checked) => setAllTurns(checked === true)}
+                aria-label="采集全部轮次" />
+              <span className="text-sm text-fg">采集全部轮次（可能耗时较长）</span>
+            </label>
+            {!allTurns && !validTurnLimit ? (
+              <p role="alert" className="text-xs text-danger">请输入 1～100 的整数。</p>
+            ) : null}
+            <p className="text-xs text-muted">
+              默认最近 10 轮，包含正在进行一轮已保存的内容。沙箱故障现场独立采集；超大内容受限时会在结果中说明。
+            </p>
+          </div>
+        ) : null}
+        {selectedIds.size > 0 ? (
           <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border p-3">
             <Checkbox
               className="mt-0.5"
@@ -405,7 +442,7 @@ export function FeedbackDiagnosticsPanel({
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-medium text-fg">包含相关原始附件</span>
               <span className="mt-1 block text-xs text-muted">
-                默认不包含。开启后仅收集所选会话引用的附件原件，可能包含私人图片和文档，并会增大诊断包；原件合计最多 200MB。
+                默认不包含。开启后仅收集本次采集轮次引用的附件原件，可能包含私人图片和文档，并会增大诊断包；原件合计最多 200MB。
               </span>
             </span>
           </label>
@@ -417,7 +454,7 @@ export function FeedbackDiagnosticsPanel({
           </div>
           <Button
             loading={generating}
-            disabled={selectedIds.size > 20}
+            disabled={selectedIds.size > 20 || (selectedIds.size > 0 && !allTurns && !validTurnLimit)}
             onClick={() => void generate()}
           >
             生成诊断包

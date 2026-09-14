@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 12,
+  "schemaRevision": 13,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -29,7 +29,13 @@
   },
   "capabilities": [
     {
-      "id": "selected-sessions-v2",
+      "id": "sandbox-incidents-v1",
+      "manifestFields": [],
+      "requiredEntries": ["diagnostics/command-runtime-incidents.json"],
+      "entryPatterns": ["diagnostics/command-runtime-incidents.json"]
+    },
+    {
+      "id": "selected-sessions-v3",
       "manifestFields": [
         "requestedSessionIds",
         "includedSessionIds"

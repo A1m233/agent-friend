@@ -68,6 +68,37 @@ def _print_build_identity() -> int:
     return 0
 
 
+def _smoke_diagnostic_evidence() -> dict[str, Any]:
+    """Exercise bounded reads and durable failure/repair capture in the frozen runtime."""
+    import io
+
+    from agent.command_runtime.sandbox_evidence import SandboxEvidence
+    from agent.sessions.diagnostic_export import export_prefix
+
+    lines = [
+        {"type": "session_meta", "uuid": "meta", "payload": {}},
+        {"type": "user_message", "uuid": "old", "payload": {"content": "old-private"}},
+        {"type": "user_message", "uuid": "new", "payload": {"content": "new"}},
+        {"type": "tool_call_result", "uuid": "result", "payload": {"content": "ok"}},
+    ]
+    raw = b"\n".join(json.dumps(line).encode() for line in lines) + b"\n"
+    projection = export_prefix(io.BytesIO(raw), len(raw), 1)
+    if "old-private" in json.dumps(projection) or projection["coverage"]["includedTurns"] != 1:
+        raise RuntimeError("diagnostic range smoke failed")
+    with tempfile.TemporaryDirectory(prefix="diagnostic-smoke-") as directory:
+        root = Path(directory)
+        args = (root / "logs" / "health.json", root / "home", None, "smoke", "smoke")
+        evidence = SandboxEvidence(*args)
+        evidence.finish(evidence.begin("start"), "orchestrator_helper_incomplete")
+        repair = evidence.begin("repair")
+        evidence.repair_started(repair)
+        evidence.finish(repair, persist_success=True)
+        retained = SandboxEvidence(*args).snapshot()["incidents"]
+        if len(retained) != 2 or not retained[-1].get("relatedIncidents"):
+            raise RuntimeError("diagnostic incident persistence smoke failed")
+    return {"range": True, "failure_retention": True, "repair_link": True}
+
+
 def _smoke_image_reading() -> dict[str, Any]:
     """Decode all shipped image formats and persist/read a tool snapshot without network."""
     import io
@@ -1219,6 +1250,13 @@ def _doctor() -> int:
         }
     else:
         checks["capability:tool_schema_validation"] = {"ok": True, **schema_details}
+
+    try:
+        diagnostic_details = _smoke_diagnostic_evidence()
+    except Exception as exc:
+        checks["capability:diagnostic_evidence"] = {"ok": False, "error": str(exc)}
+    else:
+        checks["capability:diagnostic_evidence"] = {"ok": True, **diagnostic_details}
 
     try:
         image_details = _smoke_image_reading()

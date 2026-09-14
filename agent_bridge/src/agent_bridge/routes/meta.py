@@ -255,6 +255,19 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         return _dataclass_to_dict(result)
 
+    @router.get("/sessions/{session_id}/diagnostics")
+    def get_session_diagnostics(
+        session_id: str,
+        turn_limit: int | None = Query(10, ge=1, le=100),
+        all_turns: bool = Query(False),
+    ) -> dict[str, Any]:
+        try:
+            return mgr.diagnostic_export(session_id, turn_limit=None if all_turns else turn_limit)
+        except SessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except NotImplementedError as exc:
+            raise HTTPException(status_code=503, detail="bounded export unavailable") from exc
+
     @router.get("/sessions/{session_id}")
     def get_session(
         session_id: str,

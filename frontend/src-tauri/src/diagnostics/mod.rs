@@ -18,6 +18,7 @@ use tauri::{AppHandle, Manager, State};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 mod contract;
+mod sandbox_incidents;
 
 const MAX_DESCRIPTION_CHARS: usize = 20_000;
 const MAX_SESSIONS: usize = 20;
@@ -31,12 +32,18 @@ const MAX_ATTACHMENT_ORIGINAL_TOTAL_BYTES: u64 = 200 * 1024 * 1024;
 pub struct GenerateDiagnosticBundleRequest {
     description: Option<String>,
     session_ids: Vec<String>,
+    #[serde(default = "default_session_turn_limit")]
+    session_turn_limit: Option<u32>,
     locale: Option<String>,
     timezone: Option<String>,
     #[serde(default)]
     include_attachment_originals: bool,
     #[serde(default)]
     include_render_evidence: bool,
+}
+
+fn default_session_turn_limit() -> Option<u32> {
+    Some(10)
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -88,6 +95,12 @@ pub async fn generate_diagnostic_bundle(
 ) -> Result<GenerateDiagnosticBundleResult, String> {
     let description = normalize_description(request.description)?;
     let session_ids = normalize_session_ids(request.session_ids)?;
+    if request
+        .session_turn_limit
+        .is_some_and(|value| !(1..=100).contains(&value))
+    {
+        return Err("sessionTurnLimit must be between 1 and 100, or null".into());
+    }
     let generated_at = Local::now();
     let credentials = runtime_config::credential_redaction_values()
         .map_err(|e| format!("credential protection unavailable: {e}"))?;
@@ -168,16 +181,26 @@ pub async fn generate_diagnostic_bundle(
         }
     }
     .await;
-    let session_results = futures_util::future::join_all(session_ids.iter().map(|session_id| {
+    let mut session_results = Vec::new();
+    for session_id in &session_ids {
         let client = client.clone();
         let session_id = session_id.clone();
-        async move {
+        let result = async {
             let mut url =
                 reqwest::Url::parse(&runtime_services::RuntimeServiceKind::Bridge.base_url())
                     .map_err(|e| e.to_string())?;
             url.path_segments_mut()
                 .map_err(|_| "bridge base URL cannot accept path segments".to_string())?
-                .extend(["v1", "sessions", &session_id]);
+                .extend(["v1", "sessions", &session_id, "diagnostics"]);
+            match request.session_turn_limit {
+                Some(limit) => {
+                    url.query_pairs_mut()
+                        .append_pair("turn_limit", &limit.to_string());
+                }
+                None => {
+                    url.query_pairs_mut().append_pair("all_turns", "true");
+                }
+            }
             let response = client.get(url).send().await.map_err(|e| e.to_string())?;
             if !response.status().is_success() {
                 return Err(format!("bridge returned HTTP {}", response.status()));
@@ -191,8 +214,9 @@ pub async fn generate_diagnostic_bundle(
             }
             Ok::<_, String>((session_id, value))
         }
-    }))
-    .await;
+        .await;
+        session_results.push(result);
+    }
 
     let mut included_session_ids = Vec::new();
     let mut entries = Vec::new();
@@ -250,7 +274,7 @@ pub async fn generate_diagnostic_bundle(
         }
     };
 
-    let command_runtime = match command_runtime_result {
+    let mut command_runtime = match command_runtime_result {
         Ok(value) => value,
         Err(message) => {
             failures.push(CollectionFailure {
@@ -262,6 +286,10 @@ pub async fn generate_diagnostic_bundle(
                    "gaps": ["bridge_unavailable"]})
         }
     };
+    let incidents = command_runtime
+        .as_object_mut()
+        .and_then(|value| value.remove("incidentEvidence"))
+        .unwrap_or_else(|| sandbox_incidents::collect(&paths::log_dir()));
 
     for (name, mut value) in [
         ("diagnostics/application.json", app_info),
@@ -279,6 +307,7 @@ pub async fn generate_diagnostic_bundle(
             execution_environments,
         ),
         ("diagnostics/command-runtime.json", command_runtime),
+        ("diagnostics/command-runtime-incidents.json", incidents),
         ("install/integrity.json", install_integrity),
     ] {
         let mut count = 0;
@@ -318,6 +347,19 @@ pub async fn generate_diagnostic_bundle(
     for (index, result) in session_results.into_iter().enumerate() {
         match result {
             Ok((session_id, mut value)) => {
+                if value
+                    .pointer("/coverage/completeWithinRequestedRange")
+                    .and_then(Value::as_bool)
+                    == Some(false)
+                {
+                    failures.push(CollectionFailure {
+                        collection: "session-range".into(),
+                        item: Some(session_id.clone()),
+                        message:
+                            "会话采集达到体积上限或存在记录缺口，已保留可用内容；详见 coverage。"
+                                .into(),
+                    });
+                }
                 collect_attachment_candidates(&session_id, &value, &mut attachment_candidates);
                 let mut count = 0;
                 redact_provider_reasoning_states(&mut value, &mut count);
@@ -1377,6 +1419,7 @@ mod tests {
                     "diagnostics/desktop-instance.json",
                     "diagnostics/execution-environments.json",
                     "diagnostics/command-runtime.json",
+                    "diagnostics/command-runtime-incidents.json",
                     "diagnostics/webview2.json",
                     "diagnostics/webview2-render-evidence.json",
                     "install/integrity.json",

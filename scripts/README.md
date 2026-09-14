@@ -1,5 +1,11 @@
 # scripts/
 
+| 脚本 | 用途 | mac/linux | Windows |
+|---|---|---|---|
+| diagnostics-smoke | 合成长会话最近 10 轮读取／ZIP 体积对照和事故修复留存，无网络、不读客户数据 | `./scripts/diagnostics-smoke/run.sh` | `.\scripts\diagnostics-smoke\run.ps1` |
+
+`package/run.* runtime` 的 frozen doctor 同时验证最近轮次读取、故障文件跨实例留存和修复关联，不执行真实沙箱初始化。
+
 > `package/run.* runtime` 的 frozen doctor 会实际解码静态 PNG/JPEG/WebP 并验证图像资产快照往返；不访问网络或调用视觉模型。
 
 > `package/run.* runtime` 校验 Codex 配套助手及 bin 哈希清单，旧缓存缺清单时重新从锁定官方归档准备；frozen doctor 额外以无参数启动 setup helper 验证可加载性，不执行初始化或修改系统状态。
