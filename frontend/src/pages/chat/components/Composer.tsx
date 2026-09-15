@@ -83,6 +83,7 @@ interface ComposerProps {
   placement?: "bottom" | "inline";
   onHeightChange?: (height: number) => void;
   topSlot?: ReactNode;
+  onReferenceSelect?: (reference: ChatTextReference) => void;
 }
 
 export interface ComposerHandle {
@@ -110,6 +111,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   placement = "bottom",
   onHeightChange,
   topSlot,
+  onReferenceSelect,
 }, forwardedRef) {
   const runPresentation = useConversationStore(useShallow((s) => (
     sessionRunPresentation(s, s.currentSessionId)
@@ -809,6 +811,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 removable={!disabled && !editSubmitting}
                 onReferenceRemove={(referenceId) => removeDraftReference(workspaceKey, referenceId)}
                 onClearReferences={() => clearDraftReferences(workspaceKey)}
+                onReferenceSelect={onReferenceSelect}
               />
               <div slot="footer-prefix" className="flex min-h-8 w-full items-center justify-between overflow-visible px-1">
                 <TooltipProvider>

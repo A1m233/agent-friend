@@ -157,6 +157,7 @@ export function PetBubble() {
           {(row.sessionId || display.truncated) && <div className="flex shrink-0 flex-col gap-1 self-center">
             {row.sessionId && <Button size="xs" variant="secondary" disabled={disabled} onClick={() => {
               void invoke("open_chat_session", { sessionId: row.sessionId })
+                .then(() => { if (alive.current) close(row); })
                 .catch((error: unknown) => console.warn("notification navigation unavailable", error));
             }}>查看</Button>}
             {display.truncated && <Button size="xs" variant="secondary" disabled={disabled} onClick={() => {

@@ -21,7 +21,6 @@ from llm_providers import (
     ModelRuntimeConfig,
     all_model_ids,
     default_model_runtime_config,
-    public_model_catalog,
     validate_model_runtime_config,
 )
 
@@ -32,6 +31,7 @@ from ..errors import (
     build_openai_error_envelope,
     map_exception,
 )
+from ..model_connections.catalog import connection_model_catalog
 
 
 class ModelValidateBody(BaseModel):
@@ -44,22 +44,7 @@ class ModelValidateBody(BaseModel):
 def register_routes(app: FastAPI, runtime: BridgeRuntime | None = None) -> None:
     @app.get("/v1/models/catalog")
     def model_catalog() -> dict[str, object]:
-        if runtime is None or runtime.connection_runtime is None:
-            return public_model_catalog()
-        from dataclasses import replace
-
-        from llm_providers.connections import model_reference
-
-        directory = runtime.connection_runtime.directory()
-        models = tuple(
-            replace(
-                directory.model(model_reference(connection.id, model.id)),
-                label=f"{connection.name} · {model.name}",
-            )
-            for connection in directory.connections.values()
-            for model in connection.models
-        )
-        return public_model_catalog(models)
+        return connection_model_catalog(runtime.connection_runtime if runtime else None)
 
     @app.post("/v1/models/validate")
     def validate_model(body: ModelValidateBody) -> object:

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from uuid import UUID
 
 import pytest
+from agent_bridge.model_connections.catalog import connection_model_catalog
+from agent_bridge.model_connections.runtime import ConnectionRuntime
 from agent_bridge.protocols.im.content import OutboundContent
 from agent_bridge.protocols.im.control import MENU_PAYLOAD, IMControlService
 from agent_bridge.protocols.im.coordinator import IMBindingCoordinator
@@ -13,6 +17,12 @@ from agent_bridge.protocols.im.event import InboundInteraction
 from agent_bridge.protocols.im.provider import IMProvider, ProviderStatus
 from agent_bridge.protocols.im.state import ControlCapability, IMBindingKey, IMStateStore
 from agent_bridge.session_models import SessionModelService
+from llm_providers.connections import (
+    ConnectionDefinition,
+    CustomModel,
+    ModelDirectory,
+    model_reference,
+)
 
 from agent import SessionManager
 from llm_providers import (
@@ -126,6 +136,101 @@ def interaction(payload: str) -> InboundInteraction:
     )
 
 
+def custom_catalog(service: IMControlService) -> list[ConnectionDefinition]:
+    connections = [
+        ConnectionDefinition(
+            id=str(UUID(int=index)),
+            name=f"连接{index}",
+            base_url="https://example.com/v1",
+            protocol="chat_completions",
+            models=(CustomModel(str(UUID(int=100 + index)), "same-model", 100000),),
+        )
+        for index in range(1, 6)
+    ]
+    runtime = cast(
+        ConnectionRuntime, SimpleNamespace(directory=lambda: ModelDirectory(connections))
+    )
+    service._catalog = lambda: connection_model_catalog(runtime)
+    return connections
+
+
+def button(content: OutboundContent, label: str) -> str:
+    assert content.controls is not None
+    return next(a.payload for row in content.controls.rows for a in row if a.label == label)
+
+
+@pytest.mark.asyncio
+async def test_custom_models_paginate_switch_and_refresh(tmp_path: Path) -> None:
+    service, provider, _state, _coordinator, models = make_service(tmp_path)
+    connections = custom_catalog(service)
+    await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
+    await service.handle(
+        cast(IMProvider, provider), interaction(button(provider.sent[-1], "切换模型"))
+    )
+    found: dict[str, str] = {}
+    while True:
+        page = provider.sent[-1]
+        assert page.controls is not None
+        found.update(
+            {
+                a.label: a.payload
+                for row in page.controls.rows
+                for a in row
+                if "same-model" in a.label
+            }
+        )
+        if not any(a.label == "下一页" for row in page.controls.rows for a in row):
+            break
+        await service.handle(cast(IMProvider, provider), interaction(button(page, "下一页")))
+    assert set(found) == {f"连接{i} · same-model" for i in range(1, 6)}
+    await service.handle(cast(IMProvider, provider), interaction(found["连接1 · same-model"]))
+    reference = model_reference(connections[0].id, connections[0].models[0].id)
+    assert models.calls[-1]["model"] == reference
+    assert "模型：连接1 · same-model" in provider.sent[-1].text
+    assert "推理强度：服务默认" in provider.sent[-1].text
+    connections[0] = replace(connections[0], name="改名")
+    await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
+    assert "改名 · same-model" in provider.sent[-1].text
+    connections.clear()
+    await service.handle(cast(IMProvider, provider), interaction(found["连接2 · same-model"]))
+    assert "已不可用" in provider.sent[-1].text
+    assert len(models.calls) == 1
+    await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
+    assert "自定义模型（已不可用）" in provider.sent[-1].text
+    assert reference not in provider.sent[-1].text
+
+
+@pytest.mark.asyncio
+async def test_custom_reasoning_and_session_notices(tmp_path: Path) -> None:
+    service, provider, _state, _coordinator, models = make_service(tmp_path)
+    connections = custom_catalog(service)
+    reference = model_reference(connections[0].id, connections[0].models[0].id)
+    sessions = cast(Any, service._sessions)
+    for session in sessions.sessions.values():
+        session.current_model = reference
+        session.current_model_config = ModelRuntimeConfig(reference, "effort:vendor-next")
+    await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
+    menu = provider.sent[-1]
+    assert "当前推理强度：vendor-next" in menu.text
+    await service.handle(cast(IMProvider, provider), interaction(button(menu, "调整推理强度")))
+    page = provider.sent[-1]
+    assert "建议值" in page.text
+    await service.handle(cast(IMProvider, provider), interaction(button(page, "下一页")))
+    high = button(provider.sent[-1], "high")
+    await service.handle(cast(IMProvider, provider), interaction(high))
+    assert models.calls[-1]["reasoning_preset"] == "effort:high"
+    assert "模型：连接1 · same-model" in provider.sent[-1].text
+    assert "推理强度：high" in provider.sent[-1].text
+    await service.handle(cast(IMProvider, provider), interaction(button(menu, "切换会话")))
+    await service.handle(cast(IMProvider, provider), interaction(button(provider.sent[-1], "Beta")))
+    assert "已切换会话" in provider.sent[-1].text
+    assert "模型：连接1 · same-model" in provider.sent[-1].text
+    assert reference not in provider.sent[-1].text
+    await service.handle(cast(IMProvider, provider), interaction(high))
+    assert "绑定会话已变化" in provider.sent[-1].text
+    assert len(models.calls) == 1
+
+
 def make_service(
     tmp_path: Path,
 ) -> tuple[
@@ -160,7 +265,7 @@ async def test_menu_switches_future_session_without_routing_control_to_agent(
 
     await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
     menu = provider.sent[-1]
-    assert menu.text == ("当前会话：Alpha\n当前模型：deepseek/deepseek-flash\n当前推理强度：高")
+    assert menu.text == ("当前会话：Alpha\n当前模型：DeepSeek Flash\n当前推理强度：高")
     assert menu.text_format == "markdown"
     assert menu.controls is not None
     assert menu.controls.rows[0][0].click_limit is None
@@ -328,7 +433,7 @@ async def test_menu_switches_reasoning_for_bound_session(tmp_path: Path) -> None
 
     await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[0][1].payload))
     page = provider.sent[-1]
-    assert page.text == "选择推理强度（deepseek/deepseek-flash，第 1/1 页）"
+    assert page.text == "选择推理强度（DeepSeek Flash，第 1/1 页）"
     assert page.controls is not None
     labels = [action.label for row in page.controls.rows for action in row]
     assert labels == ["关闭", "低", "当前 · 高", "最高", "返回"]
@@ -344,7 +449,7 @@ async def test_menu_switches_reasoning_for_bound_session(tmp_path: Path) -> None
         "reasoning_preset": "low",
     }
     assert provider.sent[-1].text == (
-        "推理强度已切换\n模型：deepseek/deepseek-flash\n推理强度：低\n下一条回复开始生效。"
+        "推理强度已切换\n模型：DeepSeek Flash\n推理强度：低\n下一条回复开始生效。"
     )
     assert provider.sent[-1].controls is None
 
@@ -431,9 +536,7 @@ async def test_fixed_reasoning_menu_is_read_only(tmp_path: Path) -> None:
     await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[0][1].payload))
 
     page = provider.sent[-1]
-    assert page.text == (
-        "当前模型：kimi/kimi-k2.7-code\n当前推理强度：固定开启\n固定开启，不可调整"
-    )
+    assert page.text == ("当前模型：kimi-k2.7-code\n当前推理强度：固定开启\n固定开启，不可调整")
     assert page.controls is not None
     assert [[action.label for action in row] for row in page.controls.rows] == [["返回"]]
 

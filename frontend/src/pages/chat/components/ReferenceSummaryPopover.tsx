@@ -56,6 +56,7 @@ export function ReferenceSummaryPopover({
 }: ReferenceSummaryPopoverProps) {
   const [open, setOpen] = useState(false);
   const closeTimerRef = useRef<number | null>(null);
+  const navigatingRef = useRef(false);
 
   useEffect(() => () => {
     if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
@@ -136,6 +137,10 @@ export function ReferenceSummaryPopover({
           onPointerEnter={cancelClose}
           onPointerLeave={scheduleClose}
           onOpenAutoFocus={(event) => event.preventDefault()}
+          onCloseAutoFocus={(event) => {
+            if (navigatingRef.current) event.preventDefault();
+            navigatingRef.current = false;
+          }}
         >
           <div className="max-h-80 space-y-1 overflow-y-auto" role="list">
             {references.map((reference, index) => {
@@ -162,7 +167,12 @@ export function ReferenceSummaryPopover({
                       type="button"
                       variant="ghost"
                       className="h-auto min-w-0 flex-1 justify-start p-0 text-left hover:bg-transparent"
-                      onClick={() => onSelect(reference)}
+                      onClick={() => {
+                        cancelClose();
+                        navigatingRef.current = true;
+                        setOpen(false);
+                        onSelect(reference);
+                      }}
                     >
                       <span className="min-w-0">{content}</span>
                     </Button>

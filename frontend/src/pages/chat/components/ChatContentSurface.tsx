@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ChatTextReference } from "@/types/chat";
 
 import { FeedbackIcon } from "@/components/app/FeedbackIcon";
 import { Button, StatusDot, type StatusDotProps } from "@/components/ui";
@@ -35,6 +36,15 @@ export function ChatContentSurface() {
   const runtimeCredentialGroups = useRuntimeCredentialStore((state) => state.groups);
   const [composerHeight, setComposerHeight] = useState(CHAT_COMPOSER_FALLBACK_HEIGHT_PX);
   const composerRef = useRef<ComposerHandle>(null);
+  const [referenceNavigation, setReferenceNavigation] = useState<{
+    sessionId: string;
+    reference: ChatTextReference;
+  } | null>(null);
+  const selectReference = useCallback((reference: ChatTextReference) => {
+    if (currentSessionId) setReferenceNavigation({ sessionId: currentSessionId, reference });
+  }, [currentSessionId]);
+  const clearReferenceNavigation = useCallback(() => setReferenceNavigation(null), []);
+  useEffect(clearReferenceNavigation, [currentSessionId, clearReferenceNavigation]);
   const primaryActivity = usePrimaryActivity();
   const voiceBlocksText =
     Boolean(currentSessionId && voiceSessionId === currentSessionId) &&
@@ -88,6 +98,9 @@ export function ChatContentSurface() {
             composerHeight={composerHeight}
             onFocusComposer={focusComposer}
             primaryActivity={primaryActivity}
+            referenceTarget={referenceNavigation?.sessionId === currentSessionId
+              ? referenceNavigation.reference : null}
+            onReferenceTargetHandled={clearReferenceNavigation}
           />
           <Composer
             ref={composerRef}
@@ -95,6 +108,7 @@ export function ChatContentSurface() {
             disabledReason={composerDisabledReason}
             onHeightChange={setComposerHeight}
             topSlot={<ApprovalDock activity={primaryActivity} />}
+            onReferenceSelect={selectReference}
           />
         </>
       )}
