@@ -4,6 +4,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from agent_bridge.model_connections.catalog import connection_model_catalog
 from agent_bridge.model_connections.runtime import ConnectionRuntime
 from llm_providers.connections import model_reference
 from llm_providers.errors import LLMModelUnavailableError
@@ -48,6 +49,22 @@ def test_execution_keeps_old_endpoint_while_next_execution_reads_edit(tmp_path: 
             assert isinstance(new, LLMClient)
             assert new.spec.api_base == "https://two.example/v1"
             assert old.spec.api_base == "https://one.example/v1"
+
+
+def test_public_catalog_reads_latest_saved_connections(tmp_path: Path) -> None:
+    runtime, config, reference = fixture(tmp_path)
+    catalog = connection_model_catalog(runtime)
+    custom = next(p for p in catalog["providers"] if p["id"] == "custom")
+    assert custom["models"][0]["id"] == reference
+    assert custom["models"][0]["label"] == "Custom · same"
+    assert "fixture" not in json.dumps(catalog)
+    config["connections"][0]["name"] = "Renamed"
+    runtime.reader.path.write_text(json.dumps({"modelConnections": config}), encoding="utf-8")
+    custom = next(p for p in connection_model_catalog(runtime)["providers"] if p["id"] == "custom")
+    assert custom["models"][0]["label"] == "Renamed · same"
+    config["connections"] = []
+    runtime.reader.path.write_text(json.dumps({"modelConnections": config}), encoding="utf-8")
+    assert connection_model_catalog(runtime) == connection_model_catalog(None)
 
 
 def test_delete_waits_for_bound_execution_and_errors_release_lease(tmp_path: Path) -> None:

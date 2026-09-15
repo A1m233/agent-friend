@@ -7,8 +7,11 @@ import hashlib
 import secrets
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
+
+from llm_providers.model_identity import is_custom_model_reference
 
 from agent import Session, SessionManager, SessionNotFoundError, SessionSummary
 from llm_providers import public_model_catalog
@@ -116,11 +119,13 @@ class IMControlService:
         state_store: IMStateStore,
         coordinator: IMBindingCoordinator,
         model_service: SessionModelService,
+        catalog: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self._sessions = sessions
         self._state = state_store
         self._coordinator = coordinator
         self._models = model_service
+        self._catalog = catalog or public_model_catalog
         self._tokens = _ControlTokenRegistry()
 
     async def handle(self, provider: IMProvider, event: InboundInteraction) -> None:
@@ -181,10 +186,14 @@ class IMControlService:
                 "还没有选择会话，请先在 agent-friend 的“接入 IM”窗口完成选择。",
             )
             return
+        catalog = self._catalog()
         title = self._display_title(current.session_id, current.initial_title)
         config = current.current_model_config
-        reasoning_label = _reasoning_label(config.model_id, config.reasoning_preset)
-        text = f"当前会话：{title}\n当前模型：{config.model_id}\n当前推理强度：{reasoning_label}"
+        reasoning_label = _reasoning_label(config.model_id, config.reasoning_preset, catalog)
+        text = (
+            f"当前会话：{title}\n当前模型：{_model_label(config.model_id, catalog)}\n"
+            f"当前推理强度：{reasoning_label}"
+        )
         controls = OutboundControls(
             rows=(
                 (
@@ -250,7 +259,7 @@ class IMControlService:
         key: IMBindingKey,
         page: int,
     ) -> None:
-        models = _model_options()
+        models = _model_options(self._catalog())
         total_pages = max(1, (len(models) + _PAGE_SIZE - 1) // _PAGE_SIZE)
         page = min(max(page, 0), total_pages - 1)
         start = page * _PAGE_SIZE
@@ -298,14 +307,18 @@ class IMControlService:
             await self._send_text(provider, key, "目标会话已经不存在，请重新打开菜单选择。")
             return
         config = current.current_model_config
-        control, presets = _reasoning_options(config.model_id)
-        current_label = _reasoning_label(config.model_id, config.reasoning_preset)
+        catalog = self._catalog()
+        control, presets = _reasoning_options(config.model_id, catalog)
+        current_label = _reasoning_label(config.model_id, config.reasoning_preset, catalog)
+        if not any(reference == config.model_id for reference, _ in _model_options(catalog)):
+            await self._send_text(provider, key, "当前模型已不可用，请重新选择模型。")
+            return
         if control in {"fixed", "unsupported"}:
             state_text = "固定开启，不可调整" if control == "fixed" else "不支持调整"
             await self._send(
                 provider,
                 key,
-                f"当前模型：{config.model_id}\n当前推理强度：{current_label}\n{state_text}",
+                f"当前模型：{_model_label(config.model_id, catalog)}\n当前推理强度：{current_label}\n{state_text}",
                 OutboundControls(
                     rows=((self._token_button("reasoning-back", "返回", key, "menu"),),)
                 ),
@@ -357,7 +370,12 @@ class IMControlService:
         await self._send(
             provider,
             key,
-            f"选择推理强度（{config.model_id}，第 {page + 1}/{total_pages} 页）",
+            f"选择推理强度（{_model_label(config.model_id, catalog)}，第 {page + 1}/{total_pages} 页）"
+            + (
+                "\n以下为建议值，是否支持取决于服务；自由输入请在桌面端设置。"
+                if is_custom_model_reference(config.model_id)
+                else ""
+            ),
             OutboundControls(rows=tuple(rows)),
         )
 
@@ -367,6 +385,7 @@ class IMControlService:
         key: IMBindingKey,
         session_id: str,
     ) -> None:
+        catalog = self._catalog()
         try:
             async with self._coordinator.try_mutation(key):
                 session = self._sessions.open(session_id)
@@ -389,7 +408,7 @@ class IMControlService:
             key,
             "已切换会话\n"
             f"标题：{title}\n"
-            f"模型：{session.current_model}\n"
+            f"模型：{_model_label(session.current_model, catalog)}\n"
             f"最近活跃：{updated_at}\n"
             f"最近回复：{preview}",
         )
@@ -409,6 +428,10 @@ class IMControlService:
         if binding.session_id != expected_session_id:
             await self._send_text(provider, key, "当前绑定会话已变化，请重新打开最新菜单。")
             return
+        catalog = self._catalog()
+        if not any(reference == model_id for reference, _ in _model_options(catalog)):
+            await self._send_text(provider, key, "所选模型已不可用，请重新打开菜单选择。")
+            return
         try:
             async with self._coordinator.try_mutation(key):
                 config = await asyncio.to_thread(
@@ -427,8 +450,8 @@ class IMControlService:
             provider,
             key,
             "配置已切换\n"
-            f"模型：{config.model_id}\n"
-            f"推理强度：{_reasoning_label(config.model_id, config.reasoning_preset)}\n"
+            f"模型：{_model_label(config.model_id, catalog)}\n"
+            f"推理强度：{_reasoning_label(config.model_id, config.reasoning_preset, catalog)}\n"
             "下一条回复开始生效。",
         )
 
@@ -452,6 +475,10 @@ class IMControlService:
         if current is None or current.current_model != expected_model_id:
             await self._send_text(provider, key, "当前模型已变化，请重新打开推理强度菜单。")
             return
+        catalog = self._catalog()
+        if not any(reference == expected_model_id for reference, _ in _model_options(catalog)):
+            await self._send_text(provider, key, "所选模型已不可用，请重新打开菜单选择。")
+            return
         try:
             async with self._coordinator.try_mutation(key):
                 config = await asyncio.to_thread(
@@ -470,8 +497,8 @@ class IMControlService:
             provider,
             key,
             "推理强度已切换\n"
-            f"模型：{config.model_id}\n"
-            f"推理强度：{_reasoning_label(config.model_id, config.reasoning_preset)}\n"
+            f"模型：{_model_label(config.model_id, catalog)}\n"
+            f"推理强度：{_reasoning_label(config.model_id, config.reasoning_preset, catalog)}\n"
             "下一条回复开始生效。",
         )
 
@@ -554,8 +581,7 @@ class IMControlService:
         )
 
 
-def _model_options() -> list[tuple[str, str]]:
-    catalog = public_model_catalog()
+def _model_options(catalog: dict[str, Any]) -> list[tuple[str, str]]:
     result: list[tuple[str, str]] = []
     for provider in catalog.get("providers", []):
         if not isinstance(provider, dict):
@@ -568,8 +594,15 @@ def _model_options() -> list[tuple[str, str]]:
     return result
 
 
-def _reasoning_options(model_id: str) -> tuple[str, list[tuple[str, str]]]:
-    for provider in public_model_catalog().get("providers", []):
+def _model_label(model_id: str, catalog: dict[str, Any]) -> str:
+    for reference, label in _model_options(catalog):
+        if reference == model_id:
+            return label
+    return "自定义模型（已不可用）" if is_custom_model_reference(model_id) else model_id
+
+
+def _reasoning_options(model_id: str, catalog: dict[str, Any]) -> tuple[str, list[tuple[str, str]]]:
+    for provider in catalog.get("providers", []):
         if not isinstance(provider, dict):
             continue
         for model in provider.get("models", []):
@@ -590,11 +623,13 @@ def _reasoning_options(model_id: str) -> tuple[str, list[tuple[str, str]]]:
     return "unsupported", []
 
 
-def _reasoning_label(model_id: str, preset_id: str) -> str:
-    _control, presets = _reasoning_options(model_id)
+def _reasoning_label(model_id: str, preset_id: str, catalog: dict[str, Any]) -> str:
+    _control, presets = _reasoning_options(model_id, catalog)
     for candidate_id, label in presets:
         if candidate_id == preset_id:
             return label
+    if is_custom_model_reference(model_id):
+        return "服务默认" if preset_id == "none" else preset_id.removeprefix("effort:")
     return preset_id
 
 

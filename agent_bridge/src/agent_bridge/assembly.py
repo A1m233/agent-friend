@@ -851,11 +851,14 @@ def build_runtime(
             im_binding_coordinator,
             window_seconds=3.0,
         )
+        from .model_connections.catalog import connection_model_catalog
+
         im_control_service = IMControlService(
             sessions=persistent_session_manager,
             state_store=im_state_store,
             coordinator=im_binding_coordinator,
             model_service=session_model_service,
+            catalog=lambda: connection_model_catalog(base_runtime.connection_runtime),
         )
         im_deduper = RecentMessageDeduper(
             ttl_seconds=settings.im_voice_dedupe_ttl_seconds,
