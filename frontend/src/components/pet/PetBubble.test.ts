@@ -291,17 +291,36 @@ describe("PetBubble controlled rows", () => {
     expectNoNewPresentation();
   });
 
-  it("keeps navigation and expansion non-closing and preserves the ledger record", async () => {
+  it("closes only the viewed notification after navigation succeeds", async () => {
     const item = notification("A", { text: LONG_TEXT, navigation: { sessionId: "session-1" } });
-    await mount(item);
-    const original = row("A");
+    const pending = deferred<void>();
+    mocks.invoke.mockReturnValueOnce(pending.promise);
+    await mount(item, notification("B"));
     await clickOperation("A", "查看");
     expect(mocks.invoke).toHaveBeenCalledWith("open_chat_session", { sessionId: "session-1" });
-    await clickOperation("A", "展开");
-    expect(row("A")).toBe(original);
-    expect(text("A").textContent).toBe(LONG_TEXT);
+    expect(activeIds()).toEqual(["A", "B"]);
+    expect(mocks.dismiss).not.toHaveBeenCalled();
+    await act(async () => pending.resolve());
+    expect(mocks.dismiss).toHaveBeenCalledExactlyOnceWith("A", 3);
+    expect(row("A").dataset.state).toBe("exiting");
+    expect(activeIds()).toEqual(["B"]);
+    await finishExits("A");
+    expect(rows().map((entry) => entry.dataset.bubbleId)).toEqual(["B"]);
+    expect(useNotificationStore.getState().records.A.delivery.status).toBe("dismissed");
+    expectNoNewPresentation();
+  });
+
+  it("retains the notification when navigation fails and allows retry", async () => {
+    const item = notification("A", { navigation: { sessionId: "session-1" } });
+    mocks.invoke.mockRejectedValueOnce(new Error("unavailable"));
+    await mount(item);
+    await clickOperation("A", "查看");
+    expect(activeIds()).toEqual(["A"]);
     expect(useNotificationStore.getState().records.A).toEqual(item);
     expect(mocks.dismiss).not.toHaveBeenCalled();
+    await clickOperation("A", "查看");
+    expect(mocks.dismiss).toHaveBeenCalledExactlyOnceWith("A", 3);
+    expect(activeIds()).toEqual([]);
     expectNoNewPresentation();
   });
 
