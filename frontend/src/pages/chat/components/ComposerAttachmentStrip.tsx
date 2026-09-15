@@ -8,6 +8,7 @@ interface ComposerAttachmentStripProps {
   removable: boolean;
   onReferenceRemove: (referenceId: string) => void;
   onClearReferences: () => void;
+  onReferenceSelect?: (reference: ChatTextReference) => void;
 }
 
 /** Keeps text references and real files in ChatSender's single attachment band. */
@@ -17,6 +18,7 @@ export function ComposerAttachmentStrip({
   removable,
   onReferenceRemove,
   onClearReferences,
+  onReferenceSelect,
 }: ComposerAttachmentStripProps) {
   if (!attachmentContent && references.length === 0) return null;
 
@@ -29,6 +31,7 @@ export function ComposerAttachmentStrip({
           removable={removable}
           onRemove={onReferenceRemove}
           onClear={onClearReferences}
+          onSelect={onReferenceSelect}
         />
       )}
       {attachmentContent}

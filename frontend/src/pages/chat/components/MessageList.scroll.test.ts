@@ -6,13 +6,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConversationStore } from "@/stores";
 import { useSocialAuthRequestsStore } from "@/stores/socialAuthRequests";
 import type { SocialAuthRequestSnapshot, SocialAuthRequestStatus } from "@/services";
-import type { ChatMessage } from "@/types/chat";
+import type { ChatMessage, ChatTextReference } from "@/types/chat";
 import { MessageList, MessageTimeline } from "./MessageList";
 
 // Rendering Markdown in a custom element is unrelated to scroll ownership.
 // The timeline, actual disclosure controls, ScrollArea and virtualizer stay real.
 vi.mock("@tdesign-react/chat", () => ({
-  ChatMessage: ({ children }: { children?: ReactNode }) => createElement("div", null, children),
+  ChatMessage: ({ children, content }: {
+    children?: ReactNode;
+    content?: Array<{ data?: unknown }>;
+  }) => createElement("div", null,
+    content?.map((item) => typeof item.data === "string" ? item.data : "").join(""), children),
 }));
 vi.mock("./MessageAttachments", () => ({ MessageAttachments: () => null }));
 
@@ -86,6 +90,7 @@ describe("MessageTimeline disclosure scrolling", () => {
     element.dataset.slot === "scroll-area-viewport" && !element.closest("[data-index]");
 
   function rowHeight(element: HTMLElement) {
+    if (element.parentElement?.matches("[data-quoteable-text]")) return 40;
     const id = element.querySelector<HTMLElement>("[data-message-id]")?.dataset.messageId;
     return id ? rowHeights.get(id) ?? ROW_HEIGHT : 0;
   }
@@ -241,6 +246,38 @@ describe("MessageTimeline disclosure scrolling", () => {
     expect(element.scrollHeight).toBeGreaterThan(element.clientHeight);
     expect(element.scrollTop).toBe(element.scrollHeight - element.clientHeight);
   }
+
+  it("reveals a composer reference with the existing exact-range highlight and consumes it once", async () => {
+    const items = messages();
+    items[0] = { ...items[0], blocks: [{ kind: "text", mid: "source-block", text: "before quoted text after" }] };
+    const reference: ChatTextReference = {
+      referenceId: "draft-reference", quotedText: "quoted text", sourceRole: "assistant", availability: "available",
+      source: { kind: "session_message", messageEventUuid: items[0].id, textBlockId: "source-block", externalSourceKey: null },
+      locator: { kind: "text_range", coordinateSpace: "rendered_text_utf16_v1", start: 7, end: 18 },
+    };
+    const setHighlight = vi.fn();
+    vi.stubGlobal("CSS", { highlights: { set: setHighlight, delete: vi.fn() } });
+    vi.stubGlobal("Highlight", class { constructor(public range: Range) {} });
+    const scrollBy = vi.fn();
+    overrideProperty("scrollBy", { value: scrollBy });
+    await mountTimeline(items);
+    const handled = vi.fn();
+    await renderTimeline(items, false, false, { referenceTarget: reference, onReferenceTargetHandled: handled });
+    await flushFrames();
+    expect(handled).toHaveBeenCalledOnce();
+    expect(scrollBy).toHaveBeenCalled();
+    expect(setHighlight).toHaveBeenCalledWith("agent-friend-quoted-text", expect.anything());
+    expect(setHighlight.mock.calls[0][1].range.toString()).toBe("quoted text");
+    await renderTimeline([...items], false, false, { referenceTarget: reference, onReferenceTargetHandled: handled });
+    await flushFrames();
+    expect(handled).toHaveBeenCalledOnce();
+    expect(setHighlight).toHaveBeenCalledOnce();
+    await renderTimeline(items);
+    await renderTimeline(items, false, false, { referenceTarget: reference, onReferenceTargetHandled: handled });
+    await flushFrames();
+    expect(handled).toHaveBeenCalledTimes(2);
+    expect(setHighlight).toHaveBeenCalledTimes(2);
+  });
 
   it("loads one older page near the top and preserves the visible message through prepend", async () => {
     let finish!: (success: boolean) => void;

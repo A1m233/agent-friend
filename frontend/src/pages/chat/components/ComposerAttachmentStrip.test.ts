@@ -37,6 +37,32 @@ afterEach(() => {
 });
 
 describe("ComposerAttachmentStrip", () => {
+  it("navigates from a quoted card and closes the popover without removing the draft", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const onSelect = vi.fn();
+    const onRemove = vi.fn();
+    const onClear = vi.fn();
+    await act(async () => root.render(createElement(ComposerAttachmentStrip, {
+      references: [reference], removable: true, onReferenceSelect: onSelect,
+      onReferenceRemove: onRemove, onClearReferences: onClear,
+    })));
+    const trigger = container.querySelector<HTMLButtonElement>(".composer-reference-card-trigger")!;
+    await act(async () => trigger.click());
+    const card = [...document.querySelectorAll<HTMLButtonElement>('[role="listitem"] button')]
+      .find((button) => button.textContent?.includes("quoted text"));
+    expect(card).toBeDefined();
+    await act(async () => card!.click());
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(reference);
+    expect(onRemove).not.toHaveBeenCalled();
+    expect(onClear).not.toHaveBeenCalled();
+    expect(trigger.getAttribute("data-state")).toBe("closed");
+    expect(document.querySelector('[role="listitem"]')).toBeNull();
+    expect(trigger.textContent).toContain("1 个已选文本");
+    await act(async () => root.unmount());
+  });
+
   it("keeps the reference card and real files in the same ChatSender attachment slot", async () => {
     const container = document.createElement("div");
     document.body.append(container);

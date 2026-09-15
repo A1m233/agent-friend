@@ -691,6 +691,8 @@ interface MessageTimelineProps {
   hasOlderHistory?: boolean;
   onLoadOlderHistory?: () => Promise<boolean>;
   onLoadReferenceHistory?: () => Promise<boolean>;
+  referenceTarget?: ChatTextReference | null;
+  onReferenceTargetHandled?: () => void;
 }
 
 /**
@@ -717,6 +719,8 @@ export function MessageTimeline({
   hasOlderHistory = false,
   onLoadOlderHistory,
   onLoadReferenceHistory,
+  referenceTarget = null,
+  onReferenceTargetHandled,
 }: MessageTimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const prependingRef = useRef(false);
@@ -726,6 +730,7 @@ export function MessageTimeline({
   const [olderLoadFailed, setOlderLoadFailed] = useState(false);
   const olderLoadFailedRef = useRef(false);
   const [pendingReference, setPendingReference] = useState<ChatTextReference | null>(null);
+  const handledReferenceTargetRef = useRef<ChatTextReference | null>(null);
   useEffect(() => {
     if (hasOlderHistory) setHistoryControlVisible(true);
   }, [hasOlderHistory]);
@@ -885,6 +890,17 @@ export function MessageTimeline({
     };
     searchScrollRafRef.current = window.requestAnimationFrame(locate);
   }, [applyFollowEvent, cancelUserLayoutMutation, clearSearchFeedback, composerInset, messages, virtualizer, hasOlderHistory, onLoadReferenceHistory]);
+
+  useEffect(() => {
+    if (!referenceTarget) {
+      handledReferenceTargetRef.current = null;
+      return;
+    }
+    if (historyLoading || handledReferenceTargetRef.current === referenceTarget) return;
+    handledReferenceTargetRef.current = referenceTarget;
+    handleReferenceSelect(referenceTarget);
+    onReferenceTargetHandled?.();
+  }, [referenceTarget, historyLoading, handleReferenceSelect, onReferenceTargetHandled]);
 
   useEffect(() => {
     if (!pendingReference) return;
@@ -1443,6 +1459,8 @@ export function MessageTimeline({
 }
 
 interface MessageListProps {
+  referenceTarget?: ChatTextReference | null;
+  onReferenceTargetHandled?: () => void;
   composerHeight?: number;
   onFocusComposer?: () => void;
   primaryActivity: PrimaryActivityPresentation;
@@ -1450,6 +1468,8 @@ interface MessageListProps {
 
 /** 正式会话 adapter：只负责把 conversation store 接到共享时间线。 */
 export function MessageList({
+  referenceTarget,
+  onReferenceTargetHandled,
   composerHeight = CHAT_COMPOSER_FALLBACK_HEIGHT_PX,
   onFocusComposer,
   primaryActivity,
@@ -1517,6 +1537,8 @@ export function MessageList({
         hasOlderHistory={hasOlderHistory}
         onLoadOlderHistory={loadOlderHistory}
         onLoadReferenceHistory={loadReferenceHistory}
+        referenceTarget={referenceTarget}
+        onReferenceTargetHandled={onReferenceTargetHandled}
         activeRunId={activeRunId}
         primaryActivity={primaryActivity}
         streaming={streaming}
