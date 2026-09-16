@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -14,7 +15,7 @@ import tempfile
 import urllib.error
 import urllib.parse
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from github_utils import github_request
@@ -28,7 +29,9 @@ from managed_install import (
     package_digest,
     remove_candidate,
     stage_candidate,
+    validate_branch,
     validate_skill_name,
+    verify_pinned,
 )
 
 DEFAULT_REF = "main"
@@ -40,6 +43,11 @@ class Args:
     repo: str | None = None
     path: list[str] | None = None
     ref: str | None = None
+    branch: str | None = None
+    pin: str | None = None
+    unpin: bool = False
+    revision: str | None = None
+    expect_commit: str | None = None
     dest: str | None = None
     name: str | None = None
     method: str = "auto"
@@ -55,6 +63,13 @@ class Source:
     ref: str
     paths: list[str]
     repo_url: str | None = None
+    source_kind: str = "legacy"
+    update_ref: str = ""
+    target_kind: str = "legacy"
+    pinned: bool = False
+    resolved_commit: str | None = None
+    expect_commit: str | None = None
+    check_branch: bool = False
 
 
 class InstallError(Exception):
@@ -118,13 +133,14 @@ def _download_repo_zip(owner: str, repo: str, ref: str, dest_dir: str) -> str:
     return os.path.join(dest_dir, next(iter(top_levels)))
 
 
-def _run_git(args: list[str]) -> None:
+def _run_git(args: list[str]) -> str:
     try:
         result = subprocess.run(args, capture_output=True, text=True)
     except OSError as exc:
         raise InstallError(f"Cannot run git: {exc}", code="git_failed") from exc
     if result.returncode != 0:
         raise InstallError(result.stderr.strip() or "Git command failed.", code="git_failed")
+    return result.stdout.strip()
 
 
 def _safe_extract_zip(zip_file: zipfile.ZipFile, dest_dir: str) -> None:
@@ -142,39 +158,99 @@ def _validate_relative_path(path: str) -> None:
         raise InstallError("Skill path must be a relative path inside the repo.")
 
 
-def _git_sparse_checkout(repo_url: str, ref: str, paths: list[str], dest_dir: str) -> str:
-    repo_dir = os.path.join(dest_dir, "repo")
-    clone_cmd = [
-        "git",
-        "clone",
-        "--filter=blob:none",
-        "--depth",
-        "1",
-        "--sparse",
-        "--single-branch",
-        "--branch",
-        ref,
-        repo_url,
-        repo_dir,
-    ]
+def _full_commit(value: object, *, requested: str | None = None) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value):
+        raise InstallError("Source did not resolve to a full Git commit.", code="invalid_commit")
+    if (
+        requested
+        and re.fullmatch(r"[0-9a-fA-F]{7,40}", requested)
+        and not value.startswith(requested.lower())
+    ):
+        raise InstallError(
+            "Resolved commit does not match the requested SHA.", code="invalid_commit"
+        )
+    return value
+
+
+def _api_commit(source: Source, ref: str, kind: str) -> str:
+    # Explicit namespaces prevent a same-named tag from masquerading as a branch.
+    if kind == "branch":
+        ref = f"heads/{ref}"
+    elif kind == "version" and not re.fullmatch(r"[0-9a-fA-F]{7,40}", ref):
+        ref = f"tags/{ref}"
+    url = f"https://api.github.com/repos/{source.owner}/{source.repo}/commits/{urllib.parse.quote(ref, safe='')}"
     try:
-        _run_git(clone_cmd)
-    except InstallError:
+        payload = json.loads(_request(url))
+    except (urllib.error.URLError, OSError) as exc:
+        raise InstallError(f"Cannot resolve Git ref: {exc}", code="resolve_failed") from exc
+    except (ValueError, UnicodeError) as exc:
+        raise InstallError("Invalid commit response.", code="invalid_commit") from exc
+    return _full_commit(payload.get("sha") if isinstance(payload, dict) else None, requested=ref)
+
+
+def _verify_commit(actual: str, expected: str | None) -> None:
+    if expected is not None and actual != expected:
+        raise InstallError(
+            f"Expected commit {expected}, resolved {actual}; no installation changes made.",
+            code="commit_mismatch",
+        )
+
+
+def _git_resolve(repo_dir: str, ref: str, kind: str) -> str:
+    git = ["git", "-C", repo_dir]
+    if kind == "branch":
+        target = f"refs/heads/{ref}"
+    elif kind == "version" and not re.fullmatch(r"[0-9a-fA-F]{7,40}", ref):
+        target = f"refs/tags/{ref}"
+    else:
+        target = ref
+    if re.fullmatch(r"[0-9a-fA-F]{7,39}", target):
+        # A short object ID cannot reliably be fetched. Fetch advertised history
+        # into this disposable repository and let rev-parse reject ambiguity.
+        unshallow = ["--unshallow"] if (Path(repo_dir) / ".git" / "shallow").exists() else []
         _run_git(
             [
-                "git",
-                "clone",
+                *git,
+                "fetch",
                 "--filter=blob:none",
-                "--depth",
-                "1",
-                "--sparse",
-                "--single-branch",
-                repo_url,
-                repo_dir,
+                *unshallow,
+                "origin",
+                "+refs/heads/*:refs/remotes/origin/*",
+                "+refs/tags/*:refs/tags/*",
             ]
         )
-    _run_git(["git", "-C", repo_dir, "sparse-checkout", "set", *paths])
-    _run_git(["git", "-C", repo_dir, "checkout", ref])
+        value = _run_git([*git, "rev-parse", "--verify", f"{target}^{{commit}}"])
+    else:
+        _run_git([*git, "fetch", "--depth", "1", "--filter=blob:none", "origin", target])
+        value = _run_git([*git, "rev-parse", "--verify", "FETCH_HEAD^{commit}"])
+    return _full_commit(value, requested=target)
+
+
+def _git_sparse_checkout(repo_url: str, source: Source, dest_dir: str) -> str:
+    # Each transport attempt owns a fresh directory, including after a partial failure.
+    repo_dir = tempfile.mkdtemp(prefix="git-", dir=dest_dir)
+    git = ["git", "-C", repo_dir]
+    _run_git([*git, "init", "--quiet"])
+    _run_git([*git, "remote", "add", "origin", repo_url])
+    # --revision may select an older commit but still needs a real branch source.
+    if source.check_branch:
+        _git_resolve(repo_dir, source.update_ref, "branch")
+    commit = _git_resolve(
+        repo_dir,
+        source.resolved_commit or source.ref,
+        "version" if source.resolved_commit else source.target_kind,
+    )
+    if source.resolved_commit:
+        _verify_commit(commit, source.resolved_commit)
+    source.resolved_commit = commit
+    expected = None
+    if source.expect_commit:
+        expected = _git_resolve(repo_dir, source.expect_commit, "version")
+    _verify_commit(commit, expected)
+    if source.paths != ["."]:
+        _run_git([*git, "sparse-checkout", "set", "--cone", "--", *source.paths])
+    _run_git([*git, "checkout", "--detach", commit, "--"])
+    _verify_commit(_full_commit(_run_git([*git, "rev-parse", "HEAD"])), commit)
     return repo_dir
 
 
@@ -189,22 +265,35 @@ def _build_repo_ssh(owner: str, repo: str) -> str:
 def _prepare_repo(source: Source, method: str, tmp_dir: str) -> str:
     if method in ("download", "auto"):
         try:
-            return _download_repo_zip(source.owner, source.repo, source.ref, tmp_dir)
+            if source.check_branch:
+                _api_commit(source, source.update_ref, "branch")
+            source.resolved_commit = _api_commit(source, source.ref, source.target_kind)
+            expected = (
+                _api_commit(source, source.expect_commit, "version")
+                if source.expect_commit
+                else None
+            )
+            _verify_commit(source.resolved_commit, expected)
+            return _download_repo_zip(source.owner, source.repo, source.resolved_commit, tmp_dir)
         except InstallError as exc:
             if method == "download":
                 raise
-            if exc.code == "download_failed" or str(exc).startswith("Download failed: HTTP "):
+            if exc.code in {"download_failed", "resolve_failed"} or str(exc).startswith(
+                "Download failed: HTTP "
+            ):
                 pass
             else:
                 raise
     if method in ("git", "auto"):
         repo_url = source.repo_url or _build_repo_url(source.owner, source.repo)
         try:
-            return _git_sparse_checkout(repo_url, source.ref, source.paths, tmp_dir)
+            return _git_sparse_checkout(repo_url, source, tmp_dir)
         except InstallError as https_exc:
+            if https_exc.code in {"commit_mismatch", "invalid_commit"}:
+                raise
             repo_url = _build_repo_ssh(source.owner, source.repo)
             try:
-                return _git_sparse_checkout(repo_url, source.ref, source.paths, tmp_dir)
+                return _git_sparse_checkout(repo_url, source, tmp_dir)
             except InstallError as ssh_exc:
                 raise InstallError(
                     f"HTTPS git clone failed: {https_exc}\nSSH git clone failed: {ssh_exc}"
@@ -214,7 +303,16 @@ def _prepare_repo(source: Source, method: str, tmp_dir: str) -> str:
 
 def _resolve_source(args: Args) -> Source:
     if args.url:
-        owner, repo, ref, url_path = _parse_github_url(args.url, args.ref or DEFAULT_REF)
+        owner, repo, ref, url_path = _parse_github_url(args.url, DEFAULT_REF)
+        parts = urllib.parse.urlparse(args.url).path.split("/")
+        if len(parts) > 3 and parts[3] in {"tree", "blob"}:
+            explicit = args.revision or args.pin or args.branch
+            if explicit is None or explicit != ref:
+                raise InstallError(
+                    "A tree/blob URL requires a matching --branch, --pin, or --revision. "
+                    "For slash-containing refs use --repo and --path.",
+                    code="ambiguous_ref",
+                )
         if args.path is not None:
             paths = list(args.path)
         elif url_path:
@@ -228,7 +326,7 @@ def _resolve_source(args: Args) -> Source:
     if not args.repo:
         raise InstallError("Provide --repo or --url.")
     if "://" in args.repo:
-        return _resolve_source(Args(url=args.repo, repo=None, path=args.path, ref=args.ref))
+        return _resolve_source(replace(args, url=args.repo, repo=None))
 
     repo_parts = [p for p in args.repo.split("/") if p]
     if len(repo_parts) != 2:
@@ -239,7 +337,7 @@ def _resolve_source(args: Args) -> Source:
     return Source(
         owner=repo_parts[0],
         repo=repo_parts[1],
-        ref=args.ref or DEFAULT_REF,
+        ref=DEFAULT_REF,
         paths=paths,
     )
 
@@ -253,7 +351,9 @@ def _default_dest() -> str:
 
 
 def _parse_args(argv: list[str]) -> Args:
-    parser = argparse.ArgumentParser(description="Install or update a Skill from GitHub.")
+    parser = argparse.ArgumentParser(
+        description="Install or update a Skill from GitHub.", allow_abbrev=False
+    )
     parser.add_argument("--repo", help="owner/repo")
     parser.add_argument("--url", help="https://github.com/owner/repo[/tree/ref/path]")
     parser.add_argument(
@@ -261,7 +361,18 @@ def _parse_args(argv: list[str]) -> Args:
         nargs="+",
         help="Path(s) to skill(s) inside repo",
     )
-    parser.add_argument("--ref")
+    parser.add_argument(
+        "--ref", help="Retired ambiguous option; use --branch, --pin, or --revision"
+    )
+    parser.add_argument("--branch", help="Persist a branch source and clear any pin")
+    parser.add_argument("--pin", help="Install and persistently pin a commit or tag")
+    parser.add_argument("--unpin", action="store_true", help="Resume the saved branch source")
+    parser.add_argument(
+        "--revision", help="Install a commit or tag once, keeping the branch source"
+    )
+    parser.add_argument(
+        "--expect-commit", help="Require an exact commit (7-40 hex characters); no policy change"
+    )
     parser.add_argument("--dest", help="Destination skills directory")
     parser.add_argument("--name", help="Destination skill name (defaults to basename of path)")
     parser.add_argument(
@@ -280,10 +391,43 @@ def _parse_args(argv: list[str]) -> Args:
         action="store_true",
         help="Confirm replacement and adoption of one existing unmanaged Skill",
     )
+    seen: set[str] = set()
+    for argument in argv:
+        if argument.startswith("--"):
+            option = argument.split("=", 1)[0]
+            if option in seen:
+                parser.error(f"Duplicate option: {option}")
+            seen.add(option)
     return parser.parse_args(argv, namespace=Args())
 
 
 def _validate_mode(args: Args) -> None:
+    if args.ref is not None:
+        raise InstallError(
+            "--ref is ambiguous and no longer changes installation state. Use --branch for "
+            "future updates, --pin to freeze a version, --revision for a one-time version, "
+            "or --expect-commit for verification only.",
+            code="ambiguous_ref",
+        )
+    if sum((args.branch is not None, args.pin is not None, args.unpin)) > 1:
+        raise InstallError(
+            "--branch, --pin, and --unpin are mutually exclusive.", code="invalid_mode"
+        )
+    if args.revision is not None and (args.pin is not None or args.unpin):
+        raise InstallError(
+            "--revision cannot be combined with --pin or --unpin.", code="invalid_mode"
+        )
+    if args.unpin and not args.update:
+        raise InstallError("--unpin requires --update.", code="invalid_mode")
+    for value in (args.branch, args.pin, args.revision):
+        if value is not None:
+            validate_branch(value)
+    if args.expect_commit is not None and not re.fullmatch(
+        r"[0-9a-fA-F]{7,40}", args.expect_commit
+    ):
+        raise InstallError(
+            "--expect-commit requires a 7-40 character hexadecimal SHA.", code="invalid_mode"
+        )
     if args.repo and args.url:
         raise InstallError("Use only one of --repo or --url.", code="invalid_mode")
     if args.update:
@@ -339,6 +483,67 @@ def _record_for_source(
         path=path,
         ref=ref or source.ref,
         content_sha256=content_sha256,
+    )
+
+
+def _configure_source(source: Source, args: Args, previous: InstallRecord | None = None) -> None:
+    source.source_kind = previous.source_kind if previous else ("none" if args.pin else "branch")
+    source.update_ref = previous.ref if previous else ("" if args.pin else DEFAULT_REF)
+    source.pinned = bool(previous and previous.pinned_commit)
+    if args.branch is not None:
+        source.source_kind, source.update_ref, source.pinned = "branch", args.branch, False
+    elif args.unpin:
+        if source.source_kind != "branch":
+            raise InstallError(
+                "No known branch to resume; use --branch <name>.", code="unknown_branch"
+            )
+        source.pinned = False
+    if args.revision is not None and (
+        source.pinned
+        or source.source_kind != "branch"
+        or (previous is None and args.branch is None)
+    ):
+        raise InstallError(
+            "--revision requires a known unpinned branch; use --branch <name>.", code="invalid_mode"
+        )
+    if args.pin is not None:
+        source.pinned = True
+    if args.pin or args.revision:
+        source.ref, source.target_kind = args.pin or args.revision, "version"
+    elif source.pinned:
+        source.ref, source.target_kind = previous.pinned_commit, "version"
+    else:
+        source.ref, source.target_kind = source.update_ref, source.source_kind
+    # Legacy records are preserved, but unsafe command arguments are never executed.
+    validate_branch(source.ref)
+    source.expect_commit = args.expect_commit
+    source.check_branch = args.branch is not None and source.target_kind != "branch"
+
+
+def _resolved_record(source: Source, path: str, digest: str) -> InstallRecord:
+    commit = _full_commit(source.resolved_commit)
+    return make_record(
+        repository=f"{source.owner}/{source.repo}",
+        path=path,
+        ref=source.update_ref,
+        content_sha256=digest,
+        source_kind=source.source_kind,
+        installed_commit=commit,
+        pinned_commit=commit if source.pinned else None,
+    )
+
+
+def _describe_record(record: InstallRecord) -> str:
+    if record.source_kind == "branch":
+        source = f"branch={record.ref}"
+    elif record.source_kind == "legacy":
+        source = f"legacy_ref={record.ref} (intent unknown; use --branch or --pin to clarify)"
+    else:
+        source = "branch=none"
+    policy = f"Pinned at {record.pinned_commit}; " if record.pinned_commit else ""
+    return (
+        f"{record.repository}:{record.path} {policy}{source} "
+        f"installed_commit={record.installed_commit or 'unknown'} sha256={record.content_sha256}"
     )
 
 
@@ -419,6 +624,7 @@ def _preflight_install(
 
 def _run_install(args: Args, root: Path) -> None:
     source = _resolve_source(args)
+    _configure_source(source, args)
     targets = _normalize_install_targets(source, args)
     planned = _preflight_install(
         root=root,
@@ -435,7 +641,7 @@ def _run_install(args: Args, root: Path) -> None:
                 candidate, content_sha256 = stage_candidate(
                     _source_path(repo_root, source_path), root, skill_name
                 )
-                record = _record_for_source(source, source_path, content_sha256)
+                record = _resolved_record(source, source_path, content_sha256)
                 mode, expected_sha256 = planned[skill_name]
                 result = commit_candidate(
                     root=root,
@@ -446,19 +652,11 @@ def _run_install(args: Args, root: Path) -> None:
                     expected_record=None,
                     expected_current_sha256=expected_sha256,
                 )
-                if result.status == "already_up_to_date":
-                    actual = load_records(root)[skill_name]
-                    print(
-                        f"Already up to date: {skill_name} from "
-                        f"{actual.repository}:{actual.path}@{actual.ref} "
-                        f"sha256={actual.content_sha256}"
-                    )
-                else:
-                    action = "Adopted" if mode == "unmanaged" else "Installed"
-                    print(
-                        f"{action} {skill_name} from {record.repository}:{record.path}@{record.ref} "
-                        f"sha256={record.content_sha256} to {root / skill_name}"
-                    )
+                action = "Adopted" if mode == "unmanaged" else "Installed"
+                print(
+                    f"{action} {skill_name}: {_describe_record(record)} "
+                    f"checked_ref={source.ref} to {root / skill_name}"
+                )
                 if result.cleanup_warning:
                     print(f"Warning: {result.cleanup_warning}", file=sys.stderr)
             finally:
@@ -496,19 +694,31 @@ def _run_update(args: Args, root: Path) -> None:
     if current_sha256 != record.content_sha256 and not args.replace_local_changes:
         raise InstallError(
             f"Skill {skill_name!r} has local changes. Source: "
-            f"{record.repository}:{record.path}@{record.ref}; recorded "
+            f"{_describe_record(record)}; recorded "
             f"sha256={record.content_sha256}; current sha256={current_sha256}. "
             "Continuing will discard those changes. Retry in this tool loop with "
             f"this option order: --update {skill_name} --replace-local-changes. Keep the Skill "
             "name, source, both digests, and loss warning in the command reason; the exact "
-            "replacement follows the current session approval mode. If the original command "
-            "included --ref, keep the same ref between the skill name and replacement flag.",
+            "replacement follows the current session approval mode. Preserve all original "
+            "version and verification options on the retry.",
             code="local_changes_detected",
         )
 
     owner, repo = record.repository.split("/", 1)
-    requested_ref = args.ref or record.ref
-    source = Source(owner=owner, repo=repo, ref=requested_ref, paths=[record.path])
+    source = Source(owner=owner, repo=repo, ref=record.ref, paths=[record.path])
+    _configure_source(source, args, record)
+    if (
+        record.pinned_commit
+        and not (args.branch or args.pin or args.unpin or args.revision)
+        and current_sha256 == record.content_sha256
+        and (args.expect_commit is None or len(args.expect_commit) == 40)
+    ):
+        expected = args.expect_commit.lower() if args.expect_commit else None
+        _verify_commit(record.pinned_commit, expected)
+        verify_pinned(root, skill_name, record)
+        _write_receipt(root, skill_name, "pinned", record.content_sha256, record)
+        print(f"Pinned: {skill_name}: {_describe_record(record)}; remote update check skipped.")
+        return
     temporary = tempfile.mkdtemp(prefix="skill-update-", dir=_tmp_root())
     candidate: Path | None = None
     try:
@@ -516,7 +726,7 @@ def _run_update(args: Args, root: Path) -> None:
         candidate, candidate_sha256 = stage_candidate(
             _source_path(repo_root, record.path), root, skill_name
         )
-        next_record = _record_for_source(source, record.path, candidate_sha256, ref=requested_ref)
+        next_record = _resolved_record(source, record.path, candidate_sha256)
         result = commit_candidate(
             root=root,
             skill_name=skill_name,
@@ -526,35 +736,17 @@ def _run_update(args: Args, root: Path) -> None:
             expected_record=record,
             expected_current_sha256=current_sha256,
         )
-        receipt_path = os.environ.get("AGENT_FRIEND_SKILL_UPDATE_RECEIPT")
-        nonce = os.environ.get("AGENT_FRIEND_SKILL_UPDATE_NONCE")
-        if receipt_path and nonce:
-            receipt = Path(receipt_path)
-            payload = {
-                "schema_version": 1,
-                "nonce": nonce,
-                "root": str(root),
-                "skill_name": skill_name,
-                "status": result.status,
-                "old_sha256": result.previous_sha256,
-                "new_sha256": next_record.content_sha256,
-            }
-            temporary_receipt = receipt.with_suffix(".tmp")
-            temporary_receipt.write_text(json.dumps(payload), encoding="utf-8")
-            os.replace(temporary_receipt, receipt)
-        if result.status == "already_up_to_date":
-            actual = load_records(root)[skill_name]
-            print(
-                f"Already up to date: {skill_name} from "
-                f"{actual.repository}:{actual.path}@{actual.ref} "
-                f"sha256={actual.content_sha256}"
-            )
-        else:
-            print(
-                f"Updated {skill_name} from {next_record.repository}:{next_record.path}"
-                f"@{next_record.ref} old_sha256={result.previous_sha256} "
-                f"new_sha256={next_record.content_sha256}"
-            )
+        _write_receipt(root, skill_name, result.status, result.previous_sha256, next_record)
+        action = {
+            "already_up_to_date": "Content unchanged",
+            "metadata_updated": "Metadata updated; content unchanged",
+            "committed": "Updated",
+        }[result.status]
+        print(
+            f"{action} {skill_name}: {_describe_record(next_record)} "
+            f"checked_ref={source.ref} old_sha256={result.previous_sha256} "
+            f"new_sha256={next_record.content_sha256}"
+        )
         if result.cleanup_warning:
             print(f"Warning: {result.cleanup_warning}", file=sys.stderr)
     finally:
@@ -562,6 +754,27 @@ def _run_update(args: Args, root: Path) -> None:
             remove_candidate(candidate)
         if os.path.isdir(temporary):
             shutil.rmtree(temporary, ignore_errors=True)
+
+
+def _write_receipt(
+    root: Path, name: str, status: str, previous: str | None, record: InstallRecord
+) -> None:
+    receipt_path = os.environ.get("AGENT_FRIEND_SKILL_UPDATE_RECEIPT")
+    nonce = os.environ.get("AGENT_FRIEND_SKILL_UPDATE_NONCE")
+    if receipt_path and nonce:
+        receipt = Path(receipt_path)
+        payload = {
+            "schema_version": 1,
+            "nonce": nonce,
+            "root": str(root),
+            "skill_name": name,
+            "status": status,
+            "old_sha256": previous,
+            "new_sha256": record.content_sha256,
+        }
+        temporary_receipt = receipt.with_suffix(".tmp")
+        temporary_receipt.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(temporary_receipt, receipt)
 
 
 def main(argv: list[str]) -> int:

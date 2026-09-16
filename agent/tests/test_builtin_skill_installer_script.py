@@ -14,7 +14,7 @@ import pytest
 from agent.skills import SkillCatalogService, SkillSelection
 
 
-def _load_installer() -> ModuleType:
+def _load_installer(*, mock_api: bool = True) -> ModuleType:
     scripts = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -34,6 +34,10 @@ def _load_installer() -> ModuleType:
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module
         spec.loader.exec_module(module)
+        if mock_api:
+            # Transaction/catalog fixtures isolate version resolution; resolver tests
+            # opt out and exercise real parsing against fake HTTP or local Git.
+            module.__dict__["_api_commit"] = lambda *_args: "a" * 40
         return module
     finally:
         sys.path.remove(str(scripts))
@@ -153,7 +157,7 @@ def test_managed_update_changes_content_and_ref(
     monkeypatch.setattr(module, "_request", lambda _url: _fixture_archive(script="v2\n"))
 
     result = module.main(
-        ["--update", "fixture-skill", "--ref", "release-v2", "--method", "download"]
+        ["--update", "fixture-skill", "--branch", "release-v2", "--method", "download"]
     )
 
     captured = capsys.readouterr()
@@ -186,8 +190,6 @@ def test_idempotent_update_does_not_rewrite_skill_or_lock(
         [
             "--update",
             "fixture-skill",
-            "--ref",
-            "same-content-tag",
             "--method",
             "download",
         ]
@@ -195,8 +197,8 @@ def test_idempotent_update_does_not_rewrite_skill_or_lock(
 
     captured = capsys.readouterr()
     assert result == 0
-    assert "Already up to date: fixture-skill" in captured.out
-    assert "@main" in captured.out
+    assert "Content unchanged fixture-skill" in captured.out
+    assert "branch=main" in captured.out
     assert (entry.stat().st_mtime_ns, lock.stat().st_mtime_ns, lock.read_bytes()) == before
 
 
@@ -633,10 +635,22 @@ def test_successful_update_refreshes_later_turn_while_frozen_turn_keeps_old_cont
 
 
 @pytest.mark.parametrize("mode", ["buffered", "streaming"])
+@pytest.mark.parametrize(
+    "version_args",
+    [
+        [],
+        ["--branch", "next"],
+        ["--branch=next"],
+        ["--unpin"],
+        ["--pin", "v1"],
+        ["--revision", "a" * 40, "--expect-commit", "a" * 40],
+    ],
+)
 def test_real_installer_receipt_drives_same_turn_reload(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mode: str,
+    version_args: list[str],
 ) -> None:
     from types import SimpleNamespace
 
@@ -679,6 +693,7 @@ def test_real_installer_receipt_drives_same_turn_reload(
         "fixture-skill",
         "--method",
         "download",
+        *version_args,
     )
     details = cast(
         CommandApprovalDetails,
@@ -705,7 +720,7 @@ def test_real_installer_receipt_drives_same_turn_reload(
         "_request",
         lambda _url: _fixture_archive(description="New instructions", script="print('new')\n"),
     )
-    assert module.main(["--update", "fixture-skill", "--method", "download"]) == 0
+    assert module.main(["--update", "fixture-skill", "--method", "download", *version_args]) == 0
     process = CommandProcessSnapshot(
         "process", "session", context.run_id, "call", cast(CommandMode, mode)
     )
@@ -727,6 +742,34 @@ def test_real_installer_receipt_drives_same_turn_reload(
         in (context.skill_activations[target.id].resource_root / "scripts/run.py").read_text()
     )
     assert consume_process_update(context, process) == {}
+    # A branch-only metadata change must be recognized without reinjecting Skill text.
+    metadata_args = (
+        "--update",
+        "fixture-skill",
+        "--branch",
+        "metadata-only",
+        "--method",
+        "download",
+    )
+    cast(SimpleNamespace, details.managed_command).display_argv = "python", argv[1], *metadata_args
+    second = prepare_update_receipt(details, turn, personal_root=personal, run_temp=tmp_path)
+    assert second is not None
+    monkeypatch.setenv(RECEIPT_ENV, str(second.receipt))
+    monkeypatch.setenv(NONCE_ENV, second.nonce)
+    assert module.main(list(metadata_args)) == 0
+    update = second.consume()
+    assert update is not None and update.status == "metadata_updated"
+    metadata_result = apply_skill_update(
+        ToolResult("{}", meta={"_skill_update": update}),
+        service=service,
+        snapshot=turn,
+        context=context,
+        runtime_capabilities="test",
+    )
+    metadata_payload = json.loads(metadata_result.text)["skill_update"]
+    assert metadata_payload["status"] == "metadata_updated"
+    assert metadata_payload["activation"] == "already_loaded"
+    assert "instructions" not in metadata_payload
     context.close_commands()
 
 
