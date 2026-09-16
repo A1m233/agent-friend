@@ -165,6 +165,9 @@ class RunSnapshot:
     model_continuations: int = 0
     budget_dimension: str | None = None
 
+    source_run_id: str | None = None
+    root_run_id: str | None = None
+
 
 RunChangeCallback = Callable[[RunSnapshot], None]
 
@@ -383,6 +386,8 @@ class RunHandle:
             version=self._version,
             runtime_instance_id=self.request.runtime_instance_id,
             input_accepted=self._input_accepted,
+            source_run_id=self.request.metadata.get("source_run_id"),
+            root_run_id=self.request.metadata.get("root_run_id"),
             source_kind=getattr(self.request.event, "source_kind", None),
             presentation=getattr(self.request.event, "presentation", "conversation"),
             output_visibility=getattr(self.request.event, "output_visibility", "user"),

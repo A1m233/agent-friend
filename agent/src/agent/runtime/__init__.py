@@ -37,6 +37,7 @@ from ..conversation_events import TurnDone
 from ..latency import RunLatencyContext, log_run_latency, monotonic_ms
 from ..memory_feed import project_post_turn_observation
 from ..sessions.changes import reset_session_mutation_context, set_session_mutation_context
+from ..sessions.continuation import continuation_target
 from ..system_prompt.sections import PromptChannel
 from ..system_prompt.surfaces import InteractionSurfaceId
 from ..tools import ToolResult
@@ -667,6 +668,12 @@ class AgentRuntime:
             surface=request.surface or "none",
         )
         session = conv.session
+        if request.metadata.get("operation") == "continue_tool_result":
+            try:
+                continuation_target(session.active_events, request.metadata.get("source_run_id"))
+            except BaseException:
+                reset_session_mutation_context(mutation_token)
+                raise
         if request.input_accepted is False:
             conv.set_input_accepted_callback(handle.mark_input_accepted)
         started_at = handle.snapshot().started_at
@@ -716,6 +723,8 @@ class AgentRuntime:
                 conv.append_run_started_event(
                     run_id=request.run_id,
                     started_at=started_at,
+                    source_run_id=request.metadata.get("source_run_id"),
+                    root_run_id=request.metadata.get("root_run_id"),
                     owner_runtime_instance_id=request.runtime_instance_id,
                     source_kind=getattr(request.event, "source_kind", None),
                     presentation=getattr(request.event, "presentation", "conversation"),

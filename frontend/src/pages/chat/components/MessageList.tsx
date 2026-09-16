@@ -1,3 +1,4 @@
+import { groupRecoveryMessages } from "@/stores/taskRecovery";
 import {
   type KeyboardEvent,
   type PointerEvent,
@@ -536,7 +537,7 @@ function MessageContent({
             )}
             {onContinueToolResult && (
               <Button type="button" variant="outline" size="xs" onClick={onContinueToolResult}>
-                继续整理
+                继续任务
               </Button>
             )}
           </RunNotice>
@@ -700,7 +701,7 @@ interface MessageTimelineProps {
  * TDesign 消息投影、滚动与流式展示；会话持久化和业务操作由外层 adapter 决定。
  */
 export function MessageTimeline({
-  messages,
+  messages: runMessages,
   activeRunId,
   primaryActivity,
   streaming = false,
@@ -722,6 +723,7 @@ export function MessageTimeline({
   referenceTarget = null,
   onReferenceTargetHandled,
 }: MessageTimelineProps) {
+  const messages = useMemo(() => groupRecoveryMessages(runMessages), [runMessages]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prependingRef = useRef(false);
   const [historyControlVisible, setHistoryControlVisible] = useState(hasOlderHistory);
@@ -1371,9 +1373,7 @@ export function MessageTimeline({
             const canContinueToolResult =
               index === messages.length - 1 &&
               m.role === "assistant" &&
-              m.status === "error" &&
-              ["upstream_transient", "rate_limit"].includes(m.errorCode ?? "") &&
-              m.blocks.some((block) => block.kind === "tool" && block.status === "done") &&
+              m.canContinue === true &&
               !editDisabled;
             const searchAnchorEventUuid = findSearchMessageIndex(
               [m],

@@ -167,7 +167,7 @@ class LLMToolCallDelta:
 
 @dataclass(frozen=True)
 class LLMRetryScheduled:
-    """模型流在尚未产出业务事件时安排了一次瞬时故障重试。"""
+    """Retry the uncommitted response; consumers must reset attempt buffers."""
 
     attempt: int = 1
     max_attempts: int = 1
