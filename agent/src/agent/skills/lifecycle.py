@@ -65,7 +65,7 @@ def apply_skill_update(
     assert isinstance(update, SkillUpdateResult)
     payload["skill_update"] = {
         "skill_id": update.skill_id,
-        "status": "updated",
+        "status": "updated" if update.status == "committed" else update.status,
         "version": update.version,
     }
     if (

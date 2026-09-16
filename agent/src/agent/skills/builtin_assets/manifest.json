@@ -22,7 +22,7 @@
       "source_commit": "9ded177ce7c1c0bd2047f902936c177612ab3434",
       "source_path": "codex-rs/skills/src/assets/samples/skill-installer",
       "license": "Apache-2.0",
-      "snapshot_sha256": "e13e95ece669a8769b280e99b1d4da99374552ac4698434369a572df93c29898",
+      "snapshot_sha256": "86c8cd4a4837e5f14cef9c78f2c292eb3afbe5f6a0004c0f92b4928d1d07d1d0",
       "retrieved_at": "2026-08-17",
       "compatibility_patches": [
         "Added agent-friend runtime capability and governed command instructions to SKILL.md.",
@@ -36,7 +36,8 @@
         "Marked bundled upstream scripts as excluded from the host application's strict mypy pass.",
         "Regenerated agents/openai.yaml with agent-friend-facing Chinese metadata.",
         "Omitted optional icon assets while retaining the upstream Apache-2.0 license.",
-        "Added run-owned structured update receipts and same-turn automatic reactivation instructions."
+        "Added run-owned structured update receipts and same-turn automatic reactivation instructions.",
+        "Separated branch sources, explicit pins, one-time revisions and commit verification; added legacy-aware v2 records, metadata-only transactions, and policy-aware update receipts."
       ]
     },
     "agent-friend-guide": {

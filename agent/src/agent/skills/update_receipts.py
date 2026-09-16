@@ -26,6 +26,7 @@ class SkillUpdateResult:
     skill_id: str
     previous_version: str
     version: str
+    status: str = "committed"
 
 
 @dataclass
@@ -54,16 +55,22 @@ class PendingSkillUpdate:
             or raw.get("nonce") != self.nonce
             or raw.get("skill_name") != self.destination.name
             or raw.get("root") != str(self.destination.parent)
-            or raw.get("status") not in {"committed", "already_up_to_date"}
+            or raw.get("status")
+            not in {"committed", "already_up_to_date", "metadata_updated", "pinned"}
         ):
             raise ValueError("Skill update receipt does not match this operation")
         version = raw.get("new_sha256")
         previous = raw.get("old_sha256")
         if not isinstance(version, str) or not isinstance(previous, str):
             raise ValueError("Skill update receipt has no versions")
+        if (
+            raw.get("status") in {"already_up_to_date", "metadata_updated", "pinned"}
+            and version != previous
+        ):
+            raise ValueError("Unchanged-content receipt has different digests")
         if self.destination.is_symlink() or package_digest(self.destination) != version:
             raise ValueError("Updated Skill no longer matches the committed version")
-        return SkillUpdateResult(self.skill_id, previous, version)
+        return SkillUpdateResult(self.skill_id, previous, version, str(raw["status"]))
 
 
 def prepare_update_receipt(
@@ -88,7 +95,7 @@ def prepare_update_receipt(
     ):
         return None
     argv = managed.display_argv
-    if len(argv) < 4 or Path(argv[1]).name != "install-skill-from-github.py":
+    if len(argv) < 3 or Path(argv[1]).name != "install-skill-from-github.py":
         return None
     script = Path(argv[1])
     if not script.is_absolute():
@@ -106,16 +113,36 @@ def prepare_update_receipt(
     options: dict[str, str] = {}
     index = 2
     while index < len(argv):
-        flag = argv[index]
-        if flag == "--replace-local-changes":
+        flag, equals, inline_value = argv[index].partition("=")
+        if flag in {"--replace-local-changes", "--unpin"}:
+            if flag in options or equals:
+                return None
+            options[flag] = "true"
             index += 1
             continue
-        if flag not in {"--update", "--ref", "--method", "--dest"} or flag in options:
+        if (
+            flag
+            not in {
+                "--update",
+                "--ref",
+                "--method",
+                "--dest",
+                "--branch",
+                "--pin",
+                "--revision",
+                "--expect-commit",
+            }
+            or flag in options
+        ):
             return None
-        if index + 1 >= len(argv):
-            return None
-        options[flag] = argv[index + 1]
-        index += 2
+        if equals:
+            options[flag] = inline_value
+            index += 1
+        else:
+            if index + 1 >= len(argv):
+                return None
+            options[flag] = argv[index + 1]
+            index += 2
     name = options.get("--update")
     if not name or Path(name).name != name or name in {".", ".."}:
         return None
