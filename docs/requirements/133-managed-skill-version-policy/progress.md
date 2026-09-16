@@ -35,6 +35,7 @@ COMPLETED
 
 - `scripts/check/run.ps1 --stage backend`：3240 passed / 5 skipped；lint 和类型检查通过。全量启动后补强了固定短 SHA 的 git-only 核验和 SHA 形状引用一致性，两处最终修改及新增测试均由下面的 86 项复验覆盖。
 - 最终增量复验：`scripts/check/run.ps1 --stage backend agent/tests/test_builtin_skill_installer_script.py agent/tests/test_skill_version_policy.py agent/tests/test_skill_service.py agent/tests/test_skill_update_lifecycle.py -q`：lint、701 个文件类型检查、86 个测试通过。
+- 合入前整合最新主干后，以上四个测试文件加上 `agent/tests/test_task_continuation.py`、`agent/tests/test_tool_calling_integration.py`、`agent_bridge/tests/test_meta_channel_routes.py`、`llm_providers/tests/test_stream_recovery.py` 复验：204 passed，lint 与 704 个文件类型检查通过。主干整合无冲突。
 - `scripts/check/run.ps1 --stage frontend`：lint、1298 个测试、生产构建通过。依赖通过标准 install 入口使用 frozen lockfile 安装，未修改依赖声明。
 - `scripts/check/run.ps1 --stage rust`：首次缺 MSVC 环境导致链接失败；仅在子进程调用 VsDevCmd 后重试，289 测试通过、1 忽略，release check 通过。Cargo 输出位于 `%LOCALAPPDATA%/agent-friend-build/133-rust-check`，不写入源码目录。
 - Skill 结构校验：`uv run python -X utf8 <skill-creator>/scripts/quick_validate.py agent/src/agent/skills/builtin_assets/skill-installer` 通过。首次 validator 使用系统 GBK 默认编码失败，启用 Python UTF-8 模式后通过，未为文件添加 BOM。
