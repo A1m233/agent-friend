@@ -31,11 +31,26 @@ def build_paths() -> tuple[Path, Path]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("ensure", "build", "test", "smoke"))
+    parser.add_argument("action", choices=("ensure", "build", "test", "smoke", "e2e"))
+    parser.add_argument("--config", type=Path)
+    parser.add_argument("--real-calls-authorized", action="store_true")
     args = parser.parse_args()
     if os.name != "nt":
         print(json.dumps({"status": "unsupported", "platform": sys.platform}))
         return 0
+    if args.action == "e2e":
+        if not args.config or not args.real_calls_authorized:
+            parser.error("e2e requires --config and explicit --real-calls-authorized")
+        return subprocess.run(
+            [
+                "node",
+                str(Path(__file__).with_name("e2e.mjs")),
+                str(args.config.resolve()),
+                "--real-calls-authorized",
+            ],
+            cwd=ROOT,
+            check=False,
+        ).returncode
     target, work = build_paths()
     command = [
         "cargo",
