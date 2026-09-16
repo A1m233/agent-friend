@@ -81,3 +81,9 @@ IN_PROGRESS
 - C24-04/07/08/09 和 C27-03/04 在当前 `deepseek/deepseek-flash` / off 各跑一次，6/6 通过；报告位于 `agent_eval/reports/2026-09-16T17-3*.json`。前三项基于 `cc3b8ee6`，后三项基于 `3a3535f9`，期间仅 Guide 发布门禁变化，工具和 prompt 相同。逐条复核接受不等于就绪、unknown 不重试、既有应用保留及受管命令 handle 延续。
 - 实际 Tauri WebView 审批与最终回复已观察；通过生产工具打开 MuMu，回执 accepted、readiness not_verified，回合终态后进程和可恢复窗口仍存在。其 Android 从 starting_rom/false 过渡至 start_finished/true，随后按管理器新端口连接 ADB 成功。此项说明冷启动及延迟就绪，不用过期端口或此前进程归属推断复用通过。
 - 私有桌面/游戏证据统一保存在本机 maintenance/requirement-134-acceptance；公开仓库不收录用户历史侧栏截图、账号或原始游戏日志。
+- 后续桌面 E2E：真实拒绝未打开、接受后取消终态 cancelled 且 MuMu 同 PID 存活；实际托盘 Quit 后 shell/bridge/voice 消失、开发端口释放，MuMu/ADB 保持；再次冷启动后，通过真实 supervisor 停止 bridge，返回 stopped 且对应 PID 消失，MuMu 同 PID 与 ADB 保持。明确关闭目标实例的管理器调用返回成功，随后再正常打开并保留。
+- MAA 有界 smoke 的 StartUp/Award 两条链完成、无 task-chain 错误；奖励扫描确认 10/10 档与每日两项奖励已领。只验证当前账号的启动/奖励，不代表刷图、消耗资源或多账号完整日常。正式源 `6e4c5f391060eb420dde70d38b1deb8b1fb5536d` 已推送，产品内同源更新成功，digest `9d13f446d76890db1b38aad55850c5beb44ab98ea36d34f5631cb7e6bf52eab9`。
+- 桌面取消 pilot 的计数压力请求被人格直接拒绝，未调用工具；改为普通打开请求后实测取消通过。保留首轮失败，不将它混入成功率。单轮历史归因观察没有以“未调用关闭工具”排除宿主清理；这不升级原事故归因，也不代表统计稳定性。
+- 集成后 frontend：157 文件 / 1310 测试通过，lint/typecheck/production build 通过；Rust fmt、290 项测试（另 1 ignored）与 release check 通过。
+- 首个 frozen candidate `20260916T175525Z-e5b33e6aab35-f3ac42bb` 的 doctor 全绿，新增助手身份、Explorer dispatch、参数往返与持久化证据通过。MSIX 宿主的隔离目录重定向被 matrix preflight 在安装前拒绝；转由当前用户普通桌面进程运行原脚本后通过该 preflight，没有削弱门禁。
+- 首轮完整矩阵发现安装后 doctor 入口缺少 app launcher/fixture 输入，7 次安装后 doctor 失败并使 silent-success 关联项失败；其余 6 项通过。报告保留，不可用于交付。已修正安装后 smoke：绑定安装 payload 内的助手，fixture 放在临时目录，成功与失败都清理；相关 3 项测试通过，正在重跑项目检查和候选矩阵。

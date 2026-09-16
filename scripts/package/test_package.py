@@ -431,6 +431,106 @@ def test_installed_smoke_requires_complete_packaged_runtime(tmp_path) -> None:
         raise AssertionError("incomplete installed runtime must fail closed")
 
 
+@pytest.mark.parametrize("doctor_fails", [False, True])
+def test_installed_smoke_uses_installed_launcher_and_cleans_fixture(
+    tmp_path, monkeypatch, doctor_fails
+) -> None:
+    import desktop_applications
+
+    package = _load("package_installed_desktop_fixture", PACKAGE_DIR / "run.py")
+    install = tmp_path / "install"
+    payload = install / "packages" / "candidate"
+    runtime = payload / "runtime"
+    receipt = {
+        "schemaVersion": 1,
+        "profileId": "production",
+        "payloadRelativePath": "packages/candidate",
+        "buildId": "candidate",
+        "buildIdentitySha256": "identity-hash",
+        "payloadManifestSha256": "manifest-hash",
+    }
+    identity_data = {"build_id": "candidate", "profile_id": "production"}
+    identity = SimpleNamespace(
+        build_id="candidate", profile_id="production", to_json_dict=lambda: identity_data
+    )
+    files = [
+        install / "active-install.json",
+        install / f"{package.PRODUCTION_PROFILE.main_binary_name}.exe",
+        runtime / "python/agent-friend-runtime.exe",
+        runtime / "runtime-inventory.json",
+        runtime / package.MODEL_RELATIVE_DIR,
+        *(
+            runtime / "connectors/xiaohongshu" / name
+            for name in ("xhs.exe", "LICENSE.txt", "BUILD-LOCK.json", "COMPATIBILITY.patch")
+        ),
+        *(
+            runtime / "execution-environments/python" / name
+            for name in ("identity.json", "base/python.exe", "bin/uv.exe")
+        ),
+        runtime / "desktop-applications/agent-friend-app-launcher.exe",
+        runtime / "desktop-applications/agent-friend-app-launcher.identity.json",
+    ]
+    for path in files:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"fixture")
+    monkeypatch.setattr(package, "_read_json", lambda _path: receipt)
+    monkeypatch.setattr(package, "read_build_identity", lambda _path: identity)
+    monkeypatch.setattr(
+        package,
+        "read_payload_manifest",
+        lambda _path: SimpleNamespace(build_identity_sha256="identity-hash"),
+    )
+    monkeypatch.setattr(package, "validate_payload_manifest", lambda *_args: None)
+    monkeypatch.setattr(package, "_sha256", lambda _path: "manifest-hash")
+    monkeypatch.setattr(
+        package, "_windows_xiaohongshu_contract", lambda: (None, None, None, ["xhs.exe"])
+    )
+    monkeypatch.setattr(
+        package,
+        "_sanitized_env",
+        lambda: {
+            "AGENT_FRIEND_APP_LAUNCHER": "stale-development-helper",
+            "AGENT_FRIEND_APP_LAUNCH_FIXTURE": "stale-fixture",
+        },
+    )
+    monkeypatch.setattr(
+        package.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout=json.dumps({"identity": identity_data})),
+    )
+    fixtures = []
+
+    def build_fixture(_repo, directory):
+        target = directory / "fixture.exe"
+        target.write_bytes(b"fixture")
+        fixtures.append(target)
+        return target
+
+    def check_doctor(_command, *, cwd, env):
+        assert (
+            Path(env["AGENT_FRIEND_APP_LAUNCHER"])
+            == runtime / "desktop-applications/agent-friend-app-launcher.exe"
+        )
+        assert Path(env["AGENT_FRIEND_APP_LAUNCH_FIXTURE"]).is_file()
+        assert not Path(env["AGENT_FRIEND_APP_LAUNCH_FIXTURE"]).is_relative_to(payload)
+        if doctor_fails:
+            raise RuntimeError("doctor failed")
+
+    monkeypatch.setattr(desktop_applications, "build_launch_fixture", build_fixture)
+    monkeypatch.setattr(package, "_run", check_doctor)
+    monkeypatch.setattr(package, "_smoke_frozen_services", lambda *_args, **_kwargs: None)
+    if doctor_fails:
+        with pytest.raises(RuntimeError, match="doctor failed"):
+            package._smoke_installed_runtime(install)
+    else:
+        package._smoke_installed_runtime(install)
+    assert len(fixtures) == 1
+    assert not fixtures[0].parent.exists()
+    assert (
+        runtime / "desktop-applications/agent-friend-app-launcher.exe"
+    ).read_bytes() == b"fixture"
+
+
 def test_cloudflared_lock_has_pinned_version_and_hash() -> None:
     lock = json.loads((PACKAGE_DIR / "vendor" / "cloudflared.lock.json").read_text("utf-8"))
     assert lock["version"] != "latest"
