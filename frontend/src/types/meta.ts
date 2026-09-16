@@ -30,6 +30,7 @@ export interface SessionEvent {
 }
 
 interface SessionDetailBase {
+  recovery?: { sourceRunId: string; rootRunId: string } | null;
   session_id: string;
   title: string;
   persona: string;

@@ -15,7 +15,8 @@ export function elapsedRunSeconds(message: ChatMessage, run: RunSnapshot | undef
   const start = Date.parse(startedAt);
   const end = finishedAt ? Date.parse(finishedAt) : now;
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
-  return Math.floor((end - start) / 1000);
+  return message.priorExecutionSeconds === null ? null
+    : Math.floor((message.priorExecutionSeconds ?? 0) + (end - start) / 1000);
 }
 
 export function formatRunDuration(seconds: number | null, state: "running" | "stopped" | "finished" = "finished"): string {

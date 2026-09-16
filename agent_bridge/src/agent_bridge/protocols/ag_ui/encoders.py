@@ -55,6 +55,7 @@ from agent.system_prompt.surfaces import InteractionSurfaceId
 from agent import (
     AssistantMessageEnd,
     AssistantMessagePhase,
+    AssistantMessageReset,
     AssistantMessageStart,
     AssistantPhaseStatus,
     ContextCompactionStatus,
@@ -205,6 +206,15 @@ def encode_stream(
                             type=EventType.CUSTOM,
                             name="agent_friend.assistant_message_phase",
                             value={"messageId": ev.message_id, "phase": ev.phase},
+                        )
+                    )
+                elif isinstance(ev, AssistantMessageReset):
+                    open_items.difference_update(ev.message_ids)
+                    yield _encode(
+                        CustomEvent(
+                            type=EventType.CUSTOM,
+                            name="agent_friend.assistant_message_reset",
+                            value={"messageIds": ev.message_ids},
                         )
                     )
                 elif isinstance(ev, AssistantMessageEnd):

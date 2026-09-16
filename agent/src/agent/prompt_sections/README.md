@@ -33,6 +33,7 @@
 | 消费者 | 装配入口 | 身份契约 |
 |---|---|---|
 | 普通聊天／CLI | `agent.prompts.MarkdownPromptBuilder` → 默认 composer | 默认 section |
+| 任务手动继续 | `Conversation.continue_after_tool_error` → 原用户轮上下文 → 正常工具循环 | 默认 section，复用原任务附件与 Skill 选择 |
 | 桌面／语音／IM | Bridge ag_ui／openai／im → AgentRuntime → Conversation | 同上，渠道规则独立 |
 | 定时任务／系统触发提醒／授权跟进 | Bridge scheduled_tasks／reminders／social_auth → AgentRuntime | 同上，不改变任务状态 |
 | 气泡 | `agent_bridge.notifications.generation.NotificationGenerator` | 共享资源 + 正式人格 + 通知任务 |

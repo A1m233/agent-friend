@@ -23,6 +23,8 @@ from .stream_events import (
 if TYPE_CHECKING:
     from .catalog import ModelRuntimeConfig
 
+DEFAULT_MODEL_RETRIES = 5
+
 
 @dataclass(frozen=True)
 class ModelCallTraceContext:
@@ -48,6 +50,12 @@ class ModelCallControl:
 
     cancel_check: Callable[[], None] | None = None
     allow_retries: bool = True
+    # Only consumers that can retract uncommitted text may enable this. Spoken
+    # audio and integrations without reset support retain the conservative default.
+    allow_output_retries: bool = False
+    # The orchestrator can share a budget with semantic/context repair requests.
+    retry_limit: int | None = None
+    retry_attempt_offset: int = 0
     diagnostic_callback: Callable[[LLMTransportDiagnostic], None] | None = None
     previous_request_witness: ProviderRequestWitness | None = None
     continuation_disposition: str = "baseline"
