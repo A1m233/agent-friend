@@ -766,10 +766,16 @@ def test_runtime_entry_parser_requires_explicit_subcommand() -> None:
 def test_doctor_without_configured_model_checks_static_html_extraction(monkeypatch, capsys) -> None:
     runtime_entry = _load("runtime_entry_without_model", PACKAGE_DIR / "runtime_entry.py")
     monkeypatch.delenv("AGENT_FRIEND_MEMORY_MODEL_DIR", raising=False)
+    # Real Explorer dispatch is exercised by staging with the build-owned fixture.
+    monkeypatch.setattr(runtime_entry, "_smoke_desktop_applications", lambda: {"fixture": True})
 
     assert runtime_entry._doctor() == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["checks"]["capability:web_fetch_static_html"]["ok"] is True
+    assert payload["checks"]["capability:desktop_application_launch"] == {
+        "ok": True,
+        "fixture": True,
+    }
     assert payload["checks"]["capability:tool_schema_validation"]["ok"] is True
     assert payload["checks"]["capability:scheduled_tasks"] == {
         "ok": True,

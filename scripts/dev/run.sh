@@ -140,6 +140,11 @@ if [ -z "$CODEX_EXECUTABLE" ]; then
 fi
 export AGENT_FRIEND_CODEX_EXECUTABLE="$CODEX_EXECUTABLE"
 echo "  [OK] $CODEX_EXECUTABLE"
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+        export AGENT_FRIEND_APP_LAUNCHER="$(uv run python scripts/desktop-application/run.py ensure)"
+        ;;
+esac
 if [ "$DEV_COMMAND" = "takeover" ]; then
     run_runtime_guard takeover --owner-pid "$$"
 else

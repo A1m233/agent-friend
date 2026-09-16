@@ -20,7 +20,7 @@ import {
 } from "@/stores";
 
 export interface SessionAutoApprovalTarget {
-  kind: "command" | "filesystem";
+  kind: "command" | "filesystem" | "desktop_application";
   requestId: string;
   sessionId: string;
   runId: string;
@@ -66,7 +66,7 @@ export function SessionApprovalModeController({ children }: { children: ReactNod
   useEffect(() => {
     if (intent?.source !== "approval_card") return;
     const target = intent.target;
-    const current = target.kind === "command"
+    const current = target.kind !== "filesystem"
       ? commandApprovals[target.requestId]
       : filesystemEntries[target.requestId]?.request;
     if (
@@ -191,7 +191,7 @@ export function SessionApprovalModeController({ children }: { children: ReactNod
               Agent 可以读取、创建、修改、覆盖、移动或删除本地文件，并运行本地命令和使用申请到的网络能力。
             </p>
             <p>
-              这也包括 Agent 显式申请的宿主用户命令；这类命令不受文件系统和网络沙箱限制。
+              这也包括 Agent 显式申请的宿主用户命令和桌面应用打开请求，它们不受文件系统和网络沙箱限制。正常打开的桌面应用在任务结束或取消后仍会保留。
             </p>
             <p>
               系统仍可能拒绝可识别的灾难性动作，但无法保证识别任意脚本内部的危险行为。

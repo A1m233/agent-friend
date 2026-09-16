@@ -2,6 +2,21 @@
 
 Use this reference to interpret bundles whose `manifest.json` has `formatVersion: 1`. The recorded build commit remains authoritative when an older or branch-specific producer differs from the current source. The current producer's structural source of truth is `frontend/src-tauri/src/diagnostics/bundle-contract-v1.json`; this reference explains evidence semantics rather than duplicating that machine contract.
 
+## Desktop Application Launch Evidence
+
+`desktop-application-launch-v1` adds `diagnostics/desktop-applications.json`.
+It projects at most 128 launch records from a bounded scan of persisted tool evidence
+(1,000 files and 4 MiB read budget). It does not promise full history or recency;
+deleted sessions and scan limits restrict coverage. It never includes application paths,
+arguments, raw session/run IDs or desktop contents. The inspector prints counts only.
+`accepted` means Explorer accepted a launch request, not application readiness or survival.
+`unknown` includes an interrupted dispatch without a retained acknowledgement; do not infer
+the application was never opened or replay the launch. `launchRef` is a hashed correlation
+key, not a PID. `user_desktop` describes intended ownership, not a live process inventory.
+Bridge unavailability is a collector gap; ordinary command cleanup does not imply the
+desktop application was terminated. Inspect selected tool events and actual application
+evidence separately when determining who closed an application.
+
 ## Producer Flow
 
 The settings feedback panel invokes the Tauri `generate_diagnostic_bundle` command with an optional problem description, selected session ids, locale, timezone, and an attachment-originals flag. Rust then:

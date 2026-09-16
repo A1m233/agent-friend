@@ -4,7 +4,8 @@
 # filesystem_scope_id 填入 exec_command 的 Skill binding，随后又改猜内部绝对路径。
 # 本 contract 固化稳定边界：Skill 命令使用结构化 binding，单 Skill 时可由宿主绑定；
 # filesystem scope 只供 filesystem_* 工具使用，普通沙箱命令仍使用绝对 workdir；桌面宿主
-# 进程使用独立的 host_process_start；GitHub Skill 更新在同一轮使用真实 --update / 显式覆盖参数。
+# 应用使用 launch_desktop_application，受管宿主命令使用 host_process_start；GitHub Skill 更新
+# 在同一轮使用真实 --update / 显式覆盖参数。
 
 contract:
   id: C24
@@ -86,27 +87,90 @@ cases:
       require_non_empty_response: true
 
   - id: C24-04
-    query: 已经确认是 2 号 MuMu 实例，继续启动模拟器；这是需要当前桌面用户会话的程序
-    facet: 多账号事故 isolation · 已知完整启动参数时必须用独立宿主进程工具的结构化 argv
+    query: 已经确认是 2 号 MuMu 实例，当前未运行，继续打开模拟器，结束后我还要使用它
+    facet: 生命周期事故 anchor · 正常桌面应用不放入任务受管进程
     source: prod-maa-multi-account-sandbox-launch-20260818
     surface: desktop_chat
     current_session_messages:
       - role: assistant
         text: 已从可信日志确认实例 2，完整启动参数是 C:\fixture\MuMuPlayer.exe -v 2。
     fake_tools:
-      - name: host_process_start
+      - name: launch_desktop_application
         responses:
           - match_args:
-              argv: ['C:\fixture\MuMuPlayer.exe', '-v', '2']
-            result_text: '{"status":"exited","exit_code":0,"execution":"host_user","sandbox_type":"none"}'
+              executable_path: 'C:\fixture\MuMuPlayer.exe'
+              arguments: ['-v', '2']
+            result_text: '{"status":"accepted","launch_id":"launch_fixture","lifecycle":"user_desktop","readiness":"not_verified"}'
+      - name: host_process_start
+        result_text: '{"status":"running","process_id":"proc_wrong_lifecycle"}'
     judge:
+      must_not_call_any: [host_process_start, terminate_command, write_stdin]
+      maximum_tool_call_counts: {launch_desktop_application: 1}
       required_successful_tool_calls:
-        - name: host_process_start
+        - name: launch_desktop_application
           args:
-            argv: ['C:\fixture\MuMuPlayer.exe', '-v', '2']
+            executable_path: 'C:\fixture\MuMuPlayer.exe'
+            arguments: ['-v', '2']
       require_non_empty_response: true
       forbid_question: true
       forbid_tool_identifier_confusion: true
+
+  - id: C24-07
+    query: >-
+      打开已确认存在的 D:\Apps\Canvas.exe。它目前没有运行，参数为空。
+      这次只需要提交打开请求，窗口和业务状态稍后由我自己检查。
+    facet: adjacent · 非模拟器桌面应用接受回执不等于就绪
+    source: requirement-134-application-acceptance-control
+    surface: desktop_chat
+    fake_tools:
+      - name: launch_desktop_application
+        result_text: '{"status":"accepted","launch_id":"launch_canvas","lifecycle":"user_desktop","readiness":"not_verified"}'
+      - name: host_process_start
+        result_text: '{"status":"running","process_id":"proc_wrong_lifecycle"}'
+    judge:
+      must_not_call_any: [host_process_start, terminate_command, write_stdin]
+      maximum_tool_call_counts: {launch_desktop_application: 1}
+      required_successful_tool_calls:
+        - name: launch_desktop_application
+          args: {executable_path: 'D:\Apps\Canvas.exe'}
+      must_mention_any_groups: [[请求, 提交, 接受]]
+      require_non_empty_response: true
+
+  - id: C24-08
+    query: >-
+      打开已确认存在且尚未运行的 D:\Apps\Viewer.exe，参数为空。
+      如果回执不足以确定打开结果，直接告诉我目前能确定的事实即可，我会查看窗口。
+    facet: isolation · 回执未知不得重复启动或冒充进程句柄
+    source: requirement-134-unknown-launch-no-replay
+    surface: desktop_chat
+    fake_tools:
+      - name: launch_desktop_application
+        result_text: '{"status":"unknown","error_code":"launch_outcome_unknown","launch_id":"launch_viewer","message":"可能已打开，先检查现有实例，不直接重复启动"}'
+        is_error: true
+      - name: host_process_start
+        result_text: '{"status":"running","process_id":"proc_wrong_lifecycle"}'
+    judge:
+      required_first_tool_call: launch_desktop_application
+      maximum_tool_call_counts: {launch_desktop_application: 1}
+      must_not_call_any: [host_process_start, terminate_command, write_stdin]
+      must_mention_any_groups: [[未知, 不确定, 无法确认, 不能确认, 可能]]
+      require_non_empty_response: true
+
+  - id: C24-09
+    query: >-
+      已确认 Viewer 的现有窗口正常且就是目标实例，不需要重新打开。
+      保持它运行，这次只确认我的要求即可。
+    facet: control · 复用现有用户应用不取得清理权
+    source: requirement-134-existing-application-control
+    surface: desktop_chat
+    fake_tools:
+      - name: launch_desktop_application
+        result_text: '{"status":"accepted","launch_id":"launch_duplicate"}'
+      - name: host_process_start
+        result_text: '{"status":"running","process_id":"proc_duplicate"}'
+    judge:
+      must_not_call_any: [launch_desktop_application, host_process_start, terminate_command, write_stdin]
+      require_non_empty_response: true
 
   - id: C24-05
     query: >-

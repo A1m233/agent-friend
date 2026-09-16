@@ -54,7 +54,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     def pending_approvals(
         session_id: str | None = Query(default=None, min_length=1),
         run_id: str | None = Query(default=None, min_length=1),
-        kind: Literal["filesystem", "command"] | None = Query(default=None),
+        kind: Literal["filesystem", "command", "desktop_application"] | None = Query(default=None),
     ) -> dict[str, object]:
         broker = runtime.approval_broker
         if broker is None:
@@ -217,6 +217,36 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             raise HTTPException(status_code=404, detail=stale_detail)
         return {"accepted": True, "approval": pending_request.to_dict()}
 
+    @router.post("/approvals/{request_id}/application-decision")
+    def decide_application_approval(
+        request_id: str, body: CommandApprovalDecisionBody
+    ) -> dict[str, object]:
+        broker = runtime.approval_broker
+        if broker is None:
+            raise HTTPException(status_code=503, detail="approval unavailable")
+        if body.lifetime != "once":
+            raise HTTPException(status_code=422, detail={"error": "approval_lifetime_not_enabled"})
+        pending = next(
+            (
+                item
+                for item in broker.pending(
+                    session_id=body.session_id, run_id=body.run_id, kind="desktop_application"
+                )
+                if item.request_id == request_id
+            ),
+            None,
+        )
+        if pending is None or not broker.decide(
+            request_id,
+            CommandApprovalDecision(allow=body.allow),
+            session_id=body.session_id,
+            run_id=body.run_id,
+            expected_kind="desktop_application",
+            lifetime=body.lifetime,
+        ):
+            raise HTTPException(status_code=409, detail={"error": "approval_request_stale"})
+        return {"accepted": True, "approval": pending.to_dict()}
+
     @router.get("/command-processes")
     def command_processes(
         session_id: str | None = Query(default=None, min_length=1),
@@ -232,6 +262,17 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 )
             ]
         }
+
+    @router.get("/desktop-applications/diagnostics")
+    def desktop_application_diagnostics() -> dict[str, object]:
+        if runtime.application_launch_evidence is None:
+            return {
+                "schemaVersion": 1,
+                "status": "unavailable",
+                "records": [],
+                "gaps": ["not_collected"],
+            }
+        return runtime.application_launch_evidence.application_launch_diagnostics()
 
     @router.get("/command-runtime/status")
     def command_runtime_status() -> dict[str, object]:

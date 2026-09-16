@@ -5051,7 +5051,13 @@ class Conversation:
             _RECALL_PAST_CHATS_TOOL_NAME,
         }:
             action_time = tool_run_context.read_action_time()
-        if name in {"exec_command", "host_process_start", "write_stdin", "terminate_command"}:
+        if name in {
+            "exec_command",
+            "host_process_start",
+            "write_stdin",
+            "terminate_command",
+            "launch_desktop_application",
+        }:
             invocation_args.update(
                 {
                     COMMAND_SESSION_ID_ARG: self._session.session_id,
@@ -6092,7 +6098,8 @@ class Conversation:
                     isinstance(evidence_ref, str)
                     and isinstance(operation_id, str)
                     and isinstance(tool_name, str)
-                    and tool_name in {"exec_command", "host_process_start"}
+                    and tool_name
+                    in {"exec_command", "host_process_start", "launch_desktop_application"}
                     and isinstance(run_id, str)
                 ):
                     try:
@@ -6119,6 +6126,23 @@ class Conversation:
                             render_interrupted_evidence(evidence) if evidence is not None else None
                         )
                         if rendered is not None:
+                            assert evidence is not None
+                            if evidence.kind == "application_launch":
+                                accepted = json.loads(rendered).get("status") == "accepted"
+                                return ToolResult(
+                                    text=rendered,
+                                    is_error=not accepted,
+                                    meta={
+                                        "executed": True if accepted else "unknown",
+                                        "transaction_status": "interrupted",
+                                        "process_status": "not_managed",
+                                        "semantic_status": "not_verified",
+                                        "result_origin": result_origin,
+                                        "reason_code": reason_code,
+                                        "evidence_ref": evidence_ref,
+                                        "evidence_kind": evidence.kind,
+                                    },
+                                )
                             return ToolResult(
                                 text=rendered,
                                 is_error=True,
@@ -6133,7 +6157,7 @@ class Conversation:
                                     "result_origin": result_origin,
                                     "reason_code": reason_code,
                                     "evidence_ref": evidence_ref,
-                                    "evidence_kind": "command_output",
+                                    "evidence_kind": evidence.kind,
                                     "evidence_partial": True,
                                 },
                             )

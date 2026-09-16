@@ -9,7 +9,7 @@
 
 ## Case 集
 
-当前内置 C1-C28，共 239 条 fixture：
+当前内置 C1-C28，共 242 条 fixture：
 
 | Contract | 关注点 | case 数 |
 |---|---|---:|
@@ -36,7 +36,7 @@
 | C21 | 统一 Skill discovery：精确指代时不遗漏 builtin / personal / shared；保留无可信指代基线的歧义问法作观察样本 | 4 |
 | C22 | Skill catalog 变化比较：只有上下文存在可信旧 production catalog 时才判断新增、删除或不变 | 3 |
 | C23 | 自我呈现与透明表达：沉浸 / 透明模式、上下文压缩事实、约束概括与原始指令保密 | 8 |
-| C24 | 跨工具标识符、Skill 命令绑定与真实更新入口：filesystem scope 不得冒充 Skill ID，Skill binding 与普通命令互斥，桌面宿主程序使用独立 `host_process_start` 结构化 argv，GitHub Skill 本地冲突在同一 tool loop 发起精确 replacement 命令并遵循当前会话授权模式 | 6 |
+| C24 | 跨工具标识符、Skill 命令绑定与真实更新入口：filesystem scope 不得冒充 Skill ID；桌面应用使用正常打开能力，未知回执不重放；受管命令保留现有生命周期；GitHub Skill 更新遵循真实入口和当前授权模式 | 9 |
 | C25 | 文件授权状态事实约束：旧用户轮 scope 不可复用，只有当前轮成功授权结果才能支撑授权已刷新或已获得权限的声明 | 2 |
 | C26 | Agent run 恢复：参数校验失败作为未执行 item 返回模型后继续修正；mixed batch 保留合法结果；副作用失败不执行、不授权、不重放；显式资源预算仍可终止 | 6 |
 | C27 | 受治理命令生命周期接管：同一 tool loop 内先取得 streaming handle，再精确终止并确认终态后启动明确替代命令；正常等待、已退出和其它句柄不被误伤 | 5 |

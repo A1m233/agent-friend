@@ -181,6 +181,19 @@ pub async fn generate_diagnostic_bundle(
         }
     }
     .await;
+    let desktop_applications_result = async {
+        let mut url = reqwest::Url::parse(&runtime_services::RuntimeServiceKind::Bridge.base_url())
+            .map_err(|e| e.to_string())?;
+        url.path_segments_mut()
+            .map_err(|_| "invalid bridge URL".to_string())?
+            .extend(["v1", "desktop-applications", "diagnostics"]);
+        let response = client.get(url).send().await.map_err(|e| e.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("bridge returned HTTP {}", response.status()));
+        }
+        response.json::<Value>().await.map_err(|e| e.to_string())
+    }
+    .await;
     let mut session_results = Vec::new();
     for session_id in &session_ids {
         let client = client.clone();
@@ -291,7 +304,19 @@ pub async fn generate_diagnostic_bundle(
         .and_then(|value| value.remove("incidentEvidence"))
         .unwrap_or_else(|| sandbox_incidents::collect(&paths::log_dir()));
 
+    let desktop_applications = desktop_applications_result.unwrap_or_else(|message| {
+        failures.push(CollectionFailure {
+            collection: "desktop-applications".into(),
+            item: None,
+            message: redact_text(&message, &credentials, home.as_deref()).0,
+        });
+        json!({"schemaVersion":1,"status":"unavailable","records":[],"gaps":["bridge_unavailable"]})
+    });
     for (name, mut value) in [
+        (
+            "diagnostics/desktop-applications.json",
+            desktop_applications,
+        ),
         ("diagnostics/application.json", app_info),
         ("diagnostics/environment.json", environment),
         ("diagnostics/runtime-services.json", runtime_services),
@@ -1420,6 +1445,7 @@ mod tests {
                     "diagnostics/execution-environments.json",
                     "diagnostics/command-runtime.json",
                     "diagnostics/command-runtime-incidents.json",
+                    "diagnostics/desktop-applications.json",
                     "diagnostics/webview2.json",
                     "diagnostics/webview2-render-evidence.json",
                     "install/integrity.json",

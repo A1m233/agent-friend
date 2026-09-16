@@ -88,6 +88,19 @@ export interface CommandProcessSnapshot {
   pty: string;
 }
 
+export interface ApplicationApprovalRequest extends Omit<CommandApprovalRequest, "kind" | "details"> {
+  kind: "desktop_application";
+  details: {
+    executable_path: string;
+    arguments: string[];
+    working_directory: string;
+    lifecycle: "user_desktop";
+    sandboxed: false;
+  };
+}
+
+export type ExecutionApprovalRequest = CommandApprovalRequest | ApplicationApprovalRequest;
+
 export interface CommandRuntimeStatus {
   available: boolean;
   platform: "windows" | "other";
@@ -113,11 +126,12 @@ export interface SandboxCapabilitySnapshot {
 }
 
 export const commandRuntimeApi = {
-  async pending(): Promise<CommandApprovalRequest[]> {
-    const payload = await http.get("/v1/approvals?kind=command") as {
-      requests: CommandApprovalRequest[];
-    };
-    return payload.requests;
+  async pending(): Promise<ExecutionApprovalRequest[]> {
+    const [commands, applications] = await Promise.all([
+      http.get("/v1/approvals?kind=command"),
+      http.get("/v1/approvals?kind=desktop_application"),
+    ]) as unknown as [{ requests: CommandApprovalRequest[] }, { requests: ApplicationApprovalRequest[] }];
+    return [...commands.requests, ...applications.requests];
   },
 
   async processes(): Promise<CommandProcessSnapshot[]> {
@@ -139,16 +153,16 @@ export const commandRuntimeApi = {
     ) as CommandRuntimeStatus;
   },
 
-  async decide(request: CommandApprovalRequest, allow: boolean): Promise<CommandApprovalRequest> {
+  async decide(request: ExecutionApprovalRequest, allow: boolean): Promise<ExecutionApprovalRequest> {
     const payload = await http.post(
-      `/v1/approvals/${encodeURIComponent(request.request_id)}/command-decision`,
+      `/v1/approvals/${encodeURIComponent(request.request_id)}/${request.kind === "desktop_application" ? "application" : "command"}-decision`,
       {
         session_id: request.session_id,
         run_id: request.run_id,
         allow,
         lifetime: "once",
       },
-    ) as { accepted: true; approval: CommandApprovalRequest };
+    ) as { accepted: true; approval: ExecutionApprovalRequest };
     return payload.approval;
   },
 

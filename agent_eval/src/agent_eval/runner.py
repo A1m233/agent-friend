@@ -334,6 +334,11 @@ class _FixtureTool:
         elif fixture.name == "host_process_start":
             self.description = HostProcessStartTool.description
             self.parameters_schema = HostProcessStartTool.parameters_schema
+        elif fixture.name == "launch_desktop_application":
+            from agent.desktop_applications import LaunchDesktopApplicationTool
+
+            self.description = LaunchDesktopApplicationTool.description
+            self.parameters_schema = LaunchDesktopApplicationTool.parameters_schema
         elif fixture.name == "write_stdin":
             self.description = WriteStdinTool.description
             self.parameters_schema = WriteStdinTool.parameters_schema

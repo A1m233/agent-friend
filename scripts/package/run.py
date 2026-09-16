@@ -652,6 +652,16 @@ def _stage_runtime(
     shutil.copytree(dist_dir / "agent-friend-runtime", stage_dir / "python")
     _copy_runtime_supplements(stage_dir / "python")
 
+    from desktop_applications import build_launch_fixture, stage_application_launcher
+
+    application_launcher = stage_application_launcher(
+        repo_root=REPO_ROOT,
+        target_dir=build_paths.cargo_target_dir,
+        destination=stage_dir / "desktop-applications",
+        identity=identity.to_json_dict(),
+        env=_sanitized_env(),
+    )
+
     cloudflared_lock = _read_json(CLOUDFLARED_LOCK)
     cache_dir = build_paths.roots.cache_dir
     cloudflared_cache = cache_dir / f"cloudflared-{cloudflared_lock['version']}-windows-amd64.exe"
@@ -738,6 +748,10 @@ def _stage_runtime(
 
     doctor_env["AGENT_FRIEND_MEMORY_MODEL_DIR"] = str(stage_dir / MODEL_RELATIVE_DIR)
     doctor_env["AGENT_FRIEND_CODEX_EXECUTABLE"] = str(codex_executable)
+    doctor_env["AGENT_FRIEND_APP_LAUNCHER"] = str(application_launcher)
+    doctor_env["AGENT_FRIEND_APP_LAUNCH_FIXTURE"] = str(
+        build_launch_fixture(REPO_ROOT, build_paths.build_dir / "desktop-launch-fixture")
+    )
     doctor_env["AGENT_FRIEND_EXECUTION_ENVIRONMENT_ROOT"] = str(
         stage_dir / "execution-environments"
     )

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   commandRuntimeApi,
   type CommandApprovalRequest,
+  type ApplicationApprovalRequest,
   type CommandProcessSnapshot,
   type SandboxCapabilitySnapshot,
 } from "@/services/api/commandRuntime";
@@ -134,6 +135,18 @@ describe("command runtime global sandbox capability", () => {
       sandbox_capability: { state: "ready" },
     });
     expect(useCommandRuntimeStore.getState().approvals).toEqual({});
+  });
+
+  it("retains desktop approval pushes without creating a managed process", () => {
+    const request: ApplicationApprovalRequest = { ...approval(), kind: "desktop_application",
+      details: { executable_path: "C:\\Apps\\Viewer.exe", arguments: [], working_directory: "C:\\Apps",
+        lifecycle: "user_desktop", sandboxed: false } };
+    useCommandRuntimeStore.getState().handlePush({ kind: "approval_changed", session_id: "session-a",
+      seq: 1, source_kind: null, events: [], approval: request });
+    expect(useCommandRuntimeStore.getState().approvals[request.request_id]).toEqual(request);
+    useCommandRuntimeStore.getState().finishRun("run-a");
+    expect(useCommandRuntimeStore.getState().processes).toEqual({});
+    expect(commandRuntimeApi.cancel).not.toHaveBeenCalled();
   });
 
   it("does not let an older capability event overwrite a newer state", () => {

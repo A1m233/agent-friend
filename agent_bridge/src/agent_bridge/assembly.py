@@ -14,6 +14,7 @@ bridge 进程是**单实例多请求**模型——这些组件在进程启动时
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 import os
 import platform
@@ -26,6 +27,7 @@ from typing import TYPE_CHECKING, cast
 
 from agent.approvals import ApprovalBroker, CatastrophicActionPolicy
 from agent.command_runtime import CodexIdentityError, CommandRuntime, verify_codex_executable
+from agent.desktop_applications import NativeApplicationLauncher
 from agent.execution_environment import (
     ExecutionEnvironmentManager,
     ManagedEnvironmentError,
@@ -285,6 +287,7 @@ class BridgeRuntime:
     approval_broker: ApprovalBroker | None = None
     """桌面文件与命令授权请求、会话决策模式及高危策略的进程级 broker。"""
     command_runtime: CommandRuntime | None = None
+    application_launch_evidence: ToolExecutionEvidenceStore | None = None
     """085：进程级 Codex exec-server 命令运行时；不可用时其它能力继续运行。"""
     execution_environment_manager: ExecutionEnvironmentManager | None = None
     """096：共享 base、session overlay 与 run snapshot 的进程级 owner。"""
@@ -655,6 +658,18 @@ def build_runtime(
         command_runtime=command_runtime,
         execution_environment_manager=execution_environment_manager,
         tool_execution_evidence_store=tool_evidence_store,
+        desktop_application_launcher=NativeApplicationLauncher(
+            Path(os.environ["AGENT_FRIEND_APP_LAUNCHER"])
+            if os.environ.get("AGENT_FRIEND_APP_LAUNCHER")
+            else (
+                Path(sys.executable).resolve().parent.parent
+                / "desktop-applications"
+                / "agent-friend-app-launcher.exe"
+                if getattr(sys, "frozen", False)
+                else None
+            ),
+            build_identity=json.dumps(build_identity) if build_identity else None,
+        ),
         attachment_store=attachment_store,
     )
 
@@ -807,6 +822,7 @@ def build_runtime(
         approval_broker=approval_broker,
         command_runtime=command_runtime,
         execution_environment_manager=execution_environment_manager,
+        application_launch_evidence=tool_evidence_store,
     )
 
     # 022:IM 通道装配(SessionBridge 复用现有 persistent path,session_id 由 IMRouter 决定)

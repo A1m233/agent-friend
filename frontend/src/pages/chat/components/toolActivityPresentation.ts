@@ -181,6 +181,10 @@ function summaryFor(block: ToolBlock, args: Record<string, unknown>): string {
       const reason = asString(args.reason);
       return reason ? normalizedText(reason) : "启动宿主进程";
     }
+    case "launch_desktop_application": {
+      const reason = asString(args.reason);
+      return reason ? normalizedText(reason) : "打开桌面应用";
+    }
     case "write_stdin":
       return "与本地进程交互";
     case "terminate_command":

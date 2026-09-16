@@ -336,6 +336,14 @@ def _build_bundle(
     assert set(manifest) == _contract_manifest_fields(contract)
 
     json_entries = {
+        "diagnostics/desktop-applications.json": {
+            "schemaVersion": 1,
+            "status": "available",
+            "gaps": ["bounded_persisted_evidence_only"],
+            "records": [
+                {"status": "accepted", "launchRef": "private-ref", "arguments": "private-secret"}
+            ],
+        },
         "manifest.json": manifest,
         "diagnostics/pet-input/coverage.json": pet_coverage,
         "diagnostics/pet-render/coverage.json": {
@@ -720,6 +728,8 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
         "render-evidence/windows-desktop.png",
     ]
     assert summary["commandRuntime"]["codes"] == {"helper_launch_failed": 1}
+    assert summary["desktopApplications"]["statuses"] == {"accepted": 1}
+    assert "private" not in json.dumps(summary["desktopApplications"])
     assert summary["installIntegrity"]["status"] == "consistent"
     assert summary["installIntegrity"]["evidence"] == "collected"
     assert summary["installIntegrity"]["payload"]["validated"] is True
