@@ -194,6 +194,19 @@ it("loads earlier complete turns and preserves them through a latest-page refres
   expect(useConversationStore.getState().messages).toHaveLength(4);
 });
 
+it("preserves server recovery eligibility while loading older history", async () => {
+  const latest = historyPage(["new"], "new:user");
+  latest.recovery = { sourceRunId: "failed", rootRunId: "failed" };
+  latest.active_events!.push({ type: "run_error", uuid: "error", ts: "2026-09-10T00:00:02Z",
+    meta: { run_id: "failed" }, payload: { recoverable: true, message: "failure" } });
+  mockGet.mockResolvedValue(latest);
+  await useConversationStore.getState().openSession("paged");
+  expect(lastMessage().canContinue).toBe(true);
+  vi.mocked(sessionsApi.getOlder).mockResolvedValue(historyPage(["old"], null));
+  expect(await useConversationStore.getState().loadOlderHistory()).toBe(true);
+  expect(lastMessage().canContinue).toBe(true);
+});
+
 function runSnapshot(
   runId: string,
   sessionId: string,
@@ -1576,12 +1589,36 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
 });
 
 describe("conversation store · continue tool result", () => {
+  it("拒绝过期恢复请求后移除乐观占位，不生成第二条错误或残留忙碌状态", async () => {
+    mockGet.mockResolvedValue({
+      session_id: "sid-1", title: "task", persona: "default", model: "test",
+      recovery: { sourceRunId: "failed", rootRunId: "failed" },
+      events: [
+        { type: "user_message", uuid: "user", ts: "2026-09-16T00:00:00Z", payload: { content: "finish" } },
+        { type: "run_error", uuid: "error", ts: "2026-09-16T00:00:01Z",
+          meta: { run_id: "failed" }, payload: { recoverable: true, message: "failed" } },
+      ],
+    });
+    mockRunGet.mockRejectedValue(new Error("not found"));
+    mockContinueStream.mockImplementation(async function* () {
+      throw new StreamAdmissionError("stale source");
+      yield ev({ type: EventType.RUN_FINISHED });
+    });
+    await useConversationStore.getState().openSession("sid-1");
+    await useConversationStore.getState().continueToolResult(lastMessage().id);
+    expect(useConversationStore.getState().messages.filter((m) => m.role === "assistant")).toHaveLength(1);
+    expect(lastMessage().runId).toBe("failed");
+    expect(isSessionBusy(useConversationStore.getState(), "sid-1")).toBe(false);
+    expect(Object.keys(useConversationStore.getState().runSnapshots)).toHaveLength(0);
+  });
+
   it("复用完成的工具结果继续生成，不插入新的用户消息", async () => {
     mockGet.mockResolvedValueOnce({
       session_id: "sid-1",
       title: "sid-1",
       persona: "default",
       model: "test",
+      recovery: { sourceRunId: "legacy:run-error", rootRunId: "legacy:run-error" },
       events: [
         {
           type: "user_message",

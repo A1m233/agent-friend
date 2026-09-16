@@ -251,6 +251,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       message.createdAt = ev.ts;
       if (content) {
         message.blocks.push({ kind: "text", mid: ev.uuid, text: content,
+          ...(p.partial === true ? { partial: true } : {}),
           ...(p.phase === undefined ? {} : { phase: normalizeAssistantPhase(p.phase) }) });
       }
       if (p.partial === true) {
@@ -295,7 +296,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
         currentAssistant = null;
         continue;
       }
-      const message = ensureAssistant(ev.uuid, ev.ts, runId);
+      const message = ensureAssistant(ev.uuid, ev.ts, runId || asString(p.run_id) || `legacy:${ev.uuid}`);
       message.createdAt = ev.ts;
       message.status = "error";
       message.error = asString(p.message) || "这轮回答中断了，没有生成完整回复。请稍后重试。";
@@ -345,8 +346,13 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       || messages.some((message) => message.role === "assistant" && message.runId === runId)) continue;
     const userEvent = events.find((candidate) => candidate.type === "user_message" && candidate.meta?.run_id === runId);
     const userIndex = messages.findIndex((message) => message.id === userEvent?.uuid);
-    if (userIndex < 0) continue;
-    messages.splice(userIndex + 1, 0, { ...assistantMessage(`run:${runId}`, ev.ts, runId), status: "interrupted" });
+    const sourceRunId = asString(ev.payload?.source_run_id);
+    const sourceIndex = sourceRunId
+      ? messages.findIndex((message) => message.role === "assistant" && message.runId === sourceRunId)
+      : -1;
+    const anchorIndex = userIndex >= 0 ? userIndex : sourceIndex;
+    if (anchorIndex < 0) continue;
+    messages.splice(anchorIndex + 1, 0, { ...assistantMessage(`run:${runId}`, ev.ts, runId), status: "interrupted" });
   }
   // Apply durable facts to their own runs, never the currently selected model.
   for (const ev of events) {
@@ -356,6 +362,8 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       if (message.role !== "assistant" || message.runId !== runId) continue;
       if (ev.type === "assistant_phase") message.assistantPhase = parseAssistantPhaseState(ev.payload);
       if (ev.type === "run_started") {
+        message.sourceRunId = asString(ev.payload?.source_run_id) || undefined;
+        message.rootRunId = asString(ev.payload?.root_run_id) || undefined;
         message.runStartedAt = asString(ev.payload?.started_at) || undefined;
         if (message.status === "complete") message.status = "interrupted";
       }

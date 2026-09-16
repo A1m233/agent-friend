@@ -7,7 +7,7 @@
 | ``POST /v1/sessions``             | 显式创建 session（007 起；voice_bridge 用） | （内部）       |
 | ``GET /v1/sessions/{id}``         | 单个 session 的 events（调试用）       | （内部）           |
 | ``POST /v1/sessions/{id}/edit-resend-latest`` | 编辑并重发最后一条 user 输入 | （内部） |
-| ``POST /v1/sessions/{id}/continue-tool-result`` | 从已完成工具结果继续整理 | （内部） |
+| ``POST /v1/sessions/{id}/continue-tool-result`` | 从已提交历史继续任务 | （内部） |
 | ``DELETE /v1/sessions/{id}``      | 删除 session（内部清理用）            | （内部）           |
 | ``POST /v1/sessions/{id}/persona`` | 切换 persona                          | ``/persona <name>``|
 | ``POST /v1/sessions/{id}/model``  | 切换 model                             | ``/model <name>``  |
@@ -26,13 +26,17 @@ import logging
 from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import ExitStack
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from ag_ui.encoder import EventEncoder
+from agent.errors import AgentError
 from agent.runtime import ConsumerAbandonPolicy, InteractiveBusyPolicy, UserEvent
 from agent.runtime.cancellation import CancellationToken
+from agent.runtime.errors import SessionBusyError
 from agent.runtime.models import RunRequest
+from agent.sessions.continuation import continuation_target
 from agent.sessions.query import SessionQuerySnapshot
 from agent.system_prompt import DESKTOP_CHAT_SURFACE
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
@@ -166,6 +170,8 @@ class ContinueToolResultBody(BaseModel):
         alias="runId",
         description="客户端预生成的稳定 run id；旧客户端不传时由 Bridge 生成",
     )
+
+    source_run_id: str | None = Field(None, alias="sourceRunId")
 
 
 class SessionPatchBody(BaseModel):
@@ -310,6 +316,12 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
             page_info = {"history_cursor": next_cursor, "history_epoch": session.history_epoch}
         active_events = [_public_event_dict(ev) for ev in visible]
+        recovery = None
+        try:
+            target = continuation_target(session.active_events)
+            recovery = {"sourceRunId": target.source_run_id, "rootRunId": target.root_run_id}
+        except AgentError:
+            pass
         detail = {
             "session_id": session.session_id,
             "title": session.initial_title,
@@ -317,6 +329,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             "model": session.current_model,
             "reasoningPreset": session.current_model_config.reasoning_preset,
             "revision": revision,
+            "recovery": recovery,
             **mgr.approval_mode_state(session).to_dict(),
         }
         if view == "active":
@@ -550,52 +563,128 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         request: Request,
         body: ContinueToolResultBody | None = None,
     ) -> StreamingResponse:
-        """从最新可恢复失败轮的已完成工具结果继续生成，禁止再次调用工具。"""
+        """从最新停止的任务继续执行，复用已提交结果。"""
         accept = request.headers.get("accept") or ""
         run_id = body.run_id if body and body.run_id else uuid4().hex
 
-        def _conversation_for_continue() -> Conversation:
-            session = mgr.open_for_execution(session_id)
-            return mgr.start_conversation(
-                session,
-                post_turn_external=runtime.agent_runtime is not None,
-            )
+        try:
+            with ExitStack() as admission:
+                if runtime.agent_runtime is not None:
+                    existing = runtime.agent_runtime.get_run_snapshot(run_id)
+                    if existing is not None:
+                        raise HTTPException(
+                            status_code=409,
+                            detail={
+                                "error": "recovery_already_accepted",
+                                "runId": run_id,
+                                "message": "恢复请求已受理，请刷新运行状态。",
+                            },
+                        )
+                    admission.enter_context(
+                        runtime.agent_runtime.try_reserve_session_mutation(session_id)
+                    )
+                admission.enter_context(runtime.turn_coordinator.try_hold(session_id))
+                try:
+                    target = continuation_target(
+                        mgr.query(session_id).active_events,
+                        body.source_run_id if body else None,
+                    )
+                except SessionNotFoundError as exc:
+                    raise HTTPException(status_code=404, detail=str(exc)) from exc
+                except AgentError as exc:
+                    raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-        def _persist_error(
-            conv: Conversation,
-            exc: BaseException,
-            run_request: RunRequest,
-        ) -> None:
-            err = map_exception(exc)
-            conv.append_run_error_event(
-                code=err.code,
-                message=err.message,
-                recoverable=err.recoverable,
-                source="ag_ui",
-                run_id=run_request.run_id,
-                sanitize_failed_model_call=err.sanitize_failed_model_call,
-            )
+                def _conversation_for_continue() -> Conversation:
+                    session = mgr.open_for_execution(session_id)
+                    return mgr.start_conversation(
+                        session,
+                        post_turn_external=runtime.agent_runtime is not None,
+                    )
 
-        handle = None
-        if runtime.agent_runtime is not None:
-            handle = runtime.agent_runtime.submit(
-                UserEvent(session_id=session_id, user_input=""),
+                def _persist_error(
+                    conv: Conversation,
+                    exc: BaseException,
+                    run_request: RunRequest,
+                ) -> None:
+                    err = map_exception(exc)
+                    conv.append_run_error_event(
+                        code=err.code,
+                        message=err.message,
+                        recoverable=err.recoverable,
+                        source="ag_ui",
+                        run_id=run_request.run_id,
+                        sanitize_failed_model_call=err.sanitize_failed_model_call,
+                    )
+
+                handle = None
+                if runtime.agent_runtime is not None:
+                    handle = runtime.agent_runtime.submit(
+                        UserEvent(session_id=session_id, user_input=""),
+                        run_id=run_id,
+                        channel="text",
+                        surface=DESKTOP_CHAT_SURFACE,
+                        conversation_factory=_conversation_for_continue,
+                        metadata={
+                            "protocol": "ag_ui",
+                            "operation": "continue_tool_result",
+                            "source_run_id": target.source_run_id,
+                            "root_run_id": target.root_run_id,
+                        },
+                        consumer_abandon_policy=ConsumerAbandonPolicy.DETACH,
+                        interactive_busy_policy=InteractiveBusyPolicy.REJECT_IF_INTERACTIVE_BUSY,
+                        control_scope=DESKTOP_TEXT_CONTROL_SCOPE,
+                        conversation_runner=lambda conv, run_request, token: (
+                            conv.continue_after_tool_error(
+                                channel="text",
+                                surface=run_request.surface,
+                                run_id=run_request.run_id,
+                                source_run_id=target.source_run_id,
+                                cancel_check=token.raise_if_cancelled,
+                            )
+                        ),
+                        error_callback=_persist_error,
+                    )
+
+        except SessionBusyError as exc:
+            raise HTTPException(status_code=409, detail="任务正在运行，请刷新运行状态") from exc
+
+        if handle is not None and handle.snapshot().outcome == "rejected":
+            raise HTTPException(status_code=409, detail="恢复请求未受理，请刷新运行状态")
+
+        def _continue_direct(conv: Conversation, _value: str) -> Iterator[ConversationEvent]:
+            # Compatibility hosts without AgentRuntime still persist the same
+            # attempt relationship and terminal, under encode_stream's turn guard.
+            continuation_target(conv.session.active_events, target.source_run_id)
+            started = datetime.now(UTC)
+            owner = runtime.runtime_identity.bridge_instance_id
+            conv.append_run_started_event(
                 run_id=run_id,
-                channel="text",
-                surface=DESKTOP_CHAT_SURFACE,
-                conversation_factory=_conversation_for_continue,
-                metadata={"protocol": "ag_ui", "operation": "continue_tool_result"},
-                consumer_abandon_policy=ConsumerAbandonPolicy.DETACH,
-                interactive_busy_policy=InteractiveBusyPolicy.REJECT_IF_INTERACTIVE_BUSY,
-                control_scope=DESKTOP_TEXT_CONTROL_SCOPE,
-                conversation_runner=lambda conv, run_request, token: conv.continue_after_tool_error(
-                    channel="text",
-                    surface=run_request.surface,
-                    run_id=run_request.run_id,
-                    cancel_check=token.raise_if_cancelled,
-                ),
-                error_callback=_persist_error,
+                started_at=started,
+                owner_runtime_instance_id=owner,
+                source_run_id=target.source_run_id,
+                root_run_id=target.root_run_id,
             )
+            status: Literal["completed", "failed", "interrupted"] = "interrupted"
+            try:
+                yield from conv.continue_after_tool_error(
+                    channel="text",
+                    surface=DESKTOP_CHAT_SURFACE,
+                    run_id=run_id,
+                    source_run_id=target.source_run_id,
+                )
+                status = "completed"
+            except Exception:
+                status = "failed"
+                raise
+            finally:
+                conv.append_run_terminal_event(
+                    run_id=run_id,
+                    status=status,
+                    reason_code=status,
+                    owner_runtime_instance_id=owner,
+                    started_at=started,
+                    finished_at=datetime.now(UTC),
+                )
 
         return StreamingResponse(
             encode_stream(
@@ -605,11 +694,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 run_id=run_id,
                 accept=accept,
                 agent_runtime=runtime.agent_runtime,
-                run_conversation=lambda conv, _value: conv.continue_after_tool_error(
-                    channel="text",
-                    surface=DESKTOP_CHAT_SURFACE,
-                    run_id=run_id,
-                ),
+                run_conversation=_continue_direct,
                 channel="text",
                 surface=DESKTOP_CHAT_SURFACE,
                 turn_coordinator=runtime.turn_coordinator,

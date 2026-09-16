@@ -19,6 +19,7 @@ from agent import (
     AttachmentStore,
     Conversation,
     Event,
+    EventType,
     JsonlSessionStore,
     MarkdownPromptBuilder,
     NaiveContextManager,
@@ -587,7 +588,111 @@ async def _bytes(value: bytes) -> AsyncIterator[bytes]:
 
 
 class TestContinueToolResultEndpoint:
-    def test_continues_from_saved_result_without_exposing_tools(
+    def test_missing_session_returns_not_found_without_starting_a_run(
+        self, client: TestClient
+    ) -> None:
+        response = client.post(
+            "/v1/sessions/missing/continue-tool-result", json={"runId": "unused"}
+        )
+        assert response.status_code == 404
+        assert not _RouteLLM.seen_messages
+
+    def test_runtime_continuation_survives_lifecycle_events_and_rejects_stale_requests(
+        self,
+        client: TestClient,
+        runtime: BridgeRuntime,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event as ThreadEvent
+
+        from agent.runtime import AgentRuntime
+
+        entered, release = ThreadEvent(), ThreadEvent()
+        original_stream = _RouteLLM.stream
+
+        def blocked_stream(model: _RouteLLM, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+            entered.set()
+            assert release.wait(10), "test did not release the model"
+            yield from original_stream(model, request)
+
+        monkeypatch.setattr(_RouteLLM, "stream", blocked_stream)
+        manager = runtime.persistent_session_manager
+        engine = AgentRuntime(
+            conversation_factory=lambda sid: manager.start_conversation(
+                manager.open_for_execution(sid)
+            ),
+            session_turn_guard=runtime.turn_coordinator.hold,
+        )
+        from dataclasses import replace
+
+        runtime = replace(runtime, agent_runtime=engine)
+        client = TestClient(create_app_with_runtime(runtime))
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        seed: list[tuple[EventType, dict[str, Any]]] = [
+            ("run_started", {"run_id": "failed", "started_at": datetime.now(UTC).isoformat()}),
+            ("user_message", {"content": "finish the remaining work"}),
+            ("run_error", {"run_id": "failed", "code": "upstream_transient", "recoverable": True}),
+            ("run_terminal", {"run_id": "failed", "status": "failed"}),
+        ]
+        for kind, payload in seed:
+            runtime.persistent_store.append_event(
+                sid,
+                Event(
+                    type=kind,
+                    uuid=f"old-{kind}",
+                    ts=datetime.now(UTC),
+                    payload=payload,
+                    meta={"run_id": "failed"},
+                ),
+            )
+        engine.start()
+        try:
+            before = client.get(f"/v1/sessions/{sid}?view=active").json()
+            assert before["recovery"]["sourceRunId"] == "failed"
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                pending = executor.submit(
+                    client.post,
+                    f"/v1/sessions/{sid}/continue-tool-result",
+                    json={"runId": "continued", "sourceRunId": "failed"},
+                )
+                try:
+                    assert entered.wait(10)
+                    for duplicate_id in ("continued", "competing"):
+                        rejected = client.post(
+                            f"/v1/sessions/{sid}/continue-tool-result",
+                            json={"runId": duplicate_id, "sourceRunId": "failed"},
+                        )
+                        assert rejected.status_code == 409
+                finally:
+                    release.set()
+                response = pending.result(timeout=10)
+            assert response.status_code == 200
+            assert "new answer" in response.text and '"type":"RUN_ERROR"' not in response.text
+            snapshot = client.get("/v1/runs/continued").json()
+            assert snapshot["outcome"] == "completed"
+            assert snapshot["source_run_id"] == snapshot["root_run_id"] == "failed"
+            after = client.get(f"/v1/sessions/{sid}?view=active").json()
+            assert after["recovery"] is None
+            assert sum(e["type"] == "user_message" for e in after["active_events"]) == 1
+            start = next(
+                e
+                for e in after["active_events"]
+                if e["type"] == "run_started" and e["payload"]["run_id"] == "continued"
+            )
+            assert start["payload"]["source_run_id"] == "failed"
+            assert len(_RouteLLM.seen_messages) == 1
+            assert engine.get_run_snapshot("competing") is None
+            refused = client.post(
+                f"/v1/sessions/{sid}/continue-tool-result",
+                json={"runId": "stale", "sourceRunId": "failed"},
+            )
+            assert refused.status_code == 409
+            assert len(manager.query(sid).active_events) == len(after["active_events"])
+        finally:
+            engine.stop()
+
+    def test_continues_from_saved_result_with_normal_tools(
         self, client: TestClient, runtime: BridgeRuntime
     ) -> None:
         sid = client.post("/v1/sessions", json={}).json()["session_id"]
@@ -652,7 +757,8 @@ class TestContinueToolResultEndpoint:
         assert resp.status_code == 200
         assert "new answer" in body
         assert "continue-client-run" in body
-        assert _RouteLLM.seen_tools[-1] is None
+        assert client.get(f"/v1/sessions/{sid}?view=active").json()["recovery"] is None
+        assert _RouteLLM.seen_tools[-1]
         assert any(
             message.get("role") == "tool" and message.get("content") == "saved result"
             for message in _RouteLLM.seen_messages[-1]

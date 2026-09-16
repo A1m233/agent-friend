@@ -387,7 +387,10 @@ function projectSessionDetail(detail: SessionDetail) {
   detail = historyPages.accept(detail);
   const events = detail.active_events ?? detail.events;
   if (!events) throw new Error("session detail is missing events");
-  return projectSessionEvents(events);
+  return projectSessionEvents(events).map((message) => ({
+    ...message,
+    canContinue: Boolean(detail.recovery && message.runId === detail.recovery.sourceRunId),
+  }));
 }
 
 export function messageHasConversationContent(message: ChatMessage): boolean {
@@ -412,6 +415,8 @@ function terminalizeRunMessage(
   if (message.status !== "streaming") {
     return {
       ...message,
+      sourceRunId: snapshot.source_run_id ?? message.sourceRunId,
+      rootRunId: snapshot.root_run_id ?? message.rootRunId,
       runOutcome: outcome ?? message.runOutcome,
       runStartedAt: snapshot.started_at ?? message.runStartedAt,
       runFinishedAt: snapshot.finished_at ?? undefined,
@@ -421,6 +426,8 @@ function terminalizeRunMessage(
   const status = terminalStatusForOutcome(outcome);
   return {
     ...message,
+    sourceRunId: snapshot.source_run_id ?? message.sourceRunId,
+    rootRunId: snapshot.root_run_id ?? message.rootRunId,
     status,
     runOutcome: outcome ?? undefined,
     runStartedAt: snapshot.started_at ?? message.runStartedAt,
@@ -1119,13 +1126,16 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             blocks: [],
             status: "streaming",
           };
-      const nextAssistant = events.reduce(
+      const nextAssistant = events.reduce<ChatMessage>(
         (message, event) => applyPushConversationEvent(
           message,
           withObservedPushTerminalTimestamp(event),
           runId,
         ),
-        assistant,
+        { ...assistant,
+          sourceRunId: knownRun?.source_run_id ?? assistant.sourceRunId,
+          rootRunId: knownRun?.root_run_id ?? assistant.rootRunId,
+        },
       );
       const messages = [...view.messages];
       if (existingIndex >= 0) messages[existingIndex] = nextAssistant;
@@ -1159,7 +1169,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       const nextView = view
         ? {
             ...view,
-            messages: terminal ? terminalizeRunMessages(view.messages, snapshot) : view.messages,
+            messages: terminal ? terminalizeRunMessages(view.messages, snapshot) : view.messages.map((m) =>
+              m.runId === snapshot.run_id ? { ...m,
+                sourceRunId: snapshot.source_run_id ?? m.sourceRunId,
+                rootRunId: snapshot.root_run_id ?? m.rootRunId,
+              } : m),
           }
         : view;
       const isCurrent = state.currentSessionId === snapshot.session_id;
@@ -1345,7 +1359,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       }
       if (historyPages.get(id)?.history_epoch !== previous.history_epoch) return false;
       const merged = historyPages.accept(detail, true);
-      const messages = projectSessionEvents(merged.active_events ?? merged.events ?? []);
+      const messages = projectSessionDetail(merged);
       set((state) => ({ messages, sessionViews: { ...state.sessionViews,
         [id]: { ...state.sessionViews[id]!, messages } } }));
       return true;
@@ -2089,9 +2103,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       state.modelSwitching ||
       !state.currentSessionId ||
       target?.id !== messageId ||
-      target.status !== "error" ||
-      !["upstream_transient", "rate_limit"].includes(target.errorCode ?? "") ||
-      !target.blocks.some((block) => block.kind === "tool" && block.status === "done")
+      !target.canContinue || !target.runId
     ) return;
 
     const sessionId = state.currentSessionId;
@@ -2101,6 +2113,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       id: assistantId,
       role: "assistant",
       runId,
+      sourceRunId: target.runId,
+      rootRunId: target.rootRunId ?? target.runId,
       createdAt: new Date().toISOString(),
       blocks: [],
       status: "streaming",
@@ -2150,6 +2164,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     try {
       for await (const evt of continueToolResultStream(sessionId, runId, {
         signal: controller.signal,
+        sourceRunId: target.runId,
       })) {
         if (evt.type === EventType.RUN_FINISHED || evt.type === EventType.RUN_ERROR) {
           sawTerminalEvent = true;
@@ -2160,9 +2175,18 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       if (projectDirectStream) {
         patch((m) => (m.status === "streaming" ? markMessageTerminal(m, "complete") : m));
       }
-    } catch {
+    } catch (error) {
       streamUpdates?.flush();
-      if (controller.signal.aborted) {
+      if (error instanceof StreamAdmissionError) {
+        dropOptimisticRun(runId);
+        set((s) => {
+          const view = s.sessionViews[sessionId];
+          if (!view) return s;
+          const messages = view.messages.filter((m) => m.id !== assistantId);
+          return { sessionViews: { ...s.sessionViews, [sessionId]: { ...view, messages } },
+            ...(s.currentSessionId === sessionId ? { messages } : {}) };
+        });
+      } else if (controller.signal.aborted) {
         patch((m) => (m.status === "streaming" ? markMessageTerminal(m, "interrupted") : m));
       } else {
         patch((m) => markMessageTerminal(m, "error", { error: FRIENDLY_FALLBACK }));
@@ -2195,6 +2219,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           stopRequestsByRun,
         };
       });
+      // Admission failures produce no durable assistant entry. Reload the
+      // authoritative history instead of keeping an optimistic empty error.
+      await get().refreshCurrentSession(sessionId);
       void useSessionsStore.getState().refresh();
     }
   },

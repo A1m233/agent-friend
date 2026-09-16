@@ -77,6 +77,7 @@ from llm_providers import (
     LLMNetworkError,
     LLMOutputBudgetExhaustedError,
     LLMResponseDiagnostics,
+    LLMRetryScheduled,
     LLMStreamEvent,
     LLMTextDelta,
     LLMToolCallDelta,
@@ -548,6 +549,38 @@ def test_incomplete_model_response_recovers_with_same_run(
     )
     assistants = [event for event in conv.session.events if event.type == "assistant_message"]
     assert [event.payload["content"] for event in assistants] == ["recovered"]
+
+
+@pytest.mark.parametrize("empty_at", [1, 5, 6])
+def test_transport_and_empty_response_repair_share_one_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, empty_at: int
+) -> None:
+    client = LLMClient(
+        ProviderSpec(model="deepseek/deepseek-chat", api_key="test"),
+        network_retry_backoff_seconds=0,
+    )
+    calls = 0
+
+    def attempt(*args: Any, **kwargs: Any) -> Iterator[LLMStreamEvent]:
+        nonlocal calls
+        calls += 1
+        if calls == empty_at:
+            raise LLMEmptyResponseError("injected empty response")
+        raise LLMNetworkError("injected disconnect")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(client, "_stream_once", attempt)
+    conv = _make_conversation(tmp_path, fake_llm=client)
+    events: list[Any] = []
+    with pytest.raises((LLMNetworkError, LLMEmptyResponseError)):
+        for item in conv.stream("finish"):
+            events.append(item)
+    assert calls == 6
+    assert [
+        (item.attempt, item.max_attempts)
+        for item in events
+        if isinstance(item, ModelResponseStatus) and item.phase == "retrying"
+    ] == [(i, 6) for i in range(2, 7)]
 
 
 def test_incomplete_model_response_fails_after_explicit_recovery_budget(
@@ -1530,6 +1563,19 @@ def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(tmp_pat
                 return
             if self.calls == 2:
                 raise LLMNetworkError("follow-up timeout")
+            if self.calls == 3:
+                assert any(
+                    m.get("role") == "tool" and "saved" in str(m.get("content"))
+                    for m in request.messages
+                )
+                yield LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="call-next",
+                    tool_name="echo",
+                    args_json_delta=json.dumps({"message": "next"}),
+                )
+                yield LLMTurnDone(stop_reason="tool_use")
+                return
             yield LLMTextDelta(text="已根据保存的结果整理完成。")
             yield LLMTurnDone(stop_reason="end_turn")
 
@@ -1566,8 +1612,12 @@ def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(tmp_pat
 
     events = list(conv.continue_after_tool_error(run_id="continue-run"))
 
-    assert echo.call_count == 1
-    assert fake.received_tools[-1] is None
+    assert echo.call_count == 2  # saved action once, new action once
+    assert fake.received_tools[-1]
+    assert len([e for e in conv.session.events if e.type == "user_message"]) == 1
+    assert [
+        e.payload["tool_call_id"] for e in conv.session.events if e.type == "tool_call_request"
+    ] == ["call-recover", "call-next"]
     assert any(
         message.get("role") == "system"
         and "<image_evidence_boundary>" in str(message.get("content", ""))
@@ -1623,6 +1673,61 @@ def test_network_retry_after_two_tools_does_not_repeat_tools(
         "两次搜索结果整理完成。"
     )
     assert isinstance(events[-1], TurnDone)
+
+
+def test_desktop_disconnect_retracts_uncommitted_text_and_does_not_repeat_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent.system_prompt import DESKTOP_CHAT_SURFACE
+
+    from agent import AssistantMessageReset
+
+    echo = EchoTool()
+    client = LLMClient(
+        ProviderSpec(model="deepseek/test", api_key="test", context_window=128_000),
+        network_retry_backoff_seconds=0,
+    )
+    calls = 0
+
+    def attempt(*args: Any, **kwargs: Any) -> Iterator[LLMStreamEvent]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            yield LLMToolCallDelta(
+                index=0,
+                tool_call_id="once",
+                tool_name="echo",
+                args_json_delta='{"message":"saved"}',
+            )
+            yield LLMTurnDone(stop_reason="tool_use")
+        elif calls == 2:
+            yield LLMTextDelta(text="uncommitted")
+            yield LLMToolCallDelta(
+                index=0, tool_call_id="broken", tool_name="echo", args_json_delta='{"message":'
+            )
+            raise LLMNetworkError("disconnect after text and partial tool")
+        elif calls == 3:
+            yield LLMToolCallDelta(
+                index=0, tool_call_id="next", tool_name="echo", args_json_delta='{"message":"next"}'
+            )
+            yield LLMTurnDone(stop_reason="tool_use")
+        else:
+            yield LLMTextDelta(text="finished")
+            yield LLMTurnDone(stop_reason="end_turn")
+
+    monkeypatch.setattr(client, "_stream_once", attempt)
+    conv = _make_conversation(tmp_path, fake_llm=client, registry=ToolRegistry([echo]))
+    events = list(conv.stream("complete both actions", surface=DESKTOP_CHAT_SURFACE))
+    assert calls == 4
+    assert echo.call_count == 2
+    assert [e.tool_call_id for e in events if isinstance(e, ToolCallRequest)] == ["once", "next"]
+    partial = next(e for e in events if isinstance(e, TextDelta) and e.text == "uncommitted")
+    resets = [e for e in events if isinstance(e, AssistantMessageReset)]
+    assert len(resets) == 1 and partial.message_id in resets[0].message_ids
+    assert [e.payload["content"] for e in conv.session.events if e.type == "assistant_message"] == [
+        "finished"
+    ]
 
 
 def test_reused_provider_tool_call_id_gets_unique_event_ids(tmp_path: Path) -> None:
@@ -2118,6 +2223,8 @@ def test_explicit_continuation_budget_triggers_finalization(tmp_path: Path) -> N
         script=[tool_use_events(f"call_{i}") for i in range(6)]
         + [
             [
+                LLMTextDelta(text="discarded-finalization-draft"),
+                LLMRetryScheduled(attempt=2, max_attempts=6, delay_seconds=0),
                 LLMTextDelta(text="我尽力了，没找到更好的回答。"),
                 LLMTurnDone(stop_reason="end_turn"),
             ],
@@ -2142,11 +2249,41 @@ def test_explicit_continuation_budget_triggers_finalization(tmp_path: Path) -> N
     assert "尽力了" in text
 
     assert echo.call_count == 6
+    assert "discarded-finalization-draft" not in str(conv.session.events[-1].payload)
+    assert not any(
+        "discarded-finalization-draft" in str(event.payload.get("content", ""))
+        for event in conv.session.events
+        if event.type == "assistant_message"
+    )
 
     # 兜底调用使用 trusted host user packet，避免改写稳定 system envelope。
     finalization_messages = fake.received[-1]
     host_messages = [m for m in finalization_messages if m.get("role") == "user"]
     assert any("不要再调用任何工具" in str(m.get("content") or "") for m in host_messages)
+
+
+def test_system_text_consumer_discards_retried_draft(tmp_path: Path) -> None:
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMTextDelta(text="discarded-system-draft"),
+                LLMRetryScheduled(attempt=2, max_attempts=6, delay_seconds=0),
+                LLMTextDelta(text="completed"),
+                LLMTurnDone(stop_reason="end_turn"),
+            ]
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake)
+    list(
+        conv.dispatch_system_turn(
+            source_kind="cron:test",
+            system_prompt_addendum="notify",
+            output_visibility="user",
+        )
+    )
+    assert [e.payload["content"] for e in conv.session.events if e.type == "assistant_message"] == [
+        "completed"
+    ]
 
 
 def test_default_policy_can_complete_after_more_than_five_continuations(tmp_path: Path) -> None:

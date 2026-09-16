@@ -16,7 +16,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-LOCK_SCHEMA_VERSION = 1
+LOCK_SCHEMA_VERSION = 2
 LOCK_FILE_NAME = ".agent-friend-skill-lock.json"
 MUTEX_FILE_NAME = ".agent-friend-skill-lock.lock"
 MAX_SKILL_BYTES = 256 * 1024
@@ -25,6 +25,7 @@ MAX_LOCK_BYTES = 4 * 1024 * 1024
 MAX_LOCK_RECORDS = 2_000
 _NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 _REPOSITORY_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _PLAIN_NON_STRING_RE = re.compile(
@@ -46,16 +47,22 @@ class InstallRecord:
     path: str
     ref: str
     content_sha256: str
+    source_kind: str = "legacy"
+    installed_commit: str | None = None
+    pinned_commit: str | None = None
 
     def same_source(self, other: InstallRecord) -> bool:
         return self.repository.casefold() == other.repository.casefold() and self.path == other.path
 
-    def to_json(self) -> dict[str, str]:
+    def to_json(self) -> dict[str, object]:
         return {
             "repository": self.repository,
             "path": self.path,
             "ref": self.ref,
             "content_sha256": self.content_sha256,
+            "source_kind": self.source_kind,
+            "installed_commit": self.installed_commit,
+            "pinned_commit": self.pinned_commit,
         }
 
 
@@ -116,22 +123,63 @@ def normalize_source_path(path: str) -> str:
     return "/".join(parts) if parts else "."
 
 
-def make_record(*, repository: str, path: str, ref: str, content_sha256: str) -> InstallRecord:
+def make_record(
+    *,
+    repository: str,
+    path: str,
+    ref: str,
+    content_sha256: str,
+    source_kind: str = "legacy",
+    installed_commit: str | None = None,
+    pinned_commit: str | None = None,
+) -> InstallRecord:
+    if not all(isinstance(value, str) for value in (repository, path, ref, content_sha256)):
+        raise ManagedInstallError("invalid_source", "Source fields must be strings.")
     normalized_ref = ref.strip()
     if (
-        not normalized_ref
+        (not normalized_ref and source_kind != "none")
         or len(normalized_ref) > 1_024
         or any(ord(character) < 32 or ord(character) == 127 for character in normalized_ref)
     ):
         raise ManagedInstallError("invalid_source", "Git ref must be a non-empty string.")
     if not _DIGEST_RE.fullmatch(content_sha256):
         raise ManagedInstallError("invalid_digest", "Skill content digest must be SHA-256.")
+    if source_kind not in {"branch", "legacy", "none"}:
+        raise ManagedInstallError("invalid_source", "Unknown update source kind.")
+    for commit in (installed_commit, pinned_commit):
+        if commit is not None and (not isinstance(commit, str) or not _COMMIT_RE.fullmatch(commit)):
+            raise ManagedInstallError("invalid_source", "Commit must be a full lowercase Git SHA.")
+    if source_kind != "legacy" and installed_commit is None:
+        raise ManagedInstallError("invalid_source", "Explicit policy requires an installed commit.")
+    if pinned_commit is not None and pinned_commit != installed_commit:
+        raise ManagedInstallError("invalid_source", "Pinned and installed commits must match.")
+    if source_kind == "none" and (normalized_ref or pinned_commit is None):
+        raise ManagedInstallError("invalid_source", "A source-free record must be pinned.")
+    if source_kind == "branch":
+        validate_branch(normalized_ref)
     return InstallRecord(
         repository=normalize_repository(repository),
         path=normalize_source_path(path),
         ref=normalized_ref,
         content_sha256=content_sha256,
+        source_kind=source_kind,
+        installed_commit=installed_commit,
+        pinned_commit=pinned_commit,
     )
+
+
+def validate_branch(value: str) -> str:
+    if (
+        not value
+        or value.startswith(("-", "/"))
+        or value.endswith(("/", "."))
+        or any(ord(c) <= 32 or c in "~^:?*[\\" or ord(c) == 127 for c in value)
+        or any(token in value for token in ("..", "@{", "//"))
+        or value == "@"
+        or any(part.startswith(".") or part.endswith(".lock") for part in value.split("/"))
+    ):
+        raise ManagedInstallError("invalid_source", "Invalid branch name.")
+    return value
 
 
 def load_records(root: Path) -> dict[str, InstallRecord]:
@@ -153,7 +201,12 @@ def load_records(root: Path) -> dict[str, InstallRecord]:
         raise ManagedInstallError(
             "invalid_lock", "Skill lock must contain schema_version and skills."
         )
-    if parsed["schema_version"] != LOCK_SCHEMA_VERSION or not isinstance(parsed["skills"], dict):
+    schema = parsed["schema_version"]
+    if (
+        type(schema) is not int
+        or schema not in {1, LOCK_SCHEMA_VERSION}
+        or not isinstance(parsed["skills"], dict)
+    ):
         raise ManagedInstallError("invalid_lock", "Unsupported or invalid Skill lock schema.")
     if len(parsed["skills"]) > MAX_LOCK_RECORDS:
         raise ManagedInstallError("invalid_lock", "Skill lock contains too many records.")
@@ -161,22 +214,30 @@ def load_records(root: Path) -> dict[str, InstallRecord]:
     for name, value in parsed["skills"].items():
         try:
             validate_skill_name(name)
-            if not isinstance(value, dict) or set(value) != {
+            keys = {
                 "repository",
                 "path",
                 "ref",
                 "content_sha256",
-            }:
+            }
+            if schema == 2:
+                keys |= {"source_kind", "installed_commit", "pinned_commit"}
+            if not isinstance(value, dict) or set(value) != keys:
                 raise ManagedInstallError("invalid_lock", f"Invalid record for {name!r}.")
-            if not all(isinstance(item, str) for item in value.values()):
+            if not all(
+                isinstance(value[key], str) for key in keys - {"installed_commit", "pinned_commit"}
+            ):
                 raise ManagedInstallError("invalid_lock", f"Invalid record values for {name!r}.")
             record = make_record(
                 repository=value["repository"],
                 path=value["path"],
                 ref=value["ref"],
                 content_sha256=value["content_sha256"],
+                source_kind=value.get("source_kind", "legacy"),
+                installed_commit=value.get("installed_commit"),
+                pinned_commit=value.get("pinned_commit"),
             )
-            if record.to_json() != value:
+            if {key: item for key, item in record.to_json().items() if key in keys} != value:
                 raise ManagedInstallError("invalid_lock", f"Record for {name!r} is not normalized.")
             records[name] = record
         except ManagedInstallError as exc:
@@ -300,14 +361,6 @@ def commit_candidate(
         current_exists = os.path.lexists(destination)
         current_sha256 = package_digest(destination) if current_exists else None
 
-        if (
-            current_record is not None
-            and current_record.same_source(record)
-            and current_record.content_sha256 == candidate_sha256
-            and current_sha256 == candidate_sha256
-        ):
-            return CommitResult("already_up_to_date", current_sha256)
-
         _verify_expected_state(
             expected_mode=expected_mode,
             expected_record=expected_record,
@@ -316,6 +369,18 @@ def commit_candidate(
             current_exists=current_exists,
             current_sha256=current_sha256,
         )
+
+        if current_record is not None and not current_record.same_source(record):
+            raise ManagedInstallError(
+                "source_conflict", "Cannot change a managed Skill's repository or path."
+            )
+        if current_record == record and current_sha256 == candidate_sha256:
+            return CommitResult("already_up_to_date", current_sha256)
+        if current_record is not None and current_sha256 == candidate_sha256:
+            next_records = dict(records)
+            next_records[skill_name] = record
+            _write_records(root, next_records)
+            return CommitResult("metadata_updated", current_sha256)
 
         nonce = uuid.uuid4().hex
         backup = root / f".agent-friend-backup-{skill_name}-{nonce}"
@@ -368,6 +433,21 @@ def commit_candidate(
 def remove_candidate(candidate: Path) -> None:
     if candidate.exists():
         _remove_tree(candidate)
+
+
+def verify_pinned(root: Path, skill_name: str, record: InstallRecord) -> None:
+    """Recheck a read-only pinned result under the same transaction lock."""
+    with _commit_lock(root):
+        destination = root / skill_name
+        exists = os.path.lexists(destination)
+        _verify_expected_state(
+            expected_mode="managed",
+            expected_record=record,
+            expected_current_sha256=record.content_sha256,
+            current_record=load_records(root).get(skill_name),
+            current_exists=exists,
+            current_sha256=package_digest(destination) if exists else None,
+        )
 
 
 def _verify_expected_state(
