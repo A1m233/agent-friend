@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from uuid import uuid4
 
 from llm_providers.multimodal.tool_images import supports_tool_images
+from llm_providers.protocol import DEFAULT_MODEL_RETRIES
 
 from llm_providers import (
     LanguageModel,
@@ -119,6 +120,7 @@ from .context.usage_anchor import (
 from .conversation_events import (
     AssistantMessageEnd,
     AssistantMessagePhase,
+    AssistantMessageReset,
     AssistantMessageStart,
     AssistantPhaseStatus,
     ContextCompactionStatus,
@@ -177,6 +179,7 @@ from .sessions import (
     ToolExecutionEvidenceStore,
     render_interrupted_evidence,
 )
+from .sessions.continuation import continuation_target
 from .sessions.model_context import ModelContextProjection
 from .sessions.store import append_session_events
 from .sessions.turn_origin import history_before_rewrite
@@ -195,6 +198,7 @@ from .system_prompt.defaults import load_default_channel_instruction
 from .system_prompt.sections import PromptChannel
 from .system_prompt.surfaces import (
     DEFAULT_INTERACTION_CONTEXT_RENDERER,
+    DESKTOP_CHAT_SURFACE,
     InteractionSurfaceId,
 )
 from .time_provider import SystemTimeProvider, TimeProvider, read_host_time
@@ -843,6 +847,7 @@ class Conversation:
         skill_turn_snapshot: SkillTurnSnapshot | None = None,
         turn_context: str | None = None,
         rewrite_plan: _RewritePlan | None = None,
+        resume_task: bool = False,
     ) -> Iterator[ConversationEvent]:
         self._session_model_history.reconcile(self._session)
         self._repair_incomplete_model_tool_transactions()
@@ -965,7 +970,7 @@ class Conversation:
                     ):
                         completed_replay_events.append(event)
                         completed_parts.append(str(event.payload.get("content", "")))
-                if completed_parts and not replay_incomplete:
+                if completed_parts and not replay_incomplete and not resume_task:
                     completed_replay_text = "".join(completed_parts)
             self._active_skill_selections = effective_skill_selections
             self._active_skill_turn_snapshot = (
@@ -1169,132 +1174,30 @@ class Conversation:
         channel: PromptChannel | None = None,
         surface: InteractionSurfaceId | None = None,
         run_id: str | None = None,
+        source_run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
-        """复用最后一轮已完成的工具结果，请模型继续整理，不再次执行工具。"""
-        self._validate_tool_error_continuation()
-
-        previous_prompt_channel = self._prompt_channel_override
-        previous_prompt_surface = self._prompt_surface_override
-        previous_run_id = self._run_id_override
-        previous_turn_context = self._turn_context_override
-        previous_turn_prompt_builder = self._turn_prompt_builder
-        previous_run_model_snapshot = self._run_model_snapshot
-        previous_tool_run_context = self._active_tool_run_context
-        self._prompt_channel_override = channel
-        self._prompt_surface_override = surface
-        self._run_id_override = run_id
-        self._turn_context_override = _compose_turn_context(
-            None,
-            _latest_user_attachments(self._session.messages),
+        """Continue the original task using committed history and normal tools."""
+        target = continuation_target(
+            self._session.active_events,
+            source_run_id,
+            current_run_id=run_id,
         )
-        self._turn_prompt_builder = self._snapshot_prompt_builder()
-        self._run_model_snapshot = self._capture_run_model_snapshot()
-        try:
-            self._active_tool_run_context = self._make_tool_run_context("")
-
-            persona_name = self._session.current_persona_name
-            persona_id = self._session.current_persona_id
-            model_snapshot = self._active_model_id()
-            current_text_buf: list[str] = []
-            current_text_persisted = False
-            turn_start_idx = len(self._session.events)
-
-        except BaseException:
-            self._restore_run_model_snapshot(previous_run_model_snapshot)
-            raise
-        try:
-            self._check_cancel(cancel_check)
-            canonical_messages = yield from self._build_openai_messages_continuation_stream(
-                tool_specs=None,
-                cancel_check=cancel_check,
-            )
-            openai_messages = self._prepare_run_continuation(
-                canonical_messages,
-                tools=None,
-                settings={},
-            )
-            yield ModelResponseStatus(
-                phase="waiting",
-                after_tool=True,
-                attempt=1,
-                max_attempts=2,
-            )
-            turn_done: LLMTurnDone | None = None
-            for ev in self._iter_model_stream(
-                openai_messages,
-                tools=None,
-                trace_call_kind="tool_error_continuation",
-            ):
-                self._check_cancel(cancel_check)
-                if isinstance(
-                    ev,
-                    (
-                        ContextCompactionStatus,
-                        AssistantMessageStart,
-                        AssistantMessageEnd,
-                        AssistantMessagePhase,
-                        AssistantPhaseStatus,
-                    ),
-                ):
-                    yield ev
-                elif isinstance(ev, LLMTextDelta):
-                    current_text_buf.append(ev.text)
-                    yield self._phase_text_delta(ev)
-                elif isinstance(ev, LLMActivity):
-                    yield ModelResponseStatus(
-                        phase=ev.kind,
-                        after_tool=True,
-                    )
-                elif isinstance(ev, LLMRetryScheduled):
-                    yield ModelResponseStatus(
-                        phase="retrying",
-                        after_tool=True,
-                        attempt=ev.attempt,
-                        max_attempts=ev.max_attempts,
-                    )
-                elif isinstance(ev, LLMTurnDone):
-                    self._consume_usage(ev)
-                    turn_done = ev
-
-            assistant_event = self._append_assistant_event(
-                "".join(current_text_buf),
-                partial=False,
-                persona_name=persona_name,
-                persona_id=persona_id,
-                model=model_snapshot,
-            )
-            current_text_persisted = True
-            if turn_done is not None and turn_done.reasoning_state is not None:
-                self._append_provider_reasoning_event(turn_done.reasoning_state)
-            self._append_completed_provider_assistant(
-                turn_done,
-                text="".join(current_text_buf),
-                event=assistant_event,
-            )
-            if turn_done is not None:
-                self._session_model_history.note_provider_request()
-            yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
-        finally:
-            interrupted = sys.exc_info()[0] is not None
-            if interrupted:
-                if current_text_buf and not current_text_persisted:
-                    self._append_assistant_event(
-                        "".join(current_text_buf),
-                        partial=True,
-                        persona_name=persona_name,
-                        persona_id=persona_id,
-                        model=model_snapshot,
-                    )
-            elif not self._post_turn_external:
-                self._observe_turn(turn_start_idx)
-            self._prompt_channel_override = previous_prompt_channel
-            self._prompt_surface_override = previous_prompt_surface
-            self._run_id_override = previous_run_id
-            self._turn_context_override = previous_turn_context
-            self._turn_prompt_builder = previous_turn_prompt_builder
-            self._restore_run_model_snapshot(previous_run_model_snapshot)
-            self._active_tool_run_context = previous_tool_run_context
+        user = target.user_event
+        yield from self._stream_user_turn(
+            str(user.payload.get("content", "")),
+            user_event_id=user.uuid,
+            attachments=[
+                AttachmentRef.from_dict(item) for item in user.payload.get("attachments", [])
+            ],
+            references=parse_quoted_text_references(user.payload.get("references", [])),
+            skill_selections=self._persisted_skill_selections(user),
+            channel=channel,
+            surface=surface,
+            run_id=run_id,
+            cancel_check=cancel_check,
+            resume_task=True,
+        )
 
     def continue_after_external_action(
         self,
@@ -1583,6 +1486,7 @@ class Conversation:
                     ContextCompactionStatus,
                     AssistantMessageStart,
                     AssistantMessageEnd,
+                    AssistantMessageReset,
                     AssistantMessagePhase,
                     AssistantPhaseStatus,
                 ),
@@ -1593,6 +1497,12 @@ class Conversation:
                 text_buf.append(ev.text)
                 if output_visibility == "user":
                     yield self._phase_text_delta(ev)
+            elif isinstance(ev, LLMRetryScheduled):
+                text_buf.clear()
+                if output_visibility == "user":
+                    yield ModelResponseStatus(
+                        phase="retrying", attempt=ev.attempt, max_attempts=ev.max_attempts
+                    )
             elif isinstance(ev, LLMTurnDone):
                 self._consume_usage(ev)
                 turn_done = ev
@@ -2227,37 +2137,6 @@ class Conversation:
             prefix_events=list(active_events[:target_idx]),
         )
 
-    def _validate_tool_error_continuation(self) -> None:
-        """只允许从最新失败轮的已完成工具结果恢复，避免重放旧工具。"""
-        active_events = self._session.active_events
-        latest_error_idx: int | None = None
-        for idx in range(len(active_events) - 1, -1, -1):
-            event = active_events[idx]
-            if event.type in {
-                "session_meta",
-                "memory_observation",
-                "compaction",
-                "model_context",
-            }:
-                continue
-            if event.type != "run_error":
-                raise AgentError("当前会话没有可继续整理的失败工具轮")
-            latest_error_idx = idx
-            break
-        if latest_error_idx is None:
-            raise AgentError("当前会话没有可继续整理的失败工具轮")
-
-        error_event = active_events[latest_error_idx]
-        if error_event.payload.get("recoverable") is not True:
-            raise AgentError("这次失败不能直接从工具结果继续")
-
-        for event in reversed(active_events[:latest_error_idx]):
-            if event.type == "user_message":
-                break
-            if event.type == "tool_call_result" and event.payload.get("is_error") is not True:
-                return
-        raise AgentError("最近的失败轮没有可复用的工具结果")
-
     def _messages_from_events(self, events: list[Event]) -> list[Message]:
         """按 ``Session.messages`` 规则投影指定事件前缀。"""
         if not events:
@@ -2504,6 +2383,11 @@ class Conversation:
                         phase=None if item.phase == "unknown" else item.phase,
                     )
                 elif isinstance(event, LLMRetryScheduled):
+                    uncommitted = tuple(
+                        item.message_id for item in state.ordered_text() if not item.persisted
+                    )
+                    if uncommitted:
+                        yield AssistantMessageReset(uncommitted)
                     state.begin_response()
                     yield event
                 elif isinstance(event, LLMTurnDone):
@@ -2602,6 +2486,8 @@ class Conversation:
         started_at: datetime,
         owner_runtime_instance_id: str,
         source_kind: str | None = None,
+        source_run_id: str | None = None,
+        root_run_id: str | None = None,
         presentation: str = "conversation",
         output_visibility: str = "user",
     ) -> None:
@@ -2616,6 +2502,11 @@ class Conversation:
             ts=datetime.now(UTC),
             payload={
                 "run_id": run_id,
+                **(
+                    {"source_run_id": source_run_id, "root_run_id": root_run_id}
+                    if source_run_id
+                    else {}
+                ),
                 "started_at": started_at.isoformat(),
                 "source_kind": source_kind,
                 "presentation": presentation,
@@ -3740,6 +3631,7 @@ class Conversation:
         context_recovery_used = False
         response_recovery_used = False
         request_attempt = 0
+        retries_used = 0
         while True:
             request_accepted = False
             self._check_cancel(cancel_check)
@@ -3815,6 +3707,10 @@ class Conversation:
                         cache_key=cache_key,
                         control=ModelCallControl(
                             cancel_check=cancel_check,
+                            allow_output_retries=self._prompt_surface_override
+                            == DESKTOP_CHAT_SURFACE,
+                            retry_limit=DEFAULT_MODEL_RETRIES - retries_used,
+                            retry_attempt_offset=retries_used,
                             diagnostic_callback=diagnostic_callback,
                             previous_request_witness=previous_request_witness,
                             continuation_disposition=continuation_disposition,
@@ -3825,6 +3721,8 @@ class Conversation:
                     )
                 )
                 for event in self._track_assistant_stream(stream, cancel_check):
+                    if isinstance(event, LLMRetryScheduled):
+                        retries_used = max(retries_used, event.attempt - 1)
                     if isinstance(event, (LLMTextDelta, LLMTurnDone)):
                         request_accepted = True
                         completed = self._commit_pending_context_checkpoints()
@@ -3841,10 +3739,15 @@ class Conversation:
                 discarded = self._discard_pending_context_checkpoints()
                 if discarded is not None:
                     yield discarded
-                if request_accepted or context_recovery_used:
+                if (
+                    request_accepted
+                    or context_recovery_used
+                    or retries_used >= DEFAULT_MODEL_RETRIES
+                ):
                     raise
                 context_recovery_used = True
                 request_attempt += 1
+                retries_used += 1
                 previous_ratio = self._context_emergency_ratio
                 previous_reason = self._context_trigger_reason
                 self._context_emergency_ratio = 0.8
@@ -3868,13 +3771,18 @@ class Conversation:
                     self._context_emergency_ratio = previous_ratio
                     self._context_trigger_reason = previous_reason
             except LLMEmptyResponseError as exc:
-                if request_accepted or response_recovery_used:
+                if (
+                    request_accepted
+                    or response_recovery_used
+                    or retries_used >= DEFAULT_MODEL_RETRIES
+                ):
                     discarded = self._discard_pending_context_checkpoints()
                     if discarded is not None:
                         yield discarded
                     raise
                 response_recovery_used = True
                 request_attempt += 1
+                retries_used += 1
                 recovery_instruction = (
                     "上一轮模型请求把输出预算耗尽在不可见推理中，没有产生可用响应项。"
                     "请保留当前目标，立即生成简洁的用户可见回答或合法工具调用；"
@@ -3915,8 +3823,8 @@ class Conversation:
                     "runtime",
                 )
                 yield LLMRetryScheduled(
-                    attempt=request_attempt + 1,
-                    max_attempts=request_attempt + 1,
+                    attempt=retries_used + 1,
+                    max_attempts=DEFAULT_MODEL_RETRIES + 1,
                     delay_seconds=0.0,
                 )
             except Exception:
@@ -5308,7 +5216,7 @@ class Conversation:
                 phase="waiting",
                 after_tool=turn_idx > 0,
                 attempt=1,
-                max_attempts=2,
+                max_attempts=1,
             )
             turn_done: LLMTurnDone | None = None
             for event in self._iter_traced_model_stream(
@@ -5327,6 +5235,7 @@ class Conversation:
                         ContextCompactionStatus,
                         AssistantMessageStart,
                         AssistantMessageEnd,
+                        AssistantMessageReset,
                         AssistantMessagePhase,
                         AssistantPhaseStatus,
                     ),
@@ -5354,6 +5263,7 @@ class Conversation:
                 elif isinstance(event, LLMToolCallDelta):
                     self._accumulate_tool_call_delta(current_tc_acc, event)
                 elif isinstance(event, LLMRetryScheduled):
+                    frame.current_text_buf.clear()
                     current_tc_acc.clear()
                     yield ModelResponseStatus(
                         phase="retrying",
@@ -5815,6 +5725,7 @@ class Conversation:
                     ContextCompactionStatus,
                     AssistantMessageStart,
                     AssistantMessageEnd,
+                    AssistantMessageReset,
                     AssistantMessagePhase,
                     AssistantPhaseStatus,
                 ),
@@ -5823,6 +5734,14 @@ class Conversation:
             elif isinstance(ev, LLMTextDelta):
                 text_buf.append(ev.text)
                 yield self._phase_text_delta(ev)
+            elif isinstance(ev, LLMRetryScheduled):
+                text_buf.clear()
+                yield ModelResponseStatus(
+                    phase="retrying",
+                    after_tool=True,
+                    attempt=ev.attempt,
+                    max_attempts=ev.max_attempts,
+                )
             elif isinstance(ev, LLMTurnDone):
                 self._consume_usage(ev)
                 turn_done = ev

@@ -109,6 +109,9 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
 
     case EventType.CUSTOM: {
       const e = evt as CustomEvent;
+      if (e.name === "agent_friend.assistant_message_reset") {
+        return retractAssistantItems(msg, (e.value as Record<string, unknown>)?.messageIds);
+      }
       if (e.name === "agent_friend.assistant_phase") {
         const data = e.value as Record<string, unknown>;
         return applyAssistantPhase(msg, data, typeof data?.runId === "string" ? data.runId : undefined);
@@ -270,6 +273,9 @@ export function applyPushConversationEvent(
         })),
       };
     }
+
+    case "assistant_message_reset":
+      return retractAssistantItems(msg, evt.message_ids);
 
     case "model_response_status": {
       const runStatus = parseRunStatus({
@@ -484,4 +490,11 @@ function patchTool(
   const next = [...blocks];
   next[idx] = fn(next[idx] as ToolBlock);
   return next;
+}
+
+/** Only retract the exact uncommitted item IDs named by the producer. */
+function retractAssistantItems(msg: ChatMessage, ids: unknown): ChatMessage {
+  if (!Array.isArray(ids)) return msg;
+  const removed = new Set(ids.filter((id): id is string => typeof id === "string"));
+  return { ...msg, blocks: msg.blocks.filter((block) => block.kind !== "text" || !removed.has(block.mid)) };
 }

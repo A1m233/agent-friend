@@ -37,6 +37,8 @@ export interface TextBlock {
   text: string;
   phase?: AssistantPhase;
   itemIndex?: number;
+  /** Durable evidence of an interrupted draft, not a completed model item. */
+  partial?: boolean;
 }
 
 /** 工具调用块（卡片）。 */
@@ -122,6 +124,11 @@ export interface ChatMessage {
   role: ChatRole;
   /** 产生这条 assistant 消息的 Runtime run；旧历史和 user 消息可缺失。 */
   runId?: string;
+  sourceRunId?: string;
+  rootRunId?: string;
+  canContinue?: boolean;
+  /** Sum of prior attempts; null means at least one execution interval is unknown. */
+  priorExecutionSeconds?: number | null;
   assistantPhase?: AssistantPhaseState;
   /** Runtime terminal outcome；用于区分失败、取消、跳过、过期和拒绝。 */
   runOutcome?: import("./run").RunOutcome;

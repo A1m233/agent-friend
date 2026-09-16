@@ -50,6 +50,14 @@ class AssistantMessageStart:
 
 
 @dataclass(frozen=True)
+class AssistantMessageReset:
+    """Retract only uncommitted items from a failed model response attempt."""
+
+    message_ids: tuple[str, ...]
+    type: Literal["assistant_message_reset"] = "assistant_message_reset"
+
+
+@dataclass(frozen=True)
 class AssistantMessageEnd:
     message_id: str
     type: Literal["assistant_message_end"] = "assistant_message_end"
@@ -195,6 +203,7 @@ ConversationEvent = (
     TextDelta
     | AssistantMessageStart
     | AssistantMessageEnd
+    | AssistantMessageReset
     | AssistantMessagePhase
     | AssistantPhaseStatus
     | ToolCallRequest

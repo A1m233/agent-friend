@@ -234,11 +234,11 @@ export async function* editResendLatestStream(
   yield* readEventStream(body);
 }
 
-/** 不重跑工具，直接用会话中最后一次成功工具结果继续整理。 */
+/** 从指定停止任务继续，保留已提交结果及后续工具能力。 */
 export async function* continueToolResultStream(
   sessionId: string,
   runId: string,
-  opts: RunStreamOptions = {},
+  opts: RunStreamOptions & { sourceRunId?: string } = {},
 ): AsyncGenerator<BaseEvent> {
   await ensureLocalServiceReady("bridge");
   const base = opts.baseUrl ?? BRIDGE_BASE_URL;
@@ -250,7 +250,7 @@ export async function* continueToolResultStream(
         "Content-Type": "application/json",
         Accept: "text/event-stream",
       },
-      body: JSON.stringify({ runId }),
+      body: JSON.stringify({ runId, sourceRunId: opts.sourceRunId }),
       signal: opts.signal,
     },
   );

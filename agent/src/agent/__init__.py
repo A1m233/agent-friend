@@ -22,6 +22,7 @@ from .conversation import MAX_TOOL_TURNS_DEFAULT, Conversation
 from .conversation_events import (
     AssistantMessageEnd,
     AssistantMessagePhase,
+    AssistantMessageReset,
     AssistantMessageStart,
     AssistantPhaseStatus,
     ContextCompactionStatus,
@@ -159,6 +160,7 @@ __all__ = [
     "AgentError",
     "AssistantMessageEnd",
     "AssistantMessagePhase",
+    "AssistantMessageReset",
     "AssistantMessageStart",
     "AssistantPhaseStatus",
     "AttachmentError",

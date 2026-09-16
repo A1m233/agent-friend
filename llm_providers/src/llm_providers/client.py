@@ -53,7 +53,13 @@ from .prompt_cache_observation import (
     build_prompt_cache_observation,
     emit_prompt_cache_observation,
 )
-from .protocol import LanguageModelCapabilities, ModelCallControl, ModelRequest, ModelResponse
+from .protocol import (
+    DEFAULT_MODEL_RETRIES,
+    LanguageModelCapabilities,
+    ModelCallControl,
+    ModelRequest,
+    ModelResponse,
+)
 from .reasoning import build_provider_reasoning_state, reasoning_detail_objects
 from .request_witness import ProviderRequestWitness
 from .responses import stream_responses
@@ -75,13 +81,13 @@ from .stream_events import (
 from .usage import extract_stream_usage, extract_usage
 from .usage import usage_field as _usage_field
 
-DEFAULT_NETWORK_RETRIES = 1
-"""Provider 尚未产出任何结果时，网络错误的默认重试次数。"""
+DEFAULT_NETWORK_RETRIES = DEFAULT_MODEL_RETRIES
+"""可安全重试的模型请求默认重试次数。"""
 
 DEFAULT_NETWORK_RETRY_BACKOFF_SECONDS = 0.5
 """网络重试的初始退避秒数；后续重试按 2 倍递增。"""
 
-DEFAULT_ENGINE_OVERLOAD_RETRIES = 2
+DEFAULT_ENGINE_OVERLOAD_RETRIES = DEFAULT_MODEL_RETRIES
 """引擎过载在未产出结果时的默认重试次数。"""
 
 DEFAULT_ENGINE_OVERLOAD_RETRY_BACKOFF_SECONDS = 2.0
@@ -559,6 +565,9 @@ class LLMClient:
             previous_request_witness=previous_request_witness,
             transcript_item_domains=transcript_item_domains,
             allow_retries=control.allow_retries,
+            allow_output_retries=control.allow_output_retries,
+            retry_limit_remaining=control.retry_limit,
+            retry_attempt_offset=control.retry_attempt_offset,
             **overrides,
         )
         return self._observe_stream(
@@ -645,15 +654,21 @@ class LLMClient:
         previous_request_witness: ProviderRequestWitness | None = None,
         transcript_item_domains: tuple[str, ...] | None = None,
         allow_retries: bool = True,
+        allow_output_retries: bool = False,
+        retry_limit_remaining: int | None = None,
+        retry_attempt_offset: int = 0,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
-        """仅在上游尚未产出任何事件时重试临时故障，避免重复文本或工具调用。"""
+        """Retry an uncommitted response using one bounded attempt budget."""
         max_retries = (
             max(self._network_retries, self._engine_overload_retries) if allow_retries else 0
         )
+        if retry_limit_remaining is not None:
+            max_retries = min(max_retries, max(0, retry_limit_remaining))
         relation_witness = previous_request_witness
         for attempt in range(max_retries + 1):
             emitted = False
+            completed = False
             should_retry = False
             retry_error: LLMNetworkError | LLMTransientProviderError | None = None
             retry_limit = 0
@@ -685,11 +700,13 @@ class LLMClient:
                     # the retry boundary.
                     if isinstance(event, (LLMTextDelta, LLMTurnDone)):
                         emitted = True
+                    if isinstance(event, LLMTurnDone):
+                        completed = True
                     yield event
                 return
             except (LLMNetworkError, LLMTransientProviderError) as exc:
-                retry_limit = self._retry_limit(exc) if allow_retries else 0
-                if emitted:
+                retry_limit = min(self._retry_limit(exc), max_retries) if allow_retries else 0
+                if completed or (emitted and not allow_output_retries):
                     raise LLMStreamInterruptedAfterOutputError(
                         "provider stream failed after visible output"
                     ) from exc
@@ -705,8 +722,8 @@ class LLMClient:
                 assert retry_error is not None
                 delay = self._retry_delay(retry_error, attempt)
                 yield LLMRetryScheduled(
-                    attempt=attempt + 2,
-                    max_attempts=retry_limit + 1,
+                    attempt=retry_attempt_offset + attempt + 2,
+                    max_attempts=retry_attempt_offset + retry_limit + 1,
                     delay_seconds=delay,
                 )
                 self._wait_before_retry(
@@ -730,20 +747,24 @@ class LLMClient:
         )
 
     def _retry_limit(self, error: LLMError) -> int:
+        if (
+            isinstance(error, LLMTransientProviderError)
+            and error.retry_after_seconds is not None
+            and error.retry_after_seconds > self._engine_overload_max_retry_delay_seconds
+        ):
+            # A bounded automatic wait must not violate a longer server cooldown.
+            return 0
         if self._is_engine_overload(error):
             return self._engine_overload_retries
         return self._network_retries
 
     def _retry_delay(self, error: LLMError, attempt: int) -> float:
+        if isinstance(error, LLMTransientProviderError) and error.retry_after_seconds is not None:
+            return max(0.0, error.retry_after_seconds)
         if not self._is_engine_overload(error):
             return self._network_retry_delay(attempt)
 
         assert isinstance(error, LLMTransientProviderError)
-        if error.retry_after_seconds is not None:
-            return min(
-                error.retry_after_seconds,
-                self._engine_overload_max_retry_delay_seconds,
-            )
         base_delay = self._engine_overload_retry_backoff_seconds * (2**attempt)
         jitter = random.uniform(
             0.0,
