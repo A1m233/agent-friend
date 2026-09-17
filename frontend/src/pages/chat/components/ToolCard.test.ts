@@ -69,6 +69,20 @@ describe("ToolCard", () => {
     }
   });
 
+  it.each(["accepted", "unknown"])("keeps application %s separate from command controls", async (status) => {
+    const block: ToolBlock = {
+      kind: "tool", toolCallId: "launch", name: "launch_desktop_application",
+      args: JSON.stringify({ executable_path: "C:\\Apps\\MuMuPlayer.exe" }),
+      result: JSON.stringify({ status }), status: status === "accepted" ? "done" : "error",
+    };
+    await act(async () => root.render(createElement(ToolCard, { block })));
+    expect(container.textContent).toContain("打开桌面应用");
+    expect(container.textContent).toContain(status === "accepted" ? "已提交打开请求" : "启动结果未知");
+    expect(container.textContent).toContain(status === "accepted" ? "仍需检查" : "不要直接重复启动");
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.textContent).not.toContain("已完成");
+  });
+
   it("announces disclosure before expanding a standalone tool card", async () => {
     const block: ToolBlock = {
       kind: "tool",

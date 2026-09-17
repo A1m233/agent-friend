@@ -37,6 +37,56 @@ def test_command_diagnostics_does_not_launch_setup_or_load_sessions(tmp_path: Pa
     assert not (tmp_path / "home").exists()
 
 
+def test_application_approval_is_owned_and_does_not_require_command_runtime(tmp_path: Path) -> None:
+    from agent.desktop_applications.models import PendingApplicationApproval
+
+    broker = ApprovalBroker()
+    request = PendingApplicationApproval.create(
+        session_id="app-session",
+        run_id="app-run",
+        tool_call_id="app-call",
+        reason="open",
+        details=CommandApprovalDetails(
+            cmd="",
+            argv=(str(tmp_path / "app.exe"),),
+            workdir=str(tmp_path),
+            cwd_source="explicit",
+            mode="buffered",
+            timeout_seconds=12,
+            filesystem_access="unrestricted",
+            additional_roots=(),
+            host_derived_roots=(),
+            network_access="unrestricted",
+            interactive=False,
+            execution="host_user",
+        ),
+    )
+    pending = threading.Event()
+    broker.add_listener(lambda value: pending.set() if value["status"] == "pending" else None)
+    worker = threading.Thread(target=lambda: broker.request(request, timeout_seconds=5))
+    worker.start()
+    try:
+        assert pending.wait(2)
+        app = FastAPI()
+        register_routes(
+            app, cast(Any, SimpleNamespace(approval_broker=broker, command_runtime=None))
+        )
+        with TestClient(app) as client:
+            response = client.get("/v1/approvals", params={"kind": "desktop_application"})
+            assert response.json()["requests"][0]["details"]["lifecycle"] == "user_desktop"
+            body = {"session_id": "app-session", "run_id": "wrong", "allow": True}
+            endpoint = f"/v1/approvals/{request.request_id}/application-decision"
+            assert client.post(endpoint, json=body).status_code == 409
+            body["run_id"] = "app-run"
+            assert client.post(endpoint, json={**body, "lifetime": "session"}).status_code == 422
+            response = client.post(endpoint, json=body)
+            assert response.status_code == 200
+            assert response.json()["approval"]["status"] == "approved"
+    finally:
+        broker.cancel_run("app-session", "app-run")
+        worker.join(5)
+
+
 @pytest.fixture
 def approval_sessions(
     tmp_path: Path,

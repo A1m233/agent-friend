@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { post } = vi.hoisted(() => ({ post: vi.fn() }));
 vi.mock("../http", () => ({ http: { post } }));
-import { commandRuntimeApi, type CommandApprovalRequest } from "./commandRuntime";
+import { commandRuntimeApi, type CommandApprovalRequest, type ApplicationApprovalRequest } from "./commandRuntime";
 
 describe("command approval decision API", () => {
   beforeEach(() => { post.mockReset(); });
@@ -28,5 +28,16 @@ describe("command approval decision API", () => {
     post.mockRejectedValue(error);
     await expect(commandRuntimeApi.decide(request, true)).rejects.toEqual(error);
     expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes application decisions to their owned approval endpoint", async () => {
+    const application: ApplicationApprovalRequest = { ...request, kind: "desktop_application",
+      details: { executable_path: "C:\\Apps\\Viewer.exe", arguments: [], working_directory: "C:\\Apps",
+        lifecycle: "user_desktop", sandboxed: false } };
+    post.mockResolvedValue({ accepted: true, approval: { ...application, status: "approved" } });
+    await commandRuntimeApi.decide(application, true);
+    expect(post).toHaveBeenCalledExactlyOnceWith("/v1/approvals/approval%2Fa/application-decision", {
+      session_id: "session-a", run_id: "run-a", allow: true, lifetime: "once",
+    });
   });
 });

@@ -1,0 +1,48 @@
+{
+  "model": "deepseek/deepseek-flash",
+  "reasoning_preset": "off",
+  "cases": [
+    "C24-04",
+    "C24-07",
+    "C24-08",
+    "C24-09",
+    "C27-03",
+    "C27-04"
+  ],
+  "repeat": 1,
+  "purpose": "first real validation; application routing and managed-command controls",
+  "authorization": "user explicitly authorized this delivery smoke and LLM calls",
+  "leakage_audit": {
+    "literal_case_identifiers_in_production_descriptions": false,
+    "fixture_paths_in_descriptions": false,
+    "holdout": [
+      "C27-03",
+      "C27-04"
+    ],
+    "manual_review_required": [
+      "acceptance versus readiness",
+      "unknown must not replay"
+    ]
+  },
+  "fixture_sha256": {
+    "agent_eval\\cases\\c24-tool-identifier-contract.yaml": "4d3d00e0c8fbe2e20c64eec20eeedec1789f7b5de14573272773d3b1f59414c5",
+    "agent_eval\\cases\\c27-command-lifecycle-handoff.yaml": "0b6e0f51d54093997815315cdeb9fa7a73a66804f35c98348ae0a1504f8d8f83"
+  },
+  "status": "completed",
+  "preflight_note": "v4-flash removed by current catalog; zero provider calls before rejection; use current DeepSeek Flash/off",
+  "result": {
+    "passed": 6,
+    "total": 6,
+    "repeat_per_case": 1,
+    "manual_review": "accepted versus readiness, unknown no replay, existing application preserved, managed command handle retained; all reviewed",
+    "limitation": "single observation per case, not a statistical reliability estimate"
+  },
+  "reports": [
+    "agent_eval/reports/2026-09-16T17-38-09-cc3b8ee6-C24-04.json",
+    "agent_eval/reports/2026-09-16T17-38-31-cc3b8ee6-C24-07.json",
+    "agent_eval/reports/2026-09-16T17-38-51-cc3b8ee6-C24-08.json",
+    "agent_eval/reports/2026-09-16T17-39-12-3a3535f9-C24-09.json",
+    "agent_eval/reports/2026-09-16T17-39-29-3a3535f9-C27-03.json",
+    "agent_eval/reports/2026-09-16T17-39-54-3a3535f9-C27-04.json"
+  ]
+}

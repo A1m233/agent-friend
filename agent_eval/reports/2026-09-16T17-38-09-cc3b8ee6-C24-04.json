@@ -1,0 +1,136 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-09-16T17:38:09.362055+00:00",
+    "ended_at": "2026-09-16T17:38:18.634832+00:00",
+    "duration_seconds": 9.273,
+    "git_commit": "cc3b8ee6",
+    "working_tree_dirty": true,
+    "note": "requirement-134-desktop-launch-first-validation",
+    "selection": {
+      "contract": "all",
+      "case": "C24-04",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/deepseek-flash",
+      "api_base": "https://api.deepseek.com",
+      "defaults": {
+        "timeout": 90.0,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "ffec46cf5c681f8e50870c220a12c7b9c508eaf40b5cc646b55723dc810b289d",
+      "total_contracts": 28,
+      "total_cases": 242,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 2,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 5,
+        "C18": 5,
+        "C19": 5,
+        "C20": 11,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 9,
+        "C25": 2,
+        "C26": 6,
+        "C27": 5,
+        "C28": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C24": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C24",
+      "name": "tool-identifier-contract",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C24-04",
+          "query": "已经确认是 2 号 MuMu 实例，当前未运行，继续打开模拟器，结束后我还要使用它",
+          "facet": "生命周期事故 anchor · 正常桌面应用不放入任务受管进程",
+          "source": "prod-maa-multi-account-sandbox-launch-20260818",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "launch_desktop_application",
+              "args": {
+                "executable_path": "C:\\fixture\\MuMuPlayer.exe",
+                "arguments": [
+                  "-v",
+                  "2"
+                ],
+                "reason": "按确认的 2 号实例参数启动 MuMu 模拟器，供你继续使用"
+              },
+              "result_text": "{\"status\":\"accepted\",\"launch_id\":\"launch_fixture\",\"lifecycle\":\"user_desktop\",\"readiness\":\"not_verified\"}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            }
+          ],
+          "prior_tool_calls": [],
+          "skill_activations": [],
+          "assistant_segments": [
+            "已经发出启动请求，用的是 `C:\\fixture\\MuMuPlayer.exe -v 2`。\n\n系统只确认了请求被接受，模拟器窗口和设备有没有真正就绪我这边看不到。你瞄一眼桌面，看 2 号实例起来了没；这次它是作为桌面应用独立运行的，不会跟着我这边结束被关掉，你后面接着用就行。"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "已经发出启动请求，用的是 `C:\\fixture\\MuMuPlayer.exe -v 2`。\n\n系统只确认了请求被接受，模拟器窗口和设备有没有真正就绪我这边看不到。你瞄一眼桌面，看 2 号实例起来了没；这次它是作为桌面应用独立运行的，不会跟着我这边结束被关掉，你后面接着用就行。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

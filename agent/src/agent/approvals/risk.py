@@ -48,7 +48,7 @@ class CatastrophicActionPolicy:
     def assess(self, request: Any) -> RiskAssessment:
         if getattr(request, "kind", None) == "filesystem":
             return self._assess_filesystem(request)
-        if getattr(request, "kind", None) == "command":
+        if getattr(request, "kind", None) in {"command", "desktop_application"}:
             return self._assess_command(request)
         return self._normal({"kind": str(getattr(request, "kind", "unknown"))})
 

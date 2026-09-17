@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -389,7 +390,7 @@ class ToolTransactionReconciler:
             not isinstance(evidence_ref, str)
             or not isinstance(operation_id, str)
             or not isinstance(tool_name, str)
-            or tool_name not in {"exec_command", "host_process_start"}
+            or tool_name not in {"exec_command", "host_process_start", "launch_desktop_application"}
             or not run_id
         ):
             return None
@@ -414,6 +415,18 @@ class ToolTransactionReconciler:
         rendered = render_interrupted_evidence(evidence) if evidence is not None else None
         if rendered is None:
             return None
+        if evidence is not None and evidence.kind == "application_launch":
+            value = json.loads(rendered)
+            accepted = value.get("status") == "accepted"
+            return RecoveredToolResult(
+                content=rendered,
+                is_error=not accepted,
+                process_status="not_managed",
+                semantic_status="not_verified",
+                executed=True if accepted else None,
+                reason_code="persisted_application_launch",
+                evidence_ref=evidence_ref,
+            )
         return RecoveredToolResult(
             content=rendered,
             is_error=True,

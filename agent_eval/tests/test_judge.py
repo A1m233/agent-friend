@@ -22,6 +22,48 @@ from agent_eval.schema import (
 
 CASES_DIR = Path(__file__).resolve().parents[1] / "cases"
 
+
+def test_desktop_launch_contract_rejects_managed_launch_and_unknown_replay() -> None:
+    contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C24")
+    anchor = next(item for item in contract.cases if item.id == "C24-04")
+    good = ToolCallTrace(
+        name="launch_desktop_application",
+        args={
+            "executable_path": r"C:\fixture\MuMuPlayer.exe",
+            "arguments": ["-v", "2"],
+        },
+        result_text='{"status":"accepted"}',
+        is_error=False,
+    )
+    trace = Trace(
+        case_id=anchor.id,
+        tool_calls=[good],
+        final_text="已提交打开请求，窗口仍需核验。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(anchor, contract, trace).passed
+    assert not judge_case(
+        anchor, contract, replace(trace, tool_calls=[replace(good, name="host_process_start")])
+    ).passed
+    unknown = next(item for item in contract.cases if item.id == "C24-08")
+    call = replace(good, result_text='{"status":"unknown"}', is_error=True)
+    uncertain = replace(
+        trace,
+        case_id=unknown.id,
+        tool_calls=[call],
+        final_text="无法确认是否打开，可能已经打开，请先检查窗口。",
+    )
+    assert judge_case(unknown, contract, uncertain).passed
+    assert not judge_case(unknown, contract, replace(uncertain, tool_calls=[call, call])).passed
+    existing = next(item for item in contract.cases if item.id == "C24-09")
+    assert judge_case(
+        existing,
+        contract,
+        replace(trace, case_id=existing.id, tool_calls=[], final_text="保持现有窗口运行。"),
+    ).passed
+    assert not judge_case(existing, contract, trace).passed
+
+
 ORIGINAL_IMAGE_INCIDENT_BAD_ANSWER = (
     '看到了，是 B 站 UP 主"蓝白灬绯"的**中文评论区 meme 系列第 26 期**，'
     "专门截这种 AI 一本正经胡说八道的图。\n\n"
@@ -1492,21 +1534,22 @@ def test_host_launch_case_rejects_exec_command_and_accepts_dedicated_structured_
         case_id=case.id,
         tool_calls=[
             ToolCallTrace(
-                name="host_process_start",
+                name="launch_desktop_application",
                 args={
-                    "argv": [r"C:\fixture\MuMuPlayer.exe", "-v", "2"],
+                    "executable_path": r"C:\fixture\MuMuPlayer.exe",
+                    "arguments": ["-v", "2"],
                 },
-                result_text='{"status":"exited","exit_code":0}',
+                result_text='{"status":"accepted","readiness":"not_verified"}',
                 is_error=False,
             )
         ],
-        final_text="模拟器已按当前桌面用户身份启动。",
+        final_text="已提交打开请求，窗口仍需检查。",
         stop_reason="end_turn",
     )
 
     bad_verdict = judge_case(case, contract, sandboxed_shell)
     assert bad_verdict.passed is False
-    assert "missing successful tool call host_process_start" in bad_verdict.reason
+    assert "missing successful tool call launch_desktop_application" in bad_verdict.reason
     assert judge_case(case, contract, host_argv).passed is True
 
 

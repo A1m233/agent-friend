@@ -652,6 +652,16 @@ def _stage_runtime(
     shutil.copytree(dist_dir / "agent-friend-runtime", stage_dir / "python")
     _copy_runtime_supplements(stage_dir / "python")
 
+    from desktop_applications import build_launch_fixture, stage_application_launcher
+
+    application_launcher = stage_application_launcher(
+        repo_root=REPO_ROOT,
+        target_dir=build_paths.cargo_target_dir,
+        destination=stage_dir / "desktop-applications",
+        identity=identity.to_json_dict(),
+        env=_sanitized_env(),
+    )
+
     cloudflared_lock = _read_json(CLOUDFLARED_LOCK)
     cache_dir = build_paths.roots.cache_dir
     cloudflared_cache = cache_dir / f"cloudflared-{cloudflared_lock['version']}-windows-amd64.exe"
@@ -738,6 +748,10 @@ def _stage_runtime(
 
     doctor_env["AGENT_FRIEND_MEMORY_MODEL_DIR"] = str(stage_dir / MODEL_RELATIVE_DIR)
     doctor_env["AGENT_FRIEND_CODEX_EXECUTABLE"] = str(codex_executable)
+    doctor_env["AGENT_FRIEND_APP_LAUNCHER"] = str(application_launcher)
+    doctor_env["AGENT_FRIEND_APP_LAUNCH_FIXTURE"] = str(
+        build_launch_fixture(REPO_ROOT, build_paths.build_dir / "desktop-launch-fixture")
+    )
     doctor_env["AGENT_FRIEND_EXECUTION_ENVIRONMENT_ROOT"] = str(
         stage_dir / "execution-environments"
     )
@@ -1419,6 +1433,8 @@ def _smoke_installed_runtime(
         runtime_dir / "execution-environments" / "python" / "identity.json",
         runtime_dir / "execution-environments" / "python" / "base" / "python.exe",
         runtime_dir / "execution-environments" / "python" / "bin" / "uv.exe",
+        runtime_dir / "desktop-applications" / "agent-friend-app-launcher.exe",
+        runtime_dir / "desktop-applications" / "agent-friend-app-launcher.identity.json",
     )
     missing = [path for path in required if not path.exists()]
     if missing:
@@ -1449,14 +1465,25 @@ def _smoke_installed_runtime(
     observed_identity = json.loads(identity_result.stdout)
     if observed_identity.get("identity") != identity.to_json_dict():
         raise RuntimeError("installed frozen runtime embedded identity mismatch")
-    _run([str(launcher), "doctor"], cwd=launcher.parent, env=smoke_env)
-    if expect_trusted_credentials:
-        _run(
-            [str(launcher), "credential-status", "--require-operational"],
-            cwd=launcher.parent,
-            env=smoke_env,
+    from desktop_applications import build_launch_fixture
+
+    # Validate the installed helper, never a development/staging helper inherited from the caller.
+    # The fixture belongs to this verification invocation and must not modify the signed payload.
+    with tempfile.TemporaryDirectory(prefix="agent-friend-installed-launch-") as fixture_root:
+        smoke_env["AGENT_FRIEND_APP_LAUNCHER"] = str(
+            runtime_dir / "desktop-applications" / "agent-friend-app-launcher.exe"
         )
-    _smoke_frozen_services(launcher, smoke_env, expected_identity=identity)
+        smoke_env["AGENT_FRIEND_APP_LAUNCH_FIXTURE"] = str(
+            build_launch_fixture(REPO_ROOT, Path(fixture_root))
+        )
+        _run([str(launcher), "doctor"], cwd=launcher.parent, env=smoke_env)
+        if expect_trusted_credentials:
+            _run(
+                [str(launcher), "credential-status", "--require-operational"],
+                cwd=launcher.parent,
+                env=smoke_env,
+            )
+        _smoke_frozen_services(launcher, smoke_env, expected_identity=identity)
     print(f"installed runtime smoke passed: {install_dir.resolve()}")
 
 

@@ -23,6 +23,7 @@ CORE_ENTRIES = (
     "diagnostics/runtime-config.json",
 )
 CAPABILITY_HANDLERS = {
+    "desktop-application-launch-v1": "desktopApplications",
     "selected-sessions-v1": "sessions",
     "selected-sessions-v2": "sessions",
     "selected-sessions-v3": "sessions",
@@ -1646,6 +1647,12 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 execution_environments,
                 collected=execution_environments_collected,
             ),
+            "desktopApplications": summarize_desktop_applications(
+                optional_json(archive, "diagnostics/desktop-applications.json", warnings)
+                if "diagnostics/desktop-applications.json" in names
+                else None,
+                collected="desktop-application-launch-v1" in capabilities,
+            ),
             "commandRuntime": summarize_command_runtime(
                 optional_json(archive, "diagnostics/command-runtime.json", warnings)
                 if "diagnostics/command-runtime.json" in names
@@ -1663,6 +1670,36 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             "petRenderEvidence": summarize_pet_render(archive, manifest, warnings),
             "warnings": warnings,
         }
+
+
+def summarize_desktop_applications(value: Any, *, collected: bool) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"evidence": "missing" if collected else "not-collected"}
+    records = value.get("records", [])
+    if not isinstance(records, list) or len(records) > 128 or value.get("schemaVersion") != 1:
+        return {"evidence": "invalid"}
+    counts: Counter[str] = Counter()
+    invalid = 0
+    for record in records:
+        status = record.get("status") if isinstance(record, dict) else None
+        if not isinstance(status, str) or status not in {
+            "accepted",
+            "failed",
+            "denied",
+            "cancelled",
+            "unknown",
+        }:
+            invalid += 1
+        else:
+            counts[status] += 1
+    return {
+        "evidence": "collected",
+        "recordCount": len(records),
+        "statuses": dict(counts),
+        "invalidCount": invalid,
+        "gapCount": len(value.get("gaps", [])) if isinstance(value.get("gaps"), list) else None,
+        "presentation": "not_observed",
+    }
 
 
 def summarize_command_runtime(value: Any, *, collected: bool) -> dict[str, Any]:

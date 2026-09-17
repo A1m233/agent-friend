@@ -1,0 +1,136 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-09-16T17:39:54.140084+00:00",
+    "ended_at": "2026-09-16T17:40:03.141487+00:00",
+    "duration_seconds": 9.001,
+    "git_commit": "3a3535f9",
+    "working_tree_dirty": true,
+    "note": "requirement-134-desktop-launch-first-validation",
+    "selection": {
+      "contract": "all",
+      "case": "C27-04",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/deepseek-flash",
+      "api_base": "https://api.deepseek.com",
+      "defaults": {
+        "timeout": 90.0,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "ffec46cf5c681f8e50870c220a12c7b9c508eaf40b5cc646b55723dc810b289d",
+      "total_contracts": 28,
+      "total_cases": 242,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 2,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 5,
+        "C18": 5,
+        "C19": 5,
+        "C20": 11,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 9,
+        "C25": 2,
+        "C26": 6,
+        "C27": 5,
+        "C28": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C27": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C27",
+      "name": "command-lifecycle-handoff",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C27-04",
+          "query": "用准确的 argv [\"task-runner\", \"status\"] 运行一次状态检查。若这次调用已经返回 exited， 请直接根据已有终态汇报结果，不要终止、等待或重跑任何命令。",
+          "facet": "control：当前 run 内已自然退出不机械终止或重跑",
+          "source": "requirement-104-already-exited-control",
+          "surface": null,
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "exec_command",
+              "args": {
+                "argv": [
+                  "task-runner",
+                  "status"
+                ],
+                "mode": "buffered",
+                "reason": "按你要求运行 task-runner status 做一次状态检查。"
+              },
+              "result_text": "{\"status\":\"exited\",\"process_id\":\"proc_completed\",\"exit_code\":0,\"stdout\":\"original-complete\"}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            }
+          ],
+          "prior_tool_calls": [],
+          "skill_activations": [],
+          "assistant_segments": [
+            "已经跑完并正常退出了，退出码 0，输出是 `original-complete`。后面不会再动它。"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "已经跑完并正常退出了，退出码 0，输出是 `original-complete`。后面不会再动它。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

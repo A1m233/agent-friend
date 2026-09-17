@@ -98,6 +98,7 @@ def _init_guide_repo(tmp_path: Path, *, publish: bool = True) -> tuple[Path, str
     repo.mkdir()
     _write_package(repo)
     _git(repo, "init", "--initial-branch=main")
+    _git(repo, "config", "core.autocrlf", "false")
     _git(repo, "config", "user.name", "Guide Test")
     _git(repo, "config", "user.email", "guide@example.invalid")
     _git(repo, "add", ".")
@@ -356,6 +357,30 @@ def test_build_release_assets_rejects_invalid_compatibility_range(tmp_path: Path
             guide_repo,
             release_sequence=1,
             min_product_version="0.3.0",
+            max_product_version_exclusive="0.3.0",
+            output_dir=tmp_path / "release",
+        )
+
+
+def test_release_rejects_git_clean_newline_drift(tmp_path: Path) -> None:
+    repo, _ = _init_guide_repo(tmp_path)
+    (repo / ".gitattributes").write_bytes(b"* text=auto eol=lf\n")
+    package = guide.package_root(repo)
+    for path in guide.regular_files(package):
+        path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n"))
+    _git(repo, "add", ".")
+    _git(repo, "commit", "--allow-empty", "-m", "normalize")
+    _git(repo, "push", "origin", "main")
+    _git(repo, "config", "core.autocrlf", "true")
+    path = package / "SKILL.md"
+    path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+    _git(repo, "add", "skills/agent-friend-guide/SKILL.md")
+    assert not guide.git_changes(repo)
+    with pytest.raises(guide.GuideError, match="release bytes differ from committed source"):
+        guide.build_release_assets(
+            repo,
+            release_sequence=2,
+            min_product_version="0.2.0",
             max_product_version_exclusive="0.3.0",
             output_dir=tmp_path / "release",
         )

@@ -55,6 +55,7 @@ Before diagnosing, establish:
 - explicit exclusions.
 - managed execution environment provider status, runtime/version identity, overlay/cache size buckets, payload validation and recent stable error codes; never expect session ids, paths, package names, scripts or command output in this evidence family.
 - command-runtime health, bounded setup/proxy event counts, native error codes and retention gaps; treat hashed runtime/operation identities as correlation keys, not session IDs. A ready export snapshot does not invalidate an earlier helper failure.
+- desktop application launch evidence counts and gaps; distinguish accepted launch requests from readiness and unknown dispatch outcomes from non-execution. Never treat launch references as process handles or print application arguments in inventory.
 
 `outcome: complete` means the configured collectors reported no failure. It does not prove that the user selected the relevant session, that the retained log tail covers the occurrence, or that an excluded source was unnecessary.
 

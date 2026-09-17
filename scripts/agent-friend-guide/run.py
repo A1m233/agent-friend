@@ -589,6 +589,19 @@ def build_release_assets(
     if not origin_contains_exact_ref(guide_repo, source_commit):
         raise GuideError("guide release commit is not visible on an origin branch or tag")
     package = package_root(guide_repo)
+    # Git may report a clean worktree even when CRLF/mixed bytes differ from HEAD.
+    # Published digests describe exact bytes, so require reproducible source bytes.
+    for path in regular_files(package):
+        relative = path.relative_to(guide_repo).as_posix()
+        committed = subprocess.run(
+            ["git", "-C", str(guide_repo), "show", f"{source_commit}:{relative}"],
+            capture_output=True,
+            check=False,
+        )
+        if committed.returncode != 0 or committed.stdout != path.read_bytes():
+            raise GuideError(
+                f"release bytes differ from committed source: {relative}; normalize and refresh metadata before publishing"
+            )
     verified = verify_package(package)
     tag = f"{SKILL_NAME}-r{release_sequence}"
     output_dir.mkdir(parents=True, exist_ok=True)

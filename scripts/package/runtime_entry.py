@@ -1165,6 +1165,82 @@ def _smoke_command_runtime() -> dict[str, Any]:
             runtime.close()
 
 
+def _smoke_desktop_applications() -> dict[str, Any]:
+    """Exercise the staged native protocol through the frozen tool, with no user app."""
+    from agent.approvals import ApprovalBroker
+    from agent.command_runtime.models import CommandApprovalDecision
+    from agent.command_runtime.tools import (
+        COMMAND_EXECUTION_CHECKPOINT_ARG,
+        COMMAND_RUN_ID_ARG,
+        COMMAND_SESSION_ID_ARG,
+        COMMAND_SURFACE_ARG,
+        COMMAND_TOOL_CALL_ID_ARG,
+    )
+    from agent.desktop_applications import LaunchDesktopApplicationTool, NativeApplicationLauncher
+    from agent.sessions.tool_execution_evidence import ToolExecutionEvidenceStore
+
+    launcher_path = os.environ.get("AGENT_FRIEND_APP_LAUNCHER")
+    fixture_path = os.environ.get("AGENT_FRIEND_APP_LAUNCH_FIXTURE")
+    if not launcher_path or not fixture_path:
+        raise RuntimeError("desktop application smoke inputs are unavailable")
+    launcher = NativeApplicationLauncher(Path(launcher_path), build_identity=BUILD_IDENTITY_JSON)
+    with tempfile.TemporaryDirectory(prefix="agent-friend-app-launch-smoke-") as temp_dir:
+        directory = Path(temp_dir)
+        broker = ApprovalBroker()
+
+        def approve(request: dict[str, object]) -> None:
+            if request["status"] == "pending":
+                broker.decide(str(request["request_id"]), CommandApprovalDecision(True))
+
+        broker.add_listener(approve)
+        store = ToolExecutionEvidenceStore(directory / "evidence")
+        tool = LaunchDesktopApplicationTool(launcher, broker, store)
+        checkpoints: list[tuple[object, ...]] = []
+        args = {
+            "executable_path": fixture_path,
+            "arguments": [str(directory), "", "space value", 'quote"value', "trailing\\"],
+            "working_directory": str(directory),
+            "reason": "本地冻结能力测试",
+            COMMAND_SESSION_ID_ARG: "doctor",
+            COMMAND_RUN_ID_ARG: "desktop-launch",
+            COMMAND_TOOL_CALL_ID_ARG: "fixture",
+            COMMAND_SURFACE_ARG: "desktop_chat",
+            COMMAND_EXECUTION_CHECKPOINT_ARG: lambda *values: checkpoints.append(values),
+        }
+        marker = directory / "started.json"
+        try:
+            result = json.loads(tool.invoke(args).text)
+            if result.get("status") != "accepted" or not checkpoints:
+                raise RuntimeError(f"desktop fixture launch failed: {result}")
+            deadline = time.monotonic() + 10
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.1)
+            observed = json.loads(marker.read_text(encoding="utf-8"))
+            if observed["arguments"] != args["arguments"][1:]:
+                raise RuntimeError("frozen launcher argument roundtrip failed")
+            if json.loads(tool.invoke(args).text)["launch_id"] != result["launch_id"]:
+                raise RuntimeError("launch replay guard failed")
+            if store.application_launch_diagnostics()["records"] == []:
+                raise RuntimeError("launch diagnostics missing")
+        finally:
+            (directory / "stop").touch()
+            # Fixture signals exit before its directory is removed.
+            deadline = time.monotonic() + 5
+            while (
+                marker.exists()
+                and not (directory / "stopped").exists()
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.1)
+    return {
+        "staged_helper_identity": True,
+        "explorer_dispatch": True,
+        "argument_roundtrip": True,
+        "durable_evidence": True,
+        "readiness": "fixture_only",
+    }
+
+
 def _doctor() -> int:
     checks: dict[str, dict[str, Any]] = {}
     modules = (
@@ -1315,6 +1391,13 @@ def _doctor() -> int:
         }
     else:
         checks["capability:governed_command_runtime"] = {"ok": True, **command_details}
+
+    try:
+        application_details = _smoke_desktop_applications()
+    except Exception as exc:
+        checks["capability:desktop_application_launch"] = {"ok": False, "error": str(exc)}
+    else:
+        checks["capability:desktop_application_launch"] = {"ok": True, **application_details}
 
     try:
         managed_environment_details = _smoke_managed_execution_environment()

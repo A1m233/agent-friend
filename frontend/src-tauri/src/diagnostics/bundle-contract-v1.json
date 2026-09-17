@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 13,
+  "schemaRevision": 14,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -28,6 +28,12 @@
     ]
   },
   "capabilities": [
+    {
+      "id": "desktop-application-launch-v1",
+      "manifestFields": [],
+      "requiredEntries": ["diagnostics/desktop-applications.json"],
+      "entryPatterns": ["diagnostics/desktop-applications.json"]
+    },
     {
       "id": "sandbox-incidents-v1",
       "manifestFields": [],

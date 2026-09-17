@@ -2,7 +2,12 @@
 
 | 脚本 | 用途 | mac/linux | Windows |
 |---|---|---|---|
+| desktop-application | 原生桌面启动助手构建、测试与 Job 隔离 smoke；smoke 只启动自有夹具，非 Windows 明确不支持 | `./scripts/desktop-application/run.sh build\|test\|smoke` | `.\scripts\desktop-application\run.ps1 build\|test\|smoke` |
 | diagnostics-smoke | 合成长会话最近 10 轮读取／ZIP 体积对照和事故修复留存，无网络、不读客户数据 | `./scripts/diagnostics-smoke/run.sh` | `.\scripts\diagnostics-smoke\run.ps1` |
+
+Windows `dev/run.*` 会通过 `desktop-application/run.* ensure` 构建并绑定当前 worktree 的启动助手；其他平台不装配该 Windows 能力。`package/run.* runtime` 将助手及身份清单纳入版本化 payload，frozen doctor 通过构建工作区内的专用短命夹具执行 Explorer 打开与参数、证据往返校验；不启动用户应用。
+
+`desktop-application/run.* e2e --config PRIVATE_JSON --real-calls-authorized` 在已确认的 Windows Tauri dev 中创建独立会话、发送一次配置中的 message，只允许与 executable_path/arguments 完全匹配的应用审批，并保存审批/终态截图与真实 run 回执。mode 为 accept/deny/cancel；output 必须是新建的项目外报告。它实际调用模型并可能触发后台调用，必须取得当前验证的显式授权；不能将截图或包含私有路径的报告提交。
 
 `package/run.* runtime` 的 frozen doctor 同时验证最近轮次读取、故障文件跨实例留存和修复关联，不执行真实沙箱初始化。
 

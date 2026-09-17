@@ -118,6 +118,9 @@ if ($commandRuntimeExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($codexExecuta
 }
 $env:AGENT_FRIEND_CODEX_EXECUTABLE = $codexExecutable
 Write-Host "  [OK] $codexExecutable"
+$appLauncherOutput = @(& uv run python scripts/desktop-application/run.py ensure)
+if ($LASTEXITCODE -ne 0) { throw "Application launcher build failed" }
+$env:AGENT_FRIEND_APP_LAUNCHER = (($appLauncherOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
 
 $guardCommand = if ($devCommand -eq "takeover") { "takeover" } else { "acquire" }
 $runtimePortsText = (Get-DevRuntimePorts) -join ","

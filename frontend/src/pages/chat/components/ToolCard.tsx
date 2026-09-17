@@ -11,6 +11,7 @@ import {
 } from "@/components/ui";
 import type { ToolBlock, ToolStatus } from "@/types/chat";
 import { SocialAuthCard } from "./SocialAuthCard";
+import { ApplicationLaunchCard } from "./ApplicationLaunchCard";
 import {
   useConversationStore,
   useCommandRuntimeStore,
@@ -371,7 +372,7 @@ function CommandRuntimeCard({
   isPrimaryActivity?: boolean;
 }) {
   const approval = useCommandRuntimeStore((state) =>
-    Object.values(state.approvals).find((item) => item.tool_call_id === block.toolCallId),
+    Object.values(state.approvals).find((item) => item.kind === "command" && item.tool_call_id === block.toolCallId),
   );
   const process = useCommandRuntimeStore((state) =>
     Object.values(state.processes).find((item) => item.tool_call_id === block.toolCallId),
@@ -388,7 +389,7 @@ function CommandRuntimeCard({
   } catch {
     // Keep the runtime card useful for malformed provider arguments.
   }
-  const details = approval?.details;
+  const details = approval?.kind === "command" ? approval.details : undefined;
   const runActive = Boolean(
     approval && activeRunId === approval.run_id,
   );
@@ -600,6 +601,9 @@ export function ToolCard({
   onDisclosureChange?: () => void;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
+  if (block.name === "launch_desktop_application") {
+    return <ApplicationLaunchCard block={block} embedded={embedded} isPrimaryActivity={isPrimaryActivity} />;
+  }
   if (block.name === "request_filesystem_access") {
     return <FilesystemApprovalCard block={block} embedded={embedded} isPrimaryActivity={isPrimaryActivity} />;
   }

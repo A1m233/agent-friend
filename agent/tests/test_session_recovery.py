@@ -77,6 +77,7 @@ def _store_with_request(
     *,
     checkpoint_mode: str | None = None,
     evidence_ref: str | None = None,
+    tool_name: str = "exec_command",
 ) -> tuple[JsonlSessionStore, str]:
     store = JsonlSessionStore(tmp_path / "sessions")
     session = Session.new(title="t", persona="default", model="m")
@@ -87,7 +88,7 @@ def _store_with_request(
         {
             "tool_call_id": "call-1",
             "event_tool_call_id": "event-call-1",
-            "tool_name": "exec_command",
+            "tool_name": tool_name,
             "args": {},
         },
     )
@@ -95,7 +96,7 @@ def _store_with_request(
     if checkpoint_mode is not None:
         checkpoint_payload: dict[str, object] = {
             "tool_call_id": "call-1",
-            "tool_name": "exec_command",
+            "tool_name": tool_name,
             "recovery_mode": checkpoint_mode,
             "operation_id": "proc_1",
             "execution_state": "launch_committed",
@@ -255,6 +256,50 @@ def test_reconciler_rejects_corrupt_evidence_and_falls_back_to_unknown(
     result = next(event for event in report.session.events if event.type == "tool_call_result")
     assert result.payload.get("evidence_ref") is None
     assert "领域结果均未知" in str(result.payload["content"])
+
+
+@pytest.mark.parametrize("status", ["accepted", "dispatching"])
+def test_application_recovery_preserves_acceptance_without_process_ownership(
+    tmp_path: Path, status: str
+) -> None:
+    evidence_store = ToolExecutionEvidenceStore(tmp_path / "evidence")
+    reference = evidence_store.new_reference()
+    store, session_id = _store_with_request(
+        tmp_path,
+        checkpoint_mode="persisted_evidence",
+        evidence_ref=reference,
+        tool_name="launch_desktop_application",
+    )
+    evidence_store.write(
+        ToolExecutionEvidence(
+            evidence_ref=reference,
+            session_id=session_id,
+            run_id="run-1",
+            tool_call_id="call-1",
+            operation_id="proc_1",
+            tool_name="launch_desktop_application",
+            process_status=status,
+            output_seq=1,
+            dropped_bytes=0,
+            kind="application_launch",
+            stdout=json.dumps(
+                {"status": status, "lifecycle": "user_desktop", "readiness": "not_verified"}
+            ),
+        )
+    )
+    reconciler = ToolTransactionReconciler(
+        store, runtime_instance_id="new", tool_execution_evidence_store=evidence_store
+    )
+    reconciler.reconcile_session(session_id)
+    session = reconciler.reconcile_session(session_id).session
+    results = [event.payload for event in session.events if event.type == "tool_call_result"]
+    assert len(results) == 1
+    assert json.loads(str(results[0]["content"]))["status"] == (
+        "accepted" if status == "accepted" else "unknown"
+    )
+    assert results[0]["process_status"] == "not_managed"
+    assert results[0]["semantic_status"] == "not_verified"
+    assert results[0]["is_error"] is (status != "accepted")
 
 
 def test_reconciler_closes_orphan_even_when_run_terminal_already_exists(tmp_path: Path) -> None:

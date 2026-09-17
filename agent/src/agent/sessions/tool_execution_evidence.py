@@ -70,6 +70,7 @@ class ToolExecutionEvidence:
     source: str = "host_command_runtime"
     complete: bool = False
     captured_at: str = ""
+    kind: str = "command_output"
 
     @property
     def has_output(self) -> bool:
@@ -82,7 +83,7 @@ class ToolExecutionEvidence:
     def _content_record(self) -> dict[str, object]:
         return {
             "schema_version": TOOL_EXECUTION_EVIDENCE_SCHEMA_VERSION,
-            "kind": "command_output",
+            "kind": self.kind,
             "evidence_ref": self.evidence_ref,
             "session_id": self.session_id,
             "run_id": self.run_id,
@@ -114,7 +115,7 @@ class ToolExecutionEvidence:
             raise ToolExecutionEvidenceError("evidence record must be an object")
         if value.get("schema_version") != TOOL_EXECUTION_EVIDENCE_SCHEMA_VERSION:
             raise ToolExecutionEvidenceError("unsupported evidence schema version")
-        if value.get("kind") != "command_output":
+        if value.get("kind") not in {"command_output", "application_launch"}:
             raise ToolExecutionEvidenceError("unsupported evidence kind")
         required_strings = (
             "evidence_ref",
@@ -184,6 +185,7 @@ class ToolExecutionEvidence:
             stderr=strings["stderr"],
             pty=strings["pty"],
             captured_at=strings["captured_at"],
+            kind=str(value["kind"]),
         )
         if evidence.output_bytes > MAX_EVIDENCE_STREAM_BYTES * 3:
             raise ToolExecutionEvidenceError("evidence output exceeds the bounded limit")
@@ -374,6 +376,65 @@ class ToolExecutionEvidenceStore:
             with suppress(OSError):
                 path.parent.rmdir()
 
+    def application_launch_diagnostics(self) -> dict[str, object]:
+        """Bounded allowlisted projection, never expose paths, arguments or user/run IDs."""
+        from itertools import islice
+
+        records: list[dict[str, object]] = []
+        gaps: set[str] = {"bounded_persisted_evidence_only"}
+        consumed = 0
+        candidates = list(islice(self._root.glob("session-*/tev_*.json"), 1001))
+        if len(candidates) > 1000:
+            gaps.add("scan_limit")
+        for path in candidates[:1000]:
+            try:
+                if path.is_symlink() or not path.resolve().is_relative_to(self._root):
+                    continue
+                size = path.stat().st_size
+                if size > 65536:
+                    gaps.add("oversize_record_skipped")
+                    continue
+                if consumed + size > 4 * 1024 * 1024:
+                    gaps.add("scan_byte_limit")
+                    break
+                raw = path.read_bytes()
+                consumed += len(raw)
+                value = json.loads(raw)
+                if not isinstance(value, dict) or value.get("kind") != "application_launch":
+                    continue
+                evidence = ToolExecutionEvidence.from_record(value)
+                result = json.loads(evidence.stdout)
+                if not isinstance(result, dict):
+                    gaps.add("invalid_record")
+                    continue
+                status = result.get("status")
+                if status in {"prepared", "dispatching"}:
+                    status = "unknown"
+                if status not in {"accepted", "failed", "denied", "cancelled", "unknown"}:
+                    gaps.add("invalid_record")
+                    continue
+                records.append(
+                    {
+                        "launchRef": sha256(evidence.operation_id.encode()).hexdigest()[:16],
+                        "status": status,
+                        "at": evidence.captured_at,
+                        "lifecycle": "user_desktop",
+                        "readiness": "not_verified",
+                    }
+                )
+                if len(records) >= 128:
+                    gaps.add("record_limit")
+                    break
+            except (OSError, ValueError, TypeError, ToolExecutionEvidenceError):
+                gaps.add("unreadable_record")
+        return {
+            "schemaVersion": 1,
+            "status": "available",
+            "records": records,
+            "gaps": sorted(gaps),
+            "presentation": "not_observed",
+        }
+
     def delete_session(self, session_id: str) -> None:
         directory = self._session_dir(session_id)
         with self._lock:
@@ -451,6 +512,20 @@ class ToolExecutionEvidenceStore:
 def render_interrupted_evidence(evidence: ToolExecutionEvidence) -> str | None:
     """Render stable model-visible partial output without implying command success."""
 
+    if evidence.kind == "application_launch":
+        try:
+            value = json.loads(evidence.stdout)
+            if not isinstance(value, dict):
+                raise ValueError("invalid launch evidence")
+        except ValueError:
+            value = {"status": "unknown", "error_code": "launch_evidence_unavailable"}
+        if value.get("status") in {"prepared", "dispatching"}:
+            value.update(status="unknown", error_code="launch_outcome_unknown")
+        value["message"] = (
+            "这是已持久化的桌面应用启动记录，不是应用运行状态。accepted 仅表示系统接受请求；"
+            "unknown 可能已启动。先核验已有实例，不自动重放；本轮中断不代表已关闭应用。"
+        )
+        return json.dumps(value, ensure_ascii=False)
     if not evidence.has_output:
         return None
     streams = (
@@ -487,6 +562,8 @@ def render_interrupted_evidence(evidence: ToolExecutionEvidence) -> str | None:
 def render_recoverable_evidence(evidence: ToolExecutionEvidence) -> str:
     """Render the full bounded artifact for query/offset recovery."""
 
+    if evidence.kind == "application_launch":
+        return render_interrupted_evidence(evidence) or ""
     return json.dumps(
         {
             "status": "interrupted_evidence",

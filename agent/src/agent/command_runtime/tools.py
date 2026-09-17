@@ -336,8 +336,9 @@ class ExecCommandTool:
     result_context_retention: ClassVar[str] = "recoverable"
     supports_invocation_control: ClassVar[bool] = True
     description: ClassVar[str] = (
-        "在 Codex 沙箱中运行经过产品治理和逐次授权的本地命令。需要当前桌面用户会话，或已确认"
-        "无法在沙箱中工作的宿主程序时改用 host_process_start。普通非交互命令使用 buffered："
+        "在 Codex 沙箱中运行经过产品治理和逐次授权的本地命令。用户需要在任务后继续使用的桌面应用"
+        "使用 launch_desktop_application；需要受管执行且无法在沙箱中工作的宿主命令使用"
+        " host_process_start。普通非交互命令使用 buffered："
         "调用保持 pending，直到退出、超时、取消或运行时失联，过程输出只推送给界面；"
         "交互式命令使用 streaming，尽早返回仅对当前 run 有效的 process_id。每次启动"
         "都必须提交一次准确的命令、目录、文件系统与网络权限请求；宿主可能按当前会话"
@@ -1741,8 +1742,9 @@ class ExecCommandTool:
             if details.execution == "sandboxed":
                 payload["message"] = (
                     f"进程以 Windows fast-fail 状态 {code_hex} 终止；该状态不能单独证明具体根因。"
-                    "当前进程运行在受限沙箱中；若这是需要桌面用户会话的可信 GUI/宿主程序，"
-                    "不要重复同一沙箱命令；确需宿主能力时改用 host_process_start 并让用户确认。"
+                    "当前进程运行在受限沙箱中，不要重复同一沙箱命令。需要留给用户使用的桌面应用"
+                    "使用 launch_desktop_application；确需受管宿主命令时使用 host_process_start。"
+                    "两者都须遵循当前授权模式。"
                 )
             else:
                 payload["message"] = (
@@ -1910,7 +1912,8 @@ class HostProcessStartTool(ExecCommandTool):
     name: ClassVar[str] = "host_process_start"
     description: ClassVar[str] = (
         "以当前桌面用户身份启动一个经过逐次授权的结构化本地进程。该进程不受 Codex 文件系统"
-        "或网络沙箱限制，只用于用户可见桌面程序或已确认无法在沙箱中工作的宿主能力。必须把"
+        "或网络沙箱限制，用于需要读取输出、等待退出或显式终止的宿主命令；进程会在本轮结束时清理。"
+        "用户需要继续使用的桌面应用应使用 launch_desktop_application，不使用本工具保持应用运行。必须把"
         "可执行文件和每个参数分别放入 argv；本工具不接受 shell 命令字符串、access、Skill 绑定"
         "或 execution。普通非交互进程用 buffered；只有需要后续输入或显式终止的交互进程才用"
         " streaming，并把返回的 process_id 原样交给 write_stdin 或 terminate_command。"

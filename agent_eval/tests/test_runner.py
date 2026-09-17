@@ -49,6 +49,15 @@ FIXTURE_IMAGE = (
 )
 
 
+def test_desktop_application_fixture_uses_production_wire_contract() -> None:
+    from agent.desktop_applications import LaunchDesktopApplicationTool
+
+    tool = _FixtureTool(FakeTool(name="launch_desktop_application", result_text="accepted"))
+    assert tool.parameters_schema == LaunchDesktopApplicationTool.parameters_schema
+    assert tool.description == LaunchDesktopApplicationTool.description
+    assert "__command_session_id" not in tool.parameters_schema["properties"]
+
+
 @pytest.mark.parametrize("fail", [False, True])
 def test_run_case_releases_writer_before_temp_cleanup(
     monkeypatch: pytest.MonkeyPatch, fail: bool

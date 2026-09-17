@@ -1,12 +1,13 @@
 import type {
   CommandApprovalRequest,
+  ExecutionApprovalRequest,
   CommandProcessSnapshot,
   CommandRuntimeStatus,
 } from "@/services/api/commandRuntime";
 import type { FilesystemApprovalEntry } from "@/stores/filesystemApprovals";
 
 export type PendingApproval = {
-  kind: "command" | "filesystem";
+  kind: "command" | "filesystem" | "desktop_application";
   requestId: string;
   requestVersion: number;
   sessionId: string;
@@ -43,7 +44,15 @@ function commandNetworkLabel(request: CommandApprovalRequest): string {
   return request.details.network_access === "enabled" ? "允许" : "禁止";
 }
 
-function commandDetailLines(request: CommandApprovalRequest): string[] {
+function commandDetailLines(request: ExecutionApprovalRequest): string[] {
+  if (request.kind === "desktop_application") {
+    return [
+      `工作目录：${request.details.working_directory}`,
+      "打开后由你继续使用，任务结束或退出本应用不会自动关闭它。",
+      "以当前桌面用户身份打开，文件和网络不受命令沙箱限制。",
+      "打开请求被接受后，仍需核验窗口和应用是否就绪。",
+    ];
+  }
   const details = request.details;
   const lines = [
     `工作目录：${details.workdir}`,
@@ -104,7 +113,7 @@ function filesystemDetailLines(entry: FilesystemApprovalEntry): string[] {
 export function buildPendingApprovalQueue(input: {
   currentSessionId: string | null;
   activeRunId: string | null;
-  commandApprovals: Record<string, CommandApprovalRequest>;
+  commandApprovals: Record<string, ExecutionApprovalRequest>;
   commandSubmitting: ReadonlySet<string>;
   commandRuntimeStatus: CommandRuntimeStatus | null;
   filesystemEntries: Record<string, FilesystemApprovalEntry>;
@@ -125,17 +134,19 @@ export function buildPendingApprovalQueue(input: {
       && request.run_id === activeRunId
     ))
     .map((request) => ({
-      kind: "command" as const,
+      kind: request.kind,
       requestId: request.request_id,
       requestVersion: request.version,
       sessionId: request.session_id,
       runId: request.run_id,
       reason: request.reason,
-      command: request.details.cmd,
+      command: request.kind === "desktop_application"
+        ? [request.details.executable_path, ...request.details.arguments].map((v) => JSON.stringify(v)).join(" ")
+        : request.details.cmd,
       detailLines: commandDetailLines(request),
       submitting: commandSubmitting.has(request.request_id),
       needsSandboxSetup: Boolean(
-        request.details.execution === "sandboxed"
+        request.kind === "command" && request.details.execution === "sandboxed"
         && commandRuntimeStatus?.sandbox_capability.supported
         && !commandRuntimeStatus.sandbox_capability.ready,
       ),
@@ -168,7 +179,7 @@ export function buildPendingApprovalQueue(input: {
 export function buildRunningCommandQueue(input: {
   currentSessionId: string | null;
   activeRunId: string | null;
-  commandApprovals: Record<string, CommandApprovalRequest>;
+  commandApprovals: Record<string, ExecutionApprovalRequest>;
   commandProcesses: Record<string, CommandProcessSnapshot>;
 }): RunningCommand[] {
   const {
@@ -195,7 +206,7 @@ export function buildRunningCommandQueue(input: {
       return {
         processId: process.process_id,
         reason: approval?.reason || "运行本地命令",
-        command: approval?.details.cmd || "命令详情可在对话中展开查看",
+        command: (approval?.kind === "command" ? approval.details.cmd : null) || "命令详情可在对话中展开查看",
         detail: `${process.mode === "streaming" ? "交互式" : "普通"}${duration}`,
       };
     });

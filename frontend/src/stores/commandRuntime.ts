@@ -2,7 +2,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import {
   commandRuntimeApi,
-  type CommandApprovalRequest,
+  type ExecutionApprovalRequest,
   type CommandProcessSnapshot,
   type CommandRuntimeStatus,
   type SandboxCapabilitySnapshot,
@@ -22,7 +22,7 @@ type CommandApprovalResult =
   | { status: "failed" | "stale"; message: string };
 
 interface CommandRuntimeState {
-  approvals: Record<string, CommandApprovalRequest>;
+  approvals: Record<string, ExecutionApprovalRequest>;
   processes: Record<string, CommandProcessSnapshot>;
   submitting: ReadonlySet<string>;
   runtimeStatus: CommandRuntimeStatus | null;
@@ -40,15 +40,19 @@ interface CommandRuntimeState {
   clear: () => void;
 }
 
-function validApproval(value: unknown): value is CommandApprovalRequest {
-  const item = value as Partial<CommandApprovalRequest> | undefined;
-  return item?.kind === "command"
+function validApproval(value: unknown): value is ExecutionApprovalRequest {
+  const item = value as Partial<ExecutionApprovalRequest> | undefined;
+  return (item?.kind === "command" || item?.kind === "desktop_application")
     && typeof item.request_id === "string"
     && typeof item.session_id === "string"
     && typeof item.run_id === "string"
     && typeof item.tool_call_id === "string"
     && typeof item.version === "number"
-    && typeof item.details?.cmd === "string";
+    && ((item.kind === "command" && typeof item.details?.cmd === "string")
+      || (item.kind === "desktop_application" && typeof item.details?.executable_path === "string"
+        && Array.isArray(item.details.arguments)
+        && typeof item.details.working_directory === "string"
+        && item.details.lifecycle === "user_desktop"));
 }
 
 function validProcess(value: unknown): value is CommandProcessSnapshot {
@@ -356,7 +360,7 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
 }));
 
 export function pendingCommandApprovalSessionIds(
-  approvals: Record<string, CommandApprovalRequest>,
+  approvals: Record<string, ExecutionApprovalRequest>,
 ): ReadonlySet<string> {
   return new Set(
     Object.values(approvals)

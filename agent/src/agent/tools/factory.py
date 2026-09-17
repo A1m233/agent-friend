@@ -65,6 +65,7 @@ from .registry import ToolRegistry
 if TYPE_CHECKING:
     from ..attachments import AttachmentStore
     from ..command_runtime import CommandRuntime
+    from ..desktop_applications import NativeApplicationLauncher
     from ..execution_environment import ExecutionEnvironmentManager
     from ..filesystem import FilesystemApprovalBroker, ProtectedPathPolicy
     from ..scheduled_tasks import ScheduledTaskService
@@ -96,6 +97,7 @@ def make_default_registry(
     command_runtime: CommandRuntime | None = None,
     execution_environment_manager: ExecutionEnvironmentManager | None = None,
     tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
+    desktop_application_launcher: NativeApplicationLauncher | None = None,
     attachment_store: AttachmentStore | None = None,
     stderr_warn: bool = True,
 ) -> ToolRegistry:
@@ -159,6 +161,17 @@ def make_default_registry(
                 command_runtime,
                 approval_broker,
                 execution_environment_manager,
+                tool_execution_evidence_store,
+            )
+        )
+
+    if tool_execution_evidence_store is not None:
+        from ..desktop_applications import LaunchDesktopApplicationTool, NativeApplicationLauncher
+
+        tools.append(
+            LaunchDesktopApplicationTool(
+                desktop_application_launcher or NativeApplicationLauncher(None),
+                approval_broker,
                 tool_execution_evidence_store,
             )
         )

@@ -36,7 +36,7 @@ def test_loads_builtin_cases() -> None:
         ("C21", "unified-skill-catalog-discovery", 4),
         ("C22", "skill-catalog-change-comparison", 3),
         ("C23", "self-presentation-and-transparency", 8),
-        ("C24", "tool-identifier-contract", 6),
+        ("C24", "tool-identifier-contract", 9),
         ("C25", "filesystem-authorization-claim-grounding", 2),
         ("C26", "agent-run-recovery", 6),
         ("C27", "command-lifecycle-handoff", 5),
@@ -285,9 +285,10 @@ def test_loads_fixture_session_and_case_judge() -> None:
     host_launch = next(item for item in c24.cases if item.id == "C24-04")
     assert host_launch.judge is not None
     assert host_launch.judge.required_successful_tool_calls[0].args == {
-        "argv": [r"C:\fixture\MuMuPlayer.exe", "-v", "2"],
+        "executable_path": r"C:\fixture\MuMuPlayer.exe",
+        "arguments": ["-v", "2"],
     }
-    assert host_launch.judge.required_successful_tool_calls[0].name == "host_process_start"
+    assert host_launch.judge.required_successful_tool_calls[0].name == "launch_desktop_application"
     managed_update = next(item for item in c24.cases if item.id == "C24-05")
     assert managed_update.judge is not None
     assert [(item.name, item.source) for item in managed_update.expected_skill_catalog_entries] == [
@@ -457,7 +458,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     meta = build_case_set_meta(CASES_DIR, contracts)
 
     assert meta.total_contracts == 28
-    assert meta.total_cases == 239
+    assert meta.total_cases == 242
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -482,7 +483,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C21": 4,
         "C22": 3,
         "C23": 8,
-        "C24": 6,
+        "C24": 9,
         "C25": 2,
         "C26": 6,
         "C27": 5,
