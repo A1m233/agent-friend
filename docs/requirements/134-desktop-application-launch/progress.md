@@ -2,20 +2,20 @@
 
 ## 总体状态
 
-IN_PROGRESS
+COMPLETED
 
-2026-09-17 用户明确授权实现、必要 smoke、真实 LLM、桌面验收，并在通过后合入 main、推送远端、构建 local-test。需求与技术方案均为 CONFIRMED；当前分支 `feature/134-desktop-application-launch`。Guide 基线阻塞已解决，真实模型首轮已通过，正在完成产品与打包验收。下文早期阻塞记录保留为历史，不代表当前状态。
+2026-09-17 用户明确授权实现、必要 smoke、真实 LLM、桌面验收，并在通过后合入 main、推送远端、构建 local-test。需求与技术方案均为 CONFIRMED；当前分支 `feature/134-desktop-application-launch`。全部 AC 的适用证据与项目检查已完成，14 项安装矩阵和独立校验通过；按用户明确的“通过后合入并推送”授权进入交付。下文早期阻塞记录保留为历史，不代表当前状态。
 
 ## 任务列表
 
 - [x] 原生 Explorer 启动助手、结构化协议、受管 Job 隔离验证（专用原生 fixture）。
 - [x] Python 应用启动服务、工具契约、取消/未知结果与持久化恢复。
 - [x] 现有审批控制面、风险评估与前端展示接入。
-- [ ] 开发装配、受治理 payload 与 frozen capability smoke。
+- [x] 开发装配、受治理 payload 与 frozen capability smoke。
 - [x] 诊断生产/消费契约、工具恢复及相关测试。
 - [x] 独立 MAA skill 指引同步与确定性验证，已提交并推送 `6e4c5f3`。
 - [x] 工具行为回归 case 与真实验证边界记录。
-- [ ] 项目检查、真实 Windows/MuMu 验证和用户验收。
+- [x] 项目检查、真实 Windows/MuMu 验证和用户验收。
 
 ## AC 验证
 
@@ -23,16 +23,16 @@ IN_PROGRESS
 
 | AC | 状态 | 证据/缺口 |
 | --- | --- | --- |
-| AC-1 | pending | MuMu 正常打开及四层就绪核验 |
-| AC-2 | pending | 真实日常及任务后存活，需有界游戏执行授权 |
-| AC-3 | pending | 任务取消、服务停止、产品退出的实际隔离 |
-| AC-4 | pending | 已有实例复用不改变生命周期 |
-| AC-5 | source-verified | 原 command_runtime 的取消、超时、收尾测试通过；未改变清理实现 |
-| AC-6 | partial | 无效目标、拒绝、入口不可用、未知不重放、checkpoint/证据失败、恢复有单测；Android 未就绪的真实场景未测 |
-| AC-7 | pending | 明确关闭目标的既有应用流程 |
-| AC-8 | partial | 新工具、审批 UI、持久化恢复和诊断契约已测；行为 case 确定性检查通过，真实模型与事故归因回答待验 |
-| AC-9 | partial | 正式 skill 仓库本地指引已改、117 项测试通过；未发布、未在真实产品跑日常 |
-| AC-10 | partial | 非桌面入口及助手缺失单测通过；无 Explorer/非 Windows 实机未验 |
+| AC-1 | passed | 真实 Tauri 冷启动；可恢复窗口、目标实例、Android 和当前 ADB 地址分别核验。 |
+| AC-2 | passed (bounded smoke) | 正式 Skill 的 StartUp/Award 有界任务在产品内执行，最终回复和清理后同一 MuMu 窗口、实例、ADB 保持；不外推为刷图或完整资源型日常。 |
+| AC-3 | passed | 真实 Tauri 任务取消、托盘退出、supervisor 停止 bridge 分别记录，MuMu 同 PID 及 ADB 保持。 |
+| AC-4 | passed | 产品任务开始前由普通桌面启动的既有实例被复用；MAA 终态、最终回复及开发服务清理后同 PID/窗口/ADB 保持。 |
+| AC-5 | passed | 受管命令取消/超时/收尾自动化回归及 frozen capability smoke 通过，未改变清理策略。 |
+| AC-6 | passed | 失败/拒绝/不可用/unknown/恢复由单测覆盖，真实拒绝不打开；MuMu 窗口先出现、Android 后就绪的过程实测。 |
+| AC-7 | passed | 管理器对已确认实例正常 shutdown 返回成功，关闭状态实测；之后重新打开并保持。 |
+| AC-8 | passed | 审批、工具证据、恢复和诊断测试；6/6 模型回归及单轮历史归因观察。各一次观察，不宣称统计稳定性。 |
+| AC-9 | passed | MAA 正式源 6e4c5f3 已发布并更新到产品，117 项测试；真实产品通过 Skill binding 执行现有有界任务。 |
+| AC-10 | passed (contract/tests) | Windows desktop_chat 能力边界及缺失助手/不支持入口错误有确定性测试；不宣称非 Windows 或无交互桌面实机验证。 |
 
 ## 实现日志
 
@@ -49,7 +49,7 @@ IN_PROGRESS
 | 2026-09-17 | 后端完整复验通过 | 3216 passed、5 skipped；lint/typecheck 通过。之后仅统一 exec_command 描述与沙箱错误路由，245 项 command_runtime/agent_eval 回归及 lint 通过 |
 | 2026-09-17 | 增加应用审批推送、独立决定 endpoint 与不会生成受管进程的前端回归；补充 session_auto 风险提示 | 33 项相关前端测试通过；最终前端 lint/typecheck 通过。全量 1300 项为这些增量前的结果，不混报为最终全量 |
 
-## 打包与后续验证边界
+## 早期打包与验证边界（历史记录，现状见后续执行记录）
 
 - `installer-contract` 因 `scripts/package/run.py` 给出 `full-matrix` floor，不降档。当前先走 package-release runtime-only；runtime 通过也不代表安装器矩阵完成。
 - package-baseline：Guide r47 已发布且 immutable，checkout `3f564e0115821d293abbb3f06d89aceb864aae47`，snapshot `1511e816c926c4e0742e73baccf8aaf1461272a1ce802a7112d5e313468d4edd`，verify 通过。
@@ -87,3 +87,15 @@ IN_PROGRESS
 - 集成后 frontend：157 文件 / 1310 测试通过，lint/typecheck/production build 通过；Rust fmt、290 项测试（另 1 ignored）与 release check 通过。
 - 首个 frozen candidate `20260916T175525Z-e5b33e6aab35-f3ac42bb` 的 doctor 全绿，新增助手身份、Explorer dispatch、参数往返与持久化证据通过。MSIX 宿主的隔离目录重定向被 matrix preflight 在安装前拒绝；转由当前用户普通桌面进程运行原脚本后通过该 preflight，没有削弱门禁。
 - 首轮完整矩阵发现安装后 doctor 入口缺少 app launcher/fixture 输入，7 次安装后 doctor 失败并使 silent-success 关联项失败；其余 6 项通过。报告保留，不可用于交付。已修正安装后 smoke：绑定安装 payload 内的助手，fixture 放在临时目录，成功与失败都清理；相关 3 项测试通过，正在重跑项目检查和候选矩阵。
+
+### 最终验收与交付依据
+
+- 最终生产代码候选 `303d9563bfe9332e6a8af56e598e250f46231c35`：backend lint/mypy 全绿，3285 passed / 5 skipped；frontend 157 文件 / 1310 测试、lint/typecheck/build 全绿；Rust fmt、290 passed / 1 ignored、release check 全绿。后续仅整理验收文档。
+- 真实产品内 MAA 有界复验：正式 Skill 通过 `exec_command` 的 Skill binding 执行既有 StartUp/Award task，进程与 wrapper 退出码均 0，两条链 Completed、无内部或子任务错误。最终回复后立即核验，再停止本次开发 runtime 并释放端口后复核：同一 MuMu PID、可恢复窗口、Android 与 ADB 均保持。此证据覆盖既有桌面实例复用，不把外部预先打开的动作算作产品新启动。
+- 早期指定 `host_process_start` 执行受保护 Skill 文件的 pilot 被 `skill_binding_required` 拒绝，没有运行 MAA；改用公开支持的 `exec_command` Skill binding 后通过。另一次运行成功后因会话中断未即时取到存活快照，不以 19 小时后的进程状态判断当时结果；最终复验补齐这项证据。
+- 验收日常限定为启动与领奖，不刷图、不用药、不切号。执行边界成功不等于物品级奖励保证，未用 Completed 推断奖励；历史奖励扫描只适用于其记录的游戏日。
+- 私有核心证据清单 `final-evidence-manifest.json` SHA-256：`4d9bc68e635f3d161383ac31e5baf94737203cd89be99f1e917566a642df8aec`。原始对话、截图、账号与游戏日志不进入公开仓库。
+- 修正候选 `20260917T141921Z-303d9563bfe9-ee4e9771`：staged doctor 与七轮 installed runtime doctor 通过；完整隔离矩阵 14/14 passed，`installer-smoke-verify` 通过。报告 `smoke-20260917T141921Z-303d9563bfe9-ee4e9771.json`；packageInputSha256 `ec0e81f0d1542af885c10f47eb26997c57a17896840894848c157060a0a40a0d`；候选安装器 SHA-256 `a970f77e3282d5524b66c1be5af7a89419786ff4c65d91c447f76c35ae282d5c`。失败首轮报告保留为历史，不用于交付。
+- 普通桌面进程运行原 package runner，环境隔离检查保持启用。local-test/smoke 的 Guide r49 baseline 事务结束后已恢复，产品工作树无残留 overlay；未安装到 production。
+- Guide 自动复核：自已发布用户知识对应的 `3a3535f9` 之后，仅新增验收脚本、报告、安装后 smoke 输入及回归测试，用户可见语义未再变化；继续绑定 immutable r49，无需另发公开知识版本。
+- 用户明确授权必要验收及通过后合入、推送和本地测试包，正常交付不再次索要确认。验收完成；最终主干提交及其测试包由 Git 历史与制品 manifest 绑定。

@@ -7,7 +7,7 @@
 - 现有事故与 run 结束清理高度吻合，仍缺少最终进程终止回执和 dirty 构建的完整源码输入。
 - 当前 MAA skill 已要求默认保持模拟器可见运行；尚不能确认事故实际加载的全文与当前仓库版本相同。
 - Codex 的受管后台终端与操作系统正常打开桌面应用是不同能力，不能把二者的生命周期混为一谈。
-- 正常打开应用后再独立发现实例、ADB 和业务状态，从现有 skill 结构上可行；原生 fixture 隔离已验证，真实 MuMu/产品退出尚未验证。
+- 正常打开应用后再独立发现实例、ADB 和业务状态，从现有 skill 结构上可行；原生 fixture、真实 MuMu/产品退出及冻结安装后能力均已验证，详见 E-012 至 E-014。
 - Windows 的父级 Job Object 继承必须纳入验证，仅移除 run 结束回调或更换启动命令不足以证明脱离产品清理。
 
 ## 证据账本
@@ -49,7 +49,7 @@
 - 未执行真实 LLM、游戏操作；候选原生 fixture 启动试验见 E-011；未读取无关桌面截图。
 - 查询方法：限定所选会话的启动请求/结果、收尾检查、run_terminal 和最后用户反馈，再用构建提交的源码解释生命周期。不是对所有历史异常的扫描。
 
-## 未决问题与下一项验证
+## 初期未决问题与下一项验证（已由后续验收推进）
 
 1. 已选择薄原生助手委托当前桌面 Explorer 的候选路线；下一项关键证据是生产等价 Job 约束下的启动、助手清理及产品退出试验。选择方案不是隔离成功的证据。
 2. 已确定 accepted 与业务就绪分离、unknown 不自动重放；仍需验证既有实例、无新 PID、回执丢失与恢复分支。
@@ -65,3 +65,11 @@
 - 2026-09-17 后续：用户确认技术方案，design 为 CONFIRMED，取代上一条“技术方案尚未确认”的阶段状态。E-009/E-010 补充选择依据；尚未实现或运行候选验证，progress.md 仍在实现阶段建立。
 - 2026-09-17 实施：用户明确开始实现。首次 COM 实验直接 GetItemObject<IShellFolderViewDual> 返回 E_NOINTERFACE；按接口契约改为先获取 IDispatch 再 cast 后，原生隔离试验通过两次。E-011 推进原 E-009 中“尚未验证”的本机 Job 隔离部分；原事故归因不升级为 confirmed。
 - E-011 第二次报告位于本机构建工作区 `desktop-application-dev/smoke-e85e4c6e9ea24d359322978b61907328/report.json`，由 `scripts/desktop-application/run.ps1 smoke` 生成；构建工作区不是持久仓内归档。通过的最小事实已记于此处，完整原件可能受后续构建 GC 生命周期影响。
+
+## 最终验收证据（2026-09-17）
+
+- **E-012 / runtime-supported / confirmed（限实测链路）**：真实 Tauri 的冷启动、延迟 Android 就绪、拒绝、接受后取消、托盘退出、supervisor 停止 bridge 和明确关闭目标均已观察。正式 MAA Skill 的有界 StartUp/Award 在产品内完成，最终回复及开发 runtime 清理后，同一既有 MuMu 实例、窗口与 ADB 保持可用。真实 MuMu 来源为源码开发态；安装版由 E-014 的生产工具与原生 fixture 验证，不混为安装版 MuMu 全链路。
+- **E-013 / model-observed / directional**：C24-04/07/08/09、C27-03/04 各一次真实模型运行 6/6 通过，逐条人工复核；一次产品历史归因回答未以“未调用关闭工具”排除宿主清理。报告与输入绑定见 eval-manifest.json。不是统计稳定性结论，原事故 E-002 仍为 strongly-supported。
+- **E-014 / frozen-runtime-supported / confirmed（隔离安装）**：候选 `20260917T141921Z-303d9563bfe9-ee4e9771` 通过 staged doctor、七轮 installed doctor、14 项完整安装器矩阵及独立报告校验。精确输入/安装器摘要见 progress.md；没有 production 安装或非 Windows 实机结论。
+- **E-015 / published-source / confirmed**：MAA 正式指引 `6e4c5f391060eb420dde70d38b1deb8b1fb5536d` 已推送、产品已更新同源 Skill；Guide immutable r49 对应 `65e94efd3ed4818bc9153d20e4aa7ebdc609a137`。117 项 MAA 测试、Guide 17 项测试通过。
+- 私有原件清单 SHA-256 `4d9bc68e635f3d161383ac31e5baf94737203cd89be99f1e917566a642df8aec`，由需求负责人持有；完整截图、用户历史、账号和日志不公开。历史阶段的“尚未验证”只描述当时状态，由本节与 progress.md 最终记录更新。
