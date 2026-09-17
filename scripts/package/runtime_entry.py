@@ -1165,6 +1165,41 @@ def _smoke_command_runtime() -> dict[str, Any]:
             runtime.close()
 
 
+def _stop_desktop_launch_fixture(directory: Path, *, timeout_ms: int = 5000) -> None:
+    """Wait for the owned fixture's OS exit, not its pre-exit file marker."""
+    import ctypes
+    from ctypes import wintypes
+
+    marker = directory / "started.json"
+    if not marker.exists():
+        (directory / "stop").touch()
+        return
+    pid = int(json.loads(marker.read_text(encoding="utf-8"))["pid"])
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE only
+    error = ctypes.get_last_error() if not handle else 0
+    try:
+        (directory / "stop").touch()
+        if not handle:
+            if error == 87:  # ERROR_INVALID_PARAMETER: fixture has already exited
+                return
+            raise ctypes.WinError(error)
+        result = kernel.WaitForSingleObject(handle, timeout_ms)
+        if result == 258:  # WAIT_TIMEOUT
+            raise TimeoutError("desktop launch fixture did not exit after stop")
+        if result != 0:  # WAIT_OBJECT_0
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        if handle:
+            kernel.CloseHandle(handle)
+
+
 def _smoke_desktop_applications() -> dict[str, Any]:
     """Exercise the staged native protocol through the frozen tool, with no user app."""
     from agent.approvals import ApprovalBroker
@@ -1223,15 +1258,7 @@ def _smoke_desktop_applications() -> dict[str, Any]:
             if store.application_launch_diagnostics()["records"] == []:
                 raise RuntimeError("launch diagnostics missing")
         finally:
-            (directory / "stop").touch()
-            # Fixture signals exit before its directory is removed.
-            deadline = time.monotonic() + 5
-            while (
-                marker.exists()
-                and not (directory / "stopped").exists()
-                and time.monotonic() < deadline
-            ):
-                time.sleep(0.1)
+            _stop_desktop_launch_fixture(directory)
     return {
         "staged_helper_identity": True,
         "explorer_dispatch": True,
