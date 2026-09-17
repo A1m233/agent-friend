@@ -99,3 +99,12 @@ COMPLETED
 - 普通桌面进程运行原 package runner，环境隔离检查保持启用。local-test/smoke 的 Guide r49 baseline 事务结束后已恢复，产品工作树无残留 overlay；未安装到 production。
 - Guide 自动复核：自已发布用户知识对应的 `3a3535f9` 之后，仅新增验收脚本、报告、安装后 smoke 输入及回归测试，用户可见语义未再变化；继续绑定 immutable r49，无需另发公开知识版本。
 - 用户明确授权必要验收及通过后合入、推送和本地测试包，正常交付不再次索要确认。验收完成；最终主干提交及其测试包由 Git 历史与制品 manifest 绑定。
+
+### 合入后测试包的验证脚本竞态
+
+- 主干 `c43ad283` 已推送，合入树与验收分支一致。随后按用户要求构建主干 local-test，build `20260917T145533Z-c43ad2831bee-c21fc44b` 的 doctor 在清理应用 fixture 临时目录时返回 WinError 32；未产生可交付安装器。
+- 失败属于验证装置：fixture 的 `stopped` 文件在进程退出前写出，原 harness 将该标记当作退出证据；Windows 进程仍可能持有 cwd。启动、参数往返、持久证据步骤没有报告失败。此前 14/14 安装矩阵仍是其精确候选的有效历史证据，不伪称此次打包成功。
+- 独立 fix 分支改为先取得本次 fixture 的只读同步进程句柄，发送 stop，再有界等待 OS 退出；超时明确失败，不关闭用户应用，不调整产品生命周期。延迟退出及超时两项真实进程回归通过；后端全量和新 frozen 验证继续执行。
+- 本次脚本 contract 的 floor 为 package-sensitive，安装状态转换没有变化；新输入不沿用旧报告冒充匹配，按该 floor 验证冻结能力。Guide 用户知识语义不变，继续绑定已发布 r49。
+
+- 竞态修复最终验证：backend lint/mypy 全绿、3287 passed / 5 skipped；新增延迟退出与超时两项真实进程回归通过。冻结 runtime `20260917T150818Z-f743a752a459-86d9e21c` 的完整 doctor 通过，临时 Guide baseline 已恢复、工作树干净。仅验证脚本变化，前端/Rust 与此前已通过的输入一致。继续按既有授权合入修复、推送并从最终主干构建测试包。

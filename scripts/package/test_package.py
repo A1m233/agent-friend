@@ -1824,3 +1824,39 @@ def test_frozen_image_capability_runs_all_static_decoders() -> None:
         "formats": ["PNG", "JPEG", "WEBP"],
         "snapshot_roundtrip": True,
     }
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows fixture process lifetime")
+@pytest.mark.parametrize("timeout_ms", [50, 5000])
+def test_desktop_fixture_cleanup_waits_for_os_exit(tmp_path: Path, timeout_ms: int) -> None:
+    entry = _load("fixture_exit_runtime_entry", PACKAGE_DIR / "runtime_entry.py")
+    directory = tmp_path / "fixture"
+    directory.mkdir()
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import time; "
+            "stop=Path('stop'); "
+            "exec('while not stop.exists(): time.sleep(0.01)'); "
+            "Path('stopped').write_text('stopped'); time.sleep(0.5)",
+        ],
+        cwd=directory,
+    )
+    (directory / "started.json").write_text(json.dumps({"pid": child.pid}), encoding="utf-8")
+    try:
+        if timeout_ms == 50:
+            with pytest.raises(TimeoutError, match="did not exit"):
+                entry._stop_desktop_launch_fixture(directory, timeout_ms=timeout_ms)
+            assert child.poll() is None
+        else:
+            entry._stop_desktop_launch_fixture(directory, timeout_ms=timeout_ms)
+            assert child.poll() == 0
+            assert (directory / "stopped").read_text(encoding="utf-8") == "stopped"
+            for file in directory.iterdir():
+                file.unlink()
+            directory.rmdir()  # A live Windows cwd would still hold this directory open.
+    finally:
+        if child.poll() is None:
+            child.terminate()
+        child.wait(timeout=5)
