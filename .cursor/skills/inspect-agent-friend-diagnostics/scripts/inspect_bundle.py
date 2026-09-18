@@ -27,11 +27,14 @@ CAPABILITY_HANDLERS = {
     "selected-sessions-v1": "sessions",
     "selected-sessions-v2": "sessions",
     "selected-sessions-v3": "sessions",
+    "selected-sessions-v4": "sessions",
     "sandbox-incidents-v1": "sandboxIncidents",
     "sandbox-incidents-v2": "sandboxIncidents",
     "model-catalog-v1": "modelCatalog",
     "bounded-log-tail-v1": "logs",
+    "full-retained-logs-v1": "logs",
     "attachment-integrity-v1": "attachments",
+    "attachment-integrity-v2": "attachments",
     "windows-shell-history-v1": "windowsShell",
     "webview2-process-health-v1": "webView2",
     "webview2-render-evidence-v1": "webView2RenderEvidence",
@@ -42,6 +45,7 @@ CAPABILITY_HANDLERS = {
     "managed-execution-environment-v1": "executionEnvironments",
     "command-runtime-health-v1": "commandRuntime",
     "pet-input-evidence-v1": "petInputEvidence",
+    "pet-input-evidence-v2": "petInputEvidence",
     "pet-render-evidence-v1": "petRenderEvidence",
 }
 
@@ -77,6 +81,7 @@ PET_INPUT_GAPS = {
     "metadata-folded",
     "clock-uncertain",
     "unclosed-process",
+    "historical-metadata-unavailable",
 }
 PET_INPUT_COUNTERS = (
     "dropped",
@@ -123,12 +128,12 @@ def safe_entry_name(name: str) -> bool:
     return not path.is_absolute() and all(part not in ("", ".", "..") for part in path.parts)
 
 
-def read_json(archive: zipfile.ZipFile, name: str) -> Any:
+def read_json(archive: zipfile.ZipFile, name: str, *, uncapped: bool = False) -> Any:
     try:
         info = archive.getinfo(name)
     except KeyError as error:
         raise BundleError(f"missing required entry: {name}") from error
-    if info.file_size > MAX_JSON_BYTES:
+    if not uncapped and info.file_size > MAX_JSON_BYTES:
         raise BundleError(f"JSON entry exceeds {MAX_JSON_BYTES} bytes: {name}")
     try:
         with archive.open(info, "r") as stream:
@@ -752,7 +757,9 @@ def summarize_pet_input(
     names = set(archive.namelist())
     entries = sorted(name for name in names if name.startswith(PET_INPUT_PREFIX))
     capabilities = manifest.get("capabilities")
-    declared = isinstance(capabilities, list) and "pet-input-evidence-v1" in capabilities
+    declared = isinstance(capabilities, list) and bool(
+        {"pet-input-evidence-v1", "pet-input-evidence-v2"}.intersection(capabilities)
+    )
     if not declared and not entries and "petInputEvidence" not in manifest:
         return {"evidence": "not-collected"}
     if PET_INPUT_COVERAGE not in names:
@@ -1259,6 +1266,15 @@ def summarize_session_coverage(value: Any) -> dict[str, Any]:
         result[key] = raw if type(raw) is int and raw >= 0 else None
     result["completeWithinRequestedRange"] = value.get("completeWithinRequestedRange") is True
     result["earlierHistoryOmitted"] = value.get("earlierHistoryOmitted") is True
+    limits = value.get("limits")
+    result["byteLimitsRemoved"] = (
+        value.get("schemaVersion") == 2
+        and isinstance(limits, dict)
+        and all(
+            key in limits and limits[key] is None
+            for key in ("scanBytes", "eventBytes", "exportBytes")
+        )
+    )
     result["gapCount"] = len(value["gaps"]) if isinstance(value.get("gaps"), list) else 0
     return result
 
@@ -1535,14 +1551,21 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             name for name in names if name.startswith("sessions/") and name.endswith(".json")
         ):
             try:
-                sessions.append(summarize_session(read_json(archive, name), name))
+                sessions.append(
+                    summarize_session(
+                        read_json(archive, name, uncapped="selected-sessions-v4" in capabilities),
+                        name,
+                    )
+                )
             except BundleError as error:
                 sessions.append({"entry": name, "error": str(error)})
-        if "selected-sessions-v3" in capabilities:
+        if {"selected-sessions-v3", "selected-sessions-v4"}.intersection(capabilities):
             for item in sessions:
                 if item.get("coverage", {}).get("evidence") != "collected":
                     warnings.append(f"selected-sessions-v3 coverage unavailable: {item['entry']}")
-        if {"selected-sessions-v2", "selected-sessions-v3"}.intersection(capabilities):
+        if {"selected-sessions-v2", "selected-sessions-v3", "selected-sessions-v4"}.intersection(
+            capabilities
+        ):
             leaked_reasoning_entries = [
                 item["entry"]
                 for item in sessions

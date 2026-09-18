@@ -66,8 +66,8 @@ The generator does not upload the bundle or intentionally call an external provi
 | `diagnostics/pet-input/history-NNN.jsonl` | Bounded default input-chain state history with per-segment identity | No continuous mouse trajectory; an event is an observation, not a total cross-process order |
 | `diagnostics/pet-input/incident-NNN.json` | Independently retained input signal with bounded context and recovery evidence | Signals are not root-cause verdicts; healthy history does not replace retained incidents |
 | `sessions/session-NNN.json` | Selected session projection with ordered events | Complete private content may be present; `active_events` is removed; `selected-sessions-v2` replaces provider reasoning payloads with content-free summaries |
-| `logs/<allowlisted-name>` | Bounded log content after redaction | Per file 5 MiB tail; total 20 MiB |
-| `attachments/NNN-<name>` | Optional verified attachment original | Total originals capped at 200 MiB |
+| `logs/<allowlisted-name>` | Complete retained log prefix after redaction | No export byte cap with `full-retained-logs-v1`; old tail capability: 5 MiB/file, 20 MiB total |
+| `attachments/NNN-<name>` | Optional verified attachment original | No export byte cap with `attachment-integrity-v2`; v1 capped at 200 MiB |
 
 ## Manifest Semantics
 
@@ -81,7 +81,7 @@ The generator does not upload the bundle or intentionally call an external provi
 - `excluded`: currently calls out the memory database, persona assets, raw settings, full environment, and unselected sessions.
 - `logs[].tailStartOffset > 0`: earlier log content is absent. Absence before that offset is not evidence.
 - `logs[].includedBytes` is measured after text decoding/redaction and may differ from the raw byte span.
-- Attachment summary reports requested originals, item count, estimated/included/skipped/failed bytes, and the 200 MiB cap.
+- Attachment summary reports requested originals, item count, estimated/included/skipped/failed bytes, and `maxOriginalBytes` (`null` means no export cap; older v1 uses 200 MiB).
 - `windowsShell.supported` distinguishes platform support; `artifacts` names the shell entries expected in the archive; `failureCount` reports collection/export failures.
 - `diagnostics/webview2.json` records up to 128 `ProcessFailed`, `BrowserProcessExited`, and pet page-visibility events. A nonzero `droppedEventCount` means earlier events were evicted. Empty events prove only that registered handlers observed no failure; inspect `registeredWindows` and `registrationFailures` before treating the absence as evidence.
 - `renderEvidence.includeRequested` remains the second consent boundary for manual captures. `automaticIncidentIncluded` means the latest bounded display- or GPU-recovery incident was included by the user's diagnostic-bundle export without a separate checkbox. `pendingCapture` means a local capture existed; `artifacts` lists only screenshots actually included. Missing referenced screenshots, hash/size mismatch, partial capture errors, or a large `startDeltaMs` are explicit evidence gaps.
@@ -100,7 +100,11 @@ History is persisted as a bounded 64 KiB JSON snapshot under the canonical log d
 
 ## Session Evidence
 
-`selected-sessions-v3` adds a bounded diagnostic projection. The default is the
+`selected-sessions-v4` removes scan, individual event and projected-output byte caps for both recent and all-turn exports. The desktop defaults to all turns; explicit recent-range selection still applies. Coverage schema 2 reports null `scanBytes`, `eventBytes` and `exportBytes` limits. A frozen persisted prefix bounds each export in time, not size. Corrupt records or concurrent truncation still produce explicit gaps; raw internal snapshot bodies and provider reasoning remain excluded. Full log export streams redacted data through owned temporary files and uses ZIP64; original attachments remain opt-in and integrity checked. No export cap can recover records already deleted by runtime retention.
+
+`pet-input-evidence-v2` reports an inherited `metadataUnavailable` flag as a `historical-metadata-unavailable` coverage gap, without counting it as a current export failure. Actual read/parse/write failures still make the export partial. Never interpret a complete export as complete historical observation.
+
+Older `selected-sessions-v3` adds a bounded diagnostic projection. The default is the
 latest 10 effective user/system-trigger turns per selected session; `all` requests
 all turns subject to the same byte guards. An ongoing turn includes only its
 persisted prefix. `coverage` records requested/included turns, source offsets,

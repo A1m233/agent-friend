@@ -47,7 +47,7 @@ export function FeedbackDiagnosticsPanel({
   const [description, setDescription] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [generating, setGenerating] = useState(false);
-  const [allTurns, setAllTurns] = useState(false);
+  const [allTurns, setAllTurns] = useState(true);
   const [turnLimit, setTurnLimit] = useState("10");
   const validTurnLimit = /^\d+$/.test(turnLimit) && Number(turnLimit) >= 1 && Number(turnLimit) <= 100;
   const [includeAttachmentOriginals, setIncludeAttachmentOriginals] = useState(false);
@@ -272,7 +272,7 @@ export function FeedbackDiagnosticsPanel({
             )}
           </div>
         </ScrollArea>
-        <p className="text-xs text-muted">已选择 {selectedIds.size} 个会话，最多 20 个。</p>
+        <p className="text-xs text-muted">已选择 {selectedIds.size} 个会话。</p>
       </SettingsGroup>
 
       <PetRenderEvidencePanel />
@@ -427,7 +427,7 @@ export function FeedbackDiagnosticsPanel({
               <p role="alert" className="text-xs text-danger">请输入 1～100 的整数。</p>
             ) : null}
             <p className="text-xs text-muted">
-              默认最近 10 轮，包含正在进行一轮已保存的内容。沙箱故障现场独立采集；超大内容受限时会在结果中说明。
+              默认采集全部已保存轮次，不按体积截断；也可取消勾选，仅采集最近指定轮数。内部快照正文和模型私有推理仍会过滤，历史已删除的记录无法补回。
             </p>
           </div>
         ) : null}
@@ -442,7 +442,7 @@ export function FeedbackDiagnosticsPanel({
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-medium text-fg">包含相关原始附件</span>
               <span className="mt-1 block text-xs text-muted">
-                默认不包含。开启后仅收集本次采集轮次引用的附件原件，可能包含私人图片和文档，并会增大诊断包；原件合计最多 200MB。
+                默认不包含。开启后仅收集本次采集轮次引用的附件原件，可能包含私人图片和文档，并会增大诊断包，不设导出体积上限。
               </span>
             </span>
           </label>
@@ -454,7 +454,7 @@ export function FeedbackDiagnosticsPanel({
           </div>
           <Button
             loading={generating}
-            disabled={selectedIds.size > 20 || (selectedIds.size > 0 && !allTurns && !validTurnLimit)}
+            disabled={selectedIds.size > 0 && !allTurns && !validTurnLimit}
             onClick={() => void generate()}
           >
             生成诊断包

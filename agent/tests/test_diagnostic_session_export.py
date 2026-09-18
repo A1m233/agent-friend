@@ -116,13 +116,38 @@ def test_recent_read_cost_independent_of_old_history() -> None:
         assert result["coverage"]["eventBytes"] < 1000
 
 
-def test_large_record_and_budget_produce_explicit_gaps(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(export, "MAX_EVENT_BYTES", 512)
+def test_large_records_and_total_output_are_not_truncated() -> None:
+    content = "x" * (5 * 1024 * 1024)
     result = collect(
-        [event("session_meta", "meta"), event("user_message", "large", content="x" * 2000)]
+        [event("session_meta", "meta"), event("user_message", "u")]
+        + [event("tool_call_result", str(i), content=content) for i in range(4)],
+        None,
     )
-    assert not result["coverage"]["completeWithinRequestedRange"]
-    assert "oversized_event_boundary_unknown" in result["coverage"]["gaps"]
+    assert result["coverage"]["completeWithinRequestedRange"]
+    assert result["coverage"]["eventBytes"] > 16 * 1024 * 1024
+    assert all(e["payload"]["content"] == content for e in result["events"][2:])
+    assert result["coverage"]["limits"] == {
+        "scanBytes": None,
+        "eventBytes": None,
+        "exportBytes": None,
+    }
+
+
+@pytest.mark.parametrize("limit", [None, 100])
+def test_internal_snapshots_do_not_exhaust_scan_before_requested_turns(limit: int | None) -> None:
+    # Reproduce a long session where internal records consume the old 64 MiB budget.
+    result = collect(
+        [event("session_meta", "meta"), event("user_message", "first")]
+        + [event("rollout_commit", str(i), transcript="x" * (1024 * 1024)) for i in range(65)]
+        + [event("user_message", "last"), event("assistant_message", "answer")],
+        limit,
+    )
+    assert result["coverage"]["readBytes"] > 64 * 1024 * 1024
+    assert result["coverage"]["includedTurns"] == 2
+    assert result["coverage"]["completeWithinRequestedRange"]
+    assert result["coverage"]["gaps"] == []
+    assert result["events"][1]["uuid"] == "first"
+    assert result["coverage"]["internalSnapshotCount"] == 65
 
 
 def test_damaged_tail_does_not_invent_complete_turn_count() -> None:

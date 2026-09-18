@@ -49,7 +49,7 @@ export function generateDiagnosticBundle(
     request: {
       description: input.description || null,
       sessionIds: input.sessionIds,
-      sessionTurnLimit: input.sessionTurnLimit === undefined ? 10 : input.sessionTurnLimit,
+      sessionTurnLimit: input.sessionTurnLimit ?? null,
       locale: navigator.language || null,
       timezone: resolved.timeZone || null,
       includeAttachmentOriginals: input.includeAttachmentOriginals ?? false,
