@@ -26,6 +26,8 @@ from uuid import uuid4
 
 import pytest
 from agent.context import (
+    ContextBaseOverBudgetError,
+    ContextCompactionUnavailableError,
     ContextInputTooLargeError,
     RuntimeContext,
     SummarizingContextManager,
@@ -58,9 +60,11 @@ from agent import (
 )
 from llm_providers import (
     LLMContextWindowError,
+    LLMNetworkError,
     LLMResponseDiagnostics,
     LLMStreamEvent,
     LLMTextDelta,
+    LLMTransientProviderError,
     LLMTurnDone,
     LLMUnsupportedParameterError,
     LLMUsage,
@@ -598,6 +602,66 @@ def test_empty_summary_counts_as_failure() -> None:
     assert result.notes["fell_back"] is True
     assert result.notes["fallback_reason"] == "empty_summary"
     assert result.new_compaction is None
+
+
+@pytest.mark.parametrize("failure", [LLMNetworkError("offline"), LLMTransientProviderError("502")])
+def test_summary_outage_with_exhausted_fifo_keeps_recoverable_cause(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    llm = _FakeLLM()
+
+    def unavailable(request: ModelRequest) -> ModelResponse:
+        llm.complete_calls += 1
+        raise failure
+
+    monkeypatch.setattr(llm, "generate", unavailable)
+    cm = SummarizingContextManager(max_failures=1)
+    history = [
+        *_turns(6, 100),
+        _m("user", "continue", "current"),
+        _m("assistant", "x" * 5000, "current-answer"),
+    ]
+    original = [(m.uuid, m.content) for m in history]
+    # Real FIFO cannot discard the in-progress last turn. Repeated explicit
+    # attempts must still reach the summary service, even past the breaker limit.
+    for attempt in range(1, 3):
+        with pytest.raises(ContextCompactionUnavailableError) as caught:
+            cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(llm, 2000))
+        assert caught.value.__cause__ is failure
+        assert llm.complete_calls == attempt
+    assert [(m.uuid, m.content) for m in history] == original
+
+
+def test_summary_outage_can_still_use_fifo(monkeypatch: pytest.MonkeyPatch) -> None:
+    llm = _FakeLLM()
+
+    def unavailable(request: ModelRequest) -> ModelResponse:
+        llm.complete_calls += 1
+        raise LLMTransientProviderError("502")
+
+    monkeypatch.setattr(llm, "generate", unavailable)
+    cm = SummarizingContextManager(max_failures=1)
+    history = _turns(6, 100)
+    result = cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(llm, 1000))
+    assert result.notes["fell_back"] is True
+    assert result.notes["fallback_reason"] == "llm_error"
+    assert result.notes["circuit_tripped"] is True
+    assert result.new_compaction is None
+    cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(llm, 1000))
+    assert llm.complete_calls == 1
+
+
+def test_summary_outage_does_not_hide_base_budget_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    llm = _FakeLLM()
+
+    def unavailable(request: ModelRequest) -> ModelResponse:
+        raise LLMTransientProviderError("502")
+
+    monkeypatch.setattr(llm, "generate", unavailable)
+    with pytest.raises(ContextBaseOverBudgetError):
+        SummarizingContextManager().build_messages(
+            history=_turns(6, 100), system_prompt="x" * 5000, runtime=_runtime(llm, 2000)
+        )
 
 
 def test_summary_context_error_retries_with_smaller_complete_turn_source() -> None:

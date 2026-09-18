@@ -29,6 +29,8 @@ from uuid import uuid4
 
 from llm_providers import (
     LLMContextWindowError,
+    LLMNetworkError,
+    LLMTransientProviderError,
     LLMUnsupportedParameterError,
     ModelCallControl,
     ModelCallTraceContext,
@@ -40,6 +42,11 @@ from ..attachments import AttachmentError, AttachmentRef
 from ..messages import Message
 from .budget import estimate_request_tokens, estimate_tokens
 from .checkpoints import checkpoint_prefix_digest, summary_message
+from .errors import (
+    ContextBaseOverBudgetError,
+    ContextCompactionUnavailableError,
+    ContextInputTooLargeError,
+)
 from .fifo import FifoContextManager
 from .protocol import (
     BuildResult,
@@ -360,6 +367,20 @@ class SummarizingContextManager:
                 return self._fallback_result(
                     history, parts, runtime, reason="unsupported_model_parameter"
                 )
+            except (LLMNetworkError, LLMTransientProviderError) as exc:
+                runtime.check_cancelled()
+                try:
+                    return self._on_failure(history, parts, runtime, reason="llm_error")
+                except ContextBaseOverBudgetError:
+                    # Fixed configuration cannot be repaired by retrying a summary.
+                    raise
+                except ContextInputTooLargeError:
+                    # A breaker may bypass summarization only when fallback works.
+                    # Let a later explicit retry attempt the unavailable service again.
+                    self._tripped = False
+                    raise ContextCompactionUnavailableError(
+                        "会话压缩暂时失败，本地裁剪也无法安全继续，请稍后重试。"
+                    ) from exc
             except Exception:
                 runtime.check_cancelled()
                 return self._on_failure(history, parts, runtime, reason="llm_error")

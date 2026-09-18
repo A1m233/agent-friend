@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from agent import (
     AttachmentError,
     ContextBaseOverBudgetError,
+    ContextCompactionUnavailableError,
     ContextInputTooLargeError,
     MalformedToolCallError,
 )
@@ -292,6 +293,19 @@ def test_budget_failures_keep_specific_protocol_codes(exc: Exception, code: str)
 
     assert error.code == code
     assert error.http_status in {400, 502}
+
+
+def test_compaction_unavailable_is_retryable_and_sanitized() -> None:
+    error = map_exception(ContextCompactionUnavailableError("private provider detail"))
+
+    assert error.http_status == 503
+    assert error.code == "context_compaction_unavailable"
+    assert error.recoverable is True
+    assert "会话压缩" in error.message
+    assert "稍后重试" in error.message
+    assert "private provider detail" not in error.message
+    assert "减少附件" not in error.message
+    assert error.sanitize_failed_model_call is False
 
 
 def test_post_output_stream_interruption_keeps_specific_protocol_code() -> None:
