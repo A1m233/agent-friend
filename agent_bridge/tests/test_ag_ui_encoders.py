@@ -18,6 +18,7 @@ from agent import (
     AssistantMessageStart,
     AssistantPhaseStatus,
     ContextCompactionStatus,
+    ContextCompactionUnavailableError,
     Conversation,
     ConversationEvent,
     MalformedToolCallError,
@@ -360,6 +361,33 @@ def test_encode_stream_exposes_malformed_tool_call_as_honest_run_error() -> None
     assert b"RUN_ERROR" in body
     assert b"malformed_tool_call" in body
     assert "工具没有执行，也没有发起授权".encode() in body
+    assert b"RUN_FINISHED" not in body
+
+
+def test_encode_stream_reports_compaction_outage_without_claiming_success() -> None:
+    request = RunRequest(event=UserEvent(session_id="session-a", user_input="continue"))
+    handle = RunHandle(request)
+    assert handle.mark_running()
+    assert handle.finish_once(
+        RunOutcome.FAILED,
+        reason_code="executor_error",
+        error=ContextCompactionUnavailableError("private provider detail"),
+    )
+    body = b"".join(
+        encode_stream(
+            lambda: cast(Conversation, _ConversationStub()),
+            "continue",
+            thread_id="session-a",
+            run_id=request.run_id,
+            accept="text/event-stream",
+            run_handle=handle,
+        )
+    )
+    assert b"RUN_ERROR" in body
+    assert b"context_compaction_unavailable" in body
+    assert "会话压缩暂时失败".encode() in body
+    assert b"turn_input_too_large" not in body
+    assert b"private provider detail" not in body
     assert b"RUN_FINISHED" not in body
 
 

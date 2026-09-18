@@ -23,6 +23,7 @@ from agent.runtime import SessionBusyError
 from agent import (
     AttachmentError,
     ContextBaseOverBudgetError,
+    ContextCompactionUnavailableError,
     ContextInputTooLargeError,
     MalformedToolCallError,
     PersonaAmbiguousError,
@@ -130,6 +131,13 @@ def map_exception(exc: BaseException) -> ProtocolError:
             http_status=503,
             code="credential_missing",
             message="模型凭据尚未配置，请先在设置中完成配置。",
+            recoverable=True,
+        )
+    if isinstance(exc, ContextCompactionUnavailableError):
+        return ProtocolError(
+            http_status=503,
+            code=exc.code,
+            message="会话压缩暂时失败，暂时无法继续这轮任务。请稍后重试。",
             recoverable=True,
         )
     if isinstance(exc, ContextBaseOverBudgetError):

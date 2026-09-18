@@ -30,7 +30,11 @@ from .checkpoints import (
     PriorSummaryResolution,
     resolve_prior_summary,
 )
-from .errors import ContextBaseOverBudgetError, ContextInputTooLargeError
+from .errors import (
+    ContextBaseOverBudgetError,
+    ContextCompactionUnavailableError,
+    ContextInputTooLargeError,
+)
 from .fifo import RECENT_PROTECT_TURNS, FifoContextManager
 from .naive import NaiveContextManager
 from .protocol import (
@@ -77,6 +81,7 @@ __all__ = [
     "CompactionRecord",
     "ContextBaseOverBudgetError",
     "ContextCompactionProgress",
+    "ContextCompactionUnavailableError",
     "ContextInputTooLargeError",
     "ContextManager",
     "FifoContextManager",
