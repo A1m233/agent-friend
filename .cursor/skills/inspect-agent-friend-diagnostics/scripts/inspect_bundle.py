@@ -28,6 +28,7 @@ CAPABILITY_HANDLERS = {
     "selected-sessions-v2": "sessions",
     "selected-sessions-v3": "sessions",
     "sandbox-incidents-v1": "sandboxIncidents",
+    "sandbox-incidents-v2": "sandboxIncidents",
     "model-catalog-v1": "modelCatalog",
     "bounded-log-tail-v1": "logs",
     "attachment-integrity-v1": "attachments",
@@ -1273,6 +1274,10 @@ def summarize_sandbox_incidents(value: Any) -> dict[str, Any]:
     stages: Counter[str] = Counter()
     invalid = 0
     related = 0
+    log_signals: Counter[str] = Counter()
+    log_scopes: Counter[str] = Counter()
+    log_window_count = 0
+    log_gap_count = 0
     for record in records[:32]:
         if not isinstance(record, dict) or record.get("schemaVersion") != 1:
             invalid += 1
@@ -1285,6 +1290,42 @@ def summarize_sandbox_incidents(value: Any) -> dict[str, Any]:
             else "unknown"
         ] += 1
         related += bool(record.get("relatedIncidents"))
+        window = record.get("logWindow")
+        if isinstance(window, dict):
+            log_window_count += 1
+            gaps = window.get("gaps")
+            log_gap_count += len(gaps) if isinstance(gaps, list) else 0
+            sources = window.get("records")
+            if not isinstance(sources, list):
+                invalid += 1
+                sources = []
+            for source in sources[:2]:
+                if not isinstance(source, dict):
+                    invalid += 1
+                    continue
+                scope = source.get("scope")
+                log_scopes[scope if scope in ("appended", "unattributed_tail") else "unknown"] += 1
+                events = source.get("events")
+                if not isinstance(events, list):
+                    invalid += 1
+                    continue
+                for event in events[:64]:
+                    signal = event.get("signal") if isinstance(event, dict) else None
+                    if isinstance(signal, str) and signal in {
+                        "setup_users_missing_or_incompatible",
+                        "setup_marker_missing_or_incompatible",
+                        "setup_firewall_settings_changed",
+                        "users_delete_after_login_failure",
+                        "refresh_spawn_requested",
+                        "refresh_exit_failed",
+                        "refresh_launch_failed",
+                        "report_clear_before_failed",
+                        "report_clear_after_failed",
+                        "marker_parse_failed",
+                    }:
+                        log_signals[signal] += 1
+                    else:
+                        invalid += 1
         error = record.get("error")
         if isinstance(error, dict) and isinstance(error.get("codes"), list):
             for code in error.get("codes", []):
@@ -1326,6 +1367,10 @@ def summarize_sandbox_incidents(value: Any) -> dict[str, Any]:
         "stages": dict(stages),
         "codes": dict(errors),
         "repairLinkCount": related,
+        "logWindowCount": log_window_count,
+        "logSignals": dict(log_signals),
+        "logScopes": dict(log_scopes),
+        "logGapCount": log_gap_count,
         "invalidCount": invalid,
         "gapCount": len(value["gaps"]) if isinstance(value.get("gaps"), list) else 0,
     }
@@ -1662,7 +1707,7 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             ),
             "sandboxIncidents": summarize_sandbox_incidents(
                 optional_json(archive, "diagnostics/command-runtime-incidents.json", warnings)
-                if "sandbox-incidents-v1" in capabilities
+                if {"sandbox-incidents-v1", "sandbox-incidents-v2"}.intersection(capabilities)
                 or "diagnostics/command-runtime-incidents.json" in names
                 else None
             ),

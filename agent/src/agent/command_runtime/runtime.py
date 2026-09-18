@@ -692,50 +692,60 @@ class CommandRuntime:
         if not system_root:
             raise CommandRuntimeError("windows_sandbox_probe_failed", "无法定位系统命令解释器。")
         self._execution_root.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="sandbox-probe-", dir=self._execution_root) as tmp:
-            workdir = Path(tmp)
-            process = self.start_process(
-                argv=(
-                    str(Path(system_root) / "System32" / "cmd.exe"),
-                    "/D",
-                    "/C",
-                    "echo agent-friend-sandbox-ready",
-                ),
-                workdir=workdir,
-                env=self._windows_setup_env(),
-                mode="buffered",
-                session_id="sandbox-setup",
-                run_id="sandbox-probe",
-                tool_call_id="sandbox-probe",
-                sandbox=sandbox_context(
-                    workdir=workdir, writable=True, additional_roots=(), network_enabled=False
-                ),
-                _setup_probe=True,
-            )
-            result = self.wait(
-                process.process_id,
-                session_id="sandbox-setup",
-                run_id="sandbox-probe",
-                timeout_seconds=15,
-            )
-            if not result.terminal():
-                with suppress(CommandRuntimeError):
-                    self.terminate(
-                        process.process_id,
-                        session_id="sandbox-setup",
-                        run_id="sandbox-probe",
-                        reason="timeout",
-                    )
-            if (
-                not result.terminal()
-                or result.exit_code != 0
-                or b"agent-friend-sandbox-ready" not in result.stdout_tail
-            ):
-                self._diagnostics.record("probe", "failed")
-                raise CommandRuntimeError(
-                    "windows_sandbox_probe_failed",
-                    "沙箱实际执行验证失败，请导出诊断并修复后重新发起命令。",
+        for writable in (True, False):
+            with tempfile.TemporaryDirectory(
+                prefix="sandbox-probe-", dir=self._execution_root
+            ) as tmp:
+                workdir = Path(tmp)
+                # Exercise the same filesystem-helper boundary as a default read-only
+                # command, before accepting process execution as proof of recovery.
+                probe_sandbox = sandbox_context(
+                    workdir=workdir, writable=writable, additional_roots=(), network_enabled=False
                 )
+                if not writable:
+                    self.prepare_owned_read_only_workdir(
+                        workdir, probe_sandbox, operation_id="sandbox-probe"
+                    )
+                process = self.start_process(
+                    argv=(
+                        str(Path(system_root) / "System32" / "cmd.exe"),
+                        "/D",
+                        "/C",
+                        "echo agent-friend-sandbox-ready",
+                    ),
+                    workdir=workdir,
+                    env=self._windows_setup_env(),
+                    mode="buffered",
+                    session_id="sandbox-setup",
+                    run_id="sandbox-probe",
+                    tool_call_id="sandbox-probe",
+                    sandbox=probe_sandbox,
+                    _setup_probe=True,
+                )
+                result = self.wait(
+                    process.process_id,
+                    session_id="sandbox-setup",
+                    run_id="sandbox-probe",
+                    timeout_seconds=15,
+                )
+                if not result.terminal():
+                    with suppress(CommandRuntimeError):
+                        self.terminate(
+                            process.process_id,
+                            session_id="sandbox-setup",
+                            run_id="sandbox-probe",
+                            reason="timeout",
+                        )
+                if (
+                    not result.terminal()
+                    or result.exit_code != 0
+                    or b"agent-friend-sandbox-ready" not in result.stdout_tail
+                ):
+                    self._diagnostics.record("probe", "failed")
+                    raise CommandRuntimeError(
+                        "windows_sandbox_probe_failed",
+                        "沙箱实际执行验证失败，请导出诊断并修复后重新发起命令。",
+                    )
         self._diagnostics.record("probe", "ok")
 
     def _record_sandbox_failure(self, stage: str, detail: str, *, operation: str = "") -> None:

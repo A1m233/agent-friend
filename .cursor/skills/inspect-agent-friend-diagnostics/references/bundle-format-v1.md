@@ -127,6 +127,24 @@ secrets, arbitrary error text, commands or helper logs are exported in this fami
 An in-progress record after restart means the final result was not retained; it
 does not prove setup failed. Durability is limited to persisted records.
 
+`sandbox-incidents-v2` keeps v1 records readable and adds `logWindow` to newly
+completed records. At operation start the observer captures private file offsets;
+at completion it reads up to 64 KiB per file from at most two logs and exports
+only fixed signals, byte offsets and native codes (at most 64 events per file).
+`appended` means bytes appended to a matching baseline file, not unique operation
+attribution: other processes can share the log. `unattributed_tail` means a new
+or replaced file with no usable baseline. Preserve byte/event limits, partial
+lines, missing baselines and read failures; absence of a signal is not proof
+that a branch did not execute. Old retained incidents can lack `logWindow`.
+Setup reasons distinguish missing/incompatible users, missing/incompatible
+markers and offline firewall settings changes. Upstream deletion-after-login
+failure is debug-only; normal logging may omit it, and the product does not
+enable debug logging for this collector. A deletion signal describes an attempt,
+not a successful delete. No raw lines, paths, usernames, ports or arguments are
+exported. The repair probe now tests writable execution followed by fresh
+read-only directory preparation and read-only execution; success covers these
+probes only, not every future command or automatic recovery.
+
 Session files normally contain `session_id`, title, model, persona, and ordered `events`. Common event types include:
 
 - `session_meta`: initial model/persona/title/schema context;
