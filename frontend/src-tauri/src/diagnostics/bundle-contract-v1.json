@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 15,
+  "schemaRevision": 16,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -31,17 +31,25 @@
     {
       "id": "desktop-application-launch-v1",
       "manifestFields": [],
-      "requiredEntries": ["diagnostics/desktop-applications.json"],
-      "entryPatterns": ["diagnostics/desktop-applications.json"]
+      "requiredEntries": [
+        "diagnostics/desktop-applications.json"
+      ],
+      "entryPatterns": [
+        "diagnostics/desktop-applications.json"
+      ]
     },
     {
       "id": "sandbox-incidents-v2",
       "manifestFields": [],
-      "requiredEntries": ["diagnostics/command-runtime-incidents.json"],
-      "entryPatterns": ["diagnostics/command-runtime-incidents.json"]
+      "requiredEntries": [
+        "diagnostics/command-runtime-incidents.json"
+      ],
+      "entryPatterns": [
+        "diagnostics/command-runtime-incidents.json"
+      ]
     },
     {
-      "id": "selected-sessions-v3",
+      "id": "selected-sessions-v4",
       "manifestFields": [
         "requestedSessionIds",
         "includedSessionIds"
@@ -60,7 +68,7 @@
       ]
     },
     {
-      "id": "bounded-log-tail-v1",
+      "id": "full-retained-logs-v1",
       "manifestFields": [
         "logLimits",
         "logs"
@@ -71,7 +79,7 @@
       ]
     },
     {
-      "id": "attachment-integrity-v1",
+      "id": "attachment-integrity-v2",
       "manifestFields": [
         "attachments"
       ],
@@ -148,7 +156,7 @@
       ]
     },
     {
-      "id": "pet-input-evidence-v1",
+      "id": "pet-input-evidence-v2",
       "manifestFields": [
         "petInputEvidence"
       ],

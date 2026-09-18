@@ -286,7 +286,7 @@ def _build_bundle(
         "includedBytes": 0,
         "skippedBytes": 0,
         "failedBytes": 0,
-        "maxOriginalBytes": 200 * 1024 * 1024,
+        "maxOriginalBytes": None,
     }
     pet_coverage, pet_entries = _pet_input_fixture()
     manifest = {
@@ -304,8 +304,8 @@ def _build_bundle(
         "failures": [],
         "excluded": [],
         "logLimits": {
-            "maxBytesPerFile": 5 * 1024 * 1024,
-            "maxBytesTotal": 20 * 1024 * 1024,
+            "maxBytesPerFile": None,
+            "maxBytesTotal": None,
         },
         "logs": [
             {
@@ -664,9 +664,10 @@ def _build_bundle(
         "sessions/session-001.json": {
             "session_id": "session-1",
             "coverage": {
-                "schemaVersion": 1,
-                "mode": "recent",
-                "requestedTurns": 10,
+                "schemaVersion": 2,
+                "mode": "all",
+                "requestedTurns": None,
+                "limits": {"scanBytes": None, "eventBytes": None, "exportBytes": None},
                 "includedTurns": 1,
                 "completeWithinRequestedRange": True,
                 "gaps": [],
@@ -776,6 +777,7 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
     assert summary["executionEnvironments"]["activeOverlayCount"] == 1
     assert summary["executionEnvironments"]["inactiveOverlayCount"] == 2
     assert summary["executionEnvironments"]["validatedPayloadCount"] == 1
+    assert summary["sessions"][0]["coverage"]["byteLimitsRemoved"] is True
     assert summary["sessions"][0]["providerReasoningStateCount"] == 1
     assert summary["sessions"][0]["providerReasoningRedactedCount"] == 1
     assert summary["sessions"][0]["providerReasoningPayloadLeakCount"] == 0
@@ -1461,3 +1463,36 @@ def test_pet_render_missing_artifact_and_older_bundle(tmp_path: Path) -> None:
         pass
     with zipfile.ZipFile(bundle) as archive:
         assert INSPECTOR.summarize_pet_render(archive, {}, []) == {"evidence": "not-collected"}
+
+
+def test_historical_metadata_gap_does_not_mean_current_export_failed(tmp_path: Path) -> None:
+    current = tmp_path / "current.zip"
+    _build_bundle(current, _load_contract())
+    coverage, _ = _pet_input_fixture()
+    coverage["gaps"] = [{"kind": "historical-metadata-unavailable", "scope": "metadata"}]
+    updated = tmp_path / "historical-gap.zip"
+    _rewrite_pet_bundle(current, updated, coverage=coverage)
+    summary = INSPECTOR.inspect_bundle(updated, verify_crc=True)
+    assert summary["warnings"] == []
+    assert summary["manifest"]["outcome"] == "complete"
+    assert summary["petInputEvidence"]["failureCount"] == 0
+    assert summary["petInputEvidence"]["gaps"] == coverage["gaps"]
+
+
+def test_v4_session_reader_accepts_json_larger_than_legacy_guard(tmp_path: Path) -> None:
+    bundle = tmp_path / "large-session.zip"
+    _build_bundle(bundle, _load_contract())
+    # Exercise the actual former 64 MiB consumer guard, not only the producer caps.
+    updated = tmp_path / "large-session-v4.zip"
+    with zipfile.ZipFile(bundle) as src, zipfile.ZipFile(updated, "w") as dst:
+        for info in src.infolist():
+            data = src.read(info)
+            if info.filename == "sessions/session-001.json":
+                value = json.loads(data)
+                value["events"][0]["payload"]["content"] = "x" * (65 * 1024 * 1024)
+                data = json.dumps(value).encode()
+            dst.writestr(info.filename, data)
+    summary = INSPECTOR.inspect_bundle(updated, verify_crc=True)
+    assert summary["warnings"] == []
+    assert summary["sessions"][0]["coverage"]["byteLimitsRemoved"] is True
+    assert "error" not in summary["sessions"][0]

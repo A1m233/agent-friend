@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs::{self, File},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, UNIX_EPOCH},
@@ -19,13 +19,10 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 mod contract;
 mod sandbox_incidents;
+mod staged_log;
 
 const MAX_DESCRIPTION_CHARS: usize = 20_000;
-const MAX_SESSIONS: usize = 20;
-const MAX_LOG_FILE_BYTES: u64 = 5 * 1024 * 1024;
-const MAX_LOG_TOTAL_BYTES: u64 = 20 * 1024 * 1024;
 const PACKAGE_BUILD_METADATA: &str = "package-build.json";
-const MAX_ATTACHMENT_ORIGINAL_TOTAL_BYTES: u64 = 200 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,7 +40,7 @@ pub struct GenerateDiagnosticBundleRequest {
 }
 
 fn default_session_turn_limit() -> Option<u32> {
-    Some(10)
+    None
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -71,6 +68,7 @@ struct ArchiveEntry {
 enum ArchiveEntrySource {
     Bytes(Vec<u8>),
     File(PathBuf),
+    StagedLog(staged_log::StagedLog),
 }
 
 #[derive(Clone)]
@@ -194,9 +192,14 @@ pub async fn generate_diagnostic_bundle(
         response.json::<Value>().await.map_err(|e| e.to_string())
     }
     .await;
+    // Session exports may scan a large persisted snapshot. Do not apply the health-probe timeout.
+    let session_client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("create session diagnostics client failed: {e}"))?;
     let mut session_results = Vec::new();
     for session_id in &session_ids {
-        let client = client.clone();
+        let client = session_client.clone();
         let session_id = session_id.clone();
         let result = async {
             let mut url =
@@ -380,9 +383,8 @@ pub async fn generate_diagnostic_bundle(
                     failures.push(CollectionFailure {
                         collection: "session-range".into(),
                         item: Some(session_id.clone()),
-                        message:
-                            "会话采集达到体积上限或存在记录缺口，已保留可用内容；详见 coverage。"
-                                .into(),
+                        message: "会话记录存在读取或格式缺口，已保留可用内容；详见 coverage。"
+                            .into(),
                     });
                 }
                 collect_attachment_candidates(&session_id, &value, &mut attachment_candidates);
@@ -841,7 +843,7 @@ fn collect_attachment_diagnostics(
     let mut items = Vec::new();
     let estimated_bytes = candidates.values().map(|item| item.size_bytes).sum::<u64>();
     let mut included_bytes = 0_u64;
-    let mut skipped_bytes = 0_u64;
+    let skipped_bytes = 0_u64;
     let mut failed_bytes = 0_u64;
 
     for (index, candidate) in candidates.into_values().enumerate() {
@@ -888,11 +890,6 @@ fn collect_attachment_diagnostics(
                 message: "attachment original is missing or failed integrity verification".into(),
             });
             ("failed", None)
-        } else if included_bytes.saturating_add(candidate.size_bytes)
-            > MAX_ATTACHMENT_ORIGINAL_TOTAL_BYTES
-        {
-            skipped_bytes = skipped_bytes.saturating_add(candidate.size_bytes);
-            ("skipped", None)
         } else {
             included_bytes = included_bytes.saturating_add(candidate.size_bytes);
             let name = format!(
@@ -934,7 +931,7 @@ fn collect_attachment_diagnostics(
         "includedBytes": included_bytes,
         "skippedBytes": skipped_bytes,
         "failedBytes": failed_bytes,
-        "maxOriginalBytes": MAX_ATTACHMENT_ORIGINAL_TOTAL_BYTES,
+        "maxOriginalBytes": null,
     });
     AttachmentCollectionResult {
         entries,
@@ -980,9 +977,6 @@ fn normalize_session_ids(session_ids: Vec<String>) -> Result<Vec<String>, String
             continue;
         }
         result.push(session_id);
-    }
-    if result.len() > MAX_SESSIONS {
-        return Err(format!("at most {MAX_SESSIONS} sessions can be exported"));
     }
     Ok(result)
 }
@@ -1047,8 +1041,8 @@ fn build_bundle_manifest(
             "unselected sessions"
         ],
         "logLimits": {
-            "maxBytesPerFile": MAX_LOG_FILE_BYTES,
-            "maxBytesTotal": MAX_LOG_TOTAL_BYTES
+            "maxBytesPerFile": null,
+            "maxBytesTotal": null
         },
         "logs": input.logs,
         "windowsShell": input.windows_shell,
@@ -1105,17 +1099,9 @@ fn collect_logs(
         .collect::<Vec<_>>();
     candidates.sort_by(|a, b| b.0.cmp(&a.0));
 
-    let mut remaining = MAX_LOG_TOTAL_BYTES;
     for (modified, name, path) in candidates {
-        if remaining == 0 {
-            break;
-        }
-        let budget = MAX_LOG_FILE_BYTES.min(remaining);
-        match read_file_tail(&path, budget) {
-            Ok((bytes, tail_start_offset, original_bytes)) => {
-                remaining = remaining.saturating_sub(bytes.len() as u64);
-                let text = String::from_utf8_lossy(&bytes);
-                let (text, _) = redact_text(&text, credentials, home);
+        match staged_log::StagedLog::collect(&path, credentials, home) {
+            Ok(log) => {
                 let entry_name = format!("logs/{}", sanitize_entry_name(&name));
                 result.items.push(LogManifestItem {
                     source: name,
@@ -1124,13 +1110,13 @@ fn collect_logs(
                         .duration_since(UNIX_EPOCH)
                         .ok()
                         .map(|duration| duration.as_secs()),
-                    original_bytes,
-                    tail_start_offset,
-                    included_bytes: text.len(),
+                    original_bytes: log.original_bytes,
+                    tail_start_offset: 0,
+                    included_bytes: log.included_bytes,
                 });
                 result.entries.push(ArchiveEntry {
                     name: entry_name,
-                    source: ArchiveEntrySource::Bytes(text.into_bytes()),
+                    source: ArchiveEntrySource::StagedLog(log),
                 });
             }
             Err(error) => result.failures.push(CollectionFailure {
@@ -1163,17 +1149,6 @@ fn is_allowed_log_name(name: &str) -> bool {
     ]
     .iter()
     .any(|prefix| name == *prefix || name.starts_with(&format!("{prefix}.")))
-}
-
-fn read_file_tail(path: &Path, budget: u64) -> Result<(Vec<u8>, u64, u64), String> {
-    let mut file = File::open(path).map_err(|e| e.to_string())?;
-    let len = file.metadata().map_err(|e| e.to_string())?.len();
-    let start = len.saturating_sub(budget);
-    file.seek(SeekFrom::Start(start))
-        .map_err(|e| e.to_string())?;
-    let mut bytes = Vec::with_capacity((len - start) as usize);
-    file.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-    Ok((bytes, start, len))
 }
 
 fn sanitize_entry_name(name: &str) -> String {
@@ -1360,7 +1335,9 @@ fn write_archive_atomically(
     let write_result = (|| -> Result<(), String> {
         let file = File::create(&part_path).map_err(|e| format!("create ZIP failed: {e}"))?;
         let mut writer = ZipWriter::new(file);
-        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        let options = SimpleFileOptions::default()
+            .compression_method(CompressionMethod::Deflated)
+            .large_file(true);
         for entry in entries {
             writer
                 .start_file(entry.name, options)
@@ -1369,6 +1346,10 @@ fn write_archive_atomically(
                 ArchiveEntrySource::Bytes(bytes) => writer
                     .write_all(&bytes)
                     .map_err(|e| format!("write ZIP entry failed: {e}"))?,
+                ArchiveEntrySource::StagedLog(mut log) => {
+                    std::io::copy(&mut log.file, &mut writer)
+                        .map_err(|e| format!("copy staged log failed: {e}"))?;
+                }
                 ArchiveEntrySource::File(path) => {
                     let mut input =
                         File::open(path).map_err(|e| format!("open ZIP source failed: {e}"))?;
@@ -1641,13 +1622,16 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_and_limits_session_ids() {
+    fn normalizes_session_ids_without_count_cap() {
         assert_eq!(
             normalize_session_ids(vec![" a ".into(), "a".into(), "b".into()]).unwrap(),
             vec!["a", "b"]
         );
-        assert!(
-            normalize_session_ids((0..=MAX_SESSIONS).map(|i| i.to_string()).collect()).is_err()
+        assert_eq!(
+            normalize_session_ids((0..25).map(|i| i.to_string()).collect())
+                .unwrap()
+                .len(),
+            25
         );
     }
 
@@ -1760,15 +1744,6 @@ mod tests {
         assert!(is_allowed_log_name("tauri.log.2026-07-15"));
         assert!(!is_allowed_log_name("settings.json"));
         assert!(!is_allowed_log_name("private-agent_bridge.log"));
-    }
-
-    #[test]
-    fn file_tail_reads_only_the_requested_budget() {
-        let path =
-            std::env::temp_dir().join(format!("agent-friend-log-tail-{}", rand::random::<u64>()));
-        fs::write(&path, b"0123456789").unwrap();
-        assert_eq!(read_file_tail(&path, 4).unwrap(), (b"6789".to_vec(), 6, 10));
-        fs::remove_file(path).unwrap();
     }
 
     #[test]

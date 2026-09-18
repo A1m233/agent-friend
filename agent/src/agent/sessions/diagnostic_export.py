@@ -1,18 +1,14 @@
-"""Bounded diagnostic projection of a pinned JSONL prefix, never an execution load."""
+"""Range-selected diagnostic projection of a pinned JSONL prefix, without byte caps."""
 
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Iterator
 from time import perf_counter
 from typing import Any, BinaryIO
 
 from .events import ROLLOUT_EVENT_TYPES
 
-MAX_SCAN_BYTES = 64 * 1024 * 1024
-MAX_EVENT_BYTES = 4 * 1024 * 1024
-MAX_EXPORT_BYTES = 16 * 1024 * 1024
 CHUNK_BYTES = 64 * 1024
 TURN_TYPES = {"user_message", "system_trigger"}
 SUMMARY_TYPES = ROLLOUT_EVENT_TYPES | {"model_context", "skill_catalog_state"}
@@ -22,10 +18,10 @@ def _reverse_lines(
     source: BinaryIO, length: int, metrics: dict[str, int]
 ) -> Iterator[tuple[int, bytes, bool]]:
     position = length
-    pending = b""
-    oversized = False
-    while position and metrics["readBytes"] < MAX_SCAN_BYTES:
-        size = min(CHUNK_BYTES, position, MAX_SCAN_BYTES - metrics["readBytes"])
+    # Keep fragments separately: concatenating a large record on every chunk is quadratic.
+    pending: list[bytes] = []
+    while position:
+        size = min(CHUNK_BYTES, position)
         position -= size
         source.seek(position)
         chunk = source.read(size)
@@ -34,25 +30,20 @@ def _reverse_lines(
             raise OSError("diagnostic snapshot truncated")
         pieces = chunk.split(b"\n")
         # The rightmost piece continues the partial record from the next chunk.
-        tail = pieces.pop() + pending
-        if len(tail) > MAX_EVENT_BYTES:
-            oversized = True
-            tail = tail[:4096]
+        pending.append(pieces.pop())
         if pieces:
+            tail = b"".join(reversed(pending))
             offset = position + sum(len(p) + 1 for p in pieces)
             if tail.strip():
-                yield offset, tail, oversized
-            oversized = False
+                yield offset, tail, False
             for index in range(len(pieces) - 1, 0, -1):
                 offset -= len(pieces[index]) + 1
                 if pieces[index].strip():
-                    large = len(pieces[index]) > MAX_EVENT_BYTES
-                    yield offset, pieces[index][:4096] if large else pieces[index], large
-            pending = pieces[0]
-        else:
-            pending = tail
-    if position == 0 and pending.strip():
-        yield 0, pending, oversized
+                    yield offset, pieces[index], False
+            pending = [pieces[0]]
+    tail = b"".join(reversed(pending))
+    if tail.strip():
+        yield 0, tail, False
     metrics["scanStart"] = position
 
 
@@ -82,7 +73,7 @@ def export_prefix(source: BinaryIO, length: int, turn_limit: int | None) -> dict
     summary_count = 0
     # Metadata is read independently; no forward full-session projection is created.
     source.seek(0)
-    head = source.readline(CHUNK_BYTES)
+    head = source.readline(length)
     try:
         meta = json.loads(head)
         if (
@@ -95,16 +86,8 @@ def export_prefix(source: BinaryIO, length: int, turn_limit: int | None) -> dict
         meta = None
         gaps.add("metadata_unavailable")
     try:
-        for offset, raw, oversized in _reverse_lines(source, length, metrics):
+        for offset, raw, _ in _reverse_lines(source, length, metrics):
             start_offset = offset
-            if oversized:
-                # Only the canonical top-level prefix can identify an internal snapshot.
-                match = re.match(rb'\s*\{\s*"type"\s*:\s*"([a-z_]+)"', raw)
-                if match and match[1].decode("ascii") in SUMMARY_TYPES:
-                    summary_count += 1
-                    continue
-                gaps.add("oversized_event_boundary_unknown")
-                break
             try:
                 event = json.loads(raw)
                 if (
@@ -130,9 +113,6 @@ def export_prefix(source: BinaryIO, length: int, turn_limit: int | None) -> dict
             if kind in SUMMARY_TYPES:
                 summary_count += 1
             size = len(json.dumps(event, ensure_ascii=False).encode("utf-8"))
-            if total + size > MAX_EXPORT_BYTES:
-                gaps.add("export_byte_limit")
-                break
             total += size
             events.append(event)
             if kind in TURN_TYPES and event.get("uuid") not in inactive:
@@ -143,7 +123,7 @@ def export_prefix(source: BinaryIO, length: int, turn_limit: int | None) -> dict
     except OSError:
         gaps.add("snapshot_truncated")
     if not reached_boundary and not gaps:
-        gaps.add("scan_byte_limit")
+        gaps.add("metadata_unavailable")
     events.reverse()
     if meta is not None:
         events.insert(0, meta)
@@ -152,7 +132,7 @@ def export_prefix(source: BinaryIO, length: int, turn_limit: int | None) -> dict
         "session_id": payload.get("session_id"),
         "events": events,
         "coverage": {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "mode": "all" if turn_limit is None else "recent",
             "requestedTurns": turn_limit,
             "includedTurns": turns,
@@ -170,9 +150,9 @@ def export_prefix(source: BinaryIO, length: int, turn_limit: int | None) -> dict
             "exclusions": ["internal_snapshot_bodies", "provider_reasoning_payloads"],
             "scope": "persisted-prefix; external references are not expanded",
             "limits": {
-                "scanBytes": MAX_SCAN_BYTES,
-                "eventBytes": MAX_EVENT_BYTES,
-                "exportBytes": MAX_EXPORT_BYTES,
+                "scanBytes": None,
+                "eventBytes": None,
+                "exportBytes": None,
             },
         },
     }

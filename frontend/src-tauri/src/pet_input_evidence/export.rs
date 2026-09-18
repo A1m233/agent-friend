@@ -561,8 +561,8 @@ fn finish(
     limits["approvedMaxQueueBytes"] = json!(model::QUEUE_BYTES);
     let mut failures = failures;
     if state["metadataUnavailable"] == true {
-        gaps.push(json!({"kind":"read-failed","scope":"metadata"}));
-        failures.push("pet input evidence previous metadata read-failed".into());
+        // This persisted flag describes an earlier loss, not a failed read in this export.
+        gaps.push(json!({"kind":"historical-metadata-unavailable","scope":"metadata"}));
     }
     if counters
         .get("writeFailed")
@@ -725,5 +725,30 @@ mod tests {
         );
         assert_eq!(remaining, 2);
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod export_status_tests {
+    use super::*;
+
+    #[test]
+    fn historical_metadata_loss_is_a_gap_not_a_current_export_failure() {
+        let result = finish(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            json!({"metadataUnavailable":true,"normalEnd":true,"counters":{}}),
+            Vec::new(),
+            Vec::new(),
+            "available",
+        );
+        assert!(result.failures.is_empty());
+        assert_eq!(result.summary["failureCount"], 0);
+        assert!(result.summary["gaps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|gap| gap["kind"] == "historical-metadata-unavailable"));
     }
 }
