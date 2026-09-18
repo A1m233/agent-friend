@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 14,
+  "schemaRevision": 15,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -35,7 +35,7 @@
       "entryPatterns": ["diagnostics/desktop-applications.json"]
     },
     {
-      "id": "sandbox-incidents-v1",
+      "id": "sandbox-incidents-v2",
       "manifestFields": [],
       "requiredEntries": ["diagnostics/command-runtime-incidents.json"],
       "entryPatterns": ["diagnostics/command-runtime-incidents.json"]

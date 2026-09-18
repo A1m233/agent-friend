@@ -4,6 +4,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -143,6 +144,80 @@ def test_failure_is_retained_until_successful_repair(
     assert not rt.windows_sandbox_ready
     monkeypatch.setattr(rt, "_probe_windows_sandbox", lambda: None)
     assert rt.setup_windows_sandbox()["windows_sandbox_ready"] is True
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows repair probes")
+@pytest.mark.parametrize("failure", [None, "visibility", "read_only", "writable"])
+def test_repair_requires_both_execution_modes_and_filesystem_preparation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str | None
+) -> None:
+    from agent.command_runtime.exec_server import ExecServerError
+
+    exe = tmp_path / "codex.exe"
+    exe.write_bytes(b"fake")
+    root = tmp_path / "home"
+    write_state(root)
+    rt = CommandRuntime(
+        exe,
+        codex_home=root,
+        execution_root=tmp_path / "exec",
+        base_env={"SystemRoot": "C:/Windows"},
+    )
+    monkeypatch.setattr(
+        "agent.command_runtime.runtime.probe_setup_helper", lambda _: {"status": "ready"}
+    )
+    monkeypatch.setattr(rt, "_perform_windows_sandbox_setup", lambda *a, **k: None)
+    rt._record_sandbox_failure("visibility", "orchestrator_helper_launch_canceled")
+    calls: list[str] = []
+    directories: list[Path] = []
+
+    def request(method: str, params: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        assert method == "fs/getMetadata"
+        assert any(
+            e["access"] == "write"
+            for e in params["sandbox"]["permissions"]["file_system"]["entries"]
+        )
+        calls.append("visibility")
+        if failure == "visibility":
+            raise ExecServerError("orchestrator_helper_launch_canceled: launch setup helper: 1223")
+        return {}
+
+    def start(**kwargs: Any) -> SimpleNamespace:
+        entries = kwargs["sandbox"]["permissions"]["file_system"]["entries"]
+        from agent.command_runtime.runtime import path_to_file_uri
+
+        cwd_entry = next(
+            e
+            for e in entries
+            if e.get("path", {}).get("path") == path_to_file_uri(kwargs["workdir"])
+        )
+        mode = "writable" if cwd_entry["access"] == "write" else "read_only"
+        calls.append(mode)
+        directories.append(kwargs["workdir"])
+        return SimpleNamespace(process_id=mode)
+
+    def wait(process_id: str, **kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(
+            terminal=lambda: True,
+            exit_code=1 if failure == process_id else 0,
+            stdout_tail=b"agent-friend-sandbox-ready",
+        )
+
+    monkeypatch.setattr(rt, "_ensure_client", lambda: SimpleNamespace(request=request))
+    monkeypatch.setattr(rt, "start_process", start)
+    monkeypatch.setattr(rt, "wait", wait)
+    if failure:
+        with pytest.raises(CommandRuntimeError):
+            rt.setup_windows_sandbox()
+        assert not rt.windows_sandbox_ready
+        assert not any(
+            e["stage"] == "setup" and e["code"] == "ok" for e in rt.diagnostics()["events"]
+        )
+    else:
+        assert rt.setup_windows_sandbox()["windows_sandbox_ready"] is True
+        assert calls == ["writable", "visibility", "read_only"]
+        assert directories[0] != directories[1]
+    assert all(not p.exists() for p in directories)
 
 
 def test_diagnostics_bound_history_and_never_store_operation_text(tmp_path: Path) -> None:

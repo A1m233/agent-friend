@@ -67,6 +67,19 @@ def test_incident_consumer_is_content_free_and_tolerates_bad_fields() -> None:
                     "stage": [],
                     "error": {"codes": ["helper_private_secret", "orchestrator_helper_incomplete"]},
                     "message": "private secret",
+                    "logWindow": {
+                        "records": [
+                            {
+                                "scope": [],
+                                "events": [
+                                    {"signal": "private secret"},
+                                    {"signal": []},
+                                ],
+                            },
+                            None,
+                        ],
+                        "gaps": ["private secret"],
+                    },
                 }
             ],
             "gaps": None,
@@ -75,6 +88,8 @@ def test_incident_consumer_is_content_free_and_tolerates_bad_fields() -> None:
     assert summary["codes"] == {"orchestrator_helper_incomplete": 1}
     assert "secret" not in json.dumps(summary)
     assert summary["gapCount"] == 0
+    assert summary["logScopes"] == {"unknown": 1}
+    assert summary["logSignals"] == {}
 
 
 def _load_contract() -> dict[str, object]:
@@ -384,6 +399,18 @@ def _build_bundle(
                     "stage": "start",
                     "outcome": "failed",
                     "error": {"codes": ["orchestrator_helper_incomplete"]},
+                    "logWindow": {
+                        "records": [
+                            {
+                                "scope": "appended",
+                                "events": [
+                                    {"signal": "setup_users_missing_or_incompatible", "offset": 10},
+                                    {"signal": "refresh_spawn_requested", "offset": 100},
+                                ],
+                            }
+                        ],
+                        "gaps": ["shared_log_not_operation_bound"],
+                    },
                 }
             ],
             "gaps": [],
@@ -700,6 +727,12 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
     assert summary["warnings"] == []
     assert summary["manifest"]["schemaRevision"] == contract["schemaRevision"]
     assert summary["manifest"]["unhandledCapabilities"] == []
+    assert summary["sandboxIncidents"]["logWindowCount"] == 1
+    assert summary["sandboxIncidents"]["logSignals"] == {
+        "setup_users_missing_or_incompatible": 1,
+        "refresh_spawn_requested": 1,
+    }
+    assert summary["sandboxIncidents"]["logScopes"] == {"appended": 1}
     assert summary["modelCatalog"]["providerCount"] == 1
     assert summary["modelCatalog"]["modelCount"] == 2
     assert summary["windowsShell"]["current"]["fullscreenCandidateCount"] == 1

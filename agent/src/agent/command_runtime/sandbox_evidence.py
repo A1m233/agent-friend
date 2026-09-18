@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .sandbox_log_evidence import log_cursor, log_window
 from .windows_state import SETUP_VERSION, compatible_state
 
 MAX_INCIDENTS = 32
@@ -220,6 +221,7 @@ class SandboxEvidence:
         self._build = hashlib.sha256(build.encode()).hexdigest()[:16]
         self._lock = threading.RLock()
         self._active: set[str] = set()
+        self._log_cursors: dict[str, dict[str, Any]] = {}
         self._gaps: set[str] = set()
         if self.directory is not None:
             try:
@@ -245,6 +247,7 @@ class SandboxEvidence:
         with self._lock:
             concurrent = bool(self._active)
             self._active.add(operation)
+            self._log_cursors[operation] = log_cursor(self._home)
         return {
             "id": operation,
             "stage": stage,
@@ -261,6 +264,7 @@ class SandboxEvidence:
         with self._lock:
             concurrent = operation["concurrentAtStart"] or len(self._active) > 1
             self._active.discard(operation["id"])
+            cursor = self._log_cursors.pop(operation["id"], {})
         if detail is None and not persist_success:
             return
         report = _report(self._home)
@@ -286,6 +290,7 @@ class SandboxEvidence:
             else "unconfirmed",
             "concurrent": concurrent,
             "logs": _log_facts(self._home),
+            "logWindow": log_window(self._home, cursor),
             "expectedHelpers": _helpers(self._executable),
             "gaps": [
                 "actual_helper_image_not_observed",
