@@ -1,0 +1,27 @@
+{
+  "sessionId": "1a7d4638-7220-4a19-8219-655b7d690d63",
+  "url": "http://localhost:1420/chat.html",
+  "finalText": "DESKTOP137",
+  "events": [
+    {
+      "type": "assistant_message",
+      "payload": {
+        "content": "DESKTOP137",
+        "partial": false,
+        "phase": "final_answer"
+      }
+    },
+    {
+      "type": "run_terminal",
+      "payload": {
+        "run_id": "5b24a808-2378-4726-9566-96a9eadaee9d",
+        "status": "completed",
+        "reason_code": "end_turn",
+        "source": "runtime",
+        "recovered": false,
+        "started_at": "2026-09-19T13:30:26.733353+00:00",
+        "finished_at": "2026-09-19T13:30:32.972648+00:00"
+      }
+    }
+  ]
+}

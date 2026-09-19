@@ -89,9 +89,16 @@ def test_candidate_checkpoints_follow_provider_acceptance(
     else:
         assert phases == ["started", "discarded"]
         assert session.latest_compaction() is None
-        assert [message.uuid for message in conv._session_model_history.items][
-            : len(before_ids)
-        ] == before_ids
+        history = conv._session_model_history.items
+        if entry == "send":
+            assert [message.uuid for message in history][: len(before_ids)] == before_ids
+        else:
+            # Accepted edits replace the business branch even when the provider
+            # rejects it; only the candidate summary remains uncommitted.
+            assert [m.content for m in history if m.role == "user"][-1] == "new"
+            assert not any(m.content == "before" for m in history)
+            restored = restore_rollout(store.load(session.session_id))
+            assert [m.uuid for m in restored.history.items] == [m.uuid for m in history]
 
 
 def test_edit_does_not_reuse_checkpoint_created_in_replaced_turn(tmp_path: Path) -> None:

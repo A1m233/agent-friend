@@ -1,0 +1,28 @@
+{
+  "base": "1ebee945baf86778a7b779740d3635701c6d5324",
+  "branch": "feature/137-session-context-recovery-consistency",
+  "files": {
+    "agent/src/agent/context/input_identity.py": "23707378628c63d8123803eb01be168736a82e102dbece3b730a2c53cc07fbe3",
+    "agent/src/agent/context/summarizing.py": "69e1d7849db5d522fae0b2bd73208baffbe48eec6436efe172221e9c5876d361",
+    "agent/src/agent/context/usage_anchor.py": "5b50c9954e2a662e36d76ac371e97f1c3d47bd99dd5c18187bacd470726d7ce6",
+    "agent/src/agent/conversation.py": "fa87c72381b970a709ea19d3ba9a9d21e25e9e71a0d25aa6cc9313fc2e33b2ad",
+    "agent/src/agent/runtime/__init__.py": "0380089c4a8027b12e11312e5cc6beb0cc5309b0d958fdc7a6bf01fa92f95cce",
+    "agent/src/agent/sessions/interruption.py": "80f42b96728b922506cbfff218539a9f8b100bdb56d05a95ce2846aea2aa4e7f",
+    "agent/src/agent/sessions/model_history.py": "731bca303ca1758141e3a8e7e7d201436fb3b67f2277f5a52593bccb33c88445",
+    "agent/src/agent/sessions/rollout.py": "cd7443e2da6c3a8d317e091dea0c6582ebf68ed6ce4554974ef82c9d20d08036",
+    "agent/src/agent/sessions/turn_origin.py": "772cdd832db4dce82b907a906ef9a27f3e383bc3ee0ff19f081075f8e89d8481",
+    "agent/tests/test_context_recovery_consistency.py": "5d83abb26177f0779bbeb09ae1fb781f7d6dd6534482d16098ade410e838e6db",
+    "agent/tests/test_context_summarizing.py": "7db70c68a9fc7df49ee5bcc933ab66580bcf98096d0f786951301cc0619ed970",
+    "agent/tests/test_turn_context_lifecycle.py": "89ef64286bebb99ccf769136e5873ad961d55d72fff8c162ad6841b26fef530a",
+    "agent_bridge/src/agent_bridge/agent_runtime_factory.py": "a04437f0755c2888f95200c75100607a05a730cb171dba5607562539c4dd774a",
+    "agent_bridge/src/agent_bridge/errors.py": "dad19bcc9791025cf28aa7335c072f7d7b66014f2f4ac39ca5f30d3240387620",
+    "agent_bridge/src/agent_bridge/run_errors.py": "4595daa71bac341111812d4975da485fd3ab8e6d4561fa73b2ee475e50b6bc38",
+    "agent_bridge/tests/test_meta_channel_routes.py": "784ee73c715ca6517ba7d541de8d68e7a2e8730eba73b41f9c670c1ef097bb2e",
+    "agent_bridge/tests/test_run_errors.py": "018bf0426b6b198301bdde0f555c8820fb06e794da1bf4d7f26511dbce73903b",
+    "scripts/README.md": "7503d946523d5aa11a6198ae0642add7d7ab4348d3b792032b0e1ac3400304f6",
+    "scripts/context-recovery-smoke/desktop.mjs": "3d464cca71d8b729fcf870fedb6ef3108839295be53c92f7686002ace758c26e",
+    "scripts/context-recovery-smoke/run.ps1": "4ca371700c212017b33dda638560696e78a3f4aa98f5a4723560314a9fd8018a",
+    "scripts/context-recovery-smoke/run.py": "31c3e825054ceba0eed2b2fce3e506ff9770770b8f1a323955e015164d5e020b",
+    "scripts/context-recovery-smoke/run.sh": "7cd86f28fd300024bdd6a80d4255f8703d1571d1120a0512655646d2f6601d63"
+  }
+}

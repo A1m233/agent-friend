@@ -4,9 +4,55 @@ from collections.abc import Callable
 
 from ..messages import Message
 from .events import Event
-from .model_history import model_relevant_event_uuids
+from .model_history import SessionModelHistory, model_relevant_event_uuids
 from .rollout import restore_rollout
 from .session import Session
+
+
+def recover_surviving_prefix(session: Session) -> SessionModelHistory | None:
+    """Recover legacy failed edits from a verified, still-active rollout prefix.
+
+    Only plain suffix additions are replayed here. Tool/summary mutations require
+    their own committed model state; never graft them onto an unrelated prefix.
+    """
+    current = model_relevant_event_uuids(session)
+    cutoff: int | None = None
+    prefix_size = 0
+    for index, event in enumerate(session.events):
+        if event.type != "rollout_commit":
+            continue
+        identities = event.payload.get("active_event_uuids")
+        if (
+            isinstance(identities, list)
+            and identities
+            and tuple(identities) == current[: len(identities)]
+        ):
+            cutoff = index
+            prefix_size = len(identities)
+    if cutoff is None:
+        return None
+    suffix_ids = set(current[prefix_size:])
+    safe_types = {
+        "user_message",
+        "assistant_message",
+        "run_error",
+        "model_config_change",
+        "model_change",
+        "persona_change",
+        "channel_change",
+        "skill_catalog_state",
+        "skill_context",
+    }
+    if any(e.uuid in suffix_ids and e.type not in safe_types for e in session.active_events):
+        return None
+    restored = restore_rollout(Session.from_events(session.events[: cutoff + 1]))
+    if restored.runtime_blocked or restored.commit is None:
+        return None
+    # This must take the verified unchanged/append branch, not recurse into recovery.
+    if restored.history.active_event_uuids != current[:prefix_size]:
+        return None
+    restored.history.reconcile(session)
+    return restored.history
 
 
 def history_before_rewrite(

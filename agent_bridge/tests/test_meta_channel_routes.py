@@ -397,6 +397,61 @@ class TestSessionLifecycleEndpoint:
 
 
 class TestEditResendLatestEndpoint:
+    def test_runtime_edit_failure_is_durable_without_route_callback(
+        self, runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dataclasses import replace
+
+        from agent.context.errors import ContextCompactionUnavailableError
+        from agent_bridge.agent_runtime_factory import build_agent_runtime
+
+        def unavailable(self: _RouteLLM, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+            raise ContextCompactionUnavailableError("unavailable")
+            yield  # pragma: no cover
+
+        monkeypatch.setattr(_RouteLLM, "stream", unavailable)
+        engine = build_agent_runtime(
+            settings=runtime.settings,
+            session_manager=runtime.persistent_session_manager,
+            memory=None,
+            session_turn_guard=runtime.turn_coordinator.hold,
+        )
+        runtime = replace(runtime, agent_runtime=engine)
+        client = TestClient(create_app_with_runtime(runtime))
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        runtime.persistent_store.append_event(
+            sid,
+            Event(
+                type="user_message",
+                uuid="old-user",
+                ts=datetime.now(UTC),
+                payload={"content": "old question"},
+            ),
+        )
+        engine.start()
+        try:
+            response = client.post(
+                f"/v1/sessions/{sid}/edit-resend-latest",
+                json={
+                    "runId": "failed-edit",
+                    "text": "replacement",
+                    "expectedUserContent": "old question",
+                },
+            )
+            assert response.status_code == 200
+            events = runtime.persistent_store.load(sid).active_events
+            errors = [e for e in events if e.type == "run_error"]
+            assert len(errors) == 1
+            assert errors[0].payload["run_id"] == "failed-edit"
+            assert errors[0].payload["message"]
+            assert errors[0].payload["code"] == "context_compaction_unavailable"
+            assert any(e.type == "run_terminal" and e.payload["status"] == "failed" for e in events)
+            # Reload uses the same durable error, independent of the SSE consumer.
+            detail = client.get(f"/v1/sessions/{sid}").json()
+            assert sum(e["type"] == "run_error" for e in detail["active_events"]) == 1
+        finally:
+            engine.stop()
+
     def test_edit_resend_latest_streams_and_exposes_active_events(
         self, client: TestClient, runtime: BridgeRuntime
     ) -> None:
@@ -919,14 +974,14 @@ class TestAgUiRunChannelBoundary:
         assert resp.status_code == 200
         assert "RUN_ERROR" in resp.text
         loaded = runtime.persistent_session_manager.open(sid)
-        assert [event.type for event in loaded.events] == [
+        assert [event.type for event in loaded.active_events] == [
             "session_meta",
             "user_message",
             "run_error",
         ]
         assert loaded.events[1].uuid == "user-context-error"
         assert loaded.events[1].payload == {"content": "这条 query 不能消失"}
-        assert loaded.events[2].payload["run_id"] == "run-context-error"
+        assert loaded.active_events[2].payload["run_id"] == "run-context-error"
 
 
 # ===== POST /v1/sessions/{id}/model =====

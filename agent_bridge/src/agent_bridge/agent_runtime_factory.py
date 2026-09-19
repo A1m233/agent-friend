@@ -24,6 +24,7 @@ from agent.runtime.sources import (
 from agent import Conversation, SessionManager
 from memory import Memory
 
+from .run_errors import persist_run_error
 from .settings import BridgeSettings
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ def build_agent_runtime(
         max_session_queue=settings.agent_runtime_max_session_queue,
         session_turn_guard=session_turn_guard,
         runtime_identity=runtime_identity,
+        default_error_callback=persist_run_error,
     )
 
     # UserSource 永远注册（dev / 测试场景可用）；生产 pull 路径不走它

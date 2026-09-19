@@ -298,6 +298,16 @@ class SummarizingContextManager:
 
         older = history[:cut]
         tail = history[cut:]
+        # A summary cannot repair an over-budget mandatory tail. Check the same
+        # retained catalog/dynamic projection before spending a model call.
+        retained = preserve_latest_skill_catalog(history, tail)
+        if estimate_request_tokens(parts.assemble(retained), runtime) > threshold:
+            return self._fallback_result(
+                history,
+                parts,
+                runtime,
+                reason="retained_context_over_budget",
+            )
         summarizable_older = [
             message for message in older if not message.meta.get("model_only", False)
         ]

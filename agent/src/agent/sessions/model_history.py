@@ -163,6 +163,16 @@ class SessionModelHistory:
                 self.last_reason = None
                 return HistoryUpdate(relation, previous, len(self.items))
         previous = len(self.items)
+        from .turn_origin import recover_surviving_prefix
+
+        restored = recover_surviving_prefix(session)
+        if restored is not None:
+            self.items = restored.items
+            self.active_event_uuids = current
+            self.generation += 1
+            self.last_relation = "rewrite"
+            self.last_reason = "surviving_rollout_prefix"
+            return HistoryUpdate("rewrite", previous, len(self.items), self.last_reason)
         self.items = copy.deepcopy(session.business_llm_messages)
         self.active_event_uuids = current
         self.generation += 1
