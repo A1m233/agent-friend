@@ -2,9 +2,13 @@
 
 
 class ContextCompactionUnavailableError(RuntimeError):
-    """摘要服务暂时不可用，且本地裁剪无法安全恢复当前会话。"""
+    """必要压缩未完成；保留历史，等待显式重试或配置修复。"""
 
     code = "context_compaction_unavailable"
+
+    def __init__(self, message: str, *, reason: str = "unavailable") -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class ContextInputTooLargeError(ValueError):

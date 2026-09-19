@@ -195,7 +195,7 @@ def test_session_store_injection_registers_history_tool(
     registry = make_default_registry(session_store=NullSessionStore())
 
     tools = registry.all_tools()
-    assert len(tools) == len(BASE_TOOL_NAMES) + 2
+    assert len(tools) == len(BASE_TOOL_NAMES) + 3
     history = registry.get("recall_past_chats")
     assert isinstance(history, ConversationHistoryTool)
     recovery = registry.get("recover_tool_result")
@@ -217,6 +217,7 @@ def test_both_key_and_store_registers_both_tools(monkeypatch: pytest.MonkeyPatch
         "web_search",
         "recall_past_chats",
         "recover_tool_result",
+        "inspect_tool_calls",
     }
 
 

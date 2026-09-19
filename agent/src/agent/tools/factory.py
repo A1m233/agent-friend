@@ -47,6 +47,7 @@ from .builtin.social_platforms.connectors import (
     XiaohongshuMcpApi,
     XiaohongshuProcess,
 )
+from .builtin.tool_call_history import InspectToolCallsTool
 from .builtin.tool_result_recovery import ToolResultRecoveryTool
 from .builtin.weather_query import (
     UnavailableWeatherLocationResolver,
@@ -284,6 +285,7 @@ def make_default_registry(
 
     if session_store is not None:
         tools.append(ToolResultRecoveryTool(session_store, tool_execution_evidence_store))
+        tools.append(InspectToolCallsTool(session_store))
 
     return ToolRegistry(tools)
 

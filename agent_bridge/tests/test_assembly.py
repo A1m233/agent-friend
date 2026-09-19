@@ -308,6 +308,17 @@ def test_compaction_unavailable_is_retryable_and_sanitized() -> None:
     assert error.sanitize_failed_model_call is False
 
 
+def test_compaction_configuration_failure_requires_configuration_change() -> None:
+    error = map_exception(
+        ContextCompactionUnavailableError("private detail", reason="unsupported_model_parameter")
+    )
+    assert error.code == "context_compaction_unavailable"
+    assert "切换模型" in error.message
+    assert "保留原历史" in error.message
+    assert "稍后重试" not in error.message
+    assert "private detail" not in error.message
+
+
 def test_post_output_stream_interruption_keeps_specific_protocol_code() -> None:
     error = map_exception(LLMStreamInterruptedAfterOutputError("interrupted"))
 

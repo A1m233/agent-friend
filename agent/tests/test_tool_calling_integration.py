@@ -1862,6 +1862,91 @@ def test_recovery_tool_receives_hidden_current_session_without_persisting_it(
     assert request_event.payload["args"] == public_args
 
 
+def test_call_history_uses_host_identity_and_exposes_only_public_schema(tmp_path: Path) -> None:
+    from agent.tools.builtin.tool_call_history import InspectToolCallsTool
+
+    store = JsonlSessionStore(base_dir=tmp_path / "sessions")
+    tool = InspectToolCallsTool(store)
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="discover",
+                    tool_name=tool.name,
+                    args_json_delta='{"mode":"search"}',
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="没有历史调用。"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake, registry=ToolRegistry([tool]))
+    list(conv.stream("找一下原调用"))
+    result = next(e for e in conv.session.events if e.type == "tool_call_result")
+    assert not result.payload["is_error"]
+    assert json.loads(result.payload["content"])["results"] == []
+    specs = fake.received_tools[0]
+    assert specs is not None
+    assert specs[0]["function"]["parameters"] == tool.parameters_schema
+    assert "__agent_friend_current_session_id" not in json.dumps(specs)
+    request = next(e for e in conv.session.events if e.type == "tool_call_request")
+    assert request.payload["args"] == {"mode": "search"}
+
+
+def test_mid_tool_compaction_failure_keeps_completed_call_without_replay(tmp_path: Path) -> None:
+    from agent.context import ContextCompactionUnavailableError, SummarizingContextManager
+
+    from llm_providers import LLMTransientProviderError
+
+    class FailingSummaryClient(_ScriptedLLMClient):
+        def generate(self, request: ModelRequest) -> ModelResponse:
+            raise LLMTransientProviderError("summary unavailable")
+
+    class LargeResultTool:
+        name: ClassVar[str] = "large_result"
+        description: ClassVar[str] = "Produce a deterministic result"
+        parameters_schema: ClassVar[dict[str, Any]] = {"type": "object", "properties": {}}
+        calls = 0
+
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            self.calls += 1
+            fake.context_window = 14_000
+            return ToolResult("completed-operation " + "x" * 40_000)
+
+    tool = LargeResultTool()
+    fake = FailingSummaryClient(
+        context_window=30_000,
+        script=[
+            [
+                LLMTextDelta(text="previous task result" + "x" * 10_000),
+                LLMTurnDone(stop_reason="end_turn"),
+            ],
+            [
+                LLMToolCallDelta(
+                    index=0, tool_call_id="once", tool_name=tool.name, args_json_delta="{}"
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [
+                LLMTextDelta(text="continued from completed result"),
+                LLMTurnDone(stop_reason="end_turn"),
+            ],
+        ],
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake, registry=ToolRegistry([tool]))
+    conv._context_manager = SummarizingContextManager()
+    assert conv.send("previous task").startswith("previous task result")
+    with pytest.raises(ContextCompactionUnavailableError):
+        conv.send("perform operation")
+    assert tool.calls == 1 and fake.turn_idx == 2
+    results = [e for e in conv.session.events if e.type == "tool_call_result"]
+    assert len(results) == 1 and "completed-operation" in results[0].payload["content"]
+    fake.context_window = 300_000
+    assert conv.send("continue") == "continued from completed result"
+    assert tool.calls == 1
+
+
 def test_recoverable_result_is_pinned_unless_recovery_tool_is_registered(
     tmp_path: Path,
 ) -> None:

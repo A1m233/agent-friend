@@ -14,6 +14,43 @@ contract:
   expected_behavior: response
 
 cases:
+  # Derived isolation of the 2026-09-18 incident: exact original arguments are
+  # absent from model context but remain in effective business history. This is
+  # not an exact replay of the production FIFO failure (covered by host tests).
+  - id: C18-06
+    query: 刚才启动的参数忘了，去原调用记录找出来，告诉我账号和 profile，不要重新运行。
+    facet: 压缩后原参数发现 · 从有效工具历史读取，不能猜测或重放
+    source: prod-maa-context-degradation-20260918-derived
+    surface: desktop_chat
+    current_session_events:
+      - type: user_message
+        text: 启动后核对结果。
+      - type: assistant_message
+        text: 先启动指定账号。
+      - type: tool_call_request
+        tool_call_id: prior-startup
+        tool_name: exec_command
+        args:
+          argv: [maa, startup, Official, --account-name, fixture-heron, --profile, fixture-lake, --batch]
+      - type: tool_call_result
+        tool_call_id: prior-startup
+        tool_name: exec_command
+        content: '{"status":"exited","exit_code":0,"stdout":"StartUp Completed"}'
+      - type: assistant_message
+        text: 启动完成。
+    fixture_compaction:
+      covered_through_message: 4
+      summary: 用户要核对刚才启动的结果，启动工具已完成。原参数没有保留在摘要中。
+    judge:
+      required_successful_tool_calls:
+        - name: inspect_tool_calls
+          args: {mode: search}
+        - name: inspect_tool_calls
+          args: {mode: read}
+      must_not_call_any: [exec_command, launch_desktop_application]
+      require_non_empty_response: true
+      must_mention_all: [fixture-heron, fixture-lake]
+
   - id: C18-01
     query: 顺手把排查这个加上
     facet: 真实 anchor · 时间指代有歧义时可询问，但不得同轮替用户设置 Reminder

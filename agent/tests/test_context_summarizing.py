@@ -7,7 +7,7 @@
 - ``SummarizingContextManager``：runtime=None 退化 / 平时折叠 / 超阈值触发摘要 /
   全量 vs 增量输入 / circuit breaker 跳闸 / 空摘要当失败 / 无从压缩退兜底
 - 集成（Conversation）：触发即落 compaction、下一轮复用 prior_summary 不重摘（AC-3.4/3.5）；
-  连续失败跳闸退化 FIFO 不崩（AC-3.3）
+  135 起失败有损降级暂停，保留历史与执行结果
 
 真实压缩质量 / 关键信息不漂移（AC-3.1/3.2）需真 LLM，按 llm-api-confirm 另行验证。
 """
@@ -359,12 +359,12 @@ def test_summarizing_passes_trailing_user() -> None:
     # 路径 2：触发摘要（仍要保留 trailing_user 在末尾）
     llm = _FakeLLM()
     cm = SummarizingContextManager()
-    history = _turns(6, 100)
+    history = _turns(12, 100)
     result = cm.build_messages(
         history=history,
         system_prompt="sys",
         trailing_user="ADDENDUM",
-        runtime=_runtime(llm, window=1000),
+        runtime=_runtime(llm, window=1600),
     )
     assert result.new_compaction is not None
     assert result.messages[-1].role == "user"
@@ -372,12 +372,15 @@ def test_summarizing_passes_trailing_user() -> None:
 
     # 路径 3：跳闸退化到 FIFO 兜底（仍要保留 trailing_user 在末尾）
     cm = SummarizingContextManager(max_failures=1)
+    cm._failure_scope = ("test-session", "run", "deepseek/test")
+    fallback_runtime = _runtime(_FakeLLM(), window=100_000)
+    fallback_runtime.run_id = "run"
     cm._tripped = True  # 直接强制跳闸，触发 _fallback_result 路径
     result = cm.build_messages(
         history=history,
         system_prompt="sys",
         trailing_user="ADDENDUM",
-        runtime=_runtime(_FakeLLM(), window=100_000),
+        runtime=fallback_runtime,
     )
     assert result.notes.get("fell_back") is True
     assert result.messages[-1].role == "user"
@@ -387,9 +390,9 @@ def test_summarizing_passes_trailing_user() -> None:
 def test_over_threshold_triggers_summary_and_keeps_recent_tail() -> None:
     llm = _FakeLLM()
     cm = SummarizingContextManager()
-    history = _turns(6, 100)
+    history = _turns(12, 100)
     result = cm.build_messages(
-        history=history, system_prompt="sys", runtime=_runtime(llm, window=1000)
+        history=history, system_prompt="sys", runtime=_runtime(llm, window=1600)
     )
 
     assert llm.complete_calls == 1
@@ -399,7 +402,7 @@ def test_over_threshold_triggers_summary_and_keeps_recent_tail() -> None:
     assert trace.call_kind == "summary_generation"
     assert trace.recovery_attempt == 0
     assert result.new_compaction is not None
-    assert result.new_compaction.covered_through_uuid == "a4"
+    assert result.new_compaction.covered_through_uuid == "a9"
     assert result.new_compaction.model == "deepseek/test"
     assert result.notes["compacted"] is True
     assert result.notes["summary_input"] == "bounded_full"
@@ -407,7 +410,7 @@ def test_over_threshold_triggers_summary_and_keeps_recent_tail() -> None:
     # 摘要前缀在、最老轮被折掉、最近 tail 逐字保留
     assert "压缩后的结构化摘要" in joined
     assert "U0-" not in joined
-    assert "U5-" in joined
+    assert "U11-" in joined
 
 
 def test_summary_cancellation_is_forwarded_and_never_downgraded_to_fifo() -> None:
@@ -424,11 +427,11 @@ def test_summary_cancellation_is_forwarded_and_never_downgraded_to_fifo() -> Non
             raise AssertionError("cancel check must interrupt")
 
     llm = CancellingLLM()
-    runtime = _runtime(llm, window=1000)
+    runtime = _runtime(llm, window=1600)
     runtime.cancel_check = token.raise_if_cancelled
     cm = SummarizingContextManager()
     with pytest.raises(RunCancelled):
-        cm.build_messages(history=_turns(6, 100), system_prompt="sys", runtime=runtime)
+        cm.build_messages(history=_turns(12, 100), system_prompt="sys", runtime=runtime)
     assert llm.complete_calls == 1
     assert cm._consecutive_failures == 0
 
@@ -438,14 +441,14 @@ def test_repeated_compaction_uses_operation_scoped_exact_lineage() -> None:
     cm = SummarizingContextManager()
 
     first = cm.build_messages(
-        history=_turns(6, 100),
+        history=_turns(12, 100),
         system_prompt="sys",
-        runtime=_runtime(llm, window=1000),
+        runtime=_runtime(llm, window=1600),
     )
     second = cm.build_messages(
-        history=_turns(7, 100),
+        history=_turns(13, 100),
         system_prompt="sys",
-        runtime=_runtime(llm, window=1000),
+        runtime=_runtime(llm, window=1600),
     )
 
     assert first.new_compaction is not None
@@ -467,9 +470,9 @@ def test_stream_build_yields_started_before_summary_call() -> None:
     llm = _FakeLLM()
     cm = SummarizingContextManager()
     stream = cm.stream_build_messages(
-        history=_turns(6, 100),
+        history=_turns(12, 100),
         system_prompt="sys",
-        runtime=_runtime(llm, window=1000),
+        runtime=_runtime(llm, window=1600),
     )
 
     started = next(stream)
@@ -489,9 +492,9 @@ def test_stream_build_discards_failed_summary_activity() -> None:
     llm = _FakeLLM(fail=True)
     cm = SummarizingContextManager()
     stream = cm.stream_build_messages(
-        history=_turns(6, 100),
+        history=_turns(12, 100),
         system_prompt="sys",
-        runtime=_runtime(llm, window=1000),
+        runtime=_runtime(llm, window=1600),
     )
 
     started = next(stream)
@@ -499,9 +502,8 @@ def test_stream_build_discards_failed_summary_activity() -> None:
 
     assert discarded.phase == "discarded"
     assert discarded.activity_id == started.activity_id
-    with pytest.raises(StopIteration) as stopped:
+    with pytest.raises(ContextCompactionUnavailableError):
         next(stream)
-    assert stopped.value.value.new_compaction is None
 
 
 def test_prior_summary_folds_without_resummarizing() -> None:
@@ -576,32 +578,39 @@ def test_first_huge_compaction_uses_bounded_recent_source() -> None:
 def test_circuit_breaker_trips_after_max_failures() -> None:
     llm = _FakeLLM(fail=True)
     cm = SummarizingContextManager()
-    history = _turns(6, 100)
-    rt = _runtime(llm, window=1000)
+    history = _turns(12, 100)
+    rt = _runtime(llm, window=1600)
+    rt.run_id = "same-run"
 
-    # 前 3 次摘要失败 → 退 FIFO 兜底，不崩
-    for _ in range(3):
-        result = cm.build_messages(history=history, system_prompt="sys", runtime=rt)
-        assert result.notes["fell_back"] is True
+    original = [(m.uuid, m.content) for m in history]
+    for _ in range(4):
+        with pytest.raises(ContextCompactionUnavailableError):
+            cm.build_messages(history=history, system_prompt="sys", runtime=rt)
     assert llm.complete_calls == 3
-    assert result.notes["circuit_tripped"] is True
-
-    # 跳闸后直接走 FIFO，不再调 complete
-    result4 = cm.build_messages(history=history, system_prompt="sys", runtime=rt)
-    assert llm.complete_calls == 3
-    assert result4.notes["fallback_reason"] == "circuit_tripped"
+    assert cm._tripped
+    assert [(m.uuid, m.content) for m in history] == original
 
 
 def test_empty_summary_counts_as_failure() -> None:
     llm = _FakeLLM(summary_text="<summary>   </summary>")
     cm = SummarizingContextManager()
-    history = _turns(6, 100)
-    result = cm.build_messages(
-        history=history, system_prompt="sys", runtime=_runtime(llm, window=1000)
-    )
-    assert result.notes["fell_back"] is True
-    assert result.notes["fallback_reason"] == "empty_summary"
-    assert result.new_compaction is None
+    history = _turns(12, 100)
+    with pytest.raises(ContextCompactionUnavailableError):
+        cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(llm, 1600))
+    assert cm._consecutive_failures == 1
+
+
+@pytest.mark.parametrize("summary", ["", "x" * 10_000])
+def test_unusable_summary_cannot_commit_fifo_candidate(summary: str) -> None:
+    llm = _FakeLLM(summary_text=summary)
+    history = _turns(12, 100)
+    original = [(m.uuid, m.content) for m in history]
+    with pytest.raises(ContextCompactionUnavailableError) as caught:
+        SummarizingContextManager().build_messages(
+            history=history, system_prompt="sys", runtime=_runtime(llm, 1600)
+        )
+    assert caught.value.reason == ("empty_summary" if not summary else "summary_result_over_budget")
+    assert [(m.uuid, m.content) for m in history] == original
 
 
 @pytest.mark.parametrize("failure", [LLMNetworkError("offline"), LLMTransientProviderError("502")])
@@ -617,7 +626,7 @@ def test_summary_outage_with_exhausted_fifo_keeps_recoverable_cause(
     monkeypatch.setattr(llm, "generate", unavailable)
     cm = SummarizingContextManager(max_failures=1)
     history = [
-        *_turns(6, 100),
+        *_turns(12, 100),
         _m("user", "continue", "current"),
         _m("assistant", "x" * 5000, "current-answer"),
     ]
@@ -632,7 +641,7 @@ def test_summary_outage_with_exhausted_fifo_keeps_recoverable_cause(
     assert [(m.uuid, m.content) for m in history] == original
 
 
-def test_summary_outage_can_still_use_fifo(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_summary_outage_retries_without_committing_fifo(monkeypatch: pytest.MonkeyPatch) -> None:
     llm = _FakeLLM()
 
     def unavailable(request: ModelRequest) -> ModelResponse:
@@ -641,14 +650,11 @@ def test_summary_outage_can_still_use_fifo(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(llm, "generate", unavailable)
     cm = SummarizingContextManager(max_failures=1)
-    history = _turns(6, 100)
-    result = cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(llm, 1000))
-    assert result.notes["fell_back"] is True
-    assert result.notes["fallback_reason"] == "llm_error"
-    assert result.notes["circuit_tripped"] is True
-    assert result.new_compaction is None
-    cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(llm, 1000))
-    assert llm.complete_calls == 1
+    history = _turns(12, 100)
+    for _ in range(2):
+        with pytest.raises(ContextCompactionUnavailableError):
+            cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(llm, 1600))
+    assert llm.complete_calls == 2
 
 
 def test_summary_outage_does_not_hide_base_budget_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -660,7 +666,7 @@ def test_summary_outage_does_not_hide_base_budget_error(monkeypatch: pytest.Monk
     monkeypatch.setattr(llm, "generate", unavailable)
     with pytest.raises(ContextBaseOverBudgetError):
         SummarizingContextManager().build_messages(
-            history=_turns(6, 100), system_prompt="x" * 5000, runtime=_runtime(llm, 2000)
+            history=_turns(12, 100), system_prompt="x" * 5000, runtime=_runtime(llm, 2000)
         )
 
 
@@ -687,7 +693,7 @@ def test_indivisible_current_turn_over_budget_fails_closed() -> None:
     cm = SummarizingContextManager()
     history = _turns(1, 1000)
     with pytest.raises(ContextInputTooLargeError):
-        cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(llm, window=1000))
+        cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(llm, window=1600))
     assert llm.complete_calls == 0
 
 
@@ -913,7 +919,11 @@ def test_unsupported_summary_parameter_is_blocked_only_for_same_run_and_model(
     history = _turns(10, 400)
 
     def build() -> list[Any]:
-        return list(manager.stream_build_messages(history, "system", "next", runtime=runtime))
+        events = []
+        with pytest.raises(ContextCompactionUnavailableError):
+            for event in manager.stream_build_messages(history, "system", "next", runtime=runtime):
+                events.append(event)
+        return events
 
     with caplog.at_level(logging.WARNING, logger="agent.context.summarizing"):
         assert [item.phase for item in build()] == ["started", "discarded"]
@@ -1057,22 +1067,68 @@ def test_conversation_emits_completed_only_after_compaction_is_persisted(tmp_pat
     assert statuses[0].activity_id == statuses[1].activity_id == compaction.uuid
 
 
-def test_ac33_circuit_breaker_degrades_without_crash(tmp_path: Path) -> None:
-    """AC-3.3：摘要连续失败跳闸退化 FIFO，对话不中断、不崩。"""
-    # Keep fixed prompt headroom while leaving the seeded history over budget.
+def test_summary_failure_preserves_history_and_retry_can_compact(tmp_path: Path) -> None:
     llm = _FakeLLM(context_window=14_000, fail=True)
+    conv, session, store = _make_conversation(
+        tmp_path, fake_llm=llm, context_manager=SummarizingContextManager(max_failures=1)
+    )
+    _seed_turns(session, store, n=60, size=100)
+    original = [event.uuid for event in session.active_events]
+    for attempt in range(1, 3):
+        with pytest.raises(ContextCompactionUnavailableError):
+            conv.send("继续原任务")
+        reloaded = store.load(session.session_id)
+        assert set(original) <= {event.uuid for event in reloaded.active_events}
+        assert _count_compactions(reloaded) == 0
+        assert (
+            sum(
+                e.type == "user_message" and e.payload.get("content") == "继续原任务"
+                for e in reloaded.active_events
+            )
+            == attempt
+        )
+    assert llm.complete_calls == 2
+    assert not llm.received
+    llm.fail = False
+    assert conv.send("继续原任务") == "ok"
+    assert _count_compactions(session) == 1
+
+
+def test_failed_compaction_preserves_committed_rollout_and_completed_results(
+    tmp_path: Path,
+) -> None:
+    llm = _FakeLLM(context_window=300_000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )
     _seed_turns(session, store, n=60, size=100)
-
-    for _ in range(4):
-        assert conv.send("x") == "ok"
-
-    # The first failed compaction accepts an explicit FIFO rewrite; later turns
-    # continue from that smaller model history instead of reconstructing old input.
-    assert llm.complete_calls == 1
-    assert _count_compactions(session) == 0
+    result_refs = _seed_large_tool_results(session, store, count=1, size=100)
+    conv._rollout_recorder = SessionRolloutRecorder(store=store, session=session)
+    assert conv.send("finish existing task") == "ok"
+    baseline = restore_rollout(store.load(session.session_id)).history.snapshot()
+    llm.context_window = 14_000
+    llm.fail = True
+    with pytest.raises(ContextCompactionUnavailableError):
+        conv.send("next task")
+    reloaded = store.load(session.session_id)
+    restored = restore_rollout(reloaded)
+    assert {m.uuid for m in baseline} <= {m.uuid for m in restored.history.snapshot()}
+    assert set(result_refs) <= {e.uuid for e in reloaded.active_events}
+    assert len(llm.received) == 1
+    llm.fail = False
+    restarted = Conversation(
+        session=reloaded,
+        store=store,
+        llm_client=cast(Any, llm),
+        context_manager=SummarizingContextManager(),
+        prompt_builder=conv._prompt_builder,
+        session_model_history=restored.history,
+        session_model_context=restored.model_context,
+        cache_epoch=restored.cache_epoch,
+        catalog=conv._catalog,
+    )
+    assert restarted.send("continue next task") == "ok"
+    assert len([e for e in reloaded.active_events if e.uuid in result_refs]) == 1
 
 
 def test_compaction_checkpoint_is_reused_after_real_instance_restart(tmp_path: Path) -> None:

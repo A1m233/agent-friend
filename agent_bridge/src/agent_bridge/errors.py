@@ -137,7 +137,11 @@ def map_exception(exc: BaseException) -> ProtocolError:
         return ProtocolError(
             http_status=503,
             code=exc.code,
-            message="会话压缩暂时失败，暂时无法继续这轮任务。请稍后重试。",
+            message=(
+                "当前模型不支持会话压缩参数，已保留原历史。请切换模型或修正配置后继续。"
+                if exc.reason == "unsupported_model_parameter"
+                else "会话压缩暂时失败，已保留原历史，暂时无法继续这轮任务。请稍后重试。"
+            ),
             recoverable=True,
         )
     if isinstance(exc, ContextBaseOverBudgetError):

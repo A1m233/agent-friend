@@ -39,6 +39,7 @@
 | 气泡 | `agent_bridge.notifications.generation.NotificationGenerator` | 共享资源 + 正式人格 + 通知任务 |
 | 人格编辑 | `agent.personas.editor.PersonaEditorPromptBuilder` | 共享资源 + 编辑任务 + 正式人格；候选仅为数据 |
 | 历史检索／记忆召回 | conversation_history／memory.retrieval.renderer | 保留来源；由消费它们的发言入口解释身份 |
+| 原工具调用恢复 | tool_call_history → SessionQuerySnapshot | 只读历史证据，不恢复权限、不执行原动作；结果正文仍由 tool_result_recovery 读取 |
 | 压缩摘要／记忆抽取 | context.summary_prompt／memory.extraction | 内部处理，不注入对外人格；保留来源及状态 |
 | 通知历史 | notifications.store → memory.host_episodes | 保存实际展示证据，不改写旧文本 |
 | 模型连接探测 | agent_bridge.model_connections.inspection | 能力探测，不代表朋友发言 |

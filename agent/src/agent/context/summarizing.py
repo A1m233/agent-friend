@@ -9,9 +9,8 @@
   user/tool turn；首次历史已经过大时明确记录未进入摘要的旧 turn 数。
 - **摘要后二次验算**：只有 summary + recent tail 仍满足主请求预算，才生成
   :class:`CompactionRecord` 候选。
-- **circuit breaker**：摘要连续失败 :data:`MAX_CONSECUTIVE_FAILURES` 次跳闸，退化到
-  注入的 FIFO 兜底，不反复重试拖垮对话（design §6.1 / Q-6）。状态 per-session
-  （工厂为每个会话产独立实例，见 design §7）。
+- **circuit breaker**：同一 run 内限制连续失败；新 run / 模型可重新尝试。
+  兜底仅允许不删除历史的结果投影；必须裁剪 turn 时暂停并保留历史。
 
 ⚠️ 摘要是**真实 LLM 调用**，运行时触发受 ``llm-api-confirm`` 约束。
 
@@ -68,7 +67,7 @@ from .tool_projection import ToolProjectionStats, project_tool_results
 from .turns import preserve_latest_skill_catalog, recent_turn_start_candidates
 
 MAX_CONSECUTIVE_FAILURES = 3
-"""摘要连续失败多少次后跳闸退化到 FIFO（design §6.1 / Q-6）。"""
+"""同一 run 内摘要连续失败多少次后跳闸。"""
 
 SUMMARY_RECENT_TAIL_TURNS = 2
 """旧构造参数的兼容默认值；063 起 recent tail 完全由 token 预算决定。"""
@@ -76,7 +75,7 @@ SUMMARY_RECENT_TAIL_TURNS = 2
 POST_COMPACTION_TARGET_RATIO = 0.7
 """压缩后目标占用相对触发阈值的比例，给后续 turn 与 usage 校准留出余量。"""
 
-SUMMARY_PROMPT_VERSION = 1
+SUMMARY_PROMPT_VERSION = 2
 MAX_SUMMARY_CONTEXT_RETRIES = 2
 logger = logging.getLogger(__name__)
 
@@ -129,6 +128,7 @@ class SummarizingContextManager:
         self._max_failures = max_failures
         self._consecutive_failures = 0
         self._tripped = False
+        self._failure_scope: tuple[str | None, str | None, str] | None = None
         self._unsupported_scope: tuple[str | None, str, str] | None = None
         self._prompt_cache_lineage = OperationRequestLineageTracker(max_entries=8)
 
@@ -192,7 +192,13 @@ class SummarizingContextManager:
             return BuildResult(messages=parts.assemble(history))
         runtime.check_cancelled()
 
-        # 已跳闸：直接走 FIFO 兜底
+        failure_scope = (runtime.session_id, runtime.run_id, runtime.model_id)
+        if runtime.run_id is None or failure_scope != self._failure_scope:
+            self._failure_scope = failure_scope
+            self._consecutive_failures = 0
+            self._tripped = False
+
+        # 已跳闸：只允许无历史丢失的兜底
         if self._tripped:
             return self._fallback_result(history, parts, runtime, reason="circuit_tripped")
 
@@ -255,15 +261,19 @@ class SummarizingContextManager:
         )
         activity_id = str(uuid4())
         yield ContextCompactionProgress(activity_id=activity_id, phase="started")
-        result = self._compact(
-            full_projected_history,
-            parts,
-            runtime,
-            threshold,
-            full_projection,
-            projection.new_edit,
-            activity_id,
-        )
+        try:
+            result = self._compact(
+                full_projected_history,
+                parts,
+                runtime,
+                threshold,
+                full_projection,
+                projection.new_edit,
+                activity_id,
+            )
+        except Exception:
+            yield ContextCompactionProgress(activity_id=activity_id, phase="discarded")
+            raise
         if result.new_compaction is None:
             yield ContextCompactionProgress(activity_id=activity_id, phase="discarded")
         return result
@@ -283,7 +293,7 @@ class SummarizingContextManager:
         summary_output_budget = max(512, min(4096, int(runtime.budget.effective_window * 0.05)))
         cut = self._recent_tail_cut(history, parts, runtime, summary_output_budget)
         if cut <= 0:
-            # 没有可压缩的较旧部分（全在保护 tail / 无 user 边界）→ 本轮退 FIFO 兜底，
+            # 没有可压缩的较旧部分（全在保护 tail / 无 user 边界）→ 检查无损兜底，
             # 不计失败、不跳闸（这不是摘要失败，是无从压缩）。
             return self._fallback_result(history, parts, runtime, reason="nothing_to_compact")
 
@@ -374,12 +384,9 @@ class SummarizingContextManager:
                 except ContextBaseOverBudgetError:
                     # Fixed configuration cannot be repaired by retrying a summary.
                     raise
-                except ContextInputTooLargeError:
-                    # A breaker may bypass summarization only when fallback works.
-                    # Let a later explicit retry attempt the unavailable service again.
-                    self._tripped = False
+                except (ContextInputTooLargeError, ContextCompactionUnavailableError):
                     raise ContextCompactionUnavailableError(
-                        "会话压缩暂时失败，本地裁剪也无法安全继续，请稍后重试。"
+                        "会话压缩暂时失败，已保留原历史，请稍后重试。", reason="llm_error"
                     ) from exc
             except Exception:
                 runtime.check_cancelled()
@@ -459,7 +466,7 @@ class SummarizingContextManager:
         *,
         reason: str,
     ) -> BuildResult:
-        """摘要失败：计数 +1，达阈值跳闸，本轮退 FIFO 兜底。"""
+        """摘要失败：同 run 计数，兜底仍须满足无历史丢失。"""
         self._consecutive_failures += 1
         if self._consecutive_failures >= self._max_failures:
             self._tripped = True
@@ -473,19 +480,40 @@ class SummarizingContextManager:
         *,
         reason: str,
     ) -> BuildResult:
-        """委托 FIFO 兜底并打上可观测标记（跳闸退化 / 无从压缩 / 摘要失败）。"""
-        result = self._fallback.build_messages(
-            history=history,
-            system_prompt=parts.system_prompt,
-            new_user_input=parts.new_user_input,
-            new_user_attachments=parts.new_user_attachments,
-            extra_context=parts.extra_context,
-            pre_user_context=parts.pre_user_context,
-            turn_context=parts.turn_context,
-            trailing_user=parts.trailing_user,
-            trailing_system=parts.trailing_system,
-            runtime=runtime,
-        )
+        """检查兜底候选；有损候选不得交给 Conversation 持久化。"""
+        try:
+            result = self._fallback.build_messages(
+                history=history,
+                system_prompt=parts.system_prompt,
+                new_user_input=parts.new_user_input,
+                new_user_attachments=parts.new_user_attachments,
+                extra_context=parts.extra_context,
+                pre_user_context=parts.pre_user_context,
+                turn_context=parts.turn_context,
+                trailing_user=parts.trailing_user,
+                trailing_system=parts.trailing_system,
+                runtime=runtime,
+            )
+        except ContextBaseOverBudgetError:
+            raise
+        except ContextInputTooLargeError as exc:
+            if reason == "nothing_to_compact":
+                raise
+            raise ContextCompactionUnavailableError(
+                "必要的会话压缩未完成，已保留原历史。", reason=reason
+            ) from exc
+        if result.dropped_count or int(result.notes.get("tool_results_omitted") or 0):
+            logger.warning(
+                "context_compaction_paused session=%s run=%s reason=%s dropped_candidate=%s",
+                runtime.session_id,
+                runtime.run_id,
+                reason,
+                result.dropped_count,
+            )
+            raise ContextCompactionUnavailableError(
+                "会话压缩未完成，已保留原历史；暂停这轮任务以避免丢失任务上下文。",
+                reason=reason,
+            )
         result.notes.setdefault("context_strategy", "summarizing")
         result.notes["fell_back"] = True
         result.notes["fallback_reason"] = reason
