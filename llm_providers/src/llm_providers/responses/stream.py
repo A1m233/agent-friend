@@ -36,6 +36,7 @@ from ..stream_events import (
     ProviderToolCall,
 )
 from ..usage import extract_responses_usage
+from .evidence import REASONING_EVENTS, REFUSAL_EVENTS, UNSUPPORTED_EVENTS, reference, summarize
 from .request import prepare_request
 from .transport import open_responses_stream
 
@@ -47,7 +48,8 @@ def _object(value: Any) -> dict[str, Any]:
         return value
     dump = getattr(value, "model_dump", None)
     if callable(dump):
-        result = dump(exclude_none=True)
+        # SDK union mismatch warnings can include raw response content.
+        result = dump(exclude_none=True, warnings=False)
         if isinstance(result, dict):
             return result
     raise _protocol("expected an object")
@@ -63,7 +65,9 @@ def _phase(value: Any) -> Phase:
 
 def _protocol(message: str) -> LLMProviderError:
     error = LLMProviderError(f"responses_protocol_error: {message}")
-    error.error_evidence = ErrorEvidence(source="protocol", category="protocol")
+    error.error_evidence = ErrorEvidence(
+        source="protocol", category="protocol", code=message.replace(" ", "_")
+    )
     return error
 
 
@@ -92,6 +96,8 @@ class _Item:
     name: str = ""
     arguments: str = ""
     texts: dict[int, str] = field(default_factory=dict)
+    completed_texts: dict[int, str] = field(default_factory=dict)
+    metadata_indices: set[int] = field(default_factory=set)
     snapshot: dict[str, Any] | None = None
     done: bool = False
 
@@ -106,6 +112,7 @@ class ResponsesState:
         self.response_model: str | None = None
         self.terminal: dict[str, Any] | None = None
         self.last_activity = 0.0
+        self.event_number = 0
 
     def _add(self, raw: dict[str, Any], index: Any) -> tuple[_Item, list[LLMStreamEvent]]:
         identity = raw.get("id")
@@ -120,7 +127,7 @@ class ResponsesState:
             raise _protocol("invalid item identity")
         if identity in self.items or index in self.indices:
             raise _protocol("duplicate item identity")
-        if kind not in {"message", "function_call", "reasoning"}:
+        if not isinstance(kind, str) or kind not in {"message", "function_call", "reasoning"}:
             raise _protocol("unsupported output item type")
         item = _Item(identity=identity, kind=kind, output_index=index)
         events: list[LLMStreamEvent] = []
@@ -156,7 +163,11 @@ class ResponsesState:
         index = event.get("output_index")
         if not isinstance(index, int) or isinstance(index, bool):
             raise _protocol("invalid output index")
-        if self.indices.get(index) != identity or identity not in self.items:
+        if (
+            not isinstance(identity, str)
+            or self.indices.get(index) != identity
+            or identity not in self.items
+        ):
             raise _protocol("delta references an unknown or mismatched item")
         item = self.items[identity]
         if kind is not None and item.kind != kind:
@@ -178,6 +189,8 @@ class ResponsesState:
         if not isinstance(index, int) or isinstance(index, bool) or index < 0:
             raise _protocol("invalid output index")
         identity = raw.get("id")
+        if not isinstance(identity, str) or not identity:
+            raise _protocol("invalid item identity")
         events: list[LLMStreamEvent] = []
         if identity not in self.items:
             item, events = self._add(raw, index)
@@ -185,7 +198,7 @@ class ResponsesState:
             item = self.items[identity]
             if self.indices.get(index) != identity or raw.get("type") != item.kind:
                 raise _protocol("item completion identity mismatch")
-        if raw.get("status") not in {None, "completed"}:
+        if raw.get("status") not in (None, "completed"):
             raise _protocol("item did not complete")
         if item.done:
             if response_complete and item.kind == "message" and item.snapshot is not None:
@@ -219,6 +232,11 @@ class ResponsesState:
                 if block.get("type") != "output_text" or not isinstance(block.get("text"), str):
                     raise _protocol("unsupported completed message content")
                 text = block["text"]
+                if (
+                    content_index in item.completed_texts
+                    and item.completed_texts[content_index] != text
+                ):
+                    raise _protocol("text completion conflicts with metadata")
                 previous = item.texts.get(content_index, "")
                 if not text.startswith(previous):
                     raise _protocol("text snapshot conflicts with deltas")
@@ -233,7 +251,7 @@ class ResponsesState:
                     )
                 item.texts[content_index] = text
                 seen.add(content_index)
-            if set(item.texts) - seen:
+            if (set(item.texts) | set(item.completed_texts) | item.metadata_indices) - seen:
                 raise _protocol("text content missing from completion")
             events.append(LLMAssistantItemDone(item.identity, item.output_index, item.phase))
         elif item.kind == "function_call":
@@ -251,11 +269,33 @@ class ResponsesState:
         return events
 
     def feed(self, raw: Any) -> list[LLMStreamEvent]:
-        event = _object(raw)
+        self.event_number += 1
+        event = None
+        try:
+            event = _object(raw)
+            return self._feed(event)
+        except LLMProviderError as error:
+            if error.error_evidence is not None and error.error_evidence.source == "protocol":
+                error.error_evidence = replace(
+                    error.error_evidence,
+                    response_ref=reference(self.response_id),
+                    protocol=summarize(
+                        event,
+                        stage="feed",
+                        number=self.event_number,
+                        items=len(self.items),
+                        terminal=self.terminal is not None,
+                    ),
+                )
+            raise
+
+    def _feed(self, event: dict[str, Any]) -> list[LLMStreamEvent]:
         kind = event.get("type", "")
+        if not isinstance(kind, str) or not kind:
+            raise _protocol("invalid event type")
         if self.terminal is not None:
             raise _protocol("event after terminal response")
-        if kind in {"response.created", "response.in_progress"}:
+        if kind in {"response.created", "response.in_progress", "response.queued"}:
             response = _object(event.get("response"))
             self._identity(response)
         elif kind == "response.output_item.added":
@@ -273,6 +313,8 @@ class ResponsesState:
                 or index < 0
             ):
                 raise _protocol("invalid text delta")
+            if index in item.completed_texts:
+                raise _protocol("text delta after content completion")
             item.texts[index] = item.texts.get(index, "") + delta
             return (
                 [
@@ -329,19 +371,61 @@ class ResponsesState:
             return events
         elif kind == "error":
             raise _ResponseFailure(event, self.response_id)
-        elif kind.startswith("response.reasoning"):
+        elif kind in REASONING_EVENTS:
+            self._item(event, "reasoning")
             if time.monotonic() - self.last_activity >= 2:
                 self.last_activity = time.monotonic()
                 return [LLMActivity(kind="reasoning")]
-        elif kind.startswith("response.refusal"):
+        elif kind in REFUSAL_EVENTS:
             raise LLMContentPolicyError("模型拒绝生成此响应。")
-        elif kind not in {
+        elif kind in UNSUPPORTED_EVENTS:
+            raise _protocol("unsupported response capability")
+        elif kind in {
             "response.content_part.added",
             "response.content_part.done",
             "response.output_text.done",
+            "response.output_text.annotation.added",
         }:
+            self._text_metadata(event)
+        else:
             raise _protocol("unsupported stream event")
         return []
+
+    def _text_metadata(self, event: dict[str, Any]) -> None:
+        item = self._item(event, "message")
+        index = event.get("content_index")
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            raise _protocol("invalid content index")
+        item.metadata_indices.add(index)
+        kind = event["type"]
+        if kind == "response.output_text.annotation.added":
+            annotation_index = event.get("annotation_index")
+            if (
+                not isinstance(annotation_index, int)
+                or isinstance(annotation_index, bool)
+                or annotation_index < 0
+                or (
+                    event.get("annotation") is not None
+                    and not isinstance(event["annotation"], dict)
+                )
+            ):
+                raise _protocol("invalid text annotation")
+            return
+        if kind == "response.output_text.done":
+            text = event.get("text")
+        else:
+            part = _object(event.get("part"))
+            if part.get("type") == "refusal":
+                raise LLMContentPolicyError("模型拒绝生成此响应。")
+            if part.get("type") != "output_text":
+                raise _protocol("unsupported content part")
+            text = part.get("text")
+        if not isinstance(text, str) or not text.startswith(item.texts.get(index, "")):
+            raise _protocol("text metadata conflicts with deltas")
+        if kind != "response.content_part.added":
+            if index in item.completed_texts and item.completed_texts[index] != text:
+                raise _protocol("conflicting text metadata completion")
+            item.completed_texts[index] = text
 
     def _identity(self, response: dict[str, Any]) -> None:
         identity = response.get("id")
@@ -357,15 +441,55 @@ class ResponsesState:
             self.response_model = model
 
     def finish(self, diagnostics: LLMResponseDiagnostics) -> LLMTurnDone:
+        try:
+            return self._finish_response(diagnostics)
+        except LLMProviderError as error:
+            if error.error_evidence is not None and error.error_evidence.source == "protocol":
+                error.error_evidence = replace(
+                    error.error_evidence,
+                    response_ref=reference(self.response_id),
+                    protocol=summarize(
+                        {
+                            "type": "response." + str(self.terminal.get("status")),
+                            "response": self.terminal,
+                        }
+                        if self.terminal
+                        else None,
+                        stage="finish",
+                        number=self.event_number,
+                        items=len(self.items),
+                        terminal=self.terminal is not None,
+                    ),
+                )
+            raise
+
+    def _finish_response(self, diagnostics: LLMResponseDiagnostics) -> LLMTurnDone:
         if self.terminal is None:
-            raise LLMIncompleteResponseError("missing_terminal", diagnostics=diagnostics)
+            incomplete = LLMIncompleteResponseError("missing_terminal", diagnostics=diagnostics)
+            incomplete.error_evidence = ErrorEvidence(
+                source="protocol",
+                category="incomplete",
+                code="missing_terminal",
+                response_ref=reference(self.response_id),
+                protocol=summarize(
+                    None,
+                    stage="finish",
+                    number=self.event_number,
+                    items=len(self.items),
+                    terminal=False,
+                ),
+            )
+            raise incomplete
         response = self.terminal
         usage = extract_responses_usage(response)
         status = response["status"]
         if status == "failed":
             raise _ResponseFailure(_object(response.get("error")), self.response_id)
         if status != "completed":
-            reason = (response.get("incomplete_details") or {}).get("reason", status)
+            details = response.get("incomplete_details")
+            if details is not None and not isinstance(details, dict):
+                raise _protocol("invalid incomplete details")
+            reason = (details or {}).get("reason", status)
             if reason == "max_output_tokens" and not any(
                 item.texts for item in self.items.values()
             ):
@@ -526,6 +650,12 @@ def stream_responses(
         )
         notify("request_failed")
         if isinstance(error, LLMError):
+            if error.error_evidence is not None and error.error_evidence.protocol is not None:
+                error.error_evidence = replace(
+                    error.error_evidence,
+                    request_ref=reference(diagnostics.provider_request_id),
+                    response_ref=reference(state.response_id),
+                )
             error.diagnostics = diagnostics  # type: ignore[attr-defined]
             if not hasattr(error, "usage"):
                 error.usage = extract_responses_usage(state.terminal) if state.terminal else None  # type: ignore[attr-defined]
