@@ -28,8 +28,7 @@ from uuid import uuid4
 
 from llm_providers import (
     LLMContextWindowError,
-    LLMNetworkError,
-    LLMTransientProviderError,
+    LLMError,
     LLMUnsupportedParameterError,
     ModelCallControl,
     ModelCallTraceContext,
@@ -377,7 +376,7 @@ class SummarizingContextManager:
                 return self._fallback_result(
                     history, parts, runtime, reason="unsupported_model_parameter"
                 )
-            except (LLMNetworkError, LLMTransientProviderError) as exc:
+            except LLMError as exc:
                 runtime.check_cancelled()
                 try:
                     return self._on_failure(history, parts, runtime, reason="llm_error")
@@ -386,7 +385,7 @@ class SummarizingContextManager:
                     raise
                 except (ContextInputTooLargeError, ContextCompactionUnavailableError):
                     raise ContextCompactionUnavailableError(
-                        "会话压缩暂时失败，已保留原历史，请稍后重试。", reason="llm_error"
+                        "会话压缩未完成，已保留原历史。", reason="llm_error"
                     ) from exc
             except Exception:
                 runtime.check_cancelled()

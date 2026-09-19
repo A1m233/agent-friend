@@ -100,6 +100,8 @@ class NotificationService:
     def accept(
         self, fact: NotificationFact, *, provided_text: str | None = None
     ) -> NotificationRecord:
+        if fact.kind == "run_failed":
+            provided_text = fallback_text(fact)
         item = self.store.accept(fact, provided_text=provided_text)
         item = self._revalidate(item)
         self._publish(item)
@@ -227,12 +229,15 @@ class NotificationService:
         self._publish(item)
         notification_id = item.notification_id
         try:
-            text = self.generator.generate(
-                item.fact,
-                stopping=self._stopping,
-                still_valid=lambda: self._generation_valid(notification_id),
-            )
-            source, diagnostic = "generated", ""
+            if item.fact.kind == "run_failed":
+                text, source, diagnostic = fallback_text(item.fact), "fallback", "local_failure"
+            else:
+                text = self.generator.generate(
+                    item.fact,
+                    stopping=self._stopping,
+                    still_valid=lambda: self._generation_valid(notification_id),
+                )
+                source, diagnostic = "generated", ""
         except Exception as exc:
             text, source, diagnostic = fallback_text(item.fact), "fallback", type(exc).__name__
             logger.info("notification fallback id=%s reason=%s", item.notification_id, diagnostic)

@@ -240,6 +240,8 @@ class Reconciler:
 
 
 def _validate_output(output: ExtractionOutput, context: ExtractionContext) -> None:
+    if output.failure_code is not None:
+        raise ExtractionApplyError("extraction_failed", "model extraction did not complete")
     if output.validation_error is not None:
         raise ExtractionApplyError("invalid_extraction_output", output.validation_error)
     core_refs = context.core_ref_map

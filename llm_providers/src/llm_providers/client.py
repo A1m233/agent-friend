@@ -25,6 +25,7 @@ from typing import Any, cast
 
 import litellm
 
+from .call_observation import current_call, observed_generate, observed_stream
 from .chat_request import prepare_litellm_request
 from .deepseek_vision_compat import is_deepseek_vision_spec
 from .error_normalization import map_provider_error as _normalize_provider_error
@@ -362,6 +363,7 @@ class LLMClient:
         """
         return self.generate(ModelRequest(messages=messages, settings=overrides)).text
 
+    @observed_generate
     def generate(self, request: ModelRequest) -> ModelResponse:
         """Execute one provider-neutral non-streaming model request."""
 
@@ -406,7 +408,23 @@ class LLMClient:
                     )
                 except (LLMNetworkError, LLMTransientProviderError) as exc:
                     retry_limit = self._retry_limit(exc) if request.control.allow_retries else 0
+                    if request.control.retry_limit is not None:
+                        retry_limit = min(retry_limit, max(0, request.control.retry_limit))
                     if attempt >= retry_limit:
+                        observation = current_call.get()
+                        if observation is not None:
+                            observation.retry_stop = (
+                                "retries_disabled"
+                                if not request.control.allow_retries
+                                else "server_cooldown"
+                                if (
+                                    isinstance(exc, LLMTransientProviderError)
+                                    and exc.retry_after_seconds is not None
+                                    and exc.retry_after_seconds
+                                    > self._engine_overload_max_retry_delay_seconds
+                                )
+                                else "retry_exhausted"
+                            )
                         raise
                     delay = self._retry_delay(exc, attempt)
                     self._wait_before_retry(
@@ -493,6 +511,7 @@ class LLMClient:
             logger.warning("prompt cache response observation build failed", exc_info=True)
         return replace(response, diagnostics=diagnostics)
 
+    @observed_stream
     def stream(
         self,
         request: ModelRequest | list[dict[str, Any]],
@@ -707,10 +726,29 @@ class LLMClient:
             except (LLMNetworkError, LLMTransientProviderError) as exc:
                 retry_limit = min(self._retry_limit(exc), max_retries) if allow_retries else 0
                 if completed or (emitted and not allow_output_retries):
-                    raise LLMStreamInterruptedAfterOutputError(
+                    observation = current_call.get()
+                    if observation is not None:
+                        observation.retry_stop = "output_committed"
+                    interrupted = LLMStreamInterruptedAfterOutputError(
                         "provider stream failed after visible output"
-                    ) from exc
+                    )
+                    interrupted.error_evidence = exc.error_evidence
+                    raise interrupted from exc
                 if attempt >= retry_limit:
+                    observation = current_call.get()
+                    if observation is not None:
+                        observation.retry_stop = (
+                            "retries_disabled"
+                            if not allow_retries
+                            else "server_cooldown"
+                            if (
+                                isinstance(exc, LLMTransientProviderError)
+                                and exc.retry_after_seconds is not None
+                                and exc.retry_after_seconds
+                                > self._engine_overload_max_retry_delay_seconds
+                            )
+                            else "retry_exhausted"
+                        )
                     raise
                 should_retry = True
                 retry_error = exc
@@ -721,6 +759,9 @@ class LLMClient:
             if should_retry:
                 assert retry_error is not None
                 delay = self._retry_delay(retry_error, attempt)
+                observation = current_call.get()
+                if observation is not None:
+                    observation.plan_retry(retry_error, delay)
                 yield LLMRetryScheduled(
                     attempt=retry_attempt_offset + attempt + 2,
                     max_attempts=retry_attempt_offset + retry_limit + 1,
@@ -732,6 +773,7 @@ class LLMClient:
                     retry_limit,
                     delay,
                     cancel_check=cancel_check,
+                    record_plan=False,
                 )
                 if attempt_witness is not None:
                     relation_witness = attempt_witness
@@ -741,10 +783,11 @@ class LLMClient:
 
     @staticmethod
     def _is_engine_overload(error: LLMError) -> bool:
-        return (
-            isinstance(error, LLMTransientProviderError)
-            and error.provider_error_type == "engine_overloaded_error"
-        )
+        return isinstance(error, LLMTransientProviderError) and error.provider_error_type in {
+            "engine_overloaded_error",
+            "server_is_overloaded",
+            "provider_overloaded",
+        }
 
     def _retry_limit(self, error: LLMError) -> int:
         if (
@@ -783,7 +826,11 @@ class LLMClient:
         delay: float,
         *,
         cancel_check: Callable[[], None] | None = None,
+        record_plan: bool = True,
     ) -> None:
+        observation = current_call.get()
+        if observation is not None and record_plan:
+            observation.plan_retry(error, delay)
         logger.warning(
             "LLM transient request failed before usable output; retrying model=%s "
             "retry=%d/%d delay_seconds=%.3f provider_error_type=%s "
@@ -831,7 +878,7 @@ class LLMClient:
         kwargs: dict[str, Any] = {**spec.defaults, **overrides}
         # LiteLLM/OpenAI SDK 自带重试会与本层的有界重试相乘。统一关闭内层重试，
         # 让 attempt 数、总等待时间与可观测状态只有一个所有者。
-        kwargs.setdefault("max_retries", 0)
+        kwargs["max_retries"] = 0
         request_messages, kwargs = prepare_litellm_request(spec, messages, kwargs)
         prepared_item_domains = (
             transcript_item_domains
@@ -876,7 +923,7 @@ class LLMClient:
             if isinstance(failed_witness, ProviderRequestWitness):
                 with suppress(Exception):
                     mapped.request_witness = failed_witness  # type: ignore[attr-defined]
-            raise mapped from e
+            raise mapped from None
 
         if cancel_check is not None:
             cancel_check()
@@ -1003,7 +1050,7 @@ class LLMClient:
             )
             return
         kwargs: dict[str, Any] = {**spec.defaults, **overrides}
-        kwargs.setdefault("max_retries", 0)
+        kwargs["max_retries"] = 0
         configured_timeout = kwargs.get("timeout")
         if isinstance(configured_timeout, (int, float)):
             kwargs["timeout"] = min(float(configured_timeout), self._stream_timeout_seconds)
@@ -1158,7 +1205,7 @@ class LLMClient:
                     ),
                 ),
             )
-            raise mapped_error from e
+            raise mapped_error from None
         stream_open_ms = round((time.perf_counter() - attempt_started) * 1000)
         raw_witness = getattr(response, "request_witness", None)
         if isinstance(raw_witness, ProviderRequestWitness):
@@ -1359,7 +1406,7 @@ class LLMClient:
                 cancel_check()
             if not isinstance(e, Exception):
                 raise
-            raise _map_exception(e, provider_id=_provider_id_for_spec(spec)) from e
+            raise _map_exception(e, provider_id=_provider_id_for_spec(spec)) from None
         finally:
             # 下游 SSE 客户端断开时，上层 generator 会收到 GeneratorExit 并关闭本
             # generator。显式关闭 LiteLLM / provider 的流，避免 HTTP 请求继续在后台

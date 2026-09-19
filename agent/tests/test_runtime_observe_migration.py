@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
 from agent.memory_feed import project_turn
 from agent.runtime import (
     AgentRuntime,
@@ -39,6 +40,7 @@ from agent import (
     Session,
 )
 from llm_providers import (
+    LLMProviderError,
     LLMStreamEvent,
     LLMTextDelta,
     LLMTurnDone,
@@ -146,6 +148,47 @@ def test_post_turn_external_true_skips_finally_observe(tmp_path: Path) -> None:
     list(conv.stream("hello"))
 
     assert fake_mem.observed == []
+
+
+def test_failed_runtime_turn_preserves_new_user_fact_as_deferred(tmp_path: Path) -> None:
+    from agent.runtime.models import RunOutcome
+
+    from memory import Memory
+
+    fake = _ScriptedLLMClient(
+        script=[[LLMTextDelta(text="answer"), LLMTurnDone(stop_reason="end_turn")]]
+    )
+    memory = _FakeMemory()
+    conv = _make_conversation(tmp_path, fake_llm=fake, memory=memory, post_turn_external=True)
+    list(conv.stream("new user fact"))
+    runtime = AgentRuntime(conversation_factory=lambda sid: conv, memory=cast(Memory, memory))
+    runtime._default_post_turn_observe(
+        PostTurnContext(
+            session=conv.session,
+            turn_start_idx=1,
+            event=UserEvent(session_id=conv.session.session_id, user_input="new user fact"),
+            outcome=RunOutcome.FAILED,
+        )
+    )
+    assert len(memory.observed) == 1
+    assert memory.observed[0].defer_extraction
+    assert any(u.text == "new user fact" for u in memory.observed[0].utterances)
+
+
+def test_failed_direct_conversation_also_defers_new_facts(tmp_path: Path) -> None:
+    class FailedModel(_ScriptedLLMClient):
+        def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+            raise LLMProviderError("synthetic outage")
+
+    memory = _FakeMemory()
+    conv = _make_conversation(
+        tmp_path, fake_llm=FailedModel(), memory=memory, post_turn_external=False
+    )
+    with pytest.raises(LLMProviderError):
+        list(conv.stream("new user fact"))
+    assert len(memory.observed) == 1
+    assert memory.observed[0].defer_extraction
+    assert memory.observed[0].utterances[0].text == "new user fact"
 
 
 # ===== AC-4 字段级断言（核心）=====

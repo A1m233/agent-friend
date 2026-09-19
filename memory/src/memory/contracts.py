@@ -127,6 +127,7 @@ class ConversationFragment:
     persona_id: str
     owner_user_id: str = DEFAULT_OWNER_USER_ID
     semantic_update_context: SemanticUpdateContext | None = None
+    defer_extraction: bool = False
 
     def is_empty(self) -> bool:
         """没有任何可抽取发言时为真（worker 可直接跳过）。"""

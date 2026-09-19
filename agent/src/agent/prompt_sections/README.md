@@ -36,7 +36,7 @@
 | 任务手动继续 | `Conversation.continue_after_tool_error` → 原用户轮上下文 → 正常工具循环 | 默认 section，复用原任务附件与 Skill 选择 |
 | 桌面／语音／IM | Bridge ag_ui／openai／im → AgentRuntime → Conversation | 同上，渠道规则独立 |
 | 定时任务／系统触发提醒／授权跟进 | Bridge scheduled_tasks／reminders／social_auth → AgentRuntime | 同上，不改变任务状态 |
-| 气泡 | `agent_bridge.notifications.generation.NotificationGenerator` | 共享资源 + 正式人格 + 通知任务 |
+| 气泡 | `agent_bridge.notifications.generation.NotificationGenerator` | 共享资源 + 正式人格 + 通知任务；失败通知由 service 使用本地事实文案，不调用模型 |
 | 人格编辑 | `agent.personas.editor.PersonaEditorPromptBuilder` | 共享资源 + 编辑任务 + 正式人格；候选仅为数据 |
 | 历史检索／记忆召回 | conversation_history／memory.retrieval.renderer | 保留来源；由消费它们的发言入口解释身份 |
 | 原工具调用恢复 | tool_call_history → SessionQuerySnapshot | 只读历史证据，不恢复权限、不执行原动作；结果正文仍由 tool_result_recovery 读取 |

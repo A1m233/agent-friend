@@ -36,7 +36,9 @@ from llm_providers import (
     LLMAuthError,
     LLMBadRequestError,
     LLMContentPolicyError,
+    LLMContextWindowError,
     LLMEmptyResponseError,
+    LLMError,
     LLMModelMetadataError,
     LLMModelUnavailableError,
     LLMNetworkError,
@@ -47,6 +49,7 @@ from llm_providers import (
     LLMRateLimitError,
     LLMStreamInterruptedAfterOutputError,
     LLMTransientProviderError,
+    LLMUnsupportedParameterError,
 )
 from runtime_config import CredentialMissingError
 
@@ -134,6 +137,14 @@ def map_exception(exc: BaseException) -> ProtocolError:
             recoverable=True,
         )
     if isinstance(exc, ContextCompactionUnavailableError):
+        if isinstance(exc.__cause__, LLMError):
+            cause = map_exception(exc.__cause__)
+            return ProtocolError(
+                http_status=cause.http_status,
+                code=exc.code,
+                message="会话压缩未完成，已保留原历史。" + cause.message,
+                recoverable=cause.recoverable,
+            )
         return ProtocolError(
             http_status=503,
             code=exc.code,
@@ -190,10 +201,11 @@ def map_exception(exc: BaseException) -> ProtocolError:
             message="模型没有返回可见回答，这轮未完成。请稍后重试。",
             recoverable=True,
         )
-    if (
-        isinstance(exc, LLMTransientProviderError)
-        and exc.provider_error_type == "engine_overloaded_error"
-    ):
+    if isinstance(exc, LLMTransientProviderError) and exc.provider_error_type in {
+        "engine_overloaded_error",
+        "server_is_overloaded",
+        "provider_overloaded",
+    }:
         return ProtocolError(
             http_status=503,
             code="upstream_transient",
@@ -211,7 +223,7 @@ def map_exception(exc: BaseException) -> ProtocolError:
         return ProtocolError(
             http_status=402,
             code="payment_required",
-            message="OpenRouter 账户或当前 Key 额度不足，请充值或更换 Key 后重试。",
+            message="模型账户或当前 Key 额度不足，请检查额度或更换凭据后重试。",
             recoverable=False,
         )
     if isinstance(exc, LLMPermissionError):
@@ -239,12 +251,26 @@ def map_exception(exc: BaseException) -> ProtocolError:
             message="模型连接在已经返回部分内容后中断；已返回内容不会被自动重放。",
             recoverable=True,
         )
-    if isinstance(exc, (LLMNetworkError, LLMProviderError)):
+    if isinstance(exc, (LLMNetworkError, LLMTransientProviderError)):
         return ProtocolError(
             http_status=502,
             code="upstream_transient",
             message="模型服务连接不稳定，这轮没有生成完整回答。稍后可以重试。",
             recoverable=True,
+        )
+    if isinstance(exc, LLMProviderError):
+        if exc.error_evidence is not None and exc.error_evidence.source == "protocol":
+            return ProtocolError(
+                502,
+                "model_protocol_error",
+                "模型返回的内容不符合预期协议，请检查连接兼容性或切换模型后重试。",
+                False,
+            )
+        return ProtocolError(
+            http_status=502,
+            code="model_provider_error",
+            message="模型调用失败，原因尚未确定。请查看诊断信息或检查模型连接配置后重试。",
+            recoverable=False,
         )
     if isinstance(exc, LLMAuthError):
         return ProtocolError(
@@ -264,7 +290,28 @@ def map_exception(exc: BaseException) -> ProtocolError:
             recoverable=False,
             sanitize_failed_model_call=True,
         )
+    if isinstance(exc, LLMUnsupportedParameterError):
+        return ProtocolError(
+            400,
+            "unsupported_model_parameter",
+            "当前模型参数未通过本地校验，请调整模型配置后重试。",
+            False,
+        )
+    if isinstance(exc, LLMContextWindowError):
+        return ProtocolError(
+            400,
+            "context_window_exceeded",
+            "模型报告上下文超限，请缩短输入或切换更大上下文的模型。",
+            False,
+        )
     if isinstance(exc, LLMBadRequestError):
+        if exc.error_evidence is not None and exc.error_evidence.source == "local_validation":
+            return ProtocolError(
+                400,
+                "model_request_invalid",
+                "模型请求未通过本地校验，本次没有发送请求。请检查模型配置与请求参数。",
+                False,
+            )
         return ProtocolError(
             http_status=400,
             code="bad_request",

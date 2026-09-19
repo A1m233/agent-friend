@@ -7,12 +7,14 @@ import hashlib
 from collections.abc import Mapping
 from typing import Any
 
-from ..errors import LLMBadRequestError
+from ..errors import ErrorEvidence, LLMBadRequestError
 from ..spec import ProviderSpec
 
 
 def _invalid(message: str) -> LLMBadRequestError:
-    return LLMBadRequestError(f"responses_request_invalid: {message}")
+    error = LLMBadRequestError(f"responses_request_invalid: {message}")
+    error.error_evidence = ErrorEvidence(source="local_validation", category="request")
+    return error
 
 
 def _string(value: Any, name: str) -> str:
@@ -333,7 +335,7 @@ def prepare_request(
         "store",
     }
     if set(options) - allowed:
-        raise _invalid("unsupported request settings: " + ", ".join(sorted(set(options) - allowed)))
+        raise _invalid("unsupported request settings")
     if options.get("store"):
         raise _invalid("server-side conversation storage is not supported")
     if route.parameter_profile == "deepseek":

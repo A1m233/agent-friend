@@ -1,0 +1,687 @@
+{
+  "schema": 1,
+  "source_baseline": "7cb9304eb52e825b3610724023500b9c43e65569",
+  "scope": "16 previously validated user-supplied bundles; one configured CPA route; retained logs only",
+  "deduplication": "Exact parsed observation JSON across repeated exports and duplicate application/runtime logs",
+  "limitations": [
+    "Logical calls are not HTTP attempt counts. A logical call can contain retries.",
+    "Start times are inferred as observed_at minus total_ms and include local work and backoff.",
+    "Retry log records announce scheduling, not guaranteed HTTP dispatch.",
+    "Provider reported input/cache tokens do not establish CPA upstream resource load or quota accounting.",
+    "CPA internal retries, capacity, other clients and service-side logs are unavailable.",
+    "All selected bundle builds have dirty=true; inspect commit plus runtime evidence, not exact clean-source equivalence."
+  ],
+  "unique_observations_all_providers": 904,
+  "unique_observations_selected_route": 561,
+  "windows": [
+    {
+      "id": "before_broad_outage_0911",
+      "start_local": "2026-09-11T01:38",
+      "end_local_exclusive": "2026-09-11T02:04:41",
+      "selection": "logical call completion timestamp",
+      "counts": {
+        "context_compaction/failed": 3,
+        "conversation/completed": 47,
+        "notification/completed": 1
+      },
+      "successful_conversation_usage": {
+        "reported_input_tokens_sum": 4978045,
+        "reported_cached_input_tokens_sum": 4260864
+      },
+      "records": []
+    },
+    {
+      "id": "four_failed_turns_0911",
+      "start_local": "2026-09-11T02:05:24",
+      "end_local_exclusive": "2026-09-11T02:08",
+      "selection": "logical call completion timestamp",
+      "counts": {
+        "conversation/failed": 4,
+        "memory_extraction/failed": 4,
+        "notification/failed": 4
+      },
+      "successful_conversation_usage": {
+        "reported_input_tokens_sum": 0,
+        "reported_cached_input_tokens_sum": 0
+      },
+      "records": [
+        {
+          "started_at_inferred": "2026-09-11T02:05:24.770+08:00",
+          "observed_at": "2026-09-11T02:05:46.932+08:00",
+          "operation": "conversation",
+          "status": "failed",
+          "error_type": "LLMTransientProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 22162,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+            "entry": "logs/agent_bridge.log",
+            "line": 13022
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-11T02:05:46.952+08:00",
+          "observed_at": "2026-09-11T02:05:48.138+08:00",
+          "operation": "memory_extraction",
+          "status": "failed",
+          "error_type": "LLMTransientProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 1186,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+            "entry": "logs/agent_bridge.log",
+            "line": 13099
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-11T02:05:48.070+08:00",
+          "observed_at": "2026-09-11T02:05:48.270+08:00",
+          "operation": "notification",
+          "status": "failed",
+          "error_type": "LLMTransientProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 200,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+            "entry": "logs/agent_bridge.log",
+            "line": 13100
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-11T02:06:44.899+08:00",
+          "observed_at": "2026-09-11T02:06:46.030+08:00",
+          "operation": "conversation",
+          "status": "failed",
+          "error_type": "LLMTransientProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 1131,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+            "entry": "logs/agent_bridge.log",
+            "line": 13122
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-11T02:06:47.125+08:00",
+          "observed_at": "2026-09-11T02:06:57.065+08:00",
+          "operation": "notification",
+          "status": "failed",
+          "error_type": "TimeoutError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 9940,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+            "entry": "logs/agent_bridge.log",
+            "line": 13198
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-11T02:06:46.045+08:00",
+          "observed_at": "2026-09-11T02:07:08.727+08:00",
+          "operation": "memory_extraction",
+          "status": "failed",
+          "error_type": "LLMTransientProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 22682,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+            "entry": "logs/agent_bridge.log",
+            "line": 13212
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-11T02:07:09.139+08:00",
+          "observed_at": "2026-09-11T02:07:10.294+08:00",
+          "operation": "conversation",
+          "status": "failed",
+          "error_type": "LLMTransientProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 1155,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+            "entry": "logs/agent_bridge.log",
+            "line": 13227
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-11T02:07:11.487+08:00",
+          "observed_at": "2026-09-11T02:07:11.686+08:00",
+          "operation": "notification",
+          "status": "failed",
+          "error_type": "LLMTransientProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 199,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+            "entry": "logs/agent_bridge.log",
+            "line": 13303
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-11T02:07:10.311+08:00",
+          "observed_at": "2026-09-11T02:07:12.047+08:00",
+          "operation": "memory_extraction",
+          "status": "failed",
+          "error_type": "LLMTransientProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 1736,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+            "entry": "logs/agent_bridge.log",
+            "line": 13305
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-11T02:07:23.658+08:00",
+          "observed_at": "2026-09-11T02:07:24.806+08:00",
+          "operation": "conversation",
+          "status": "failed",
+          "error_type": "LLMTransientProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 1148,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+            "entry": "logs/agent_bridge.log",
+            "line": 13328
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-11T02:07:26.084+08:00",
+          "observed_at": "2026-09-11T02:07:26.268+08:00",
+          "operation": "notification",
+          "status": "failed",
+          "error_type": "LLMTransientProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 184,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+            "entry": "logs/agent_bridge.log",
+            "line": 13404
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-11T02:07:24.821+08:00",
+          "observed_at": "2026-09-11T02:07:26.679+08:00",
+          "operation": "memory_extraction",
+          "status": "failed",
+          "error_type": "LLMTransientProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 1858,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+            "entry": "logs/agent_bridge.log",
+            "line": 13406
+          }
+        }
+      ]
+    },
+    {
+      "id": "before_failure_0918",
+      "start_local": "2026-09-18T00:18",
+      "end_local_exclusive": "2026-09-18T00:22:14",
+      "selection": "logical call completion timestamp",
+      "counts": {
+        "conversation/completed": 14,
+        "conversation/failed": 1
+      },
+      "successful_conversation_usage": {
+        "reported_input_tokens_sum": 3138842,
+        "reported_cached_input_tokens_sum": 2894336
+      },
+      "records": []
+    },
+    {
+      "id": "after_foreground_switch_0918",
+      "start_local": "2026-09-18T02:05",
+      "end_local_exclusive": "2026-09-18T02:21",
+      "selection": "logical call completion timestamp",
+      "counts": {
+        "notification/failed": 6,
+        "memory_extraction/completed": 2,
+        "memory_extraction/failed": 3,
+        "memory_reconciliation/failed": 1
+      },
+      "successful_conversation_usage": {
+        "reported_input_tokens_sum": 0,
+        "reported_cached_input_tokens_sum": 0
+      },
+      "records": [
+        {
+          "started_at_inferred": "2026-09-18T02:06:07.383+08:00",
+          "observed_at": "2026-09-18T02:06:17.304+08:00",
+          "operation": "notification",
+          "status": "failed",
+          "error_type": "TimeoutError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 9921,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "bb8385eb2beaed70d8001f647fd4b66cb73ebd41",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+            "entry": "logs/runtime-bridge.log",
+            "line": 58922
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-18T02:06:41.204+08:00",
+          "observed_at": "2026-09-18T02:06:50.555+08:00",
+          "operation": "notification",
+          "status": "failed",
+          "error_type": "TimeoutError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 9351,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "bb8385eb2beaed70d8001f647fd4b66cb73ebd41",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+            "entry": "logs/runtime-bridge.log",
+            "line": 59035
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-18T02:07:52.579+08:00",
+          "observed_at": "2026-09-18T02:07:53.176+08:00",
+          "operation": "notification",
+          "status": "failed",
+          "error_type": "LLMTransientProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 597,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "bb8385eb2beaed70d8001f647fd4b66cb73ebd41",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+            "entry": "logs/runtime-bridge.log",
+            "line": 59199
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-18T02:08:17.407+08:00",
+          "observed_at": "2026-09-18T02:08:27.224+08:00",
+          "operation": "notification",
+          "status": "failed",
+          "error_type": "TimeoutError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 9817,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "bb8385eb2beaed70d8001f647fd4b66cb73ebd41",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+            "entry": "logs/runtime-bridge.log",
+            "line": 59382
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-18T02:08:59.490+08:00",
+          "observed_at": "2026-09-18T02:09:09.397+08:00",
+          "operation": "notification",
+          "status": "failed",
+          "error_type": "TimeoutError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 9907,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "bb8385eb2beaed70d8001f647fd4b66cb73ebd41",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+            "entry": "logs/runtime-bridge.log",
+            "line": 59510
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-18T02:06:03.897+08:00",
+          "observed_at": "2026-09-18T02:09:13.489+08:00",
+          "operation": "memory_extraction",
+          "status": "completed",
+          "error_type": null,
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 189592,
+          "reported_input_tokens": 16667,
+          "reported_cached_input_tokens": 16128,
+          "source_commit": "bb8385eb2beaed70d8001f647fd4b66cb73ebd41",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+            "entry": "logs/runtime-bridge.log",
+            "line": 59522
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-18T02:11:12.793+08:00",
+          "observed_at": "2026-09-18T02:11:16.871+08:00",
+          "operation": "notification",
+          "status": "failed",
+          "error_type": "LLMProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 4078,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "bb8385eb2beaed70d8001f647fd4b66cb73ebd41",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+            "entry": "logs/runtime-bridge.log",
+            "line": 59960
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-18T02:13:09.680+08:00",
+          "observed_at": "2026-09-18T02:14:59.669+08:00",
+          "operation": "memory_extraction",
+          "status": "failed",
+          "error_type": "LLMTransientProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 109989,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "bb8385eb2beaed70d8001f647fd4b66cb73ebd41",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260919-010539.zip",
+            "entry": "logs/runtime-bridge.log",
+            "line": 166
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-18T02:14:59.681+08:00",
+          "observed_at": "2026-09-18T02:19:02.934+08:00",
+          "operation": "memory_extraction",
+          "status": "failed",
+          "error_type": "LLMTransientProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 243253,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "bb8385eb2beaed70d8001f647fd4b66cb73ebd41",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260919-010539.zip",
+            "entry": "logs/runtime-bridge.log",
+            "line": 538
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-18T02:19:02.944+08:00",
+          "observed_at": "2026-09-18T02:19:26.828+08:00",
+          "operation": "memory_extraction",
+          "status": "failed",
+          "error_type": "LLMTransientProviderError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 23884,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "bb8385eb2beaed70d8001f647fd4b66cb73ebd41",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260919-010539.zip",
+            "entry": "logs/runtime-bridge.log",
+            "line": 581
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-18T02:19:26.841+08:00",
+          "observed_at": "2026-09-18T02:20:55.904+08:00",
+          "operation": "memory_extraction",
+          "status": "completed",
+          "error_type": null,
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 89063,
+          "reported_input_tokens": 16566,
+          "reported_cached_input_tokens": 0,
+          "source_commit": "bb8385eb2beaed70d8001f647fd4b66cb73ebd41",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260919-010539.zip",
+            "entry": "logs/runtime-bridge.log",
+            "line": 715
+          }
+        },
+        {
+          "started_at_inferred": "2026-09-18T02:09:13.490+08:00",
+          "observed_at": "2026-09-18T02:13:09.656+08:00",
+          "operation": "memory_reconciliation",
+          "status": "failed",
+          "error_type": "LLMStreamTimeoutError",
+          "model": "openai/gpt-5.6-luna",
+          "elapsed_ms": 236166,
+          "reported_input_tokens": null,
+          "reported_cached_input_tokens": null,
+          "source_commit": "bb8385eb2beaed70d8001f647fd4b66cb73ebd41",
+          "source": {
+            "bundle": "agent-friend-diagnostics-20260919-010539.zip",
+            "entry": "logs/agent_bridge.log",
+            "line": 11431
+          }
+        }
+      ]
+    }
+  ],
+  "retry_schedules_four_failed_turns": {
+    "count": 8,
+    "sources": [
+      {
+        "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+        "entry": "logs/agent_bridge.log",
+        "line": 13019
+      },
+      {
+        "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+        "entry": "logs/agent_bridge.log",
+        "line": 13089
+      },
+      {
+        "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+        "entry": "logs/agent_bridge.log",
+        "line": 13119
+      },
+      {
+        "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+        "entry": "logs/agent_bridge.log",
+        "line": 13209
+      },
+      {
+        "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+        "entry": "logs/agent_bridge.log",
+        "line": 13224
+      },
+      {
+        "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+        "entry": "logs/agent_bridge.log",
+        "line": 13298
+      },
+      {
+        "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+        "entry": "logs/agent_bridge.log",
+        "line": 13325
+      },
+      {
+        "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+        "entry": "logs/agent_bridge.log",
+        "line": 13400
+      }
+    ]
+  },
+  "conclusions": {
+    "failure_period_extra_logical_calls": "confirmed",
+    "same_route_background_calls_after_foreground_switch": "confirmed",
+    "AF_caused_upstream_overload": "unconfirmed"
+  },
+  "foreground_recovery_counterevidence": [
+    {
+      "observed_at": "2026-09-18T02:05:58.298+08:00",
+      "operation": "conversation",
+      "model": "openai/deepseek-flash",
+      "status": "completed",
+      "source": {
+        "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+        "entry": "logs/runtime-bridge.log",
+        "line": 58820
+      }
+    },
+    {
+      "observed_at": "2026-09-18T02:05:59.885+08:00",
+      "operation": "conversation",
+      "model": "openai/deepseek-flash",
+      "status": "completed",
+      "source": {
+        "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+        "entry": "logs/runtime-bridge.log",
+        "line": 58842
+      }
+    },
+    {
+      "observed_at": "2026-09-18T02:06:03.819+08:00",
+      "operation": "conversation",
+      "model": "openai/deepseek-flash",
+      "status": "completed",
+      "source": {
+        "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+        "entry": "logs/runtime-bridge.log",
+        "line": 58876
+      }
+    },
+    {
+      "observed_at": "2026-09-18T02:06:37.157+08:00",
+      "operation": "conversation",
+      "model": "openai/deepseek-flash",
+      "status": "completed",
+      "source": {
+        "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+        "entry": "logs/runtime-bridge.log",
+        "line": 58988
+      }
+    },
+    {
+      "observed_at": "2026-09-18T02:07:49.081+08:00",
+      "operation": "conversation",
+      "model": "openai/deepseek-flash",
+      "status": "completed",
+      "source": {
+        "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+        "entry": "logs/runtime-bridge.log",
+        "line": 59170
+      }
+    },
+    {
+      "observed_at": "2026-09-18T02:08:02.503+08:00",
+      "operation": "conversation",
+      "model": "openai/deepseek-flash",
+      "status": "completed",
+      "source": {
+        "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+        "entry": "logs/runtime-bridge.log",
+        "line": 59253
+      }
+    },
+    {
+      "observed_at": "2026-09-18T02:08:05.311+08:00",
+      "operation": "conversation",
+      "model": "openai/deepseek-flash",
+      "status": "completed",
+      "source": {
+        "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+        "entry": "logs/runtime-bridge.log",
+        "line": 59284
+      }
+    },
+    {
+      "observed_at": "2026-09-18T02:08:13.728+08:00",
+      "operation": "conversation",
+      "model": "openai/deepseek-flash",
+      "status": "completed",
+      "source": {
+        "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+        "entry": "logs/runtime-bridge.log",
+        "line": 59338
+      }
+    },
+    {
+      "observed_at": "2026-09-18T02:08:56.058+08:00",
+      "operation": "conversation",
+      "model": "openai/deepseek-flash",
+      "status": "completed",
+      "source": {
+        "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+        "entry": "logs/runtime-bridge.log",
+        "line": 59472
+      }
+    },
+    {
+      "observed_at": "2026-09-18T02:10:56.356+08:00",
+      "operation": "conversation",
+      "model": "openai/deepseek-flash",
+      "status": "completed",
+      "source": {
+        "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+        "entry": "logs/runtime-bridge.log",
+        "line": 59785
+      }
+    },
+    {
+      "observed_at": "2026-09-18T02:10:59.354+08:00",
+      "operation": "conversation",
+      "model": "openai/deepseek-flash",
+      "status": "completed",
+      "source": {
+        "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+        "entry": "logs/runtime-bridge.log",
+        "line": 59811
+      }
+    },
+    {
+      "observed_at": "2026-09-18T02:11:03.429+08:00",
+      "operation": "conversation",
+      "model": "openai/deepseek-flash",
+      "status": "completed",
+      "source": {
+        "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+        "entry": "logs/runtime-bridge.log",
+        "line": 59868
+      }
+    },
+    {
+      "observed_at": "2026-09-18T02:11:08.427+08:00",
+      "operation": "conversation",
+      "model": "openai/deepseek-flash",
+      "status": "completed",
+      "source": {
+        "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+        "entry": "logs/runtime-bridge.log",
+        "line": 59927
+      }
+    }
+  ]
+}

@@ -516,6 +516,10 @@ class AgentRuntime:
             persona_id=ctx.session.current_persona_id or "",
         )
         try:
+            if ctx.outcome is RunOutcome.FAILED or ctx.error is not None:
+                from dataclasses import replace
+
+                fragment = replace(fragment, defer_extraction=True)
             self._memory.observe(fragment)
         except Exception:
             logger.warning("PostTurn observe 失败", exc_info=True)

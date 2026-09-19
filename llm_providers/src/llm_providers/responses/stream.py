@@ -10,13 +10,13 @@ from typing import Any, Literal
 
 from ..error_normalization import map_provider_error
 from ..errors import (
+    ErrorEvidence,
     LLMContentPolicyError,
     LLMEmptyResponseError,
     LLMError,
     LLMIncompleteResponseError,
     LLMOutputBudgetExhaustedError,
     LLMProviderError,
-    LLMRateLimitError,
 )
 from ..reasoning import build_provider_reasoning_state
 from ..request_witness import ProviderRequestWitness
@@ -50,7 +50,7 @@ def _object(value: Any) -> dict[str, Any]:
         result = dump(exclude_none=True)
         if isinstance(result, dict):
             return result
-    raise LLMProviderError("responses_protocol_error: expected an object")
+    raise _protocol("expected an object")
 
 
 def _phase(value: Any) -> Phase:
@@ -62,20 +62,23 @@ def _phase(value: Any) -> Phase:
 
 
 def _protocol(message: str) -> LLMProviderError:
-    return LLMProviderError(f"responses_protocol_error: {message}")
+    error = LLMProviderError(f"responses_protocol_error: {message}")
+    error.error_evidence = ErrorEvidence(source="protocol", category="protocol")
+    return error
 
 
 class _ResponseFailure(Exception):
-    def __init__(self, payload: dict[str, Any], request_id: str | None) -> None:
+    def __init__(self, payload: dict[str, Any], response_id: str | None) -> None:
         super().__init__("Responses provider reported a failure")
-        self.body = {"error": {**payload, "type": payload.get("type") or payload.get("code")}}
-        self.request_id = request_id
-        self.status_code = payload.get("status_code")
-        if self.status_code is None and payload.get("code") in {
-            "server_error",
-            "engine_overloaded_error",
-        }:
-            self.status_code = 503
+        self.error_source = "stream_error" if payload.get("type") == "error" else "failed_terminal"
+        nested = payload.get("error")
+        error = dict(nested) if isinstance(nested, dict) else dict(payload)
+        if error.get("type") == "error":
+            error.pop("type")
+        self.body = {"error": error}
+        self.request_id: str | None = None
+        self.response_id = response_id
+        self.status_code = error.get("status_code")
 
 
 @dataclass
@@ -527,16 +530,12 @@ def stream_responses(
             if not hasattr(error, "usage"):
                 error.usage = extract_responses_usage(state.terminal) if state.terminal else None  # type: ignore[attr-defined]
             raise
-        if (
-            isinstance(error, _ResponseFailure)
-            and error.body["error"].get("code") == "rate_limit_exceeded"
-        ):
-            mapped: LLMError = LLMRateLimitError("模型服务限流，请稍后重试。")
-        else:
-            mapped = map_provider_error(error, provider_id=spec.provider_id)
+        if isinstance(error, _ResponseFailure) and stream is not None:
+            error.request_id = stream.request_id
+        mapped = map_provider_error(error, provider_id=spec.provider_id)
         mapped.diagnostics = diagnostics  # type: ignore[attr-defined]
         mapped.usage = extract_responses_usage(state.terminal) if state.terminal else None  # type: ignore[attr-defined]
-        raise mapped from error
+        raise mapped from None
     finally:
         if stream is not None:
             stream.close()

@@ -40,5 +40,7 @@ def test_openrouter_error_categories_do_not_collapse_to_auth(
     assert isinstance(map_provider_error(error, provider_id="openrouter"), expected)
 
 
-def test_direct_provider_403_keeps_existing_auth_semantics() -> None:
-    assert isinstance(map_provider_error(_ProviderError(403), provider_id="deepseek"), LLMAuthError)
+def test_direct_provider_403_is_permission_denied() -> None:
+    assert isinstance(
+        map_provider_error(_ProviderError(403), provider_id="deepseek"), LLMPermissionError
+    )

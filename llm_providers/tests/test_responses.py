@@ -19,6 +19,7 @@ from llm_providers.errors import (
     LLMProviderError,
     LLMRateLimitError,
     LLMStreamInterruptedAfterOutputError,
+    LLMTransientProviderError,
 )
 from llm_providers.responses.request import prepare_request
 from llm_providers.responses.stream import ResponsesState
@@ -33,11 +34,149 @@ from llm_providers import (
     LLMToolCallDelta,
     LLMTurnDone,
     ModelCallControl,
+    ModelCallTraceContext,
     ModelRequest,
     build_provider_spec,
     get_model_capabilities,
     public_model_catalog,
 )
+
+
+@pytest.mark.parametrize("streaming", [True, False])
+def test_overload_budget_counts_http_separately_from_retry_plans(
+    http_mock: Any,
+    caplog: pytest.LogCaptureFixture,
+    streaming: bool,
+) -> None:
+    caplog.set_level("INFO", logger="llm_providers.call_observation")
+    requests = http_mock(
+        [
+            terminal(
+                [],
+                "failed",
+                error={
+                    "code": "server_is_overloaded",
+                    "message": "private failure sk-secret",
+                },
+            )
+        ]
+    )
+    client = LLMClient(
+        build_provider_spec(provider_id="deepseek", api_key="fixture"),
+        engine_overload_retry_backoff_seconds=0,
+    )
+    request = ModelRequest(
+        messages=[{"role": "user", "content": "private prompt"}],
+        control=ModelCallControl(
+            retry_limit=2, trace_context=ModelCallTraceContext(operation="conversation")
+        ),
+    )
+    with pytest.raises(LLMTransientProviderError):
+        if streaming:
+            list(client.stream(request))
+        else:
+            client.generate(request)
+    assert len(requests) == 3
+    records = [
+        json.loads(record.message.split("model_call_observation ", 1)[1])
+        for record in caplog.records
+        if "model_call_observation " in record.message
+    ]
+    assert len(records) == 1
+    assert records[0]["http_attempts"] == 3
+    assert records[0]["retry_plans"] == 2
+    assert records[0]["operation"] == "conversation"
+    assert records[0]["error"]["category"] == "overload"
+    assert "private failure" not in caplog.text and "sk-secret" not in caplog.text
+
+
+def test_cancelling_a_planned_retry_does_not_count_another_http_send(
+    http_mock: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class UserCancelled(Exception):
+        pass
+
+    cancelled = False
+
+    def check() -> None:
+        if cancelled:
+            raise UserCancelled()
+
+    caplog.set_level("INFO", logger="llm_providers.call_observation")
+    requests = http_mock([{"type": "error", "code": "server_is_overloaded", "message": "private"}])
+    client = LLMClient(
+        build_provider_spec(provider_id="deepseek", api_key="fixture"),
+        engine_overload_retry_backoff_seconds=0,
+    )
+    stream = client.stream(
+        ModelRequest(
+            messages=[{"role": "user", "content": "hi"}],
+            control=ModelCallControl(cancel_check=check),
+        )
+    )
+    while not isinstance(next(stream), LLMRetryScheduled):
+        pass
+    cancelled = True
+    with pytest.raises(UserCancelled):
+        next(stream)
+    assert len(requests) == 1
+    record = next(
+        json.loads(r.message.split("model_call_observation ", 1)[1])
+        for r in caplog.records
+        if "model_call_observation " in r.message
+    )
+    assert record["http_attempts"] == 1 and record["retry_plans"] == 1
+    assert record["stop_reason"] == "cancelled"
+
+
+@pytest.mark.parametrize("streaming", [True, False])
+def test_zero_retry_budget_is_not_mislabeled_server_cooldown(
+    http_mock: Any,
+    caplog: pytest.LogCaptureFixture,
+    streaming: bool,
+) -> None:
+    caplog.set_level("INFO", logger="llm_providers.call_observation")
+    requests = http_mock([terminal([], "failed", error={"code": "server_error"})])
+    client = LLMClient(
+        build_provider_spec(provider_id="deepseek", api_key="fixture"),
+        network_retries=0,
+        engine_overload_retries=0,
+    )
+    request = ModelRequest(messages=[{"role": "user", "content": "hi"}])
+    with pytest.raises(LLMTransientProviderError):
+        if streaming:
+            list(client.stream(request))
+        else:
+            client.generate(request)
+    assert len(requests) == 1
+    record = next(
+        json.loads(r.message.split("model_call_observation ", 1)[1])
+        for r in caplog.records
+        if "model_call_observation " in r.message
+    )
+    assert record["stop_reason"] == "retry_exhausted"
+    assert record["retry_plans"] == 0
+
+
+def test_closing_after_terminal_is_a_completed_call(
+    http_mock: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("INFO", logger="llm_providers.call_observation")
+    requests = http_mock(text_events())
+    client = LLMClient(build_provider_spec(provider_id="deepseek", api_key="fixture"))
+    stream = client.stream(ModelRequest(messages=[{"role": "user", "content": "hi"}]))
+    for event in stream:
+        if isinstance(event, LLMTurnDone):
+            break
+    stream.close()  # type: ignore[attr-defined]
+    assert len(requests) == 1
+    record = next(
+        json.loads(r.message.split("model_call_observation ", 1)[1])
+        for r in caplog.records
+        if "model_call_observation " in r.message
+    )
+    assert record["stop_reason"] == "completed"
 
 
 def message(identity: str, text: str, phase: str | None = None) -> dict[str, Any]:

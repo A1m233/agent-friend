@@ -1,0 +1,162 @@
+[
+  {
+    "bundle": "agent-friend-diagnostics-20260907-021103.zip",
+    "sha256": "7f30645223001affa94baa91711051849495e74e6072ba2c8efd368680b3f5cc",
+    "generated_at": "2026-09-07T02:11:03.314018300+08:00",
+    "source_commit": "6b23515e99d81b7241fc48e9c59a9a4b7206b9b4",
+    "source_dirty": true,
+    "outcome": "complete",
+    "crc_verified": true,
+    "session_inspector_size_limit": true
+  },
+  {
+    "bundle": "agent-friend-diagnostics-20260908-011657.zip",
+    "sha256": "2c565a315fd54a21d8b70f3cc0600e5b76d3db671f76c4d7e460f670bb3da149",
+    "generated_at": "2026-09-08T01:16:57.933337300+08:00",
+    "source_commit": "6b23515e99d81b7241fc48e9c59a9a4b7206b9b4",
+    "source_dirty": true,
+    "outcome": "complete",
+    "crc_verified": true,
+    "session_inspector_size_limit": true
+  },
+  {
+    "bundle": "agent-friend-diagnostics-20260910-012001.zip",
+    "sha256": "b463a2c05551f3e2d5431979113c57bc0cb0c92af96b00a217767f3e3e3f5a5e",
+    "generated_at": "2026-09-10T01:20:01.743754+08:00",
+    "source_commit": "8cf97e931cf47188522ff3cfc44682a1eaf369fa",
+    "source_dirty": true,
+    "outcome": "complete",
+    "crc_verified": true,
+    "session_inspector_size_limit": true
+  },
+  {
+    "bundle": "agent-friend-diagnostics-20260910-015720.zip",
+    "sha256": "22c922445714e84932a0dd3782612aef59e0590b19590931de4aa59c03cac92a",
+    "generated_at": "2026-09-10T01:57:20.887702900+08:00",
+    "source_commit": "8cf97e931cf47188522ff3cfc44682a1eaf369fa",
+    "source_dirty": true,
+    "outcome": "complete",
+    "crc_verified": true,
+    "session_inspector_size_limit": true
+  },
+  {
+    "bundle": "agent-friend-diagnostics-20260911-014602.zip",
+    "sha256": "8489bb996d4b83a13fb07abf9202f4cf5b135196b9e428b9990f0784fce293c5",
+    "generated_at": "2026-09-11T01:46:02.138918800+08:00",
+    "source_commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+    "source_dirty": true,
+    "outcome": "complete",
+    "crc_verified": true,
+    "session_inspector_size_limit": true
+  },
+  {
+    "bundle": "agent-friend-diagnostics-20260911-023528.zip",
+    "sha256": "dea3425fdb4f3d9ad93e2f6ab4043735a3bb881bb5f601dc315c35fc26addf98",
+    "generated_at": "2026-09-11T02:35:28.394605700+08:00",
+    "source_commit": "dc9baaea0766b9a8cfd876aafa61fafae8c01958",
+    "source_dirty": true,
+    "outcome": "complete",
+    "crc_verified": true,
+    "session_inspector_size_limit": true
+  },
+  {
+    "bundle": "agent-friend-diagnostics-20260913-015548.zip",
+    "sha256": "f5dac3301bc29be4be73706264ea6ccb4ef3df708376b5899ec66fe1b514085b",
+    "generated_at": "2026-09-13T01:55:48.196754+08:00",
+    "source_commit": "366d285b0d3f02a7716d2e49df53d831947b9eac",
+    "source_dirty": true,
+    "outcome": "complete",
+    "crc_verified": true,
+    "session_inspector_size_limit": true
+  },
+  {
+    "bundle": "agent-friend-diagnostics-20260913-033322.zip",
+    "sha256": "53418e55fadfaf786313477e5ffd9b2b7da1dcd29605eba316f1c7a3f5babbf3",
+    "generated_at": "2026-09-13T03:33:22.651351+08:00",
+    "source_commit": "366d285b0d3f02a7716d2e49df53d831947b9eac",
+    "source_dirty": true,
+    "outcome": "partial",
+    "crc_verified": true,
+    "session_inspector_size_limit": false
+  },
+  {
+    "bundle": "agent-friend-diagnostics-20260914-020708.zip",
+    "sha256": "e02ce67b25aefff1fddfbc4310c4b1bb5daf94cda6d25e973b5da11c8b6a2df6",
+    "generated_at": "2026-09-14T02:07:08.224549300+08:00",
+    "source_commit": "366d285b0d3f02a7716d2e49df53d831947b9eac",
+    "source_dirty": true,
+    "outcome": "complete",
+    "crc_verified": true,
+    "session_inspector_size_limit": true
+  },
+  {
+    "bundle": "agent-friend-diagnostics-20260915-012640.zip",
+    "sha256": "cadca01e05c2cc7c924f3892b2f6d62bb3c510fb39a86eb8c0a4088595b24d9d",
+    "generated_at": "2026-09-15T01:26:40.285826500+08:00",
+    "source_commit": "f572c6cced3f4e9b9c6b1d8779dec14d18926be4",
+    "source_dirty": true,
+    "outcome": "complete",
+    "crc_verified": true,
+    "session_inspector_size_limit": false
+  },
+  {
+    "bundle": "agent-friend-diagnostics-20260915-014247.zip",
+    "sha256": "33b1ebc6cdced7a5edf9542b4fa83607be391b4f8c73ffe3eadb0065106dc075",
+    "generated_at": "2026-09-15T01:42:47.828755300+08:00",
+    "source_commit": "f572c6cced3f4e9b9c6b1d8779dec14d18926be4",
+    "source_dirty": true,
+    "outcome": "complete",
+    "crc_verified": true,
+    "session_inspector_size_limit": false
+  },
+  {
+    "bundle": "agent-friend-diagnostics-20260916-015655.zip",
+    "sha256": "0f8472711d6011c818a9ecd4cc8e70e5a4d3c6e221bbe23ad35fae5d62d52bb6",
+    "generated_at": "2026-09-16T01:56:55.371178700+08:00",
+    "source_commit": "fcab8eb172360408244c95fddde4d709f744d32f",
+    "source_dirty": true,
+    "outcome": "complete",
+    "crc_verified": true,
+    "session_inspector_size_limit": false
+  },
+  {
+    "bundle": "agent-friend-diagnostics-20260916-232933.zip",
+    "sha256": "6a88f2467ffc94a74a886b9a60eb2697170a0680e261d301aaa8881330125266",
+    "generated_at": "2026-09-16T23:29:33.985915800+08:00",
+    "source_commit": "fcab8eb172360408244c95fddde4d709f744d32f",
+    "source_dirty": true,
+    "outcome": "partial",
+    "crc_verified": true,
+    "session_inspector_size_limit": false
+  },
+  {
+    "bundle": "agent-friend-diagnostics-20260918-003111(1).zip",
+    "sha256": "df908aaa4b18697ab4d6083e82057998136def0e4f46df0644dc29eaeb1fcd2d",
+    "generated_at": "2026-09-18T00:31:11.337631800+08:00",
+    "source_commit": "bb8385eb2beaed70d8001f647fd4b66cb73ebd41",
+    "source_dirty": true,
+    "outcome": "complete",
+    "crc_verified": true,
+    "session_inspector_size_limit": false
+  },
+  {
+    "bundle": "agent-friend-diagnostics-20260918-021133(1).zip",
+    "sha256": "5e58f1c505d5f11a19c907a7b418589f0423689202476ee9899f93a222b38c3e",
+    "generated_at": "2026-09-18T02:11:33.449275300+08:00",
+    "source_commit": "bb8385eb2beaed70d8001f647fd4b66cb73ebd41",
+    "source_dirty": true,
+    "outcome": "partial",
+    "crc_verified": true,
+    "session_inspector_size_limit": false
+  },
+  {
+    "bundle": "agent-friend-diagnostics-20260919-010539.zip",
+    "sha256": "96139ddc2867ba4abb4d1541eea0077792f3e84b6e969742e94d099314b87822",
+    "generated_at": "2026-09-19T01:05:39.716500200+08:00",
+    "source_commit": "bb8385eb2beaed70d8001f647fd4b66cb73ebd41",
+    "source_dirty": true,
+    "outcome": "partial",
+    "crc_verified": true,
+    "session_inspector_size_limit": false
+  }
+]

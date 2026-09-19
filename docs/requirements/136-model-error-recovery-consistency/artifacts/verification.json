@@ -1,0 +1,62 @@
+{
+  "schema_revision": 1,
+  "verified_at": "2026-09-19T09:26:39.303690+00:00",
+  "candidate_manifest": "implementation-manifest.json",
+  "candidate_manifest_sha256": "807e5c172d65f7902ed492acb1ddbd0d50bca82182f3675ec3f37e8f62a75e12",
+  "automated_status": "passed",
+  "user_acceptance": "delegated_to_agent; deterministic acceptance passed; frozen packaging gate pending",
+  "stages": [
+    {
+      "stage": "backend",
+      "command": "./scripts/check/run.ps1 --stage backend -q --disable-warnings --maxfail=1",
+      "exit_code": 0,
+      "lint": "passed",
+      "typecheck": "passed",
+      "passed": 3361,
+      "skipped": 5,
+      "warnings": 3,
+      "test_seconds": 555.72
+    },
+    {
+      "stage": "frontend",
+      "command": "./scripts/check/run.ps1 --stage frontend",
+      "environment": {
+        "VITEST_MAX_WORKERS": "2"
+      },
+      "exit_code": 0,
+      "lint": "passed",
+      "passed": 1310,
+      "test_files": 157,
+      "production_build": "passed"
+    },
+    {
+      "stage": "rust",
+      "command": "./scripts/check/run.ps1 --stage rust",
+      "exit_code": 0,
+      "format": "passed",
+      "passed": 291,
+      "ignored": 1,
+      "release_check": "passed"
+    }
+  ],
+  "non_blocking_observations": [
+    "Earlier default-concurrency frontend run had worker startup timeouts; supported worker bound produced a passing full stage.",
+    "One prior full backend run observed empty command execution evidence in an unchanged test; the scoped 153-test rerun and final complete suite passed without changing that code.",
+    "Existing bilibili_api process-exit cleanup emits an ignored event-loop-closed exception after pytest finishes; final stage exit code is zero.",
+    "Frontend CSS/chunk-size warnings and Rust dead-code warnings were not changed by this feature."
+  ],
+  "not_performed": [
+    "live CPA or upstream load test",
+    "real LLM invocation",
+    "desktop visual acceptance",
+    "installer build",
+    "commit or merge"
+  ],
+  "interpretation": [
+    "Failure notifications use no generation model call; deferred memory is retained and processed in bounded batches.",
+    "HTTP hooks count send attempts, not confirmed server receipts or CPA-internal upstream requests.",
+    "Previously unrecognized overload errors now use the existing foreground retry budget; total requests need not decrease for every failure type.",
+    "Evidence does not establish AF as the cause of original CPA overload."
+  ],
+  "acceptance_authority": "2026-09-19: user delegated necessary acceptance and authorized merge, push, then a local-test package without routine confirmation."
+}

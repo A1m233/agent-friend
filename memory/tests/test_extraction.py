@@ -655,6 +655,8 @@ def test_reconciler_observation_identity_is_idempotent_even_for_empty_output() -
     store = SqliteMemoryStore(":memory:")
     fragment = _fragment()
     context = ExtractionContextBuilder(store).build(fragment)
+    with pytest.raises(ExtractionApplyError, match="model extraction did not complete"):
+        Reconciler(store).apply(ExtractionOutput(failure_code="llm_error"), fragment, context)
     first = Reconciler(store).apply(ExtractionOutput(), fragment, context)
     second = Reconciler(store).apply(ExtractionOutput(), fragment, context)
     assert first.committed is True
