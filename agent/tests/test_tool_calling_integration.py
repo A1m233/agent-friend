@@ -48,7 +48,9 @@ from agent.tools.builtin.social_platforms import (
 from agent.tools.builtin.web_fetch import ExtractedContent, WebFetchTool
 from agent.tools.builtin.web_fetch.url_safety import UntrustedDnsResolutionError
 from litellm.exceptions import Timeout as LiteLLMTimeout
+from llm_providers.errors import LLMProviderError
 from llm_providers.request_witness import witness_from_body
+from llm_providers.responses.stream import ResponsesState
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -88,6 +90,7 @@ from llm_providers import (
     ProviderAssistantTurn,
     ProviderReasoningState,
     ProviderSpec,
+    build_provider_spec,
 )
 from memory import ConversationFragment, MemoryContext
 
@@ -1530,6 +1533,65 @@ def test_nearby_place_search_uses_existing_tool_event_loop(tmp_path: Path) -> No
     assert "广东省深圳市福田区福强路2号" in "".join(
         event.text for event in events if isinstance(event, TextDelta)
     )
+
+
+@pytest.mark.parametrize("completed_first_call", [False, True])
+def test_responses_protocol_failure_never_executes_partial_or_repeats_tools(
+    tmp_path: Path, completed_first_call: bool
+) -> None:
+    echo = EchoTool()
+
+    @dataclass
+    class ProtocolClient:
+        calls: int = 0
+        context_window: int = 128000
+
+        def generate(self, request: ModelRequest) -> ModelResponse:
+            return ModelResponse(text="")
+
+        def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+            self.calls += 1
+            parser = ResponsesState(build_provider_spec(provider_id="deepseek", api_key="fixture"))
+            item = {
+                "id": "fc-1",
+                "type": "function_call",
+                "call_id": f"call-{self.calls}",
+                "name": "echo",
+                "arguments": json.dumps({"message": "saved"}),
+                "status": "completed",
+            }
+            yield from parser.feed(
+                {
+                    "type": "response.output_item.added",
+                    "output_index": 0,
+                    "item": {**item, "status": "in_progress", "arguments": ""},
+                }
+            )
+            yield from parser.feed(
+                {
+                    "type": "response.function_call_arguments.delta",
+                    "item_id": "fc-1",
+                    "output_index": 0,
+                    "delta": item["arguments"],
+                }
+            )
+            if completed_first_call and self.calls == 1:
+                yield from parser.feed(
+                    {
+                        "type": "response.completed",
+                        "response": {"id": "resp-1", "status": "completed", "output": [item]},
+                    }
+                )
+                yield parser.finish(LLMResponseDiagnostics(transport="responses"))
+                return
+            yield from parser.feed({"type": "response.unrecognized"})
+
+    fake = ProtocolClient()
+    conv = _make_conversation(tmp_path, fake_llm=fake, registry=ToolRegistry([echo]))
+    with pytest.raises(LLMProviderError, match="unsupported stream event"):
+        list(conv.stream("use echo", run_id="protocol-failure"))
+    assert fake.calls == (2 if completed_first_call else 1)
+    assert echo.call_count == (1 if completed_first_call else 0)
 
 
 def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(tmp_path: Path) -> None:

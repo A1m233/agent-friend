@@ -51,7 +51,7 @@ class ResponsesSource:
 
     async def _completed_response(self) -> AsyncIterator[Any]:
         # Reuse item/terminal validation without pretending the HTTP response was SSE.
-        response = self.response.model_dump(mode="json")
+        response = self.response.model_dump(mode="json", warnings=False)
         yield {"type": f"response.{response.get('status')}", "response": response}
 
     async def close(self) -> None:

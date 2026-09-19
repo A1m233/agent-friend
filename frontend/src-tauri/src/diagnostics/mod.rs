@@ -1854,6 +1854,48 @@ mod tests {
     }
 
     #[test]
+    fn protocol_error_log_survives_collection_and_zip_redaction() {
+        let root = std::env::temp_dir().join(format!("af-protocol-log-{}", rand::random::<u128>()));
+        fs::create_dir_all(&root).unwrap();
+        let record = json!({
+            "call_id": "fixture-call", "stop_reason": "not_retryable",
+            "error": {"source": "protocol", "code": "unsupported_stream_event",
+                "protocol": {"schema_revision": 1, "event_type": "response.unknown",
+                    "event_type_state": "recorded", "stage": "feed", "event_number": 3,
+                    "fields": [["type", "string"], ["delta", "string"]],
+                    "unknown_field_count": 0, "item_count": 1, "terminal_seen": false}}
+        });
+        fs::write(
+            root.join("agent_bridge.log"),
+            format!("model_call_observation {record}\nAuthorization: private-secret\n"),
+        )
+        .unwrap();
+        let collected = collect_logs(&root, &["private-secret".into()], None);
+        assert!(collected.failures.is_empty());
+        let path = write_archive_atomically(&root, "protocol", collected.entries).unwrap();
+        {
+            let mut archive = zip::ZipArchive::new(File::open(&path).unwrap()).unwrap();
+            let mut text = String::new();
+            archive
+                .by_name("logs/agent_bridge.log")
+                .unwrap()
+                .read_to_string(&mut text)
+                .unwrap();
+            let line = text
+                .lines()
+                .next()
+                .unwrap()
+                .strip_prefix("model_call_observation ")
+                .unwrap();
+            assert_eq!(serde_json::from_str::<Value>(line).unwrap(), record);
+            assert!(!text.contains("private-secret"));
+        }
+        fs::remove_file(path).unwrap();
+        fs::remove_file(root.join("agent_bridge.log")).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
     fn final_archive_contains_no_plaintext_credentials() {
         let dir = std::env::temp_dir().join(format!(
             "agent-friend-redacted-archive-{}",

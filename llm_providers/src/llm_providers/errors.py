@@ -17,6 +17,24 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class ProtocolEvidence:
+    """Bounded structural metadata; never an event or provider payload."""
+
+    stage: str
+    event_number: int
+    event_type: str | None
+    event_type_state: str
+    event_type_digest: str | None
+    fields: tuple[tuple[str, str], ...]
+    unknown_field_count: int
+    item_count: int
+    terminal_seen: bool
+    output_types: tuple[str, ...] = ()
+    output_types_truncated: bool = False
+    schema_revision: int = 1
+
+
+@dataclass(frozen=True)
 class ErrorEvidence:
     """Content-free failure evidence, safe for application logs and diagnostics."""
 
@@ -30,6 +48,7 @@ class ErrorEvidence:
     message_digest: str | None = None
     message_length: int = 0
     retry_after_seconds: float | None = None
+    protocol: ProtocolEvidence | None = None
 
 
 class LLMError(Exception):
