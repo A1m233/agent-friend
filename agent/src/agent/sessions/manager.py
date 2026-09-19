@@ -465,6 +465,8 @@ class SessionManager:
             else acquire_session_writer_lease(self._store, session_id)
         )
         try:
+            if self._memory is not None:
+                self._memory.discard_pending_session(session_id)
             self._store.delete(session_id)
         finally:
             lease.release()

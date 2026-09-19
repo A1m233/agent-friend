@@ -163,8 +163,8 @@ class Memory:
     ) -> dict[str, int]:
         """让指定会话事件来源的记忆失活。
 
-        先 drain 异步抽取队列，保证已入队的旧分支 fragment 不会在软删除之后再落
-        新记忆；随后按 source_ref / provenance 软删除 episodic 与 semantic。
+        与当前抽取同步并移除待处理的旧来源；不为失效操作补发延后请求。
+        随后按 source_ref / provenance 软删除 episodic 与 semantic。
         """
         if not event_uuids:
             return {"episodic": 0, "semantic": 0}
@@ -175,7 +175,7 @@ class Memory:
             len(event_uuids),
             reason,
         )
-        self.flush()
+        self._worker.invalidate(session_id, event_uuids)
         result = self._store.soft_delete_by_source_events(
             session_id=session_id,
             event_uuids=set(event_uuids),
@@ -184,6 +184,10 @@ class Memory:
         if self._index_manager is not None:
             self._index_manager.request_backfill()
         return result
+
+    def discard_pending_session(self, session_id: str) -> None:
+        """Discard unprocessed private material when its source session is deleted."""
+        self._worker.invalidate(session_id)
 
     def warmup(self) -> None:
         """Warm read-path dependencies without changing memory semantics."""
@@ -524,11 +528,11 @@ class Memory:
     # ----- 生命周期 -----
 
     def flush(self) -> None:
-        """阻塞直到抽取队列清空。"""
+        """等待已触发的抽取；冷却或延后素材继续留库。"""
         self._worker.flush()
 
     def close(self) -> None:
-        """drain 抽取队列、停 worker、关库。幂等。"""
+        """等待当前抽取、保留延后素材、停 worker 并关库。幂等。"""
         self._worker.close()
         if self._index_manager is not None:
             self._index_manager.close()

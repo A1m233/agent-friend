@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from hashlib import sha256
 
 import openai
 from litellm.exceptions import (
@@ -25,6 +26,7 @@ from litellm.litellm_core_utils.completion_timeout import CompletionTimeout
 
 from .cancellable_stream import StreamIdleTimeoutExceeded
 from .errors import (
+    ErrorEvidence,
     LLMAuthError,
     LLMBadRequestError,
     LLMContentPolicyError,
@@ -41,7 +43,6 @@ from .errors import (
     LLMUnsupportedParameterError,
 )
 
-_TRANSIENT_PROVIDER_ERROR_TYPES = frozenset({"engine_overloaded_error"})
 _CONTEXT_WINDOW_ERROR_CODES = frozenset(
     {
         "context_length_exceeded",
@@ -54,10 +55,14 @@ _CONTEXT_WINDOW_ERROR_CODES = frozenset(
 
 @dataclass(frozen=True)
 class _ProviderErrorMetadata:
+    code: str | None = None
+    message: str | None = None
+    source: str = "unknown"
     error_type: str | None = None
     status_code: int | None = None
     retry_after_seconds: float | None = None
     request_id: str | None = None
+    response_id: str | None = None
 
 
 def _exception_chain(error: BaseException) -> Iterator[BaseException]:
@@ -130,11 +135,21 @@ def _header_text(headers: object, *names: str) -> str | None:
 
 
 def _provider_error_metadata(error: Exception) -> _ProviderErrorMetadata:
+    code: str | None = None
+    message: str | None = None
+    source = "unknown"
     error_type: str | None = None
     status_code: int | None = None
     retry_after_seconds: float | None = None
     request_id: str | None = None
+    response_id: str | None = None
     for item in _exception_chain(error):
+        item_response_id = getattr(item, "response_id", None)
+        if response_id is None and isinstance(item_response_id, str):
+            response_id = item_response_id
+        item_source = getattr(item, "error_source", None)
+        if item_source in {"stream_error", "failed_terminal", "sdk_validation", "protocol"}:
+            source = item_source
         item_status = getattr(item, "status_code", None)
         if status_code is None and isinstance(item_status, int):
             status_code = item_status
@@ -142,6 +157,12 @@ def _provider_error_metadata(error: Exception) -> _ProviderErrorMetadata:
         if isinstance(body, dict):
             payload = body.get("error", body)
             if isinstance(payload, dict):
+                body_code = payload.get("code")
+                if code is None and isinstance(body_code, str):
+                    code = body_code.casefold()
+                body_message = payload.get("message")
+                if message is None and isinstance(body_message, str):
+                    message = body_message
                 item_error_type = payload.get("type")
                 if error_type is None and isinstance(item_error_type, str):
                     error_type = item_error_type.casefold()
@@ -162,18 +183,15 @@ def _provider_error_metadata(error: Exception) -> _ProviderErrorMetadata:
         if retry_after_seconds is None:
             retry_after_seconds = _parse_retry_after_seconds(_header_text(headers, "retry-after"))
     return _ProviderErrorMetadata(
+        code=code,
+        message=message,
+        source=source if source != "unknown" else ("http" if status_code else "unknown"),
         error_type=error_type,
         status_code=status_code,
         retry_after_seconds=retry_after_seconds,
         request_id=request_id,
+        response_id=response_id,
     )
-
-
-def _is_transient_provider_exception(error: Exception) -> bool:
-    metadata = _provider_error_metadata(error)
-    if metadata.status_code is not None and 500 <= metadata.status_code <= 599:
-        return True
-    return metadata.status_code == 429 and metadata.error_type in _TRANSIENT_PROVIDER_ERROR_TYPES
 
 
 def _is_context_window_exception(error: Exception) -> bool:
@@ -210,97 +228,127 @@ def _is_content_policy_exception(error: Exception) -> bool:
     )
 
 
-def map_provider_error(error: Exception, *, provider_id: str | None = None) -> LLMError:
-    """Map SDK/provider exceptions without leaking transport types to callers."""
+_ERROR_CODES = {
+    "authentication": (LLMAuthError, "authentication"),
+    "authentication_error": (LLMAuthError, "authentication"),
+    "invalid_api_key": (LLMAuthError, "authentication"),
+    "permission_denied": (LLMPermissionError, "permission"),
+    "permission_error": (LLMPermissionError, "permission"),
+    "guardrail_rejected": (LLMPermissionError, "permission"),
+    "payment_required": (LLMPaymentRequiredError, "quota"),
+    "insufficient_quota": (LLMPaymentRequiredError, "quota"),
+    "billing_hard_limit_reached": (LLMPaymentRequiredError, "quota"),
+    "rate_limit_exceeded": (LLMRateLimitError, "rate_limit"),
+    "rate_limit_error": (LLMRateLimitError, "rate_limit"),
+    "invalid_request_error": (LLMBadRequestError, "request"),
+    "invalid_request": (LLMBadRequestError, "request"),
+    "content_policy_violation": (LLMContentPolicyError, "content_policy"),
+    "server_error": (LLMTransientProviderError, "service_unavailable"),
+    "server_is_overloaded": (LLMTransientProviderError, "overload"),
+    "engine_overloaded_error": (LLMTransientProviderError, "overload"),
+    "provider_overloaded": (LLMTransientProviderError, "overload"),
+    "provider_unavailable": (LLMTransientProviderError, "service_unavailable"),
+    "service_unavailable_error": (LLMTransientProviderError, "service_unavailable"),
+    **{code: (LLMContextWindowError, "context_window") for code in _CONTEXT_WINDOW_ERROR_CODES},
+}
+_ROUTE_CODES = {
+    "model_unavailable",
+    "no_available_provider",
+    "no_endpoint",
+    "privacy_constraint",
+    "routing_error",
+}
 
+
+def _safe_token(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if value in _ERROR_CODES or value in _ROUTE_CODES:
+        return value
+    return "sha256:" + sha256(value.encode()).hexdigest()[:24]
+
+
+def map_provider_error(error: Exception, *, provider_id: str | None = None) -> LLMError:
+    """Normalize semantics once; never expose arbitrary provider text in an exception."""
+    if isinstance(error, LLMError):
+        return error
     chain = tuple(_exception_chain(error))
     metadata = _provider_error_metadata(error)
-
-    # LiteLLM models this local validation error as an OpenAI BadRequestError.
-    # Preserve its origin instead of implying that a provider rejected HTTP.
+    code, kind = metadata.code, metadata.error_type
+    source = metadata.source
+    category = "unknown"
+    cls: type[LLMError] = LLMProviderError
     if any(isinstance(item, UnsupportedParamsError) for item in chain):
-        return LLMUnsupportedParameterError(str(error))
-
-    def transient() -> LLMTransientProviderError:
-        return LLMTransientProviderError(
-            str(error),
-            provider_error_type=metadata.error_type,
+        cls, category, source = LLMUnsupportedParameterError, "request", "sdk_validation"
+    elif any(isinstance(item, StreamIdleTimeoutExceeded) for item in chain):
+        cls, category, source = LLMStreamTimeoutError, "timeout", "transport"
+    elif code in _ERROR_CODES:
+        cls, category = _ERROR_CODES[code]
+    elif _is_context_window_exception(error):
+        cls, category = LLMContextWindowError, "context_window"
+    elif kind in _ERROR_CODES:
+        cls, category = _ERROR_CODES[kind]
+    elif _is_content_policy_exception(error):
+        cls, category = LLMContentPolicyError, "content_policy"
+    elif metadata.status_code == 401 or isinstance(error, openai.AuthenticationError):
+        cls, category = LLMAuthError, "authentication"
+    elif metadata.status_code == 402:
+        cls, category = LLMPaymentRequiredError, "quota"
+    elif metadata.status_code == 403 or isinstance(error, openai.PermissionDeniedError):
+        cls, category = LLMPermissionError, "permission"
+    elif metadata.status_code == 429 or isinstance(error, openai.RateLimitError):
+        cls, category = LLMRateLimitError, "rate_limit"
+    elif provider_id == "openrouter" and (
+        code in _ROUTE_CODES or kind in _ROUTE_CODES or metadata.status_code == 404
+    ):
+        cls, category = LLMModelUnavailableError, "model_unavailable"
+    elif _is_network_exception(error):
+        cls, category, source = LLMNetworkError, "network", "transport"
+    elif metadata.status_code == 408:
+        cls, category = LLMTransientProviderError, "timeout"
+    elif metadata.status_code is not None and 500 <= metadata.status_code <= 599:
+        cls, category = LLMTransientProviderError, "service_unavailable"
+    elif isinstance(error, openai.BadRequestError) or metadata.status_code in {400, 404, 422}:
+        cls, category = LLMBadRequestError, "request"
+    message = metadata.message or str(error)
+    request_ref = (
+        "sha256:" + sha256(metadata.request_id.encode()).hexdigest()[:24]
+        if metadata.request_id
+        else None
+    )
+    summary = f"Model call failed: {category}"
+    if cls is LLMTransientProviderError:
+        mapped: LLMError = LLMTransientProviderError(
+            summary,
+            provider_error_type=_safe_token(code or kind),
             status_code=metadata.status_code,
             retry_after_seconds=metadata.retry_after_seconds,
-            provider_request_id=metadata.request_id,
+            provider_request_id=request_ref,
         )
-
-    error_type = (metadata.error_type or "").casefold()
-    if provider_id == "openrouter":
-        if _is_content_policy_exception(error) or error_type == "content_policy_violation":
-            return LLMContentPolicyError(str(error))
-        if metadata.status_code == 401 or error_type in {
-            "authentication",
-            "authentication_error",
-            "invalid_api_key",
-        }:
-            return LLMAuthError(str(error))
-        if metadata.status_code == 402 or error_type == "payment_required":
-            return LLMPaymentRequiredError(str(error))
-        if metadata.status_code == 403 or error_type in {
-            "permission_denied",
-            "guardrail_rejected",
-        }:
-            return LLMPermissionError(str(error))
-        if metadata.status_code == 429 or error_type == "rate_limit_exceeded":
-            return LLMRateLimitError(str(error))
-        if (
-            error_type
-            in {
-                "model_unavailable",
-                "no_available_provider",
-                "no_endpoint",
-                "privacy_constraint",
-                "routing_error",
-            }
-            or metadata.status_code == 404
-        ):
-            return LLMModelUnavailableError(
-                str(error),
-                availability_code=error_type or "no_endpoint",
-                retryable=False,
-                status_code=metadata.status_code,
-                provider_request_id=metadata.request_id,
-            )
-        if error_type in {"provider_overloaded", "provider_unavailable"}:
-            return transient()
-
-    auth_error_types = {"authentication_error", "invalid_api_key", "permission_denied"}
-    if any(isinstance(item, StreamIdleTimeoutExceeded) for item in chain):
-        return LLMStreamTimeoutError(str(error))
-    if (
-        metadata.status_code in {401, 403}
-        or error_type in auth_error_types
-        or any(
-            isinstance(item, (openai.AuthenticationError, openai.PermissionDeniedError))
-            for item in chain
+    elif cls is LLMModelUnavailableError:
+        mapped = LLMModelUnavailableError(
+            summary,
+            availability_code=_safe_token(code or kind) or "no_endpoint",
+            status_code=metadata.status_code,
+            provider_request_id=request_ref,
         )
-    ):
-        return LLMAuthError(str(error))
-    if any(isinstance(item, openai.RateLimitError) for item in chain):
-        return (
-            transient()
-            if _is_transient_provider_exception(error)
-            else LLMRateLimitError(str(error))
-        )
-    if _is_network_exception(error):
-        return LLMNetworkError(str(error))
-    if _is_content_policy_exception(error):
-        return LLMContentPolicyError(str(error))
-    if _is_context_window_exception(error):
-        return LLMContextWindowError(str(error))
-    if any(isinstance(item, openai.BadRequestError) for item in chain):
-        return LLMBadRequestError(str(error))
-    if _is_transient_provider_exception(error):
-        return transient()
-    if isinstance(error, openai.APIError):
-        return LLMProviderError(str(error))
-    return LLMProviderError(f"未预料的错误: {error}")
+    else:
+        mapped = cls(summary)
+    mapped.error_evidence = ErrorEvidence(
+        source=source,
+        category=category,
+        code=_safe_token(code),
+        error_type=_safe_token(kind),
+        status_code=metadata.status_code,
+        request_ref=request_ref,
+        response_ref=(
+            sha256(metadata.response_id.encode()).hexdigest()[:24] if metadata.response_id else None
+        ),
+        message_digest=sha256(message.encode()).hexdigest()[:24],
+        message_length=len(message),
+        retry_after_seconds=metadata.retry_after_seconds,
+    )
+    return mapped
 
 
 __all__ = ["map_provider_error"]

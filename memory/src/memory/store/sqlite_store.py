@@ -256,6 +256,94 @@ class SqliteMemoryStore:
         with self._lock:
             self._conn.execute("SELECT 1").fetchone()
 
+    def enqueue_extraction(
+        self,
+        observation_id: str,
+        session_id: str,
+        payload: str,
+        source_refs: list[str],
+        reason: str,
+    ) -> bool:
+        """Persist once before waking the worker; completed observations stay completed."""
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "INSERT OR IGNORE INTO extraction_pending "
+                "(observation_id, session_id, payload, source_refs, reason) "
+                "SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS "
+                "(SELECT 1 FROM extraction_commit WHERE observation_id = ?)",
+                (
+                    observation_id,
+                    session_id,
+                    payload,
+                    json.dumps(source_refs),
+                    reason,
+                    observation_id,
+                ),
+            )
+            return cursor.rowcount > 0
+
+    def pending_extraction_sequence(self) -> int:
+        with self._lock:
+            row = self._conn.execute("SELECT MAX(sequence) FROM extraction_pending").fetchone()
+            return int(row[0] or 0)
+
+    def pending_extractions(
+        self, limit: int = 2, *, through: int | None = None
+    ) -> list[tuple[str, str, str]]:
+        with self._lock, self._conn:
+            # Crash after commit but before pending cleanup is harmless.
+            self._conn.execute(
+                "DELETE FROM extraction_pending WHERE observation_id IN "
+                "(SELECT observation_id FROM extraction_commit)"
+            )
+            rows = self._conn.execute(
+                "SELECT observation_id, payload, reason FROM extraction_pending "
+                "WHERE (? IS NULL OR sequence <= ?) ORDER BY sequence LIMIT ?",
+                (through, through, limit),
+            ).fetchall()
+            return [(row[0], row[1], row[2]) for row in rows]
+
+    def finish_pending_extraction(self, observation_id: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM extraction_pending WHERE observation_id = ?", (observation_id,)
+            )
+
+    def extraction_cooldown(self) -> float:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM schema_meta WHERE key = 'extraction_not_before'"
+            ).fetchone()
+            return float(row[0]) if row else 0.0
+
+    def defer_extractions(self, not_before: float, reason: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO schema_meta(key,value) VALUES ('extraction_not_before', ?)",
+                (str(not_before),),
+            )
+            self._conn.execute("UPDATE extraction_pending SET reason = ?", (reason,))
+
+    def invalidate_pending_extractions(
+        self, session_id: str, event_uuids: set[str] | None = None
+    ) -> int:
+        with self._lock, self._conn:
+            rows = self._conn.execute(
+                "SELECT observation_id, source_refs FROM extraction_pending WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+            targets = [
+                row[0]
+                for row in rows
+                if event_uuids is None
+                or any(ref.partition("#")[2] in event_uuids for ref in json.loads(row[1]))
+            ]
+            self._conn.executemany(
+                "DELETE FROM extraction_pending WHERE observation_id = ?",
+                [(target,) for target in targets],
+            )
+            return len(targets)
+
     @contextmanager
     def extraction_batch(
         self,

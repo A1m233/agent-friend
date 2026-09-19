@@ -1,0 +1,136 @@
+{
+  "created_at": "2026-09-19T09:26:39.148682+00:00",
+  "base_commit": "7cb9304eb52e825b3610724023500b9c43e65569",
+  "branch": "feature/136-model-error-recovery-consistency",
+  "state": "uncommitted_worktree",
+  "files": [
+    {
+      "path": "agent/src/agent/context/summarizing.py",
+      "sha256": "0ec9a4b9ce35fb74018389b971004e86c5c9cdc1e8092f89f0066bb34b20b925"
+    },
+    {
+      "path": "agent/src/agent/conversation.py",
+      "sha256": "6959c743b275bf0b540f051eca9d175e43e2def783fe084fdb55e9cf4a4d1199"
+    },
+    {
+      "path": "agent/src/agent/runtime/__init__.py",
+      "sha256": "83b50829513619116b0f0522808a7617fb4694863576b41d09c734cf94289546"
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "sha256": "dc8338d6ed3e55f2a6c4c33134155b8d48dd1aec56b1708ea0cd686119d1d798"
+    },
+    {
+      "path": "agent/tests/test_runtime_observe_migration.py",
+      "sha256": "09d5c8efa66fee6f5034e9c37a4993fca2c886898fcd4d2fcae8a5513618827d"
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/errors.py",
+      "sha256": "d03b4ac66697c81cf4e4a1fe7461a5cc11522a1558a54d3c784ab4ebf17c845c"
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/notifications/service.py",
+      "sha256": "17806afa953f20256b225da6ecea57471dddf46f9e4146bcdb4c7efaf86b331b"
+    },
+    {
+      "path": "agent_bridge/tests/test_model_failure_mapping.py",
+      "sha256": "1a933897b77bea6c987c920413d4e217641ba9f1df890e04df5d9f764646fe93"
+    },
+    {
+      "path": "agent_bridge/tests/test_notifications.py",
+      "sha256": "6d9e54a42766de297a036ff1584dd5ad23330cb057eaef92206f2190419fb5ef"
+    },
+    {
+      "path": "llm_providers/src/llm_providers/call_observation.py",
+      "sha256": "91d7d490405d354912a28d361ecc15c3963c06f3bd2164cd356642ed22516014"
+    },
+    {
+      "path": "llm_providers/src/llm_providers/client.py",
+      "sha256": "18b0794c54bd8e28abfef95cae970a1bc16f6576e99c4ef429d1912612957bfc"
+    },
+    {
+      "path": "llm_providers/src/llm_providers/error_normalization.py",
+      "sha256": "a349586ac6e772c2abd448571ec861644555a1f89b8d760453b7c02a17e33fcb"
+    },
+    {
+      "path": "llm_providers/src/llm_providers/errors.py",
+      "sha256": "7f02d921d4d3595d72f96ca1d9fcbde84d70cb9428f69eccaf7709b6524f7d89"
+    },
+    {
+      "path": "llm_providers/src/llm_providers/request_witness.py",
+      "sha256": "970ad232ae81ee255be31e01a12718ccfe06ac36a6224957061f22ae43ec18c8"
+    },
+    {
+      "path": "llm_providers/src/llm_providers/responses/request.py",
+      "sha256": "99b62ef2b975c4d7423aa2596395d076ddc60cf739b2652cb278ef5f269894bf"
+    },
+    {
+      "path": "llm_providers/src/llm_providers/responses/stream.py",
+      "sha256": "a1b1a65adae5d8681a8636f5296fe5d4f524cafd890fdd0d28568d9a47113fb2"
+    },
+    {
+      "path": "llm_providers/tests/test_context_window_and_usage.py",
+      "sha256": "3ff261d4f85c0635a490facbef6e24b8f3f943b92724dff10afc6529c066734c"
+    },
+    {
+      "path": "llm_providers/tests/test_failure_normalization.py",
+      "sha256": "42fc11e1d6ae590e150b2f725f38f6839482e058fe73bba7f22b709eab579c60"
+    },
+    {
+      "path": "llm_providers/tests/test_openrouter_errors.py",
+      "sha256": "c523b6f62b121188ad23e7898d2eb8c35ad7d7e9dadc374e2781797d7a2466a5"
+    },
+    {
+      "path": "llm_providers/tests/test_responses.py",
+      "sha256": "cdbd3e9e184f40a75e339e4a553dae0c4793800052fe474fed1a20345a1d89b2"
+    },
+    {
+      "path": "memory/src/memory/contracts.py",
+      "sha256": "469821b7bb8f920440a81cdc862496bf74e980ea9c195866f2ae0209d4368017"
+    },
+    {
+      "path": "memory/src/memory/extraction/deferred.py",
+      "sha256": "a9031519086370384ab586a7ce4ca72bf468d6a949cbde70f0d648824ef8ba26"
+    },
+    {
+      "path": "memory/src/memory/extraction/extractor.py",
+      "sha256": "49f39decdfb8f80392f3d1af3c72b78d09d5586e91edaa30cf09c014cd76d45b"
+    },
+    {
+      "path": "memory/src/memory/extraction/reconciler.py",
+      "sha256": "399104983bd2170919592e45ba020ec778672fb2374a25f67a67589fe9772ca1"
+    },
+    {
+      "path": "memory/src/memory/extraction/result.py",
+      "sha256": "303c84bd2ece54406eddda9aecb5e2d335949ae86bd37b24dd463f31decaa590"
+    },
+    {
+      "path": "memory/src/memory/extraction/worker.py",
+      "sha256": "92227722b86564377253eef33e4ab6dc4b21c3ef4384ec48d29fcf9f1e3f2a26"
+    },
+    {
+      "path": "memory/src/memory/facade.py",
+      "sha256": "c8c642716623b5eeea63a5d88dc58e65a1a41d4010d8c9f530123121293c26c2"
+    },
+    {
+      "path": "memory/src/memory/store/schema.py",
+      "sha256": "1c8ddfe41d4400dc314a456e79a1a9f4a88eb99f710ffda43e0033472397d9a0"
+    },
+    {
+      "path": "memory/src/memory/store/sqlite_store.py",
+      "sha256": "e35e45d4b5222a3c486015a8af1b60a3a1ce6d3cf55dbed20a4726e78d201170"
+    },
+    {
+      "path": "memory/tests/test_deferred_extraction.py",
+      "sha256": "65a692f35467a98e86c1ef66075570f1c1827f1d8756fbe00bbb86cd60e3ab30"
+    },
+    {
+      "path": "memory/tests/test_extraction.py",
+      "sha256": "130466a9ba6a2440b42862c467a074924ac452c383156edb440b87338a184751"
+    },
+    {
+      "path": "memory/tests/test_store.py",
+      "sha256": "f50c2773f9c9457474c61fed154df3c37b189dc4004527f5ee31eb5c45602511"
+    }
+  ]
+}

@@ -1096,11 +1096,10 @@ class Conversation:
                     persist_empty_partial=_is_explicit_run_cancellation(exc_info[1]),
                     interruption_reason=_interruption_reason_code(exc_info[1]),
                 )
-            else:
-                if not self._post_turn_external:
-                    # 014: 默认行为保留——AgentRuntime 装配时 post_turn_external=True，
-                    # 由 PostTurn hook 调 memory.observe；此处不重复触发
-                    self._observe_turn(turn_start_idx)
+            if not self._post_turn_external:
+                # Runtime owns observation when installed. Direct/CLI callers
+                # also retain failed-turn facts without triggering extraction.
+                self._observe_turn(turn_start_idx, defer_extraction=interrupted)
             self._prompt_channel_override = previous_prompt_channel
             self._prompt_surface_override = previous_prompt_surface
             self._interaction_destination_id_override = previous_interaction_destination_id
@@ -1319,8 +1318,8 @@ class Conversation:
                     persist_empty_partial=_is_explicit_run_cancellation(exc),
                     interruption_reason=_interruption_reason_code(exc),
                 )
-            elif not self._post_turn_external:
-                self._observe_turn(turn_start_idx)
+            if not self._post_turn_external:
+                self._observe_turn(turn_start_idx, defer_extraction=interrupted)
             self._prompt_channel_override = previous_prompt_channel
             self._prompt_surface_override = previous_prompt_surface
             self._interaction_destination_id_override = previous_interaction_destination_id
@@ -4510,8 +4509,8 @@ class Conversation:
             cache_diagnostics.get("response_model", "unavailable"),
         )
 
-    def _observe_turn(self, start_idx: int) -> None:
-        """本轮成功结束后，把这一轮新增的事件投影成 fragment 交给 memory 抽取。
+    def _observe_turn(self, start_idx: int, *, defer_extraction: bool = False) -> None:
+        """投影本轮素材；失败轮仅持久化延后，不立即调用模型抽取。
 
         memory 未注入则跳过。投影 / 入队都不应影响对话主流程，出错只吞掉
         （抽取是旁路；observe 本身是非阻塞入队）。
@@ -4526,6 +4525,8 @@ class Conversation:
                 turn_start_idx=start_idx,
                 persona_id=self._session.current_persona_id or "",
             )
+            if defer_extraction:
+                fragment = replace(fragment, defer_extraction=True)
             self._memory.observe(fragment)
         except Exception:
             import logging

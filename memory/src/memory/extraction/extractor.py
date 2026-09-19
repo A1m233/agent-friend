@@ -13,7 +13,7 @@ import json
 import logging
 import math
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING
@@ -87,6 +87,7 @@ class Extractor:
         normalize_metadata: bool = True,
     ) -> None:
         self._llm = llm_client
+        self._allow_retries = True
         self._prompt = prompt if prompt is not None else _PROMPT_PATH.read_text(encoding="utf-8")
         self._reconciliation_prompt = (
             reconciliation_prompt
@@ -103,6 +104,8 @@ class Extractor:
         self,
         fragment: ConversationFragment,
         context: ExtractionContext | list[SemanticRow],
+        *,
+        allow_retries: bool = True,
     ) -> ExtractionOutput:
         from contextlib import ExitStack
         from copy import copy
@@ -122,9 +125,13 @@ class Extractor:
                 self._report_attempt(
                     fragment, extraction_context, status="llm_error", started=started, error=exc
                 )
-                return ExtractionOutput()
+                return ExtractionOutput(
+                    failure_code=type(exc).__name__,
+                    retry_after_seconds=getattr(exc, "retry_after_seconds", None),
+                )
             bound = copy(self)
             bound._llm = model
+            bound._allow_retries = allow_retries
             return bound._extract_bound(fragment, context)
 
     def _extract_bound(
@@ -159,6 +166,7 @@ class Extractor:
                 ModelRequest(
                     messages=messages,
                     control=ModelCallControl(
+                        allow_retries=self._allow_retries,
                         previous_request_witness=lineage.previous_witness,
                         trace_context=ModelCallTraceContext(
                             operation="memory_extraction",
@@ -183,7 +191,10 @@ class Extractor:
                 started=started,
                 error=exc,
             )
-            return ExtractionOutput()
+            return ExtractionOutput(
+                failure_code=type(exc).__name__,
+                retry_after_seconds=getattr(exc, "retry_after_seconds", None),
+            )
 
         output, status = _parse_output_with_status(raw)
         self._report_attempt(
@@ -196,6 +207,8 @@ class Extractor:
         )
         if output.validation_error is not None:
             return output
+        if status in {"empty_response", "invalid_json", "invalid_shape"}:
+            return replace(output, failure_code=status)
         return self._reconcile_semantic_changes(fragment, extraction_context, output)
 
     def _reconcile_semantic_changes(
@@ -252,6 +265,7 @@ class Extractor:
                 ModelRequest(
                     messages=messages,
                     control=ModelCallControl(
+                        allow_retries=self._allow_retries,
                         previous_request_witness=lineage.previous_witness,
                         trace_context=ModelCallTraceContext(
                             operation="memory_reconciliation",
@@ -282,7 +296,11 @@ class Extractor:
                 semantic_update_estimated_tokens=packed.estimated_tokens,
                 semantic_reconciliation_fallback_reason="llm_error",
             )
-            return base_output
+            return replace(
+                base_output,
+                reconciliation_degraded=True,
+                retry_after_seconds=getattr(exc, "retry_after_seconds", None),
+            )
 
         changes, status = _parse_reconciliation_with_status(raw)
         fallback_reason = _semantic_change_validation_error(changes, context)
@@ -303,7 +321,7 @@ class Extractor:
                 semantic_update_estimated_tokens=packed.estimated_tokens,
                 semantic_reconciliation_fallback_reason=fallback_reason,
             )
-            return base_output
+            return replace(base_output, reconciliation_degraded=True)
 
         reconciled = ExtractionOutput(
             core_updates=base_output.core_updates,

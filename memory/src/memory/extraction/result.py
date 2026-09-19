@@ -99,6 +99,10 @@ class ExtractionOutput:
     # Programmatic compatibility for old fixtures. Parser-produced v1 payloads
     # are converted before constructing ExtractionOutput.
     semantic_ops: list[SemanticOp] = field(default_factory=list, repr=False)
+    # Append execution metadata so existing positional construction remains valid.
+    failure_code: str | None = None
+    retry_after_seconds: float | None = None
+    reconciliation_degraded: bool = False
 
     def __post_init__(self) -> None:
         if not self.semantic_ops:

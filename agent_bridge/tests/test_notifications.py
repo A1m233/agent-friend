@@ -78,6 +78,21 @@ def fact() -> NotificationFact:
     )
 
 
+def test_failed_notifications_are_local_including_old_pending(tmp_path: Path) -> None:
+    svc, generator = service(tmp_path)
+    failed = replace(fact(), kind="run_failed")
+    first = svc.accept(failed)
+    assert first.generation_status == "ready"
+    assert svc.accept(failed).notification_id == first.notification_id
+    assert not svc.run_once()
+    old = svc.store.accept(replace(failed, event_key="run:s:old"))
+    assert svc.run_once()
+    assert svc.store.get(old.notification_id).generation_status == "ready"
+    svc.store.recover_generation()
+    assert not svc.run_once()
+    assert generator.calls == 0
+
+
 def test_snapshot_existence_check_does_not_load_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

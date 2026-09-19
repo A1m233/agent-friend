@@ -23,6 +23,7 @@ from openai.types.chat import ChatCompletionChunk
 from llm_providers import (
     LLMActivity,
     LLMAuthError,
+    LLMBadRequestError,
     LLMClient,
     LLMContentPolicyError,
     LLMContextWindowError,
@@ -30,7 +31,7 @@ from llm_providers import (
     LLMModelMetadataError,
     LLMNetworkError,
     LLMOutputBudgetExhaustedError,
-    LLMProviderError,
+    LLMPermissionError,
     LLMRateLimitError,
     LLMRetryScheduled,
     LLMStreamInterruptedAfterOutputError,
@@ -1095,7 +1096,7 @@ def test_provider_503_maps_to_transient_provider_error() -> None:
 
 def test_explicit_auth_status_maps_before_generic_provider_errors() -> None:
     assert isinstance(_map_exception(_StatusError(401)), LLMAuthError)
-    assert isinstance(_map_exception(_StatusError(403)), LLMAuthError)
+    assert isinstance(_map_exception(_StatusError(403)), LLMPermissionError)
 
 
 def _openai_rate_limit_error(
@@ -1124,7 +1125,7 @@ def test_kimi_engine_overload_429_maps_to_transient_provider_error() -> None:
     assert mapped.provider_error_type == "engine_overloaded_error"
     assert mapped.status_code == 429
     assert mapped.retry_after_seconds == 3.5
-    assert mapped.provider_request_id == "request-overload-1"
+    assert mapped.provider_request_id == "sha256:4cb629163d3cc6f185420c2b"
 
 
 def test_generic_429_remains_rate_limit_error() -> None:
@@ -1242,7 +1243,7 @@ def test_kimi_engine_overload_honors_retry_after_and_emits_failure_metadata(
     assert failed.provider_error_type == "engine_overloaded_error"
     assert failed.status_code == 429
     assert failed.retry_after_seconds == 3.5
-    assert failed.provider_request_id == "request-overload-1"
+    assert failed.provider_request_id == "sha256:4cb629163d3cc6f185420c2b"
 
 
 def test_kimi_generic_429_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1283,7 +1284,7 @@ def test_stream_does_not_retry_permanent_provider_error(
     monkeypatch.setattr(_COMPLETION, fake_completion)
     client = LLMClient(_spec(), network_retries=2, network_retry_backoff_seconds=0)
 
-    with pytest.raises(LLMProviderError):
+    with pytest.raises(LLMBadRequestError):
         list(client.stream([{"role": "user", "content": "hi"}]))
     assert calls == 1
 

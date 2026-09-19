@@ -9,14 +9,33 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .stream_events import LLMResponseDiagnostics, LLMUsage
 
 
+@dataclass(frozen=True)
+class ErrorEvidence:
+    """Content-free failure evidence, safe for application logs and diagnostics."""
+
+    source: str
+    category: str
+    code: str | None = None
+    error_type: str | None = None
+    status_code: int | None = None
+    request_ref: str | None = None
+    response_ref: str | None = None
+    message_digest: str | None = None
+    message_length: int = 0
+    retry_after_seconds: float | None = None
+
+
 class LLMError(Exception):
     """所有 LLM 相关错误的基类。"""
+
+    error_evidence: ErrorEvidence | None = None
 
 
 class LLMAuthError(LLMError):

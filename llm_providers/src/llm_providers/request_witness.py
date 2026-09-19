@@ -267,6 +267,9 @@ class ProviderRequestCapture:
         transcript_items: list[dict[str, Any]] | None = None,
         transcript_item_domains: tuple[str, ...] | None = None,
     ) -> None:
+        from .call_observation import current_call
+
+        self._call_observation = current_call.get()
         self._provider_id = provider_id
         self._transport = transport
         self._transform_identity = transform_identity
@@ -282,6 +285,8 @@ class ProviderRequestCapture:
         self.witness: ProviderRequestWitness | None = None
 
     def observe(self, request: httpx.Request) -> None:
+        if self._call_observation is not None:
+            self._call_observation.sent()
         witness = witness_from_body(
             request.content,
             provider_id=self._provider_id,
