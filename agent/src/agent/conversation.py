@@ -681,10 +681,10 @@ class Conversation:
         snapshot = self._run_model_snapshot
         return snapshot.config if snapshot is not None else self._session.current_model_config
 
-    def _active_provider_route_identity(self) -> str:
+    def _active_provider_route_identity(self, client: LanguageModel | None = None) -> str:
         """Return an in-memory route identity without including credentials."""
 
-        client = self._active_llm_client()
+        client = client or self._active_llm_client()
         spec = getattr(client, "spec", None)
         route = {
             "model_id": self._active_model_id(),
@@ -1037,6 +1037,7 @@ class Conversation:
                 if self._input_accepted_callback is not None:
                     self._input_accepted_callback()
                 self._append_skill_context_events(appended_user_id)
+                self._commit_accepted_user_input(prefix_history, appended_user_id)
             elif self._input_accepted_callback is not None:
                 self._input_accepted_callback()
             self._check_cancel(cancel_check)
@@ -2459,6 +2460,11 @@ class Conversation:
 
         这不是 assistant 正常回复，不进入 :attr:`Session.messages` / LLM history。
         """
+        if run_id is not None and any(
+            event.type == "run_error" and event.payload.get("run_id") == run_id
+            for event in self._session.active_events
+        ):
+            return
         payload: dict[str, Any] = {
             "code": code,
             "message": message,
@@ -3215,22 +3221,29 @@ class Conversation:
         *,
         compatibility_only: bool = False,
     ) -> str:
+        if self._usage_anchor is not None and self._usage_anchor.version == 3:
+            legacy_event = getattr(self, "_legacy_usage_event", None)
+            if legacy_event is not None:
+                self._upgrade_usage_anchor(legacy_event)
         client = self._active_llm_client()
         spec = getattr(client, "spec", None)
-        return digest(
-            {
-                "session": self._session.session_id,
-                "route": self._active_provider_route_identity(),
-                "reasoning": self._active_model_config().reasoning_preset,
-                "replay_scope": getattr(spec, "reasoning_replay_scope", None),
-                "attachment_profile": getattr(spec, "attachment_profile", None),
-                "defaults": getattr(spec, "defaults", None),
-                "responses": repr(getattr(spec, "responses", None)),
-                "input_usage_scope": get_model_capabilities(client).input_usage_scope,
-                **({} if compatibility_only else {"tools": tools or []}),
-                "settings": settings or {},
-            }
-        )
+        identity = {
+            "session": self._session.session_id,
+            "route": self._active_provider_route_identity(),
+            "reasoning": self._active_model_config().reasoning_preset,
+            "replay_scope": getattr(spec, "reasoning_replay_scope", None),
+            "attachment_profile": getattr(spec, "attachment_profile", None),
+            "defaults": getattr(spec, "defaults", None),
+            "responses": repr(getattr(spec, "responses", None)),
+            "input_usage_scope": get_model_capabilities(client).input_usage_scope,
+            **({} if compatibility_only else {"tools": tools or []}),
+            "settings": settings or {},
+        }
+        if compatibility_only:
+            from .context.input_identity import input_compatibility_scope
+
+            return input_compatibility_scope(identity)
+        return digest(identity)
 
     def _estimate_context_input(
         self, messages: list[Message], tools: list[dict[str, Any]] | None
@@ -3324,7 +3337,7 @@ class Conversation:
             )
 
         def fallback() -> int:
-            if self._usage_anchor is not None and self._usage_anchor.version == 3:
+            if self._usage_anchor is not None and self._usage_anchor.version >= 3:
                 compatible = self._usage_anchor.compatibility_scope == self._usage_scope(
                     tools, settings, compatibility_only=True
                 )
@@ -3467,7 +3480,7 @@ class Conversation:
         current_model = self._session.current_model
         anchor_candidate_seen = False
         for event in reversed(self._session.active_events):
-            if event.type != "assistant_message":
+            if event.type not in {"assistant_message", "tool_call_request"}:
                 continue
             usage = event.meta.get("context_usage")
             if not isinstance(usage, dict):
@@ -3483,6 +3496,7 @@ class Conversation:
                 # Candidate only: prefix/scope verification happens against the
                 # restored model history, never merely against the model label.
                 self._usage_anchor = UsageAnchor.restore(usage["input_anchor"])
+                self._legacy_usage_event = event
                 anchor_candidate_seen = True
             if (
                 isinstance(model, str)
@@ -3498,6 +3512,49 @@ class Conversation:
                 and prompt_tokens > 0
             ):
                 self._last_input_tokens = prompt_tokens
+
+    def _upgrade_usage_anchor(self, event: Event) -> None:
+        """Verify a legacy scope before giving it the narrower v4 identity."""
+        anchor = self._usage_anchor
+        if anchor is None or anchor.version != 3:
+            return
+        preset = event.meta.get("reasoning_preset")
+        if not isinstance(preset, str):
+            # Tool request events before v4 did not store this field. Derive it
+            # from the configuration active at that event, never today's choice.
+            prefix = self._session.events[: self._session.events.index(event) + 1]
+            preset = Session.from_events(prefix).current_model_config.reasoning_preset
+        client = self._active_llm_client()
+        if preset != self._active_model_config().reasoning_preset:
+            if self._llm_client_factory is None:
+                return
+            try:
+                client = self._llm_client_factory(
+                    ModelRuntimeConfig(self._active_model_id(), preset)
+                )
+            except Exception:
+                return
+        from llm_providers.binding import bind_language_model
+
+        with bind_language_model(client) as bound:
+            spec = getattr(bound, "spec", None)
+            legacy: dict[str, Any] = {
+                "session": self._session.session_id,
+                "route": self._active_provider_route_identity(bound),
+                "reasoning": preset,
+                "replay_scope": getattr(spec, "reasoning_replay_scope", None),
+                "attachment_profile": getattr(spec, "attachment_profile", None),
+                "defaults": getattr(spec, "defaults", None),
+                "responses": repr(getattr(spec, "responses", None)),
+                "input_usage_scope": get_model_capabilities(bound).input_usage_scope,
+                "settings": {},
+            }
+            if digest(legacy) == anchor.compatibility_scope:
+                from .context.input_identity import input_compatibility_scope
+
+                self._usage_anchor = replace(
+                    anchor, version=4, compatibility_scope=input_compatibility_scope(legacy)
+                )
 
     def _commit_pending_model_request_state(self, context_events: list[Event]) -> None:
         prepared = self._pending_model_history
@@ -3541,6 +3598,32 @@ class Conversation:
         self._pending_model_context_plan = None
         self._pending_cache_epoch = None
         self._pending_filesystem_scope_announcements.clear()
+
+    def _commit_accepted_user_input(self, prefix: list[Message], user_id: str) -> None:
+        """Persist the accepted business branch before budget/provider work can fail.
+
+        This is not provider acceptance: pending summaries, context plans and wire
+        witnesses are still committed exclusively by the provider boundary.
+        """
+        business = self._session.business_llm_messages
+        user_index = next(i for i, item in enumerate(business) if item.uuid == user_id)
+        suffix = business[user_index:]
+        history = copy.copy(self._session_model_history)
+        prepared = history.prepare(
+            [*prefix, *suffix], stable_system_prompt="", reason="user_input_accepted"
+        )
+        history.commit(prepared)
+        history.note_active_events(self._session)
+        if self._rollout_recorder is not None:
+            self._rollout_recorder.commit(
+                history=history,
+                model_context=self._session_model_context,
+                cache_epoch=self._cache_epoch,
+                boundary="user_input_accepted",
+                turn_terminal=False,
+            )
+        self._session_model_history.commit(prepared)
+        self._session_model_history.note_active_events(self._session)
 
     def _stage_pending_rollout_request(self) -> None:
         recorder = self._rollout_recorder
@@ -6230,13 +6313,22 @@ class Conversation:
             if stable_run_id:
                 repaired_runs.add(stable_run_id)
         interrupted_run_reasons = {
-            run_id: str(event.payload.get("reason_code") or "interrupted")
-            for event in self._session.active_events
-            if event.type == "run_terminal"
-            and event.payload.get("status") == "interrupted"
-            and isinstance((run_id := event.payload.get("run_id")), str)
-            and run_id
+            str(message.meta["run_id"]): str(message.meta.get("reason_code") or "interrupted")
+            for message in self._session_model_history.items
+            if message.meta.get("synthetic") == "turn_aborted"
+            and isinstance(message.meta.get("run_id"), str)
+            and message.meta["run_id"]
         }
+        interrupted_run_reasons.update(
+            {
+                run_id: str(event.payload.get("reason_code") or "interrupted")
+                for event in self._session.active_events
+                if event.type == "run_terminal"
+                and event.payload.get("status") == "interrupted"
+                and isinstance((run_id := event.payload.get("run_id")), str)
+                and run_id
+            }
+        )
         for repaired_run_id in sorted(repaired_runs | interrupted_run_reasons.keys()):
             self._append_turn_aborted_history_fact(
                 run_id=repaired_run_id,
@@ -6258,38 +6350,28 @@ class Conversation:
             for event in self._session.active_events
             if event.type == "tool_call_request" and event.meta.get("run_id") == run_id
         ]
-        if not requests or any(not self._tool_result_exists_for_request(item) for item in requests):
+        if any(not self._tool_result_exists_for_request(item) for item in requests):
             return False
-        if any(
-            message.meta.get("synthetic") == "turn_aborted" and message.meta.get("run_id") == run_id
-            for message in self._session_model_history.items
-        ):
-            return False
-        interruption_summary = (
-            "上一轮工具事务被用户主动中断。"
-            if reason_code == "explicit_request"
-            else "上一轮工具事务未能完整结束。"
+        from .sessions.interruption import scope_interruption
+
+        keys = {self._tool_transaction_key(item) for item in requests}
+        results = [
+            event
+            for event in self._session.active_events
+            if event.type == "tool_call_result" and self._tool_transaction_key(event) in keys
+        ]
+        scoped = scope_interruption(
+            self._session_model_history.items,
+            requests,
+            results,
+            run_id=run_id,
+            reason_code=reason_code,
+            result_origin=result_origin,
         )
-        self._session_model_history.append(
-            [
-                Message(
-                    role="system",
-                    content=(
-                        "<turn_aborted>\n"
-                        f"{interruption_summary}部分工具可能已经执行；"
-                        "重试前请先核实实际状态。\n"
-                        "</turn_aborted>"
-                    ),
-                    timestamp=datetime.now(UTC),
-                    meta={
-                        "synthetic": "turn_aborted",
-                        "run_id": run_id,
-                        "reason_code": reason_code,
-                        "result_origin": result_origin,
-                        "trusted_host_context": True,
-                    },
-                )
-            ]
+        if scoped == self._session_model_history.items:
+            return False
+        self._session_model_history.adopt_prepared(
+            scoped, stable_system_prompt="", reason="interruption_scope_repair"
         )
         self._session_model_history.note_active_events(self._session)
         if self._rollout_recorder is not None:

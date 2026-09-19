@@ -151,6 +151,8 @@ def map_exception(exc: BaseException) -> ProtocolError:
             message=(
                 "当前模型不支持会话压缩参数，已保留原历史。请切换模型或修正配置后继续。"
                 if exc.reason == "unsupported_model_parameter"
+                else "当前任务必须保留的内容已超过上下文预算，已保留原历史。请减少本轮输入或调整模型容量后重试。"
+                if exc.reason == "retained_context_over_budget"
                 else "会话压缩暂时失败，已保留原历史，暂时无法继续这轮任务。请稍后重试。"
             ),
             recoverable=True,

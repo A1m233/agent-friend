@@ -30,6 +30,7 @@ ROLLOUT_SCHEMA_VERSION = 1
 
 RolloutBoundary = Literal[
     "legacy_migration",
+    "user_input_accepted",
     "provider_input_accepted",
     "assistant_completed",
     "tool_call_received",

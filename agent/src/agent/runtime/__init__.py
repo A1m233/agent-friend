@@ -177,10 +177,12 @@ class AgentRuntime:
         recent_terminal_ttl: timedelta = timedelta(minutes=15),
         recent_terminal_limit: int = 512,
         runtime_identity: RuntimeInstanceIdentity | None = None,
+        default_error_callback: RunErrorCallback | None = None,
     ) -> None:
         if recent_terminal_ttl.total_seconds() <= 0 or recent_terminal_limit <= 0:
             raise ValueError("recent terminal limits must be positive")
         self._conversation_factory = conversation_factory
+        self._default_error_callback = default_error_callback
         self._runtime_identity = runtime_identity or RuntimeInstanceIdentity.create()
         self._memory = memory
         self._inbox: queue.Queue[Any] = queue.Queue()
@@ -367,7 +369,7 @@ class AgentRuntime:
             "conversation_factory": conversation_factory,
             "conversation_preparer": conversation_preparer,
             "conversation_runner": conversation_runner,
-            "error_callback": error_callback,
+            "error_callback": error_callback or self._default_error_callback,
             "metadata": metadata or {},
             "consumer_abandon_policy": consumer_abandon_policy,
             "interactive_busy_policy": interactive_busy_policy,

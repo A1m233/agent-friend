@@ -39,11 +39,14 @@ Windows `dev/run.*` 会通过 `desktop-application/run.* ensure` 构建并绑定
 
 | 验收入口 | 用途 | mac / linux | windows |
 | --- | --- | --- | --- |
+| `context-recovery-smoke/` | CPA 隔离会话 3 轮真实调用：low/medium 用量复用、失败编辑后冷恢复；须逐次授权，不读写用户会话 | `./scripts/context-recovery-smoke/run.sh --allow-llm --model REF --output NEW_PATH` | `.\scripts\context-recovery-smoke\run.ps1 --allow-llm --model REF --output NEW_PATH` |
 | `image-reading-visual/` | 已核验身份的真实 Tauri 空会话中注入仅 UI 的 read_image 授权夹具、截图并验证拒绝按钮，恢复原状态；不调用模型、不验证后端授权 | `./scripts/image-reading-visual/run.sh --output-dir NEW_DIR` | `.\scripts\image-reading-visual\run.ps1 --output-dir NEW_DIR` |
 | `session-latency/` | 经授权附着真实 Tauri dev CDP，交替点击两个已有会话，记录首次内容与就绪时间、请求时间；不发送模型消息，报告拒绝覆盖 | `./scripts/session-latency/run.sh --title-a A --title-b B --output PATH` | `.\scripts\session-latency\run.ps1 --title-a A --title-b B --output PATH` |
 | `notification-visual/` | 经授权连接已有 Tauri WebView2/CDP，检查通知几何、点击 ActionBar 调试按钮、拖动与截图；不启动/关闭桌面主程序、不调用 LLM。显式 `restart-bridge` 可经既有supervisor重载Python。Windows 额外同步系统光标以匹配桌宠穿透；其它平台只使用 CDP 输入，未提供原生光标适配。 | `./scripts/notification-visual/run.sh inspect\|hover\|action short\|action long\|action stack\|action clear\|drag X Y\|restart-bridge` | `.\scripts\notification-visual\run.ps1 inspect\|hover\|action short\|action long\|action stack\|action clear\|drag X Y\|restart-bridge` |
 
 `session-latency/run.* restore --session-id ID --baseline-ref HEAD --output PATH` 只读加载一次本机会话，在同一输入上比较 Git 基线与当前 rollout 恢复，报告时间和完整恢复结果摘要；不执行回合、不调用模型。基线先跑且加载器统一使用当前版本，不能冒充独立随机实验；仅从可信项目 Git revision 加载基线代码。原始会话不写入报告。
+
+`context-recovery-smoke/run.*` 的 `--connection-name NAME` 指定已核验的 CPA 连接显示名（默认 CPA）。Windows/WebView2 桌面验收另用 `--desktop-stage open MODEL_REF` 创建专用验收会话，后续 `inspect|oversize|edit-oversize|reload|evidence|recover|success SESSION_ID` 连接已核验的真实 Tauri CDP；必须在隔离数据目录启动 runtime。`recover` 另须 `--allow-llm`，产生 1 轮 CPA 对话，产品启用的通知/记忆可能产生配套调用，执行前须一并计入授权量。其它阶段不主动发起真实模型请求；不将本 runner 用于已有用户会话。桌面 JSON/截图写入系统临时目录，跨平台入口语义一致。
 
 `session-latency/run.* config PATH` 经授权在当前已选的 kimi-k3/max 会话中点击切换推理与模型，最终恢复原配置；报告完成上界和 HTTP 关联 ID，不调用模型。`session-latency/run.* locks --session-id ID --output PATH` 在临时副本中并发读取大会话、追加合成事件、读写合成通知库，校验追加完整性和锁计时；不修改原会话、不调用模型。两者均支持同参数的 `.sh` / `.ps1` 入口；执行前避免其它测试负载，真实模型授权由调用方另行管理。
 

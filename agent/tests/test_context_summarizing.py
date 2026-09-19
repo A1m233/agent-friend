@@ -614,7 +614,7 @@ def test_unusable_summary_cannot_commit_fifo_candidate(summary: str) -> None:
 
 
 @pytest.mark.parametrize("failure", [LLMNetworkError("offline"), LLMTransientProviderError("502")])
-def test_summary_outage_with_exhausted_fifo_keeps_recoverable_cause(
+def test_impossible_retained_tail_skips_summary_even_during_outage(
     monkeypatch: pytest.MonkeyPatch, failure: Exception
 ) -> None:
     llm = _FakeLLM()
@@ -631,13 +631,13 @@ def test_summary_outage_with_exhausted_fifo_keeps_recoverable_cause(
         _m("assistant", "x" * 5000, "current-answer"),
     ]
     original = [(m.uuid, m.content) for m in history]
-    # Real FIFO cannot discard the in-progress last turn. Repeated explicit
-    # attempts must still reach the summary service, even past the breaker limit.
-    for attempt in range(1, 3):
+    # A summary cannot shrink the mandatory tail. Do not spend a request even
+    # when the user explicitly retries; keep the source history intact.
+    for _ in range(2):
         with pytest.raises(ContextCompactionUnavailableError) as caught:
             cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(llm, 2000))
-        assert caught.value.__cause__ is failure
-        assert llm.complete_calls == attempt
+        assert caught.value.reason == "retained_context_over_budget"
+        assert llm.complete_calls == 0
     assert [(m.uuid, m.content) for m in history] == original
 
 

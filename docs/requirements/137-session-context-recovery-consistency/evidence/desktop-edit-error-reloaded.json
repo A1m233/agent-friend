@@ -1,0 +1,23 @@
+{
+  "visibleError": "当前输入超过模型上下文预算，请缩短内容或减少附件后重试。",
+  "errors": [
+    {
+      "code": "turn_input_too_large",
+      "message": "当前输入超过模型上下文预算，请缩短内容或减少附件后重试。",
+      "recoverable": false,
+      "source": "ag_ui",
+      "run_id": "85cd4f23-be0e-4da1-927a-47a3b9abeb63"
+    }
+  ],
+  "terminals": [
+    {
+      "run_id": "85cd4f23-be0e-4da1-927a-47a3b9abeb63",
+      "status": "failed",
+      "reason_code": "executor_error",
+      "source": "runtime",
+      "recovered": false,
+      "started_at": "2026-09-19T13:27:12.454341+00:00",
+      "finished_at": "2026-09-19T13:27:17.839272+00:00"
+    }
+  ]
+}
