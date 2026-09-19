@@ -4,7 +4,7 @@
   "candidate_manifest": "implementation-manifest.json",
   "candidate_manifest_sha256": "807e5c172d65f7902ed492acb1ddbd0d50bca82182f3675ec3f37e8f62a75e12",
   "automated_status": "passed",
-  "user_acceptance": "delegated_to_agent; deterministic acceptance passed; frozen packaging gate pending",
+  "user_acceptance": "passed under explicit user delegation; no user-performed visual acceptance claimed",
   "stages": [
     {
       "stage": "backend",
@@ -37,20 +37,34 @@
       "passed": 291,
       "ignored": 1,
       "release_check": "passed"
+    },
+    {
+      "stage": "frozen-runtime",
+      "command": "./scripts/package/run.ps1 runtime --local-test --verification-level package-sensitive --guide-repo <managed-guide-checkout> --guide-commit 2c417f89e8eadee79c5868b49831a0a4cc18183a",
+      "exit_code": 0,
+      "build_id": "20260919T094106Z-9f7095982d9b-4a3c2c54",
+      "package_version": "0.3.0",
+      "channel": "local-test",
+      "doctor": "passed",
+      "capability_smoke": "passed",
+      "guide_release": "agent-friend-guide-r53",
+      "guide_snapshot_sha256": "2b3259478985fadcbba0236d2cfe32aae34140f9c29e09432aab2efa2759f9d8",
+      "guide_baseline_lifecycle": "transient; clean worktree restored",
+      "external_llm_requests": 0
     }
   ],
   "non_blocking_observations": [
     "Earlier default-concurrency frontend run had worker startup timeouts; supported worker bound produced a passing full stage.",
     "One prior full backend run observed empty command execution evidence in an unchanged test; the scoped 153-test rerun and final complete suite passed without changing that code.",
     "Existing bilibili_api process-exit cleanup emits an ignored event-loop-closed exception after pytest finishes; final stage exit code is zero.",
-    "Frontend CSS/chunk-size warnings and Rust dead-code warnings were not changed by this feature."
+    "Frontend CSS/chunk-size warnings and Rust dead-code warnings were not changed by this feature.",
+    "Frozen build reported optional LiteLLM submodule, jieba escape and Rust dead-code warnings; runtime doctor/capability smoke nevertheless passed."
   ],
   "not_performed": [
     "live CPA or upstream load test",
     "real LLM invocation",
     "desktop visual acceptance",
-    "installer build",
-    "commit or merge"
+    "installer build at this evidence checkpoint"
   ],
   "interpretation": [
     "Failure notifications use no generation model call; deferred memory is retained and processed in bounded batches.",
@@ -58,5 +72,6 @@
     "Previously unrecognized overload errors now use the existing foreground retry budget; total requests need not decrease for every failure type.",
     "Evidence does not establish AF as the cause of original CPA overload."
   ],
-  "acceptance_authority": "2026-09-19: user delegated necessary acceptance and authorized merge, push, then a local-test package without routine confirmation."
+  "acceptance_authority": "2026-09-19: user delegated necessary acceptance and authorized merge, push, then a local-test package without routine confirmation.",
+  "implementation_commit": "9f7095982d9b64d3c60c03bfed36cc146d833e4d"
 }
