@@ -240,7 +240,7 @@ def _managed_environment_error_result(exc: ManagedEnvironmentError) -> ToolResul
             "error": exc.code,
             "message": str(exc),
             "executed": False,
-            "provider": "python",
+            "provider": exc.provider,
         },
         error=True,
     )
@@ -771,6 +771,13 @@ class ExecCommandTool:
         )
         launch_started = time.monotonic()
         try:
+            if sandbox is not None and self._native_tools is not None:
+                from agent.execution_environment.windows_read_access import prepare_read_access
+
+                environment_roots = [self._native_tools.root]
+                if details.managed_command is not None:
+                    environment_roots.extend(details.managed_command.read_only_roots)
+                prepare_read_access(environment_roots)
             if (
                 sandbox is not None
                 and details.cwd_source == "session_managed"
@@ -827,6 +834,8 @@ class ExecCommandTool:
             )
         except CommandRuntimeError as exc:
             return _command_runtime_error_result(exc, fallback_status="failed")
+        except ManagedEnvironmentError as exc:
+            return _managed_environment_error_result(exc)
 
         def terminate(reason: str) -> None:
             current = self._terminate_for_context(snapshot.process_id, session_id, run_id, reason)

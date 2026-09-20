@@ -88,3 +88,14 @@ def test_missing_payload_does_not_fall_back_to_path(tmp_path: Path) -> None:
     with pytest.raises(ManagedEnvironmentError) as caught:
         NativeTools(tmp_path).resolve("pwsh")
     assert caught.value.code == "managed_native_tools_unavailable"
+    assert caught.value.provider == "native"
+
+
+def test_environment_error_reports_the_failed_provider() -> None:
+    from agent.command_runtime.tools import _managed_environment_error_result
+
+    for provider in ("native", "python"):
+        error = ManagedEnvironmentError("unavailable", "Unavailable", provider=provider)
+        result = _managed_environment_error_result(error)
+        assert result.is_error
+        assert json.loads(result.text)["provider"] == provider

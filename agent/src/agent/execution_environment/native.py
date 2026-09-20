@@ -66,6 +66,7 @@ class NativeTools:
             raise ManagedEnvironmentError(
                 "managed_native_tools_unavailable",
                 "产品自带 PowerShell/PDF 工具缺失或校验失败；请修复执行环境，不要改用未知 PATH 程序重试。",
+                provider="native",
             ) from exc
 
     def resolve(self, name: str) -> Path | None:

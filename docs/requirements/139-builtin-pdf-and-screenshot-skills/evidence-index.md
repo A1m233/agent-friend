@@ -8,7 +8,7 @@
 - 当前 Codex Desktop 依赖包版本：26.909.12148。该观察不代表所有历史版本、CLI 或云环境。
 
 ## 当前结论
-两个包保持内容不变地被发现、激活。用户确认对齐 Codex Desktop 后，已实现产品提供原生工具和 Python wheel 基线；源码离线 smoke 与真实沙箱已成功。冻结运行时和最终用户验收仍待完成，首轮借用 Codex 的证据不能替代后续产品自身验证。
+两个包保持内容不变地被发现、激活。用户确认对齐 Codex Desktop 后，已实现产品提供原生工具和 Python wheel 基线；源码离线 smoke、真实沙箱和包含冷启动权限修复的冻结运行时均已成功。最终用户验收与安装器矩阵待完成；首轮借用 Codex 的证据不能替代产品自身验证。
 
 | ID | 主张与直接证据 | 基础 / 置信度 | 局限 |
 | --- | --- | --- | --- |
@@ -64,4 +64,18 @@
 
 E-010 至 E-014 补充 E-003 至 E-009；历史失败结果保留。临时测量脚本与结果在本机 %TEMP%/agent-friend-139-product-smoke/ 及同名前缀 probe 文件；截图不入库。冷启动对照修改 session id 并记录独立结果，不计入正式 LLM 成功率。
 
-当前决定：依赖预置，原 Skill 不变，使用宿主调用规范与代码检查边界适配。待完成冻结验证；公开 using-agent-friend.md / troubleshooting.md 的环境说明需要后续更新，本次 package-baseline 模式仅报告，不发布。
+当前决定：依赖预置，原 Skill 不变，使用宿主调用规范与代码检查边界适配。公开 using-agent-friend.md / troubleshooting.md 的环境说明需要后续更新，本次 package-baseline 模式仅报告，不发布。
+
+## 首次启动权限竞态与冻结验证
+
+- E-016：冻结 build `20260920T145559Z-d44d66ceae8a-8f119b64`（本地检查点 d44d66ce）doctor 全部通过，含 PDF render、PowerShell 7.6.6、System.Drawing、受管 Python 3.12.14；Guide 临时覆盖已恢复。它不包含后续 ACL 修复，不代表安装器矩阵验收。
+- E-017：2026-09-20 22:46:20 本机 sandbox 日志：Python base 授权开始于 .349，command-runner 启动于 .868，read ACL 到 22:46:21.023 才完成。官方 [setup_main/win.rs](https://github.com/openai/codex/blob/rust-v0.147.0/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs) 的 spawn_read_acl_helper 使用 spawn 后直接返回，run_read_acl_only 实际执行读取授权。代码与运行日志支持首次启动竞态；原始失败未保留 DLL loader trace。
+- E-018：隔离复现 direct-8785c165：复制完整 Python 基座，独立目录只保留宿主权限，预授予 python.exe RX，并新增 5000 个空目录放大正常 ACL 传播时间。23:15:15.961 runner 启动，15.982 才开始 base 授权，17.360 完成；首轮 20 秒无输出，工具终止测试进程；第二轮相同二进制成功。用户同期补充找不到 python312.dll 弹窗，文件实际存在。该实验复现 DLL 可读性晚于进程启动，不证明用户图片的精确 PID。
+- E-019：反事实 direct-bb966ab8 保持相同复制/权限/空目录输入，仅在启动前调用同步读取权限准备：第一、二轮均退出 0。另一个完整公共工具调用 cold-f4cb0730，在全新 Python 基座与会话中 PDF 生成、提取、渲染成功，launch_seconds=0.89。未增加沙箱写权限、未重试用户命令、未更改上游脚本。原始 0xC0000022 与此机制关联为 strongly supported；被放大的竞态与修复效果为 reproduction-supported。
+
+测量脚本和结果保存在本机 `%TEMP%/agent-friend-139-acl-diagnosis/`。目录中的 Python 副本只作隔离诊断，未替换用户安装；临时结果不作为永久仓库资产。修复使用 Windows [icacls RX 与继承权限](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/icacls)，仅限已批准命令的宿主受管资源根。
+
+## 修复后验证收口
+- E-020：后端完整检查通过：3459 passed / 5 skipped，lint 与 733 source files 的 typecheck 通过。新增测试覆盖权限准备发生在批准后、启动前；拒绝不准备权限；权限错误不执行；native/Python 错误分类正确。前端 157 个文件 / 1310 tests 和生产构建通过；Rust 单测及 release check 通过。
+- E-021：修复后原截图脚本通过正式工具、审批与 Windows 沙箱再次输出 PNG，解码尺寸 64×64，885 bytes，exit_code=0，launch_seconds=0.734。仍限定小区域、无真实模型。
+- E-022：build `20260920T153122Z-d44d66ceae8a-beae92ce` 使用 d44d66ce 加本次 ACL 修复 overlay，0.3.0 local-test；标准 runtime runner 退出 0。冻结 doctor 的 governed command runtime、read-only denial、host_user、Skill tool path、进程树清理、Python 3.12.14、PDF render、PowerShell 7.6.6 / Drawing 全部通过，随后 bridge/voice readiness 与关闭检查通过。Guide baseline 临时事务恢复成功。证据仅覆盖 frozen runtime；full-matrix floor 未被降低，安装器矩阵仍待合入前执行。

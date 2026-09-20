@@ -2332,6 +2332,78 @@ def test_read_only_session_directory_is_prepared_before_process_start(
     assert json.loads(result_box[0].text)["status"] == "exited"
 
 
+@pytest.mark.parametrize("allow,acl_fails", [(False, False), (True, True), (True, False)])
+def test_environment_read_access_is_prepared_after_approval_before_launch(
+    runtime: CommandRuntime,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    allow: bool,
+    acl_fails: bool,
+) -> None:
+    from unittest.mock import Mock
+
+    from agent.execution_environment import ManagedEnvironmentError, windows_read_access
+
+    broker = ApprovalBroker()
+    tool = ExecCommandTool(runtime, broker, session_workspaces_root=tmp_path / "workspaces")
+    native = Mock(root=tmp_path / "native")
+    native.root.mkdir()
+    native.resolve.return_value = None
+    native.apply_environment.side_effect = lambda env: env
+    monkeypatch.setattr(tool, "_native_tools", native)
+    events: list[str] = []
+
+    def prepare(roots: list[Path]) -> None:
+        assert roots == [native.root]
+        events.append("acl")
+        if acl_fails:
+            raise ManagedEnvironmentError("managed_environment_read_access_failed", "failed")
+
+    original_start = runtime.start_process
+
+    def start(**kwargs: object) -> CommandProcessSnapshot:
+        events.append("launch")
+        return original_start(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(windows_read_access, "prepare_read_access", prepare)
+    monkeypatch.setattr(runtime, "start_process", start)
+    context = ToolRunContext.create("")
+    results = []
+    thread = threading.Thread(
+        target=lambda: results.append(
+            tool.invoke(
+                {
+                    "cmd": "fake:buffered",
+                    "reason": "verify environment startup ordering",
+                    COMMAND_SESSION_ID_ARG: "acl-session",
+                    COMMAND_RUN_ID_ARG: "acl-run",
+                    COMMAND_TOOL_CALL_ID_ARG: "acl-call",
+                    COMMAND_SURFACE_ARG: "desktop_chat",
+                    COMMAND_RUN_CONTEXT_ARG: context,
+                }
+            )
+        )
+    )
+    thread.start()
+    try:
+        request = _wait_for_request(broker)
+        assert events == []
+        broker.decide(
+            request.request_id,
+            CommandApprovalDecision(allow=allow),
+            session_id="acl-session",
+            run_id="acl-run",
+            expected_kind="command",
+        )
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        assert events == ([] if not allow else ["acl"] if acl_fails else ["acl", "launch"])
+        if allow and acl_fails:
+            assert json.loads(results[0].text)["executed"] is False
+    finally:
+        context.close_commands()
+
+
 def test_session_workspace_over_quota_rejects_new_write_request(
     runtime: CommandRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
