@@ -786,10 +786,10 @@ def test_nsis_template_overlay_defaults_chinese_and_enforces_maintenance_state()
     assert '!define AGENT_FRIEND_PRODUCT_NAME "agent-friend-installer-smoke"' in generated
     assert '!define AGENT_FRIEND_PRODUCT_VERSION "1.2.3"' in generated
     assert "agent-friend requires its fail-closed uninstall guard" in generated
-    assert r'File /a "/oname=$AgentFriendResourceRoot\{{this.[1]}}"' in generated
-    assert r'CreateDirectory "$AgentFriendResourceRoot\{{this}}"' in generated
-    assert r'Delete "$AgentFriendResourceRoot\{{this.[1]}}"' in generated
-    assert r'RMDir /REBOOTOK "$AgentFriendResourceRoot\{{this}}"' in generated
+    assert r'File /a "/oname=$AgentFriendResourceRoot\\{{this.[1]}}"' in generated
+    assert r'CreateDirectory "$AgentFriendResourceRoot\\{{this}}"' in generated
+    assert r'Delete "$AgentFriendResourceRoot\\{{this.[1]}}"' in generated
+    assert r'RMDir /REBOOTOK "$AgentFriendResourceRoot\\{{this}}"' in generated
     assert "!undef AGENT_FRIEND_RESOURCE" in generated
     with pytest.raises(RuntimeError, match="resource source paths anchor drifted"):
         package._apply_nsis_template_overlay(
@@ -837,6 +837,9 @@ def test_nsis_installs_and_removes_long_payload_and_parent_relative_resources(
         script += f'CreateDirectory "$AgentFriendResourceRoot\\{relative.parent}"\n'
         script += (
             package._nsis_resource_file_overlay(payload)
+            # Pinned Tauri's Handlebars rendering consumes this escape before
+            # substituting the resource path; the raw template is checked above.
+            .replace(r"\\{{", r"\{{")
             .replace("{{no-escape @key}}", str(source).replace(":\\", ":/", 1))
             .replace("{{this.[1]}}", str(relative))
         )

@@ -934,7 +934,9 @@ def _nsis_resource_file_overlay(payload_root: Path) -> str:
         r"""    !searchreplace AGENT_FRIEND_RESOURCE "{{no-escape @key}}" "/" "\"
 """
         + f'    !searchreplace AGENT_FRIEND_RESOURCE "${{AGENT_FRIEND_RESOURCE}}" "{source}" "{extended}"\n'
-        + r"""    File /a "/oname=$AgentFriendResourceRoot\{{this.[1]}}" "${AGENT_FRIEND_RESOURCE}"
+        # Handlebars consumes one backslash before interpolation. A single
+        # backslash escapes the expression and leaves literal {{this.[1]}}.
+        + r"""    File /a "/oname=$AgentFriendResourceRoot\\{{this.[1]}}" "${AGENT_FRIEND_RESOURCE}"
     !undef AGENT_FRIEND_RESOURCE
 """
     )
@@ -1014,7 +1016,7 @@ def _apply_nsis_template_overlay(
 """
     resource_dirs_overlay = r"""  !insertmacro AGENT_FRIEND_SET_RESOURCE_ROOT
   {{#each resources_dirs}}
-    CreateDirectory "$AgentFriendResourceRoot\{{this}}"
+    CreateDirectory "$AgentFriendResourceRoot\\{{this}}"
   {{/each}}
 """
     resource_delete_anchor = r"""  ; Delete resources
@@ -1025,12 +1027,12 @@ def _apply_nsis_template_overlay(
     resource_delete_overlay = r"""  ; Delete resources
   !insertmacro AGENT_FRIEND_SET_RESOURCE_ROOT
   {{#each resources}}
-    Delete "$AgentFriendResourceRoot\{{this.[1]}}"
+    Delete "$AgentFriendResourceRoot\\{{this.[1]}}"
   {{/each}}
 """
     resource_rmdir_anchor = r"""  RMDir /REBOOTOK "$INSTDIR\\{{this}}"
 """
-    resource_rmdir_overlay = r"""  RMDir /REBOOTOK "$AgentFriendResourceRoot\{{this}}"
+    resource_rmdir_overlay = r"""  RMDir /REBOOTOK "$AgentFriendResourceRoot\\{{this}}"
 """
     uninstall_guard_anchor = """  !ifmacrodef NSIS_HOOK_PREUNINSTALL
     !insertmacro NSIS_HOOK_PREUNINSTALL
