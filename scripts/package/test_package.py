@@ -740,6 +740,9 @@ def test_nsis_template_overlay_defaults_chinese_and_enforces_maintenance_state()
         "Section Install\n"
         "  SetOutPath $INSTDIR\n"
         '    File /a "/oname={{this.[1]}}" "{{no-escape @key}}"\n'
+        '  {{#each resources_dirs}}\n    CreateDirectory "$INSTDIR\\\\{{this}}"\n  {{/each}}\n'
+        '  ; Delete resources\n  {{#each resources}}\n    Delete "$INSTDIR\\\\{{this.[1]}}"\n  {{/each}}\n'
+        '  RMDir /REBOOTOK "$INSTDIR\\\\{{this}}"\n'
         "  !ifmacrodef NSIS_HOOK_PREUNINSTALL\n"
         "    !insertmacro NSIS_HOOK_PREUNINSTALL\n"
         "  !endif\n\n"
@@ -783,7 +786,10 @@ def test_nsis_template_overlay_defaults_chinese_and_enforces_maintenance_state()
     assert '!define AGENT_FRIEND_PRODUCT_NAME "agent-friend-installer-smoke"' in generated
     assert '!define AGENT_FRIEND_PRODUCT_VERSION "1.2.3"' in generated
     assert "agent-friend requires its fail-closed uninstall guard" in generated
-    assert r'File /a "/oname={{this.[1]}}" "${AGENT_FRIEND_RESOURCE}"' in generated
+    assert r'File /a "/oname=$AgentFriendResourceRoot\{{this.[1]}}"' in generated
+    assert r'CreateDirectory "$AgentFriendResourceRoot\{{this}}"' in generated
+    assert r'Delete "$AgentFriendResourceRoot\{{this.[1]}}"' in generated
+    assert r'RMDir /REBOOTOK "$AgentFriendResourceRoot\{{this}}"' in generated
     assert "!undef AGENT_FRIEND_RESOURCE" in generated
     with pytest.raises(RuntimeError, match="resource source paths anchor drifted"):
         package._apply_nsis_template_overlay(
@@ -797,7 +803,9 @@ def test_nsis_template_overlay_defaults_chinese_and_enforces_maintenance_state()
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows NSIS source-path regression")
-def test_nsis_compiles_long_payload_and_parent_relative_resources(tmp_path: Path) -> None:
+def test_nsis_installs_and_removes_long_payload_and_parent_relative_resources(
+    tmp_path: Path,
+) -> None:
     compiler = shutil.which("makensis") or str(
         Path(os.environ.get("LOCALAPPDATA", "")) / "tauri" / "NSIS" / "makensis.exe"
     )
@@ -812,14 +820,37 @@ def test_nsis_compiles_long_payload_and_parent_relative_resources(tmp_path: Path
     relative_parent = tmp_path / "base"
     relative_parent.mkdir()
     (tmp_path / "avatar.txt").write_text("avatar", encoding="utf-8")
-    inputs = [long_file, relative_parent / ".." / "avatar.txt"]
-    script = f'Unicode true\nOutFile "{tmp_path / "probe.exe"}"\nSection\n'
-    for index, source in enumerate(inputs):
+    inputs = [
+        (long_file, long_file.relative_to(payload)),
+        (relative_parent / ".." / "avatar.txt", Path("avatar.txt")),
+    ]
+    installed = tmp_path / "installed"
+    script = (
+        "Unicode true\nRequestExecutionLevel user\nSilentInstall silent\n"
+        "SilentUnInstall silent\n!include LogicLib.nsh\n"
+        + package.NSIS_RESOURCE_ROOT
+        + f'OutFile "{tmp_path / "probe.exe"}"\nSection\nStrCpy $INSTDIR "{installed}"\n'
+        + 'SetOutPath "$INSTDIR"\n'
+        + "!insertmacro AGENT_FRIEND_SET_RESOURCE_ROOT\n"
+    )
+    for source, relative in inputs:
+        script += f'CreateDirectory "$AgentFriendResourceRoot\\{relative.parent}"\n'
         script += (
             package._nsis_resource_file_overlay(payload)
             .replace("{{no-escape @key}}", str(source).replace(":\\", ":/", 1))
-            .replace("{{this.[1]}}", f"probe-{index}.txt")
+            .replace("{{this.[1]}}", str(relative))
         )
+    script += (
+        'WriteUninstaller "$INSTDIR\\uninstall.exe"\nSectionEnd\nSection Uninstall\n'
+        "!insertmacro AGENT_FRIEND_SET_RESOURCE_ROOT\n"
+    )
+    for _, relative in inputs:
+        script += f'Delete "$AgentFriendResourceRoot\\{relative}"\n'
+    for parent in (
+        long_file.relative_to(payload).parent,
+        long_file.relative_to(payload).parent.parent,
+    ):
+        script += f'RMDir "$AgentFriendResourceRoot\\{parent}"\n'
     script += "SectionEnd\n"
     script_path = tmp_path / "probe.nsi"
     script_path.write_text(script, encoding="utf-8")
@@ -828,6 +859,15 @@ def test_nsis_compiles_long_payload_and_parent_relative_resources(tmp_path: Path
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / "probe.exe").is_file()
+    subprocess.run([str(tmp_path / "probe.exe"), "/S"], check=True, timeout=30)
+    for source, relative in inputs:
+        assert (installed / relative).read_bytes() == source.read_bytes()
+    subprocess.run(
+        [str(installed / "uninstall.exe"), "/S", f"_?={installed}"], check=True, timeout=30
+    )
+    for _, relative in inputs:
+        assert not (installed / relative).exists()
+    assert not (installed / long_file.relative_to(payload).parent.parent).exists()
 
 
 def test_nsis_install_uses_owned_blocker_helper_and_never_kills_by_name() -> None:

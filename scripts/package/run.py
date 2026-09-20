@@ -934,10 +934,26 @@ def _nsis_resource_file_overlay(payload_root: Path) -> str:
         r"""    !searchreplace AGENT_FRIEND_RESOURCE "{{no-escape @key}}" "/" "\"
 """
         + f'    !searchreplace AGENT_FRIEND_RESOURCE "${{AGENT_FRIEND_RESOURCE}}" "{source}" "{extended}"\n'
-        + r"""    File /a "/oname={{this.[1]}}" "${AGENT_FRIEND_RESOURCE}"
+        + r"""    File /a "/oname=$AgentFriendResourceRoot\{{this.[1]}}" "${AGENT_FRIEND_RESOURCE}"
     !undef AGENT_FRIEND_RESOURCE
 """
     )
+
+
+NSIS_RESOURCE_ROOT = r"""Var AgentFriendResourceRoot
+!macro AGENT_FRIEND_SET_RESOURCE_ROOT
+  Push $R9
+  GetFullPathName $AgentFriendResourceRoot "$INSTDIR"
+  StrCpy $R9 $AgentFriendResourceRoot 2
+  ${If} $R9 == "\\"
+    StrCpy $AgentFriendResourceRoot $AgentFriendResourceRoot "" 2
+    StrCpy $AgentFriendResourceRoot "\\?\UNC\$AgentFriendResourceRoot"
+  ${Else}
+    StrCpy $AgentFriendResourceRoot "\\?\$AgentFriendResourceRoot"
+  ${EndIf}
+  Pop $R9
+!macroend
+"""
 
 
 def _apply_nsis_template_overlay(
@@ -951,7 +967,7 @@ def _apply_nsis_template_overlay(
 ) -> str:
     hooks_anchor = """{{#if installer_hooks}}\n!include \"{{installer_hooks}}\"\n{{/if}}\n"""
     contract_defines = (
-        f'!define AGENT_FRIEND_BUILD_ID "{identity.build_id}"\n'
+        NSIS_RESOURCE_ROOT + "\n" + f'!define AGENT_FRIEND_BUILD_ID "{identity.build_id}"\n'
         f'!define AGENT_FRIEND_PROFILE_ID "{profile.profile_id}"\n'
         f'!define AGENT_FRIEND_PRODUCT_NAME "{profile.product_name}"\n'
         f'!define AGENT_FRIEND_PRODUCT_VERSION "{identity.product_version}"\n'
@@ -992,6 +1008,30 @@ def _apply_nsis_template_overlay(
     plugin_files += '  SetOutPath "$INSTDIR"\n\n'
     resources_anchor = '    File /a "/oname={{this.[1]}}" "{{no-escape @key}}"\n'
     resources_overlay = _nsis_resource_file_overlay(payload_root)
+    resource_dirs_anchor = r"""  {{#each resources_dirs}}
+    CreateDirectory "$INSTDIR\\{{this}}"
+  {{/each}}
+"""
+    resource_dirs_overlay = r"""  !insertmacro AGENT_FRIEND_SET_RESOURCE_ROOT
+  {{#each resources_dirs}}
+    CreateDirectory "$AgentFriendResourceRoot\{{this}}"
+  {{/each}}
+"""
+    resource_delete_anchor = r"""  ; Delete resources
+  {{#each resources}}
+    Delete "$INSTDIR\\{{this.[1]}}"
+  {{/each}}
+"""
+    resource_delete_overlay = r"""  ; Delete resources
+  !insertmacro AGENT_FRIEND_SET_RESOURCE_ROOT
+  {{#each resources}}
+    Delete "$AgentFriendResourceRoot\{{this.[1]}}"
+  {{/each}}
+"""
+    resource_rmdir_anchor = r"""  RMDir /REBOOTOK "$INSTDIR\\{{this}}"
+"""
+    resource_rmdir_overlay = r"""  RMDir /REBOOTOK "$AgentFriendResourceRoot\{{this}}"
+"""
     uninstall_guard_anchor = """  !ifmacrodef NSIS_HOOK_PREUNINSTALL
     !insertmacro NSIS_HOOK_PREUNINSTALL
   !endif
@@ -1013,6 +1053,9 @@ def _apply_nsis_template_overlay(
         ("directory leave", directory_anchor),
         ("install section", section_anchor),
         ("resource source paths", resources_anchor),
+        ("resource directories", resource_dirs_anchor),
+        ("resource deletion", resource_delete_anchor),
+        ("resource directory removal", resource_rmdir_anchor),
         ("uninstall guard", uninstall_guard_anchor),
     ):
         if source.count(anchor) != 1:
@@ -1026,6 +1069,9 @@ def _apply_nsis_template_overlay(
         .replace(directory_anchor, directory_overlay)
         .replace(section_anchor, plugin_files)
         .replace(resources_anchor, resources_overlay)
+        .replace(resource_dirs_anchor, resource_dirs_overlay)
+        .replace(resource_delete_anchor, resource_delete_overlay)
+        .replace(resource_rmdir_anchor, resource_rmdir_overlay)
         .replace(uninstall_guard_anchor, uninstall_guard_overlay)
     )
 

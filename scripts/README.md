@@ -189,4 +189,4 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 安装矩阵从 Windows Shell 获取安装默认目录、开始菜单与桌面位置，检查和清理共用同一来源。不要通过覆盖 `APPDATA` / `LOCALAPPDATA` 迁移测试目录；环境不一致或写入被虚拟化时，脚本会在安装和清理之前停止。此时从普通、非虚拟化 Windows 终端运行标准 package 脚本。默认目录安装 case 始终保留，迁移 case 继续显式指定安装目标。
 
-NSIS 模板适配对受控 payload 的规范绝对路径使用 Windows 扩展长度前缀，允许完整 PowerShell 发行包从较深的构建目录读入；已有相对资源路径仍保留普通读取语义。这只影响编译输入，不改变安装目标路径或安装根长度检查。
+NSIS 模板适配对受控 payload 的规范绝对路径使用 Windows 扩展长度前缀，允许完整 PowerShell 发行包从较深的构建目录读入；已有相对资源路径仍保留普通读取语义。资源目录创建、文件写入和卸载也使用扩展路径，避免深层 DLL 被跳过；安装根、receipt 和注册表仍保存普通路径。矩阵的过长迁移失败夹具使程序根本身超过传统路径限制，不再依赖某个资源偶然跨过限制。
