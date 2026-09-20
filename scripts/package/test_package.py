@@ -738,6 +738,7 @@ def test_nsis_template_overlay_defaults_chinese_and_enforces_maintenance_state()
         "!insertmacro MUI_PAGE_DIRECTORY\n"
         "Section Install\n"
         "  SetOutPath $INSTDIR\n"
+        '    File /a "/oname={{this.[1]}}" "{{no-escape @key}}"\n'
         "  !ifmacrodef NSIS_HOOK_PREUNINSTALL\n"
         "    !insertmacro NSIS_HOOK_PREUNINSTALL\n"
         "  !endif\n\n"
@@ -780,6 +781,16 @@ def test_nsis_template_overlay_defaults_chinese_and_enforces_maintenance_state()
     assert '!define AGENT_FRIEND_PRODUCT_NAME "agent-friend-installer-smoke"' in generated
     assert '!define AGENT_FRIEND_PRODUCT_VERSION "1.2.3"' in generated
     assert "agent-friend requires its fail-closed uninstall guard" in generated
+    assert r'File /a "/oname={{this.[1]}}" "\\?\${AGENT_FRIEND_RESOURCE}"' in generated
+    assert "!undef AGENT_FRIEND_RESOURCE" in generated
+    with pytest.raises(RuntimeError, match="resource source paths anchor drifted"):
+        package._apply_nsis_template_overlay(
+            source.replace('    File /a "/oname={{this.[1]}}" "{{no-escape @key}}"\n', ""),
+            helper_path=PACKAGE_DIR / "helper.exe",
+            identity=identity,
+            profile=package.resolve_install_profile("installer-smoke"),
+            trusted_resources=None,
+        )
 
 
 def test_nsis_install_uses_owned_blocker_helper_and_never_kills_by_name() -> None:

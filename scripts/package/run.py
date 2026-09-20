@@ -969,6 +969,15 @@ def _apply_nsis_template_overlay(
             f'  File /oname=trusted-credential-seed.key "{_nsis_path(key)}"\n'
         )
     plugin_files += '  SetOutPath "$INSTDIR"\n\n'
+    resources_anchor = '    File /a "/oname={{this.[1]}}" "{{no-escape @key}}"\n'
+    # Only compile-time input paths need extended-length syntax. Preserve the
+    # resource's installed name and Tauri's directory/uninstall bookkeeping.
+    resources_overlay = r"""    !searchreplace AGENT_FRIEND_RESOURCE "{{no-escape @key}}" "/" "\"
+    !searchreplace AGENT_FRIEND_RESOURCE "${AGENT_FRIEND_RESOURCE}" "\\?\" ""
+    !searchreplace AGENT_FRIEND_RESOURCE "${AGENT_FRIEND_RESOURCE}" "\\" "UNC\"
+    File /a "/oname={{this.[1]}}" "\\?\${AGENT_FRIEND_RESOURCE}"
+    !undef AGENT_FRIEND_RESOURCE
+"""
     uninstall_guard_anchor = """  !ifmacrodef NSIS_HOOK_PREUNINSTALL
     !insertmacro NSIS_HOOK_PREUNINSTALL
   !endif
@@ -989,6 +998,7 @@ def _apply_nsis_template_overlay(
         ("uninstall-only maintenance", uninstall_only_anchor),
         ("directory leave", directory_anchor),
         ("install section", section_anchor),
+        ("resource source paths", resources_anchor),
         ("uninstall guard", uninstall_guard_anchor),
     ):
         if source.count(anchor) != 1:
@@ -1001,6 +1011,7 @@ def _apply_nsis_template_overlay(
         .replace(uninstall_only_anchor, uninstall_only_overlay)
         .replace(directory_anchor, directory_overlay)
         .replace(section_anchor, plugin_files)
+        .replace(resources_anchor, resources_overlay)
         .replace(uninstall_guard_anchor, uninstall_guard_overlay)
     )
 
