@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -756,6 +757,7 @@ def test_nsis_template_overlay_defaults_chinese_and_enforces_maintenance_state()
     generated = package._apply_nsis_template_overlay(
         source,
         helper_path=PACKAGE_DIR / "helper.exe",
+        payload_root=PACKAGE_DIR / "payload-stage",
         identity=identity,
         profile=package.resolve_install_profile("installer-smoke"),
         trusted_resources=None,
@@ -781,16 +783,51 @@ def test_nsis_template_overlay_defaults_chinese_and_enforces_maintenance_state()
     assert '!define AGENT_FRIEND_PRODUCT_NAME "agent-friend-installer-smoke"' in generated
     assert '!define AGENT_FRIEND_PRODUCT_VERSION "1.2.3"' in generated
     assert "agent-friend requires its fail-closed uninstall guard" in generated
-    assert r'File /a "/oname={{this.[1]}}" "\\?\${AGENT_FRIEND_RESOURCE}"' in generated
+    assert r'File /a "/oname={{this.[1]}}" "${AGENT_FRIEND_RESOURCE}"' in generated
     assert "!undef AGENT_FRIEND_RESOURCE" in generated
     with pytest.raises(RuntimeError, match="resource source paths anchor drifted"):
         package._apply_nsis_template_overlay(
             source.replace('    File /a "/oname={{this.[1]}}" "{{no-escape @key}}"\n', ""),
             helper_path=PACKAGE_DIR / "helper.exe",
+            payload_root=PACKAGE_DIR / "payload-stage",
             identity=identity,
             profile=package.resolve_install_profile("installer-smoke"),
             trusted_resources=None,
         )
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows NSIS source-path regression")
+def test_nsis_compiles_long_payload_and_parent_relative_resources(tmp_path: Path) -> None:
+    compiler = shutil.which("makensis") or str(
+        Path(os.environ.get("LOCALAPPDATA", "")) / "tauri" / "NSIS" / "makensis.exe"
+    )
+    if not Path(compiler).is_file():
+        pytest.skip("Tauri NSIS compiler is not installed")
+    package = _load("package_run_nsis_long_paths", PACKAGE_DIR / "run.py")
+    payload = tmp_path / "payload-stage"
+    long_file = payload / ("a" * 100) / ("b" * 100) / "probe.txt"
+    long_file.parent.mkdir(parents=True)
+    long_file.write_text("long-payload", encoding="utf-8")
+    assert len(str(long_file)) > 260
+    relative_parent = tmp_path / "base"
+    relative_parent.mkdir()
+    (tmp_path / "avatar.txt").write_text("avatar", encoding="utf-8")
+    inputs = [long_file, relative_parent / ".." / "avatar.txt"]
+    script = f'Unicode true\nOutFile "{tmp_path / "probe.exe"}"\nSection\n'
+    for index, source in enumerate(inputs):
+        script += (
+            package._nsis_resource_file_overlay(payload)
+            .replace("{{no-escape @key}}", str(source).replace(":\\", ":/", 1))
+            .replace("{{this.[1]}}", f"probe-{index}.txt")
+        )
+    script += "SectionEnd\n"
+    script_path = tmp_path / "probe.nsi"
+    script_path.write_text(script, encoding="utf-8")
+    result = subprocess.run(
+        [compiler, "/V2", str(script_path)], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "probe.exe").is_file()
 
 
 def test_nsis_install_uses_owned_blocker_helper_and_never_kills_by_name() -> None:

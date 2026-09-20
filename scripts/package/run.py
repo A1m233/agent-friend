@@ -920,10 +920,31 @@ def _nsis_path(path: Path) -> str:
     return str(path.resolve())
 
 
+def _nsis_resource_file_overlay(payload_root: Path) -> str:
+    # Tauri also merges relative resource paths from the base config. Extended
+    # paths do not resolve '..', so only prefix our canonical staged payload.
+    source = _nsis_path(payload_root).replace("/", "\\").rstrip("\\") + "\\"
+    if source.startswith("\\\\?\\"):
+        extended = source
+    elif source.startswith("\\\\"):
+        extended = "\\\\?\\UNC\\" + source[2:]
+    else:
+        extended = "\\\\?\\" + source
+    return (
+        r"""    !searchreplace AGENT_FRIEND_RESOURCE "{{no-escape @key}}" "/" "\"
+"""
+        + f'    !searchreplace AGENT_FRIEND_RESOURCE "${{AGENT_FRIEND_RESOURCE}}" "{source}" "{extended}"\n'
+        + r"""    File /a "/oname={{this.[1]}}" "${AGENT_FRIEND_RESOURCE}"
+    !undef AGENT_FRIEND_RESOURCE
+"""
+    )
+
+
 def _apply_nsis_template_overlay(
     source: str,
     *,
     helper_path: Path,
+    payload_root: Path,
     identity: BuildIdentity,
     profile: InstallProfile,
     trusted_resources: tuple[Path, Path] | None,
@@ -970,14 +991,7 @@ def _apply_nsis_template_overlay(
         )
     plugin_files += '  SetOutPath "$INSTDIR"\n\n'
     resources_anchor = '    File /a "/oname={{this.[1]}}" "{{no-escape @key}}"\n'
-    # Only compile-time input paths need extended-length syntax. Preserve the
-    # resource's installed name and Tauri's directory/uninstall bookkeeping.
-    resources_overlay = r"""    !searchreplace AGENT_FRIEND_RESOURCE "{{no-escape @key}}" "/" "\"
-    !searchreplace AGENT_FRIEND_RESOURCE "${AGENT_FRIEND_RESOURCE}" "\\?\" ""
-    !searchreplace AGENT_FRIEND_RESOURCE "${AGENT_FRIEND_RESOURCE}" "\\" "UNC\"
-    File /a "/oname={{this.[1]}}" "\\?\${AGENT_FRIEND_RESOURCE}"
-    !undef AGENT_FRIEND_RESOURCE
-"""
+    resources_overlay = _nsis_resource_file_overlay(payload_root)
     uninstall_guard_anchor = """  !ifmacrodef NSIS_HOOK_PREUNINSTALL
     !insertmacro NSIS_HOOK_PREUNINSTALL
   !endif
@@ -1034,6 +1048,7 @@ def _generate_nsis_template(
     generated = _apply_nsis_template_overlay(
         cached.read_text(encoding="utf-8"),
         helper_path=helper_path,
+        payload_root=build_paths.payload_stage,
         identity=identity,
         profile=profile,
         trusted_resources=trusted_resources,
@@ -1782,6 +1797,7 @@ def _installer_contract_report(
     generated = _apply_nsis_template_overlay(
         source,
         helper_path=roots.cache_dir / "contract-helper.exe",
+        payload_root=roots.cache_dir / "contract-payload",
         identity=identity,
         profile=resolve_install_profile("installer-smoke"),
         trusted_resources=None,
