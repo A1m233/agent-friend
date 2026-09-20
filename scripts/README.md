@@ -2,6 +2,7 @@
 
 | 脚本 | 用途 | mac/linux | Windows |
 |---|---|---|---|
+| execution-environment | 准备、校验及离线 PDF/PowerShell smoke；自带 PowerShell 7、Poppler、PDF Python wheel 基线，工作树外缓存，发行包当前限 Windows x64，其他平台明确报告不支持 | `./scripts/execution-environment/run.sh prepare\|verify\|smoke [--offline]` | `.\scripts\execution-environment\run.ps1 prepare\|verify\|smoke [--offline]` |
 | desktop-application | 原生桌面启动助手构建、测试与 Job 隔离 smoke；smoke 只启动自有夹具，非 Windows 明确不支持 | `./scripts/desktop-application/run.sh build\|test\|smoke` | `.\scripts\desktop-application\run.ps1 build\|test\|smoke` |
 | diagnostics-smoke | 合成长会话最近 10 轮读取／ZIP 体积对照和事故修复留存，无网络、不读客户数据 | `./scripts/diagnostics-smoke/run.sh` | `.\scripts\diagnostics-smoke\run.ps1` |
 

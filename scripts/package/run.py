@@ -91,6 +91,7 @@ from vendor.codex import load_lock as load_codex_lock
 from vendor.codex import stage_for_package as stage_codex_for_package
 from vendor.managed_python import load_lock as load_managed_python_lock
 from vendor.managed_python import stage_for_package as stage_managed_python_for_package
+from vendor.native_tools import stage_for_package as stage_native_tools_for_package
 from versioning import (
     ProjectVersion,
     SemVer,
@@ -696,6 +697,9 @@ def _stage_runtime(
     if not managed_python_executable.is_file():
         raise RuntimeError("staged managed Python executable is missing")
     managed_python_lock = load_managed_python_lock()
+    stage_native_tools_for_package(
+        stage_dir / "execution-environments" / "native", cache_base=cache_dir, offline=offline
+    )
 
     xhs_dir = stage_dir / "connectors" / "xiaohongshu"
     xhs_dir.mkdir(parents=True)
@@ -730,6 +734,12 @@ def _stage_runtime(
         f"Source: {managed_python_lock['python']['url']}\n"
         "Distribution: python-build-standalone; includes CPython and bundled notices\n"
         "Licenses: see execution-environments/python/licenses/\n\n"
+        "PDF Python baseline\n"
+        "Source and wheel hashes: execution-environments/python/vendor-lock.json\n"
+        "Licenses: retained in baseline-wheels and installed distribution metadata\n\n"
+        "PowerShell 7 and Poppler\n"
+        "Source, version and hashes: execution-environments/native/vendor-lock.json\n"
+        "Licenses and third-party notices: retained in complete native distributions\n\n"
         "astral-uv\n"
         f"Version: {managed_python_lock['uv']['version']}\n"
         f"Source: {managed_python_lock['uv']['url']}\n"

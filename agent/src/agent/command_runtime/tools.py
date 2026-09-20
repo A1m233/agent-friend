@@ -22,6 +22,7 @@ from ..execution_environment import (
     ManagedEnvironmentError,
     ResolvedManagedCommand,
 )
+from ..execution_environment.native import NativeTools
 from ..filesystem.policy import resolve_locator
 from ..paths import command_workspaces_dir, skills_dir
 from ..sessions.tool_execution_evidence import ToolExecutionEvidenceStore
@@ -351,7 +352,9 @@ class ExecCommandTool:
         " workdir，并在 skill.workdir 使用包内相对目录（默认包根）；不要猜测或读取"
         "产品生成的 Skill 安装绝对路径。会创建、下载或修改文件的命令必须申请"
         " read_write。Windows 默认使用系统 cmd.exe，不能直接执行 Get-Command 等"
-        "PowerShell cmdlet；确需 PowerShell 时必须在 cmd 中显式调用可用的 pwsh.exe。"
+        "PowerShell cmdlet；确需 PowerShell 时显式调用 pwsh.exe，产品执行环境优先解析到自带版本。"
+        "产品执行环境预置 PDF Python 依赖、pdftoppm/pdfinfo；无需从 Codex 安装目录寻找。"
+        "生成文件时显式指定当前授权目录内的输出路径，不依赖脚本默认保存位置。"
         "直接启动一个程序及其参数时优先使用 argv；只有确实需要 shell 内建命令、管道、"
         "重定向、变量展开等 shell 解释，或运行 Skill-bound 脚本时才使用 cmd。"
         "sandboxed 模式中的 python/python3 会稳定解析到产品管理、按会话隔离的 Python，"
@@ -587,6 +590,7 @@ class ExecCommandTool:
         self._runtime = runtime
         self._broker = broker
         self._base_env = dict(base_env or os.environ)
+        self._native_tools = NativeTools.from_environment(self._base_env)
         self._personal_skills_root = (personal_skills_root or skills_dir()).resolve()
         self._session_workspaces_root = (
             session_workspaces_root or command_workspaces_dir()
@@ -1233,7 +1237,7 @@ class ExecCommandTool:
                 raise CommandRuntimeError(
                     "windows_powershell_unsupported",
                     "系统 Windows PowerShell 5.1 在当前 Codex 沙箱中无法可靠启动；"
-                    "请改用宿主 PATH 中可用的 pwsh.exe（PowerShell 7），或改写为 cmd 命令。",
+                    "请显式改用 pwsh.exe（产品自带 PowerShell 7），或改写为 cmd 命令。",
                 )
             display_cmd = (
                 subprocess.list2cmdline(semantic_argv)
@@ -1288,12 +1292,18 @@ class ExecCommandTool:
                 *((path, True) for path in managed.writable_roots),
             )
         roots = (*roots, *derived_roots)
+        if self._native_tools is not None:
+            self._native_tools.validate()
+            if execution == "sandboxed":
+                roots = (*roots, (self._native_tools.root, False))
         if execution == "sandboxed":
             roots = (*roots, (run_temp, True))
         derived_paths: set[Path] = {path for path, _writable in derived_roots}
         internal_paths: set[Path] = (
             {*managed.read_only_roots, *managed.writable_roots} if managed is not None else set()
         )
+        if self._native_tools is not None:
+            internal_paths.add(self._native_tools.root)
         bound_snapshot_root = skill_snapshot.snapshot_root if skill_snapshot is not None else None
         root_details = tuple(
             CommandAdditionalRoot(path=str(path), access="read_write" if writable else "read_only")
@@ -1657,7 +1667,7 @@ class ExecCommandTool:
                     raise CommandRuntimeError(
                         "windows_powershell_unsupported",
                         "系统 Windows PowerShell 5.1 在当前 Codex 沙箱中无法可靠启动；"
-                        "请改用宿主 PATH 中可用的 pwsh.exe（PowerShell 7），或改写为 cmd 命令。",
+                        "请显式改用 pwsh.exe（产品自带 PowerShell 7），或改写为 cmd 命令。",
                     )
                 return direct_argv
             system_root = _env_value(self._base_env, "SystemRoot", "WINDIR")
@@ -1674,6 +1684,10 @@ class ExecCommandTool:
         return ("/bin/sh", "-lc", cmd)
 
     def _structured_argv(self, argv: tuple[str, ...]) -> tuple[str, ...]:
+        if self._native_tools is not None:
+            native = self._native_tools.resolve(argv[0])
+            if native is not None:
+                return (str(native), *argv[1:])
         executable = Path(argv[0]).expanduser()
         if executable.is_absolute():
             self._reject_linked_path(executable)
@@ -1780,6 +1794,14 @@ class ExecCommandTool:
             return None
         executable = Path(tokens[0])
         executable_name = executable.name.casefold()
+        if self._native_tools is not None:
+            native = self._native_tools.resolve(tokens[0])
+            if native is not None:
+                if executable_name not in _WINDOWS_POWERSHELL_EXECUTABLES and any(
+                    token in _WINDOWS_SHELL_OPERATORS for token in tokens[1:]
+                ):
+                    return None
+                return (str(native), *tokens[1:])
         is_powershell = executable_name in _WINDOWS_POWERSHELL_EXECUTABLES
         is_quoted_absolute_executable = (
             cmd.lstrip().startswith(('"', "'"))
@@ -1879,12 +1901,13 @@ class ExecCommandTool:
         )
         if network_enabled:
             env.update(safe_loopback_proxy_environment(self._base_env))
-        return env
+        return self._native_tools.apply_environment(env) if self._native_tools else env
 
     def _host_user_env(self) -> dict[str, str]:
         """Preserve the current desktop user's normal environment for approved host execution."""
 
-        return dict(self._base_env)
+        env = dict(self._base_env)
+        return self._native_tools.apply_environment(env) if self._native_tools else env
 
     def _terminate_for_context(
         self, process_id: str, session_id: str, run_id: str, reason: str
