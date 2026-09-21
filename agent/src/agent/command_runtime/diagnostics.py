@@ -172,7 +172,10 @@ def classify_setup_error(message: str) -> tuple[str, int | None]:
     match = re.search(r"ShellExecuteExW failed to launch setup helper: (\d{1,10})", message)
     if match:
         return "helper_launch_failed", int(match[1])
-    if "orchestrator_helper_launch_failed" in message:
+    if any(
+        code in message
+        for code in ("orchestrator_helper_launch_failed", "orchestrator_helper_launch_canceled")
+    ):
         native = re.search(r"(?:os error |WinError )(\d{1,10})", message)
         return "helper_launch_failed", int(native[1]) if native else None
     if "orchestrator_helper_incomplete" in message:

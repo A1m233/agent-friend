@@ -32,7 +32,7 @@ from .models import (
     decode_process_output,
 )
 from .network import network_decision, valid_network_request
-from .sandbox_evidence import SandboxEvidence
+from .sandbox_evidence import SandboxEvidence, error_facts
 from .vendor import probe_setup_helper
 from .windows_state import compatible_state, read_state
 
@@ -559,7 +559,10 @@ class CommandRuntime:
         with self._setup_lock:
             evidence = self._sandbox_evidence.begin("repair")
             self._sandbox_evidence.repair_started(evidence)
-            was_ready = self.windows_sandbox_ready
+            # A retained failure blocks business commands, but does not prove that
+            # the on-disk identity needs to be recreated. Explicit repair first
+            # exercises intact state; only a failed probe warrants provisioning.
+            was_ready = self._read_windows_sandbox_state()[0] == "ready"
             with self._lock:
                 self._setup_active = True
                 self._setup_error = None
@@ -583,8 +586,10 @@ class CommandRuntime:
                     evidence["repairPath"] = "probe_existing"
                     try:
                         self._probe_windows_sandbox()
-                    except CommandRuntimeError:
+                    except CommandRuntimeError as exc:
+                        evidence["initialProbeFailure"] = error_facts(str(exc))
                         evidence["repairPath"] = "probe_then_setup"
+                        self._sandbox_evidence.repair_checkpoint(evidence)
                         self._perform_windows_sandbox_setup(
                             executable, timeout_seconds=timeout_seconds
                         )
@@ -651,7 +656,7 @@ class CommandRuntime:
             suffix = f": {detail[-2000:]}" if detail else ""
             raise CommandRuntimeError(
                 "windows_sandbox_setup_timed_out",
-                "Windows sandbox setup timed out or its administrator prompt was not accepted"
+                "Windows sandbox setup timed out; administrator approval outcome is unknown"
                 f"{suffix}",
             ) from exc
         detail = _windows_setup_process_detail(completed.stdout, completed.stderr)
@@ -662,7 +667,8 @@ class CommandRuntime:
             if _windows_setup_was_cancelled(detail):
                 raise CommandRuntimeError(
                     "windows_sandbox_setup_cancelled",
-                    "Windows sandbox setup was cancelled before administrator approval completed",
+                    "Windows reported sandbox setup launch cancellation; "
+                    "the cancellation source is unknown",
                 )
             message = (
                 f"Windows sandbox elevated setup process exited with code {completed.returncode}"

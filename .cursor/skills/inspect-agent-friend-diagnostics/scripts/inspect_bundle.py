@@ -30,6 +30,7 @@ CAPABILITY_HANDLERS = {
     "selected-sessions-v4": "sessions",
     "sandbox-incidents-v1": "sandboxIncidents",
     "sandbox-incidents-v2": "sandboxIncidents",
+    "sandbox-incidents-v3": "sandboxIncidents",
     "model-catalog-v1": "modelCatalog",
     "bounded-log-tail-v1": "logs",
     "full-retained-logs-v1": "logs",
@@ -1294,6 +1295,9 @@ def summarize_sandbox_incidents(value: Any) -> dict[str, Any]:
     log_scopes: Counter[str] = Counter()
     log_window_count = 0
     log_gap_count = 0
+    helper_probes: Counter[str] = Counter()
+    helper_native_codes: Counter[str] = Counter()
+    initial_probe_failures = 0
     for record in records[:32]:
         if not isinstance(record, dict) or record.get("schemaVersion") != 1:
             invalid += 1
@@ -1306,6 +1310,38 @@ def summarize_sandbox_incidents(value: Any) -> dict[str, Any]:
             else "unknown"
         ] += 1
         related += bool(record.get("relatedIncidents"))
+        initial = record.get("initialProbeFailure")
+        if initial is not None:
+            if isinstance(initial, dict) and isinstance(initial.get("codes"), list):
+                initial_probe_failures += 1
+            else:
+                invalid += 1
+        probe = record.get("failureHelperProbe")
+        if probe is not None:
+            if (
+                not isinstance(probe, dict)
+                or probe.get("scope") != "host_non_elevated_argument_parsing"
+            ):
+                invalid += 1
+            else:
+                status = probe.get("status")
+                if isinstance(status, str) and status in {
+                    "in_progress",
+                    "ready",
+                    "failed",
+                    "launch_failed",
+                    "timed_out",
+                    "not_applicable",
+                    "unavailable",
+                }:
+                    helper_probes[status] += 1
+                else:
+                    invalid += 1
+                native = probe.get("nativeCode")
+                if type(native) is int and 0 <= native <= 0xFFFFFFFF:
+                    helper_native_codes[str(native)] += 1
+                elif native is not None:
+                    invalid += 1
         window = record.get("logWindow")
         if isinstance(window, dict):
             log_window_count += 1
@@ -1387,6 +1423,9 @@ def summarize_sandbox_incidents(value: Any) -> dict[str, Any]:
         "logSignals": dict(log_signals),
         "logScopes": dict(log_scopes),
         "logGapCount": log_gap_count,
+        "failureHelperProbes": dict(helper_probes),
+        "failureHelperNativeCodes": dict(helper_native_codes),
+        "initialProbeFailureCount": initial_probe_failures,
         "invalidCount": invalid,
         "gapCount": len(value["gaps"]) if isinstance(value.get("gaps"), list) else 0,
     }
@@ -1730,7 +1769,11 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             ),
             "sandboxIncidents": summarize_sandbox_incidents(
                 optional_json(archive, "diagnostics/command-runtime-incidents.json", warnings)
-                if {"sandbox-incidents-v1", "sandbox-incidents-v2"}.intersection(capabilities)
+                if {
+                    "sandbox-incidents-v1",
+                    "sandbox-incidents-v2",
+                    "sandbox-incidents-v3",
+                }.intersection(capabilities)
                 or "diagnostics/command-runtime-incidents.json" in names
                 else None
             ),

@@ -94,6 +94,21 @@ Format v1 permits additive fields. Ignore unknown fields safely and do not requi
 
 ## Command Runtime Evidence
 
+`sandbox-incidents-v3` retains v1/v2 incidents and adds `failureHelperProbe`
+to selected helper launch/incomplete failures. The original state, log window and
+error are persisted before this bounded, non-elevated, argument-parsing-only probe;
+its result is a later observation, not proof that the original elevated helper
+loaded or that sandbox accounts work. `in_progress` means no completion was retained.
+The probe never passes a setup payload or changes accounts. A failed probe can
+distinguish ordinary executable loading from the elevation path; a successful probe
+does not rule out elevation, identity, ACL or intermittent failures.
+`initialProbeFailure` preserves the explicit repair's pre-provisioning probe error
+separately from its final error. Intact on-disk identity is tested even when a prior
+failure is latched; only actual probe success clears that latch. Missing identities
+still require explicit setup. These fields do not recover a first native error
+already overwritten inside the pinned Codex binary. Native 1223 never establishes
+manual user cancellation. Old retained records may lack both fields.
+
 `command-runtime-health-v1` adds a read-only Bridge snapshot and at most 128 recent events. Events carry their own hashed build, runtime and operation identities, timestamps, stage, stable code, optional native code and proxy kind. Hashes cannot reconstruct a command or session. Native 1223 means the launch API returned cancellation; it does not establish which user action caused it. Unknown module names remain unknown.
 
 History is persisted as a bounded 64 KiB JSON snapshot under the canonical log directory; policy observations are flushed at process completion or runtime close. A crash can lose the unflushed policy tail. `evicted`, `history_unavailable`, `invalid_record` and `write_failed` are observer gaps, not business failures. Helper presence is not hash or load verification. Current ready status cannot replace occurrence-time evidence. Export never starts setup or a network probe. Older bundles lacking the capability are not-collected.

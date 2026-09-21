@@ -18,6 +18,69 @@ def recorder(tmp_path: Path) -> SandboxEvidence:
     )
 
 
+@pytest.mark.parametrize("probe_failure", [False, True])
+def test_failure_probe_preserves_original_state_and_error_before_loading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probe_failure: bool
+) -> None:
+    home = tmp_path / "home"
+    evidence = SandboxEvidence(
+        tmp_path / "logs/health.json", home, tmp_path / "codex.exe", "r", "b"
+    )
+    operation = evidence.begin("visibility")
+
+    def probe(executable: Path) -> dict[str, object]:
+        persisted = evidence.snapshot()["incidents"][0]
+        assert persisted["error"]["nativeCode"] == 1223
+        assert persisted["failureHelperProbe"]["status"] == "in_progress"
+        assert persisted["stateAfter"]["marker"]["status"] == "missing"
+        # Later observations must not overwrite occurrence-time state.
+        marker = home / ".sandbox/setup_marker.json"
+        marker.parent.mkdir(parents=True)
+        marker.write_text('{"version":5}', encoding="utf-8")
+        if probe_failure:
+            raise RuntimeError("private loader failure")
+        return {"status": "launch_failed", "nativeCode": 126}
+
+    monkeypatch.setattr("agent.command_runtime.sandbox_evidence.probe_setup_helper", probe)
+    evidence.finish(
+        operation,
+        "orchestrator_helper_launch_canceled: ShellExecuteExW failed to launch setup helper: 1223",
+    )
+    restored = SandboxEvidence(tmp_path / "logs/health.json", home, None, "r", "b")
+    record = restored.snapshot()["incidents"][0]
+    assert record["error"]["nativeCode"] == 1223
+    assert record["stateAfter"]["marker"]["status"] == "missing"
+    assert record["failureHelperProbe"]["status"] == (
+        "unavailable" if probe_failure else "launch_failed"
+    )
+    assert "private" not in json.dumps(record)
+    assert "finishedAt" in record["failureHelperProbe"]
+
+
+@pytest.mark.parametrize(
+    "stage,detail",
+    [("start", None), ("start", "business timeout"), ("repair", "orchestrator_helper_incomplete")],
+)
+def test_evidence_does_not_probe_healthy_commands_or_reprobe_repairs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str, detail: str | None
+) -> None:
+    evidence = SandboxEvidence(
+        tmp_path / "logs/health.json", tmp_path, tmp_path / "codex.exe", "r", "b"
+    )
+
+    def unexpected(_: Path) -> dict[str, object]:
+        pytest.fail("helper must not be launched")
+
+    monkeypatch.setattr("agent.command_runtime.sandbox_evidence.probe_setup_helper", unexpected)
+    evidence.finish(evidence.begin(stage), detail)
+
+
+def test_native_login_error_is_preserved_without_credentials() -> None:
+    facts = error_facts("CreateProcessWithLogonW failed: 1326 private-user password=secret")
+    assert facts["nativeCode"] == 1326
+    assert "secret" not in json.dumps(facts)
+
+
 def test_failure_survives_repair_and_restart_without_secret_content(tmp_path: Path) -> None:
     evidence = recorder(tmp_path)
     operation = evidence.begin("start")

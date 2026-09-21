@@ -1247,7 +1247,8 @@ def test_windows_setup_reports_uac_cancellation_without_clixml(
 
     assert cancelled.value.code == "windows_sandbox_setup_cancelled"
     assert "CLIXML" not in str(cancelled.value)
-    assert "cancelled" in str(cancelled.value)
+    assert "cancellation source is unknown" in str(cancelled.value)
+    assert "by the user" not in str(cancelled.value)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows sandbox setup is Windows-specific")
