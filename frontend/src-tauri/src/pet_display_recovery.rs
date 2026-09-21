@@ -14,6 +14,7 @@ pub const RECOVERY_SAFETY_GATE_ENV: &str = "AGENT_FRIEND_DISPLAY_RECOVERY_SAFETY
 pub const GPU_RECOVERY_MIN_HIDDEN_MS: u64 = 1_500;
 pub const GPU_RECOVERY_STABLE_MS: u64 = 500;
 pub const GPU_RECOVERY_TIMEOUT_MS: u64 = 7_000;
+const GPU_RECOVERY_EVIDENCE_TIMEOUT_MS: u64 = 2_500;
 pub const GPU_RECOVERY_RESTART_ENV: &str = "AGENT_FRIEND_WEBVIEW2_GPU_RESTART";
 pub const GPU_RECOVERY_RESTART_COOLDOWN_MS: u64 = 5 * 60 * 1_000;
 const GPU_RECOVERY_RESTART_GUARD_FILE: &str = "webview2-gpu-recovery-restart.json";
@@ -223,6 +224,7 @@ impl PetDisplayRecoveryState {
             || self
                 .active_recovery
                 .is_some_and(|active| active.cause == RecoveryCause::WebView2GpuProcessExit)
+            || self.safety_suppressed == Some(RecoveryCause::WebView2GpuProcessExit)
         {
             return DisplayObservation::None;
         }
@@ -274,6 +276,14 @@ impl PetDisplayRecoveryState {
         if !self.is_current(generation) {
             return None;
         }
+        // A healthy CPU/GDI capture does not establish that the failed GPU's
+        // host surface is safe to present. Only a fresh process may restore it.
+        if self
+            .active_recovery
+            .is_some_and(|active| active.cause == RecoveryCause::WebView2GpuProcessExit)
+        {
+            return None;
+        }
         self.active_recovery = None;
         Some(if self.desired_visible {
             VisibilityCommand::Show
@@ -287,18 +297,27 @@ impl PetDisplayRecoveryState {
             return false;
         }
         let cause = self.active_recovery.take().map(|active| active.cause);
-        self.safety_suppressed = self.desired_visible.then_some(cause).flatten();
+        self.safety_suppressed = cause.filter(|cause| {
+            self.desired_visible || *cause == RecoveryCause::WebView2GpuProcessExit
+        });
         true
     }
 
-    fn begin_gpu_process_recovery(&mut self) -> u64 {
+    fn begin_gpu_process_recovery(&mut self) -> Option<u64> {
+        if self
+            .active_recovery
+            .is_some_and(|active| active.cause == RecoveryCause::WebView2GpuProcessExit)
+            || self.safety_suppressed == Some(RecoveryCause::WebView2GpuProcessExit)
+        {
+            return None;
+        }
         self.next_generation = self.next_generation.saturating_add(1);
         self.active_recovery = Some(ActiveRecovery {
             generation: self.next_generation,
             cause: RecoveryCause::WebView2GpuProcessExit,
         });
         self.safety_suppressed = None;
-        self.next_generation
+        Some(self.next_generation)
     }
 
     pub fn disable_protection(&mut self) -> Option<VisibilityCommand> {
@@ -406,6 +425,11 @@ fn suppress_recovery(
                 .map(|mut guard| guard.display_recovery.timeout(generation))
         })
         .unwrap_or(false);
+    // Stale evidence/timeout callbacks must not hide a newer recovery or a
+    // window explicitly restored by the user.
+    if !suppressed {
+        return false;
+    }
     if app.get_webview_window("pet").is_some() {
         if let Err(error) =
             apply_visibility_command(app, VisibilityCommand::Hide, "recovery-suppressed")
@@ -744,6 +768,49 @@ fn schedule(app: &tauri::AppHandle, generation: u64, cause: RecoveryCause) {
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         let started = std::time::Instant::now();
+        if cause == RecoveryCause::WebView2GpuProcessExit {
+            // Keep the failed host hidden. Capture only bounded forensic
+            // evidence; neither successful pixels nor capture failure can
+            // release a surface whose actual presentation is unknown.
+            tokio::time::sleep(Duration::from_millis(GPU_RECOVERY_MIN_HIDDEN_MS)).await;
+            if !is_current(&handle, generation) {
+                return;
+            }
+            if let Some(manager) = handle
+                .try_state::<std::sync::Arc<crate::webview_diagnostics::WebViewDiagnosticsManager>>(
+                )
+                .map(|state| state.inner().clone())
+            {
+                let capture = tokio::time::timeout(
+                    Duration::from_millis(GPU_RECOVERY_EVIDENCE_TIMEOUT_MS),
+                    manager.capture_recovery_baseline(
+                        &handle,
+                        generation,
+                        GPU_RECOVERY_MIN_HIDDEN_MS,
+                        cause.render_trigger(),
+                    ),
+                )
+                .await;
+                if capture.is_err() {
+                    manager.cancel_recovery_capture();
+                    record_recovery_event(
+                        &handle,
+                        cause,
+                        "evidence-timeout",
+                        generation,
+                        json!({"timeoutMs": GPU_RECOVERY_EVIDENCE_TIMEOUT_MS}),
+                    );
+                }
+            }
+            fail_recovery(
+                &handle,
+                generation,
+                cause,
+                "gpu-context-invalidated",
+                "GPU process exited; screenshots cannot establish host presentation health",
+            );
+            return;
+        }
         let mut stability = TopologyStabilityTracker::default();
         loop {
             tokio::time::sleep(Duration::from_millis(RECOVERY_POLL_INTERVAL_MS)).await;
@@ -1035,6 +1102,9 @@ pub(crate) fn handle_gpu_process_failure(
         );
         return;
     };
+    let Some(generation) = generation else {
+        return; // Already containing this GPU failure, including delayed fan-out.
+    };
     record_recovery_event(
         app,
         RecoveryCause::WebView2GpuProcessExit,
@@ -1209,21 +1279,24 @@ mod tests {
     #[test]
     fn gpu_recovery_is_not_cancelled_by_the_display_protection_setting() {
         let mut state = PetDisplayRecoveryState::default();
-        let generation = state.begin_gpu_process_recovery();
+        let generation = state.begin_gpu_process_recovery().unwrap();
 
         assert_eq!(state.disable_protection(), None);
         assert!(state.is_current(generation));
-        assert_eq!(state.complete(generation), Some(VisibilityCommand::Show));
+        assert_eq!(state.complete(generation), None);
+        assert!(state.is_current(generation));
     }
 
     #[test]
     fn gpu_recovery_does_not_present_a_user_hidden_pet() {
         let mut state = PetDisplayRecoveryState::default();
         state.set_desired_visible(false);
-        let generation = state.begin_gpu_process_recovery();
+        let generation = state.begin_gpu_process_recovery().unwrap();
 
         assert!(!state.should_present(generation));
-        assert_eq!(state.complete(generation), Some(VisibilityCommand::Hide));
+        assert_eq!(state.complete(generation), None);
+        assert!(state.timeout(generation));
+        assert!(!state.desired_visible);
     }
 
     #[test]
@@ -1235,11 +1308,57 @@ mod tests {
             DisplayObservation::BeginRecovery { generation: 1 }
         );
 
-        let gpu_generation = state.begin_gpu_process_recovery();
+        let gpu_generation = state.begin_gpu_process_recovery().unwrap();
 
         assert_eq!(gpu_generation, 2);
         assert!(!state.is_current(1));
         assert!(state.is_current(2));
+    }
+
+    #[test]
+    fn delayed_gpu_fanout_cannot_replace_the_inflight_recovery() {
+        let mut state = PetDisplayRecoveryState::default();
+        let first = state.begin_gpu_process_recovery().unwrap();
+        // Independent of the diagnostics manager's one-second debounce window.
+        assert_eq!(state.begin_gpu_process_recovery(), None);
+        assert!(state.is_current(first));
+        assert!(state.timeout(first));
+        assert_eq!(state.begin_gpu_process_recovery(), None);
+    }
+
+    #[test]
+    fn stale_failure_cannot_suppress_the_new_gpu_generation() {
+        let mut state = PetDisplayRecoveryState::default();
+        state.observe_display_state(SessionDisplayState::Off);
+        state.observe_display_state(SessionDisplayState::On);
+        let current = state.begin_gpu_process_recovery().unwrap();
+        assert!(!state.timeout(1));
+        assert!(state.is_current(current));
+        assert!(state.safety_suppressed.is_none());
+    }
+
+    #[test]
+    fn user_hide_cancels_gpu_restart_and_stale_completion() {
+        let mut state = PetDisplayRecoveryState::default();
+        let generation = state.begin_gpu_process_recovery().unwrap();
+        assert_eq!(state.set_desired_visible(false), VisibilityCommand::Hide);
+        assert!(!state.timeout(generation));
+        assert_eq!(state.complete(generation), None);
+    }
+
+    #[test]
+    fn display_resume_cannot_release_a_gpu_surface_when_restart_is_blocked() {
+        let mut state = PetDisplayRecoveryState::default();
+        let generation = state.begin_gpu_process_recovery().unwrap();
+        assert!(state.timeout(generation));
+        state.observe_display_state(SessionDisplayState::Off);
+        assert_eq!(
+            state.observe_display_state(SessionDisplayState::On),
+            DisplayObservation::None
+        );
+        assert_eq!(state.disable_protection(), None);
+        assert_eq!(state.begin_gpu_process_recovery(), None);
+        assert_eq!(state.toggle_requested(false), VisibilityCommand::Show);
     }
 
     #[test]

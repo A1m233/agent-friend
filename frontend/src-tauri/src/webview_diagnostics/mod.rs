@@ -605,6 +605,12 @@ impl WebViewDiagnosticsManager {
         }
     }
 
+    pub(crate) fn cancel_recovery_capture(&self) {
+        // The bounded recovery owner dropped the capture future. Native
+        // callbacks can finish, but no longer publish or decide visibility.
+        self.finish_render_capture();
+    }
+
     pub(crate) fn set_render_capture_armed(
         &self,
         armed: bool,
