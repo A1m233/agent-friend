@@ -28,6 +28,7 @@ from uuid import uuid4
 
 from llm_providers import (
     LLMContextWindowError,
+    LLMEmptyResponseError,
     LLMError,
     LLMUnsupportedParameterError,
     ModelCallControl,
@@ -56,6 +57,7 @@ from .protocol import (
     ToolContextEditRecord,
     assemble_messages,
 )
+from .summary_generation import generate_summary
 from .summary_prompt import (
     SUMMARY_SYSTEM_PROMPT,
     build_summary_messages,
@@ -76,6 +78,7 @@ POST_COMPACTION_TARGET_RATIO = 0.7
 
 SUMMARY_PROMPT_VERSION = 2
 MAX_SUMMARY_CONTEXT_RETRIES = 2
+SUMMARY_NETWORK_RETRIES = 1
 logger = logging.getLogger(__name__)
 
 
@@ -259,6 +262,17 @@ class SummarizingContextManager:
             additional_cleared_result_uuids=projection.effective_cleared_result_uuids,
         )
         activity_id = str(uuid4())
+        logger.info(
+            "context_compaction_started session=%s run=%s model=%s "
+            "estimated_tokens=%s threshold=%s effective_window=%s prior_summary=%s",
+            runtime.session_id,
+            runtime.run_id,
+            runtime.model_id,
+            est,
+            threshold,
+            runtime.budget.effective_window,
+            prior is not None,
+        )
         yield ContextCompactionProgress(activity_id=activity_id, phase="started")
         try:
             result = self._compact(
@@ -337,12 +351,14 @@ class SummarizingContextManager:
             )
             try:
                 runtime.check_cancelled()
-                response = runtime.llm_client.generate(
+                response = generate_summary(
+                    runtime.llm_client,
                     ModelRequest(
                         messages=build_summary_messages(summary_text),
                         settings={"max_tokens": summary_output_budget},
                         control=ModelCallControl(
                             cancel_check=runtime.cancel_check,
+                            retry_limit=SUMMARY_NETWORK_RETRIES,
                             previous_request_witness=lineage.previous_witness,
                             trace_context=ModelCallTraceContext(
                                 operation="context_compaction",
@@ -357,7 +373,7 @@ class SummarizingContextManager:
                                 comparison=lineage.comparison_fields(),
                             ),
                         ),
-                    )
+                    ),
                 )
                 runtime.check_cancelled()
                 self._prompt_cache_lineage.complete(lineage, response)
@@ -386,6 +402,9 @@ class SummarizingContextManager:
                 return self._fallback_result(
                     history, parts, runtime, reason="unsupported_model_parameter"
                 )
+            except LLMEmptyResponseError:
+                runtime.check_cancelled()
+                return self._on_failure(history, parts, runtime, reason="empty_summary")
             except LLMError as exc:
                 runtime.check_cancelled()
                 try:
