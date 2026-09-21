@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
@@ -36,7 +37,16 @@ from ..stream_events import (
     ProviderToolCall,
 )
 from ..usage import extract_responses_usage
-from .evidence import REASONING_EVENTS, REFUSAL_EVENTS, UNSUPPORTED_EVENTS, reference, summarize
+from .evidence import (
+    REASONING_EVENTS,
+    REFUSAL_EVENTS,
+    UNSUPPORTED_EVENTS,
+    event_type,
+    part_type,
+    reference,
+    safe_index,
+    summarize,
+)
 from .request import prepare_request
 from .transport import open_responses_stream
 
@@ -113,6 +123,8 @@ class ResponsesState:
         self.terminal: dict[str, Any] | None = None
         self.last_activity = 0.0
         self.event_number = 0
+        self.recent_event_types: deque[str] = deque(maxlen=8)
+        self.expected_item_type: str | None = None
 
     def _add(self, raw: dict[str, Any], index: Any) -> tuple[_Item, list[LLMStreamEvent]]:
         identity = raw.get("id")
@@ -159,6 +171,7 @@ class ResponsesState:
         return item, events
 
     def _item(self, event: dict[str, Any], kind: str | None = None) -> _Item:
+        self.expected_item_type = kind
         identity = event.get("item_id")
         index = event.get("output_index")
         if not isinstance(index, int) or isinstance(index, bool):
@@ -270,21 +283,40 @@ class ResponsesState:
 
     def feed(self, raw: Any) -> list[LLMStreamEvent]:
         self.event_number += 1
+        self.expected_item_type = None
         event = None
         try:
             event = _object(raw)
+            self.recent_event_types.append(event_type(event.get("type")))
             return self._feed(event)
         except LLMProviderError as error:
             if error.error_evidence is not None and error.error_evidence.source == "protocol":
+                identity = event.get("item_id") if event else None
+                item = self.items.get(identity) if isinstance(identity, str) else None
+                index = safe_index(event.get("output_index")) if event else None
                 error.error_evidence = replace(
                     error.error_evidence,
                     response_ref=reference(self.response_id),
-                    protocol=summarize(
-                        event,
-                        stage="feed",
-                        number=self.event_number,
-                        items=len(self.items),
-                        terminal=self.terminal is not None,
+                    protocol=replace(
+                        summarize(
+                            event,
+                            stage="feed",
+                            number=self.event_number,
+                            items=len(self.items),
+                            terminal=self.terminal is not None,
+                        ),
+                        schema_revision=2,
+                        recent_event_types=tuple(self.recent_event_types),
+                        expected_item_type=self.expected_item_type,
+                        actual_item_type=item.kind if item else None,
+                        part_type=part_type(event),
+                        output_index=index,
+                        content_index=safe_index(event.get("content_index")) if event else None,
+                        item_index_matches=(
+                            item is not None and self.indices.get(index) == identity
+                            if index is not None and isinstance(identity, str)
+                            else None
+                        ),
                     ),
                 )
             raise
@@ -380,9 +412,9 @@ class ResponsesState:
             raise LLMContentPolicyError("模型拒绝生成此响应。")
         elif kind in UNSUPPORTED_EVENTS:
             raise _protocol("unsupported response capability")
+        elif kind in {"response.content_part.added", "response.content_part.done"}:
+            self._content_part(event)
         elif kind in {
-            "response.content_part.added",
-            "response.content_part.done",
             "response.output_text.done",
             "response.output_text.annotation.added",
         }:
@@ -390,6 +422,21 @@ class ResponsesState:
         else:
             raise _protocol("unsupported stream event")
         return []
+
+    def _content_part(self, event: dict[str, Any]) -> None:
+        item = self._item(event)
+        if item.kind != "reasoning":
+            self._text_metadata(event)
+            return
+        index = event.get("content_index")
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            raise _protocol("invalid content index")
+        part = _object(event.get("part"))
+        if part.get("type") != "reasoning_text" or not isinstance(part.get("text"), str):
+            raise _protocol("unsupported reasoning content part")
+        # Reasoning boundaries are metadata, not assistant text. The completed
+        # reasoning item remains the authority for private continuation state,
+        # as it is for response.reasoning_text.delta/done.
 
     def _text_metadata(self, event: dict[str, Any]) -> None:
         item = self._item(event, "message")

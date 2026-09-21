@@ -32,6 +32,13 @@ class ProtocolEvidence:
     output_types: tuple[str, ...] = ()
     output_types_truncated: bool = False
     schema_revision: int = 1
+    recent_event_types: tuple[str, ...] = ()
+    expected_item_type: str | None = None
+    actual_item_type: str | None = None
+    part_type: str | None = None
+    output_index: int | None = None
+    content_index: int | None = None
+    item_index_matches: bool | None = None
 
 
 @dataclass(frozen=True)
