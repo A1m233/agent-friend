@@ -41,6 +41,7 @@ CAPABILITY_HANDLERS = {
     "webview2-render-evidence-v1": "webView2RenderEvidence",
     "webview2-render-evidence-v2": "webView2RenderEvidence",
     "webview2-render-evidence-v3": "webView2RenderEvidence",
+    "webview2-render-evidence-v4": "webView2RenderEvidence",
     "install-integrity-v1": "installIntegrity",
     "desktop-instance-governance-v1": "desktopInstance",
     "managed-execution-environment-v1": "executionEnvironments",
@@ -1503,6 +1504,7 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             if "webview2-render-evidence-v1" in capabilities
             or "webview2-render-evidence-v2" in capabilities
             or "webview2-render-evidence-v3" in capabilities
+            or "webview2-render-evidence-v4" in capabilities
             or "diagnostics/webview2-render-evidence.json" in names
             else None
         )
@@ -1540,6 +1542,12 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             webview2_render_evidence,
             set(names),
         )
+        if render_evidence_summary is not None:
+            render_evidence_summary["gpuRecoveryPolicy"] = (
+                "hidden-evidence-then-guarded-restart"
+                if "webview2-render-evidence-v4" in capabilities
+                else "legacy-or-unknown"
+            )
         if render_evidence_summary and render_evidence_summary.get("missingArtifacts"):
             warnings.append(
                 "render evidence metadata references missing artifacts: "
