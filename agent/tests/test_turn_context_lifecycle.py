@@ -40,6 +40,12 @@ def test_candidate_checkpoints_follow_provider_acceptance(
         failing = False
 
         def stream(self, request: Any) -> Any:
+            if (
+                request.control.trace_context
+                and request.control.trace_context.operation == "context_compaction"
+            ):
+                yield from super().stream(request)
+                return
             if self.failing:
                 self.attempts += 1
                 if outcome == "cancel":
