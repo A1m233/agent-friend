@@ -44,9 +44,110 @@
   ],
   "capabilities": {
     "venv": true,
-    "stdlib": ["csv", "json", "sqlite3", "ssl", "tarfile", "zipfile"],
+    "stdlib": [
+      "csv",
+      "json",
+      "sqlite3",
+      "ssl",
+      "tarfile",
+      "zipfile"
+    ],
     "package_policy": "wheel-only-no-build",
     "link_mode": "copy",
     "runtime_downloads": false
-  }
+  },
+  "baseline_wheels": [
+    {
+      "name": "cffi",
+      "version": "2.1.1",
+      "filename": "cffi-2.1.1-cp312-cp312-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/d9/79/615cc094e2fb508cade7de88d3b4f6c4ec2bab695c97bce9153dc65aadf5/cffi-2.1.1-cp312-cp312-win_amd64.whl",
+      "sha256": "f53e442b08449d42821fa4a4fba000095af9f62742a500f978a9f557ec44339a",
+      "size": 185919
+    },
+    {
+      "name": "charset-normalizer",
+      "version": "3.5.1",
+      "filename": "charset_normalizer-3.5.1-cp312-cp312-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/9d/7a/4c6c298171e6b3e745633180ff59350fc0ca0db1ffd28df1e369e0579f71/charset_normalizer-3.5.1-cp312-cp312-win_amd64.whl",
+      "sha256": "3617ac3cfd8b9888f145ad89dd6e692285834b0201c6074a5eeaad3fd4d668c2",
+      "size": 200551
+    },
+    {
+      "name": "cryptography",
+      "version": "50.0.1",
+      "filename": "cryptography-50.0.1-cp311-abi3-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/42/8b/cb12b1b60c91b074ca6bf0fdd59aa8f10d8bc5f73af8faece86ef0421b37/cryptography-50.0.1-cp311-abi3-win_amd64.whl",
+      "sha256": "aed8db4f6d71c51efb89530e12d9464e7bf2923d46c3205dc794a2a93f8c0648",
+      "size": 3842826
+    },
+    {
+      "name": "pdfminer-six",
+      "version": "20260107",
+      "filename": "pdfminer_six-20260107-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/20/8b/28c4eaec9d6b036a52cb44720408f26b1a143ca9bce76cc19e8f5de00ab4/pdfminer_six-20260107-py3-none-any.whl",
+      "sha256": "366585ba97e80dffa8f00cebe303d2f381884d8637af4ce422f1df3ef38111a9",
+      "size": 6592252
+    },
+    {
+      "name": "pdfplumber",
+      "version": "0.11.10",
+      "filename": "pdfplumber-0.11.10-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/a2/9a/07d658e1e7fad860f1c541ab941348125dbdab773be3a0afaf32361866c7/pdfplumber-0.11.10-py3-none-any.whl",
+      "sha256": "7741ea81bf165b474b153e6789d10d18e06b6ddcf3ec84289c3ef2fed6802580",
+      "size": 60047
+    },
+    {
+      "name": "pillow",
+      "version": "12.3.0",
+      "filename": "pillow-12.3.0-cp312-cp312-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/45/89/da2f7971a317f83d807fdd4065c0af40208e59e692cc43d315a71a0e96d1/pillow-12.3.0-cp312-cp312-win_amd64.whl",
+      "sha256": "a2b55dd6b2a4c4b7d87ffa56bdb33fdc5fdb9a462173861a7bc097f17d91cb09",
+      "size": 7227137
+    },
+    {
+      "name": "pycparser",
+      "version": "3.0",
+      "filename": "pycparser-3.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl",
+      "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992",
+      "size": 48172
+    },
+    {
+      "name": "pypdf",
+      "version": "6.19.0",
+      "filename": "pypdf-6.19.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/3c/2c/c43c03eaf630435f023f1dc61ec4a4a78951ad5530a62c71cc89bde307b7/pypdf-6.19.0-py3-none-any.whl",
+      "sha256": "7e5d6e730e7dae87d560a2cee218b852f6498c8be61966f3cd02ead971e48d14",
+      "size": 395480
+    },
+    {
+      "name": "pypdfium2",
+      "version": "5.13.0",
+      "filename": "pypdfium2-5.13.0-py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/5d/99/a37b6b902457569468ed5908c94e56cb6c4032541f02cf89f723d42a9148/pypdfium2-5.13.0-py3-none-win_amd64.whl",
+      "sha256": "47dcca2a8d507b5fd24f94c3c9d48fb379430f097bc20f01beff6c963ffbcedb",
+      "size": 3885553
+    },
+    {
+      "name": "reportlab",
+      "version": "5.0.1",
+      "filename": "reportlab-5.0.1-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/db/cb/dacbc268cb68d0428ea2cbd85266195a9ab3e677449589ddae59bd7542ac/reportlab-5.0.1-py3-none-any.whl",
+      "sha256": "1c36e6bb0e71780c72331eba60da7f602e8d4389a8723825af71342e49d791e8",
+      "size": 1957258
+    }
+  ],
+  "baseline_requirements": [
+    "cffi==2.1.1",
+    "charset-normalizer==3.5.1",
+    "cryptography==50.0.1",
+    "pdfminer-six==20260107",
+    "pdfplumber==0.11.10",
+    "pillow==12.3.0",
+    "pycparser==3.0",
+    "pypdf==6.19.0",
+    "pypdfium2==5.13.0",
+    "reportlab==5.0.1"
+  ]
 }

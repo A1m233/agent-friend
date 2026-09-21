@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "platform": "windows-x86_64",
+  "archives": [
+    {
+      "name": "powershell",
+      "version": "7.6.6",
+      "filename": "PowerShell-7.6.6-win-x64.zip",
+      "url": "https://github.com/PowerShell/PowerShell/releases/download/v7.6.6/PowerShell-7.6.6-win-x64.zip",
+      "sha256": "02fe458be20493fbdf43f61ea20610b811ee6c738ab1676c61b9cfcd1a33c860",
+      "size": 106328873,
+      "executables": {"pwsh": "pwsh.exe"}
+    },
+    {
+      "name": "poppler",
+      "version": "26.09.0",
+      "filename": "Release-26.09.0-0.zip",
+      "url": "https://github.com/oschwartz10612/poppler-windows/releases/download/v26.09.0-0/Release-26.09.0-0.zip",
+      "sha256": "7a6f256a0ddf7536182246a5733331bf4677cbcc34f4663774947ad34556c8d0",
+      "size": 43709956,
+      "executables": {"pdftoppm": "pdftoppm.exe", "pdfinfo": "pdfinfo.exe"}
+    }
+  ]
+}

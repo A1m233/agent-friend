@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -738,6 +739,10 @@ def test_nsis_template_overlay_defaults_chinese_and_enforces_maintenance_state()
         "!insertmacro MUI_PAGE_DIRECTORY\n"
         "Section Install\n"
         "  SetOutPath $INSTDIR\n"
+        '    File /a "/oname={{this.[1]}}" "{{no-escape @key}}"\n'
+        '  {{#each resources_dirs}}\n    CreateDirectory "$INSTDIR\\\\{{this}}"\n  {{/each}}\n'
+        '  ; Delete resources\n  {{#each resources}}\n    Delete "$INSTDIR\\\\{{this.[1]}}"\n  {{/each}}\n'
+        '  RMDir /REBOOTOK "$INSTDIR\\\\{{this}}"\n'
         "  !ifmacrodef NSIS_HOOK_PREUNINSTALL\n"
         "    !insertmacro NSIS_HOOK_PREUNINSTALL\n"
         "  !endif\n\n"
@@ -755,6 +760,7 @@ def test_nsis_template_overlay_defaults_chinese_and_enforces_maintenance_state()
     generated = package._apply_nsis_template_overlay(
         source,
         helper_path=PACKAGE_DIR / "helper.exe",
+        payload_root=PACKAGE_DIR / "payload-stage",
         identity=identity,
         profile=package.resolve_install_profile("installer-smoke"),
         trusted_resources=None,
@@ -780,6 +786,91 @@ def test_nsis_template_overlay_defaults_chinese_and_enforces_maintenance_state()
     assert '!define AGENT_FRIEND_PRODUCT_NAME "agent-friend-installer-smoke"' in generated
     assert '!define AGENT_FRIEND_PRODUCT_VERSION "1.2.3"' in generated
     assert "agent-friend requires its fail-closed uninstall guard" in generated
+    assert r'File /a "/oname=$AgentFriendResourceRoot\\{{this.[1]}}"' in generated
+    assert r'CreateDirectory "$AgentFriendResourceRoot\\{{this}}"' in generated
+    assert r'Delete "$AgentFriendResourceRoot\\{{this.[1]}}"' in generated
+    assert r'RMDir /REBOOTOK "$AgentFriendResourceRoot\\{{this}}"' in generated
+    assert "!undef AGENT_FRIEND_RESOURCE" in generated
+    with pytest.raises(RuntimeError, match="resource source paths anchor drifted"):
+        package._apply_nsis_template_overlay(
+            source.replace('    File /a "/oname={{this.[1]}}" "{{no-escape @key}}"\n', ""),
+            helper_path=PACKAGE_DIR / "helper.exe",
+            payload_root=PACKAGE_DIR / "payload-stage",
+            identity=identity,
+            profile=package.resolve_install_profile("installer-smoke"),
+            trusted_resources=None,
+        )
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows NSIS source-path regression")
+def test_nsis_installs_and_removes_long_payload_and_parent_relative_resources(
+    tmp_path: Path,
+) -> None:
+    compiler = shutil.which("makensis") or str(
+        Path(os.environ.get("LOCALAPPDATA", "")) / "tauri" / "NSIS" / "makensis.exe"
+    )
+    if not Path(compiler).is_file():
+        pytest.skip("Tauri NSIS compiler is not installed")
+    package = _load("package_run_nsis_long_paths", PACKAGE_DIR / "run.py")
+    payload = tmp_path / "payload-stage"
+    long_file = payload / ("a" * 100) / ("b" * 100) / "probe.txt"
+    long_file.parent.mkdir(parents=True)
+    long_file.write_text("long-payload", encoding="utf-8")
+    assert len(str(long_file)) > 260
+    relative_parent = tmp_path / "base"
+    relative_parent.mkdir()
+    (tmp_path / "avatar.txt").write_text("avatar", encoding="utf-8")
+    inputs = [
+        (long_file, long_file.relative_to(payload)),
+        (relative_parent / ".." / "avatar.txt", Path("avatar.txt")),
+    ]
+    installed = tmp_path / "installed"
+    script = (
+        "Unicode true\nRequestExecutionLevel user\nSilentInstall silent\n"
+        "SilentUnInstall silent\n!include LogicLib.nsh\n"
+        + package.NSIS_RESOURCE_ROOT
+        + f'OutFile "{tmp_path / "probe.exe"}"\nSection\nStrCpy $INSTDIR "{installed}"\n'
+        + 'SetOutPath "$INSTDIR"\n'
+        + "!insertmacro AGENT_FRIEND_SET_RESOURCE_ROOT\n"
+    )
+    for source, relative in inputs:
+        script += f'CreateDirectory "$AgentFriendResourceRoot\\{relative.parent}"\n'
+        script += (
+            package._nsis_resource_file_overlay(payload)
+            # Pinned Tauri's Handlebars rendering consumes this escape before
+            # substituting the resource path; the raw template is checked above.
+            .replace(r"\\{{", r"\{{")
+            .replace("{{no-escape @key}}", str(source).replace(":\\", ":/", 1))
+            .replace("{{this.[1]}}", str(relative))
+        )
+    script += (
+        'WriteUninstaller "$INSTDIR\\uninstall.exe"\nSectionEnd\nSection Uninstall\n'
+        "!insertmacro AGENT_FRIEND_SET_RESOURCE_ROOT\n"
+    )
+    for _, relative in inputs:
+        script += f'Delete "$AgentFriendResourceRoot\\{relative}"\n'
+    for parent in (
+        long_file.relative_to(payload).parent,
+        long_file.relative_to(payload).parent.parent,
+    ):
+        script += f'RMDir "$AgentFriendResourceRoot\\{parent}"\n'
+    script += "SectionEnd\n"
+    script_path = tmp_path / "probe.nsi"
+    script_path.write_text(script, encoding="utf-8")
+    result = subprocess.run(
+        [compiler, "/V2", str(script_path)], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "probe.exe").is_file()
+    subprocess.run([str(tmp_path / "probe.exe"), "/S"], check=True, timeout=30)
+    for source, relative in inputs:
+        assert (installed / relative).read_bytes() == source.read_bytes()
+    subprocess.run(
+        [str(installed / "uninstall.exe"), "/S", f"_?={installed}"], check=True, timeout=30
+    )
+    for _, relative in inputs:
+        assert not (installed / relative).exists()
+    assert not (installed / long_file.relative_to(payload).parent.parent).exists()
 
 
 def test_nsis_install_uses_owned_blocker_helper_and_never_kills_by_name() -> None:

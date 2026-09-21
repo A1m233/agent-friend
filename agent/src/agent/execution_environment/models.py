@@ -20,9 +20,10 @@ class EnvironmentStatus(StrEnum):
 class ManagedEnvironmentError(RuntimeError):
     """带稳定错误码的受管环境失败。"""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, provider: str = "python") -> None:
         super().__init__(message)
         self.code = code
+        self.provider = provider
 
 
 @dataclass(frozen=True)

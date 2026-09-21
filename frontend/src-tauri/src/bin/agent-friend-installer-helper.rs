@@ -359,6 +359,7 @@ fn begin_transaction(
         return Err("transaction already exists".to_string());
     }
     let transactions = install_root.join(TRANSACTIONS_DIR);
+    let transactions_existed = transactions.exists();
     fs::create_dir_all(&transactions).map_err(|error| error.to_string())?;
     let preparing = transactions.join(format!(".preparing-{transaction_id}"));
     if preparing.exists() {
@@ -402,6 +403,11 @@ fn begin_transaction(
     })();
     if prepare_result.is_err() {
         let _ = fs::remove_dir_all(&preparing);
+        if !transactions_existed {
+            // Preparation has not published a recoverable transaction yet.
+            // Remove only our empty parent; never recursively remove siblings.
+            let _ = fs::remove_dir(&transactions);
+        }
     }
     prepare_result
 }
@@ -1573,6 +1579,45 @@ mod tests {
         assert!(state.registry_snapshot.is_none());
         assert!(state.source_preserved_paths.is_empty());
         assert!(state.target_preserved_paths.is_empty());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn failed_transaction_preparation_removes_only_its_new_empty_parent() {
+        for existing_parent in [false, true] {
+            let root = test_root("failed-prepare");
+            fs::create_dir_all(&root).unwrap();
+            let transactions = root.join(TRANSACTIONS_DIR);
+            if existing_parent {
+                fs::create_dir_all(transactions.join("existing-transaction")).unwrap();
+                fs::write(transactions.join("existing-transaction/state"), b"preserve").unwrap();
+            }
+            let error = begin_transaction(
+                &root,
+                "failed-build",
+                "agent-friend",
+                "agent-friend-helper-test",
+                "agent-friend-helper-test",
+                "agent-friend-helper-test",
+                &[root.join("truncated-shortcut")],
+                None,
+                Vec::new(),
+                Vec::new(),
+                false,
+            )
+            .unwrap_err();
+            assert!(error.contains("invalid shortcut path"), "{error}");
+            assert!(!transactions.join(".preparing-failed-build").exists());
+            assert!(!transactions.join("failed-build").exists());
+            assert_eq!(transactions.exists(), existing_parent);
+            if existing_parent {
+                assert_eq!(
+                    fs::read(transactions.join("existing-transaction/state")).unwrap(),
+                    b"preserve"
+                );
+            }
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]

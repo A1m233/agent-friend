@@ -36,13 +36,14 @@ def prepare(
     if os.name != "nt":
         raise RuntimeError("managed Python packaged payload currently supports Windows x64 only")
     lock = load_lock()
+    lock_key = hashlib.sha256(LOCK_PATH.read_bytes()).hexdigest()[:16]
     destination = (
-        cache_base / f"managed-python-{lock['runtime_version']}-windows-x86_64"
+        cache_base / f"managed-python-{lock['runtime_version']}-windows-x86_64-{lock_key}"
         if cache_base is not None
         else repo_root
         / ".cache"
         / "execution-environment"
-        / f"managed-python-{lock['runtime_version']}-windows-x86_64"
+        / f"managed-python-{lock['runtime_version']}-windows-x86_64-{lock_key}"
     )
     if _verify_prepared(destination, lock, run_smoke=False):
         return destination
@@ -89,6 +90,12 @@ def prepare(
             _download_locked(license_entry, cached_license, offline=offline)
             shutil.copy2(cached_license, licenses / str(license_entry["name"]))
         shutil.copy2(LOCK_PATH, staged / "vendor-lock.json")
+        wheelhouse = staged / "baseline-wheels"
+        wheelhouse.mkdir()
+        for wheel_entry in lock.get("baseline_wheels", []):
+            cached_wheel = download_root / str(wheel_entry["filename"])
+            _download_locked(wheel_entry, cached_wheel, offline=offline)
+            shutil.copy2(cached_wheel, wheelhouse / str(wheel_entry["filename"]))
         _write_identity(staged, lock)
         if not _verify_prepared(staged, lock, run_smoke=True):
             raise RuntimeError(
@@ -144,6 +151,7 @@ def _write_identity(root: Path, lock: dict[str, Any]) -> None:
         "architecture": lock["architecture"],
         "baseExecutable": "base/python.exe",
         "uvExecutable": "bin/uv.exe",
+        "baselineRequirements": lock.get("baseline_requirements", []),
         "files": files,
     }
     (root / "identity.json").write_bytes(_canonical_json_bytes(value))
@@ -166,6 +174,7 @@ def _verify_prepared(root: Path, lock: dict[str, Any], *, run_smoke: bool) -> bo
             "architecture": lock["architecture"],
             "baseExecutable": "base/python.exe",
             "uvExecutable": "bin/uv.exe",
+            "baselineRequirements": lock.get("baseline_requirements", []),
         }
         if any(identity.get(key) != expected for key, expected in expected_fields.items()):
             return False
