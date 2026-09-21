@@ -250,7 +250,24 @@ def test_read_accepts_only_same_resource_from_hidden_current_turn_url_authorizat
     assert connector.read_calls == [_NoteLocator()]
 
 
-def test_read_rejects_untrusted_or_ambiguous_url_before_connector_read() -> None:
+@pytest.mark.parametrize("known_urls", [None, ["https://www.xiaohongshu.com/explore/feed-1"]])
+def test_read_accepts_direct_supported_url_without_source_registration(
+    known_urls: list[str] | None,
+) -> None:
+    connector = _XhsConnector()
+    args: dict[str, object] = {
+        "url": "https://www.xiaohongshu.com/explore/feed-1?xsec_token=secret-xsec-token",
+        CURRENT_SESSION_ID_ARG: "session-a",
+    }
+    if known_urls is not None:
+        args[CURRENT_URL_AUTHORIZATIONS_ARG] = known_urls
+    result = SocialReadTool(_service(connector)).invoke(args)
+    assert not result.is_error
+    assert connector.read_calls == [_NoteLocator()]
+    assert "secret-xsec-token" not in result.text
+
+
+def test_read_preserves_platform_requirements_and_rejects_ambiguous_url() -> None:
     connector = _XhsConnector()
     tool = SocialReadTool(_service(connector))
 
@@ -270,7 +287,7 @@ def test_read_rejects_untrusted_or_ambiguous_url_before_connector_read() -> None
         }
     )
 
-    assert json.loads(unauthorized.text)["status"] == "url_not_authorized"
+    assert json.loads(unauthorized.text)["status"] == "url_unsupported"
     assert json.loads(ambiguous.text)["status"] == "invalid_arguments"
     assert connector.read_calls == []
     assert SocialReadTool.parameters_schema["oneOf"] == [

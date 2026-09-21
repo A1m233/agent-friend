@@ -41,11 +41,41 @@ def _authorization(url: str, source: str = "user_input") -> dict[str, str | None
     }
 
 
-def test_fetch_requires_runtime_url_authorization() -> None:
+def test_fetch_accepts_direct_url_without_prior_evidence() -> None:
     provider = _FakeProvider()
     result = WebFetchTool(provider).invoke({"url": "https://example.com/page"})
+    assert not result.is_error
+    assert provider.calls == [("https://example.com/page", None)]
+    assert json.loads(result.text)["source_evidence_ref"]
+    assert result.meta["public_evidence"]["items"][0]["source"] == "web_fetch_source"
+
+
+def test_unknown_reference_can_recover_with_direct_url() -> None:
+    provider = _FakeProvider()
+    tool = WebFetchTool(provider)
+    failure = tool.invoke({"evidence_ref": "missing-reference"})
+    assert failure.is_error
+    assert failure.meta["error_kind"] == "unknown_evidence_ref"
+    assert "url" in failure.text
+    assert provider.calls == []
+    assert not tool.invoke({"url": "https://example.com/page"}).is_error
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd",
+        "http://127.0.0.1/",
+        "http://localhost/",
+        "http://169.254.169.254/",
+        "https://user:password@example.com/",
+    ],
+)
+def test_direct_url_still_rejects_unsafe_targets_before_provider(url: str) -> None:
+    provider = _FakeProvider()
+    result = WebFetchTool(provider).invoke({"url": url})
     assert result.is_error
-    assert result.meta["error_kind"] == "url_not_authorized"
+    assert result.meta["error_kind"] == "unsafe_url"
     assert provider.calls == []
 
 

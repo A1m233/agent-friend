@@ -23,6 +23,51 @@ from agent_eval.schema import (
 CASES_DIR = Path(__file__).resolve().parents[1] / "cases"
 
 
+@pytest.mark.parametrize(
+    ("case_id", "tool", "args", "answer", "bad_tool"),
+    [
+        (
+            "C26-07",
+            "web_fetch",
+            {"url": "https://example.org/reports/river-sound"},
+            "林溪，2026-07-12",
+            "web_search",
+        ),
+        ("C26-08", "web_search", {"include_domains": ["example.org"]}, "周禾", "web_fetch"),
+        (
+            "C26-09",
+            "web_fetch",
+            {"url": "https://example.net/releases/v4"},
+            "2026-06-09",
+            "web_search",
+        ),
+    ],
+)
+def test_web_recovery_cases_reject_wrong_route_and_accept_recovery(
+    case_id: str,
+    tool: str,
+    args: dict[str, object],
+    answer: str,
+    bad_tool: str,
+) -> None:
+    contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C26")
+    case = next(item for item in contract.cases if item.id == case_id)
+    trace = Trace(
+        case_id=case_id,
+        tool_calls=[ToolCallTrace(name=tool, args=args, result_text=answer, is_error=False)],
+        final_text=answer,
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, trace).passed
+    wrong = replace(
+        trace,
+        tool_calls=[
+            ToolCallTrace(name=bad_tool, args={}, result_text="failed", is_error=True),
+        ],
+    )
+    assert not judge_case(case, contract, wrong).passed
+
+
 def test_desktop_launch_contract_rejects_managed_launch_and_unknown_replay() -> None:
     contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C24")
     anchor = next(item for item in contract.cases if item.id == "C24-04")

@@ -34,7 +34,6 @@ from .models import (
     SocialResolvedUrl,
     SocialResourceLocator,
     SocialSearchRequest,
-    SocialUrlNotAuthorizedError,
     SocialUrlUnsupportedError,
 )
 from .resources import SocialContinuationEntry, SocialContinuationStore, SocialResourceStore
@@ -225,7 +224,7 @@ class SocialPlatformService:
         authorized_urls: tuple[str, ...],
         sort: SocialCreatorWorksSort,
     ) -> SocialCreatorWorksResult:
-        resource = self._authorized_url_resource(url, authorized_urls)
+        resource = self._url_resource_with_evidence(url, authorized_urls)
         connector = self._connector(resource.platform)
         if resource.locator is None:
             raise SocialUrlUnsupportedError("creator URL lacks a public locator")
@@ -347,7 +346,7 @@ class SocialPlatformService:
         url: str,
         authorized_urls: tuple[str, ...],
     ) -> tuple[SocialPlatform, SocialContentType]:
-        resource = self._authorized_url_resource(url, authorized_urls)
+        resource = self._url_resource_with_evidence(url, authorized_urls)
         return resource.platform, resource.content_type
 
     def read_url(
@@ -356,7 +355,7 @@ class SocialPlatformService:
         url: str,
         authorized_urls: tuple[str, ...],
     ) -> SocialReadResult:
-        resource = self._authorized_url_resource(url, authorized_urls)
+        resource = self._url_resource_with_evidence(url, authorized_urls)
         if resource.locator is None:
             raise SocialUrlUnsupportedError(
                 "authorized platform URL lacks connector parameters required for reading"
@@ -517,13 +516,15 @@ class SocialPlatformService:
             raise SocialConnectorUnavailableError(f"connector is unavailable for {platform}")
         return connector
 
-    def _authorized_url_resource(
+    def _url_resource_with_evidence(
         self,
         url: str,
         authorized_urls: tuple[str, ...],
     ) -> SocialResolvedUrl:
         target = self._resolve_url(url)
         assert target is not None
+        if target.locator is not None:
+            return target
         for authorized_url in authorized_urls:
             authorized = self._resolve_url(authorized_url, required=False)
             if authorized is None:
@@ -534,7 +535,7 @@ class SocialPlatformService:
                 and authorized.canonical_url == target.canonical_url
             ):
                 return authorized
-        raise SocialUrlNotAuthorizedError("platform URL is not authorized for this turn")
+        return target
 
     def _resolve_url(self, url: str, *, required: bool = True) -> SocialResolvedUrl | None:
         for connector in self._connectors.values():
