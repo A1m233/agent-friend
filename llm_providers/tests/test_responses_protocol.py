@@ -280,3 +280,214 @@ def test_protocol_evidence_reaches_call_log_without_retry(
     assert record["error"]["protocol"]["event_type"] == "response.completed"
     assert record["error"]["request_ref"] and record["error"]["response_ref"]
     assert "PRIVATE_BODY" not in caplog.text and "private-id" not in caplog.text
+
+
+def test_item_mismatch_probe_reaches_log_without_private_content(
+    http_mock: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("INFO", logger="llm_providers.call_observation")
+    requests = http_mock(
+        [
+            added(
+                {
+                    "id": "private-id",
+                    "type": "function_call",
+                    "call_id": "call1",
+                    "name": "lookup",
+                    "arguments": "",
+                },
+                0,
+            ),
+            {
+                "type": "response.content_part.added",
+                "item_id": "private-id",
+                "output_index": 0,
+                "content_index": 0,
+                "part": {"type": "reasoning_text", "text": "PRIVATE_BODY"},
+            },
+        ]
+    )
+    client = LLMClient(build_provider_spec(provider_id="deepseek", api_key="fixture"))
+    with pytest.raises(LLMProviderError, match="delta type does not match"):
+        list(client.stream(ModelRequest(messages=[])))
+    records = [
+        json.loads(r.message.split("model_call_observation ", 1)[1])
+        for r in caplog.records
+        if "model_call_observation " in r.message
+    ]
+    assert len(requests) == len(records) == 1
+    probe = records[0]["error"]["protocol"]
+    assert probe["schema_revision"] == 2
+    assert probe["expected_item_type"] == "message"
+    assert probe["actual_item_type"] == "function_call"
+    assert probe["part_type"] == "reasoning_text"
+    assert probe["item_index_matches"] is True
+    assert probe["output_index"] == probe["content_index"] == 0
+    assert probe["recent_event_types"][-2:] == [
+        "response.output_item.added",
+        "response.content_part.added",
+    ]
+    assert "PRIVATE_BODY" not in caplog.text and "private-id" not in caplog.text
+    assert records[0]["retry_plans"] == 0
+
+
+def test_probe_history_is_bounded_and_unknown_parts_are_redacted() -> None:
+    parser = state()
+    parser.feed(added({"id": "private-id", "type": "reasoning", "summary": []}, 0))
+    for _ in range(20):
+        parser.feed(
+            {
+                "type": "response.reasoning_text.delta",
+                "item_id": "private-id",
+                "output_index": 0,
+                "delta": "PRIVATE_BODY",
+            }
+        )
+    with pytest.raises(LLMProviderError) as caught:
+        parser.feed(
+            {
+                "type": "response.content_part.added",
+                "item_id": "private-id",
+                "output_index": 1,
+                "content_index": True,
+                "part": {"type": "PRIVATE_BODY", "text": "PRIVATE_BODY"},
+            }
+        )
+    evidence = caught.value.error_evidence
+    assert evidence and evidence.protocol
+    probe = evidence.protocol
+    assert len(probe.recent_event_types) == 8
+    assert probe.item_index_matches is False
+    assert probe.part_type == "<redacted-or-unknown>"
+    assert probe.content_index is None
+    assert "PRIVATE_BODY" not in json.dumps(asdict(probe))
+    assert "private-id" not in json.dumps(asdict(probe))
+
+
+@pytest.mark.parametrize("tool_call", [False, True])
+def test_deepseek_reasoning_content_parts_complete_and_replay(
+    http_mock: Any, tool_call: bool
+) -> None:
+    # Incident 2026-09-22 01:41, run b17ee828: the first four event types,
+    # reasoning/part types and matching indices are probe-confirmed. Text,
+    # IDs and the subsequent lifecycle below are synthetic, not a raw capture.
+    reasoning = {
+        "id": "r1",
+        "type": "reasoning",
+        "summary": [],
+        "content": [{"type": "reasoning_text", "text": "PRIVATE_REASONING"}],
+        "status": "completed",
+    }
+    result = (
+        {
+            "id": "f1",
+            "type": "function_call",
+            "call_id": "call1",
+            "name": "lookup",
+            "arguments": '{"n":1}',
+            "status": "completed",
+        }
+        if tool_call
+        else message("m1", "visible answer", "final_answer")
+    )
+    part = {"item_id": "r1", "output_index": 0, "content_index": 0}
+    requests = http_mock(
+        [
+            {"type": "response.created", "response": {"id": "resp-1"}},
+            {"type": "response.in_progress", "response": {"id": "resp-1"}},
+            added({**reasoning, "content": []}, 0),
+            {
+                "type": "response.content_part.added",
+                **part,
+                "part": {"type": "reasoning_text", "text": ""},
+            },
+            {"type": "response.reasoning_text.delta", **part, "delta": "PRIVATE_REASONING"},
+            {"type": "response.reasoning_text.done", **part, "text": "PRIVATE_REASONING"},
+            {"type": "response.content_part.done", **part, "part": reasoning["content"][0]},
+            {"type": "response.output_item.done", "output_index": 0, "item": reasoning},
+            added(result, 1),
+            {"type": "response.output_item.done", "output_index": 1, "item": result},
+            terminal([reasoning, result]),
+        ]
+    )
+    client = LLMClient(
+        build_provider_spec(
+            provider_id="deepseek",
+            model_id="deepseek/deepseek-flash",
+            reasoning_preset="high",
+            api_key="fixture",
+        )
+    )
+    events = list(client.stream(ModelRequest(messages=[{"role": "user", "content": "fixture"}])))
+    done = events[-1]
+    assert isinstance(done, LLMTurnDone)
+    assert done.stop_reason == ("tool_use" if tool_call else "end_turn")
+    assert done.assistant_turn is not None and done.reasoning_state is not None
+    assert done.assistant_turn.content == (None if tool_call else "visible answer")
+    assert "PRIVATE_REASONING" not in "".join(e.text for e in events if isinstance(e, LLMTextDelta))
+    assert done.reasoning_state.to_event_payload()["data"] == [reasoning]
+    if tool_call:
+        assert done.assistant_turn.tool_calls[0].arguments_json == '{"n":1}'
+    list(
+        client.stream(
+            ModelRequest(
+                messages=[
+                    {
+                        "role": "assistant",
+                        "content": "visible answer",
+                        "reasoning_details": done.reasoning_state.to_event_payload()["data"],
+                    },
+                    {"role": "user", "content": "continue"},
+                ]
+            )
+        )
+    )
+    assert len(requests) == 2
+    assert json.loads(requests[1].content)["input"][0] == reasoning
+
+
+@pytest.mark.parametrize("kind", ["response.content_part.added", "response.content_part.done"])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"item_id": "unknown"},
+        {"output_index": 1},
+        {"content_index": -1},
+        {"content_index": True},
+        {"part": {"type": "output_text", "text": ""}},
+        {"part": {"type": "reasoning_text", "text": 123}},
+    ],
+)
+def test_reasoning_content_parts_still_reject_malformed_events(
+    kind: str, changes: dict[str, Any]
+) -> None:
+    parser = state()
+    parser.feed(added({"id": "r1", "type": "reasoning", "summary": []}, 0))
+    with pytest.raises(LLMProviderError):
+        parser.feed(
+            {
+                "type": kind,
+                "item_id": "r1",
+                "output_index": 0,
+                "content_index": 0,
+                "part": {"type": "reasoning_text", "text": ""},
+                **changes,
+            }
+        )
+
+
+def test_reasoning_content_part_after_item_completion_is_rejected() -> None:
+    parser = state()
+    item = {"id": "r1", "type": "reasoning", "summary": [], "content": []}
+    parser.feed(added(item, 0))
+    parser.feed({"type": "response.output_item.done", "output_index": 0, "item": item})
+    with pytest.raises(LLMProviderError, match="after item completion"):
+        parser.feed(
+            {
+                "type": "response.content_part.done",
+                "item_id": "r1",
+                "output_index": 0,
+                "content_index": 0,
+                "part": {"type": "reasoning_text", "text": ""},
+            }
+        )

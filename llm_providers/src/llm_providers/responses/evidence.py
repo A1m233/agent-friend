@@ -62,6 +62,33 @@ def reference(value: str | None) -> str | None:
     return sha256(value.encode("utf-8", errors="replace")).hexdigest()[:24] if value else None
 
 
+def event_type(value: Any) -> str:
+    if (
+        isinstance(value, str)
+        and len(value) <= 96
+        and re.fullmatch(r"(?:response\.[a-z_]+(?:\.[a-z_]+)*|error)", value)
+    ):
+        return value
+    return "<redacted-or-missing>"
+
+
+def safe_index(value: Any) -> int | None:
+    return value if type(value) is int and 0 <= value <= 2**31 - 1 else None
+
+
+def part_type(event: dict[str, Any] | None) -> str | None:
+    part = event.get("part") if event else None
+    if not isinstance(part, dict):
+        return None
+    kind = part.get("type")
+    return (
+        kind
+        if isinstance(kind, str)
+        and kind in {"output_text", "reasoning_text", "summary_text", "refusal"}
+        else "<redacted-or-unknown>"
+    )
+
+
 def _shape(value: Any) -> str:
     # Do not use arbitrary class names or repr: both may contain private data.
     if value is None:
