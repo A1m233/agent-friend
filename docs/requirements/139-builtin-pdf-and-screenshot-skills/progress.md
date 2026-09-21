@@ -1,9 +1,9 @@
 # 139 进度
 
 ## 总体状态
-IN_PROGRESS
+COMPLETED
 
-已按确认方案实现环境适配。源码检查、离线 smoke、真实沙箱 PDF/截图及包含冷启动权限修复的冻结 runtime 验证均已通过。尚未完成用户验收与合入前的完整安装器矩阵。
+已按确认方案实现环境适配。源码检查、离线 smoke、真实沙箱 PDF/截图、冻结 runtime 及完整安装器矩阵均通过。用户已确认验收并授权合入推送；历史未完成项以文末最终收口记录为准。
 
 2026-09-21：用户明确要求合入主干、推送并构建本地测试包，接受当前实现。公开 Guide r56 已发布，打包使用其精确 commit `f38433739ed0ac1a9835bfa1fd34095a48a81657` 的临时 baseline。合入继续受完整安装器矩阵门禁约束。
 
@@ -22,7 +22,7 @@ IN_PROGRESS
 - [x] AC-5 / AC-6：两个命令工具共用原生定位；测试覆盖 PATH 冲突、显式外部路径、损坏拒绝与会话包隔离。宿主进程路径通过单测，未做完整用户会话 E2E。
 - [x] AC-7：命令解析、提示、开发入口和 command-runtime smoke 已迁移。
 - [x] AC-8：固定发行包与 wheel URL/SHA，原样保留发行包许可证与 wheel metadata；缺失/损坏拒绝执行。
-- [ ] AC-9：项目检查、冻结 runtime 与用户验收。
+- [x] AC-9：项目检查、冻结 runtime、14 项完整安装器矩阵及独立报告核验通过；用户确认验收并授权合入推送。
 
 ## 实现日志
 | 日期 | 内容 | 验证 |
@@ -65,3 +65,11 @@ IN_PROGRESS
 - candidate `20260920T172729Z-14f4b96ffa71-a1dafc25` 构建成功，但 Tauri Handlebars 将新增路径的单反斜杠视为表达式转义，留下字面占位符，矩阵再次拒绝激活。修正为上游采用的双反斜杠；独立诊断使用实际 Tauri bundle 渲染并在压缩前主动停止，核对 7469 条 payload 写入及删除路径、565 条目录创建与 644 条目录删除均已展开。取实际渲染片段运行小安装器，270 字符 DLL 写入内容一致、卸载成功。失败矩阵停止后 Guide 自动恢复，隔离清理通过；该旧候选不作为成功证据。
 - candidate `20260920T181514Z-c68ef1ad98c2-89b21192` 的完整矩阵得到 13 passed / 1 failed；首次安装、同版本修复、版本拒绝、显式迁移、运行中升级、孤立进程升级、文件占用失败后重试和身份拒绝均通过。唯一失败为 `overlong_migration_target_rolls_back`，旧程序树和注册表保持不变，但目标目录存在残留。
 - 单场景复用该 candidate 取证：超长目标导致 preinstall 的 shortcut 参数截断并被校验拒绝，返回 32；残留只有空 `.installer-transactions`，未写入新程序。事务准备失败已移除 preparing 目录，但遗漏了新建的空父目录。补齐仅删除本次新建空父目录的失败清理，不递归删除兄弟事务；新增回归同时验证既有事务保留。标准 Rust 检查通过（lib 285 passed / 1 ignored、helper 7 passed、launcher 1 passed，release check 通过）。该修复后的完整矩阵仍待执行，不能以 13/14 代替通过。Guide 临时覆盖已恢复。
+
+## 最终交付收口（2026-09-21）
+- 验证源码：`110d30b84898b8373084a7022f7baa0e303bbd9e`；完整候选 `20260921T141530Z-110d30b84898-670c8824` 构建退出 0，冻结 doctor、bridge/voice readiness 与关闭、前端生产构建和 Rust release 编译通过。
+- `installer-smoke`：14/14 passed，退出 0；包含超长迁移失败清理、首次安装、覆盖修复、版本拒绝、目录迁移、进程占用、重试及身份校验。`installer-smoke-verify` 对精确候选独立核验通过。
+- 报告 `smoke-20260921T141530Z-110d30b84898-670c8824.json` 位于标准 packaging work 的 `installer-smoke-reports` 目录；package input SHA256 `729820084fd7a8ba90f403159e4510e538803f952b63108c0ab7aa9e1b9c89cd`，installer SHA256 `ff02a3e94c472769a2bede8859ab3690329d510d1bc38bdc64b565bf4498a443`。
+- 最新后端完整检查 3460 passed / 5 skipped，lint/typecheck 通过；前端 1310 tests 和生产构建通过；清理修复后 Rust 全量与 release check 通过。未调用真实 LLM，未安装到 production，未代做交互式安装器语言视觉验收。
+- Guide r56 已公开发布；构建与矩阵均使用 commit `f38433739ed0ac1a9835bfa1fd34095a48a81657`，每次临时 baseline 事务恢复成功。新增安装器内部修复未改变公开操作说明，无需再次发布 Guide。
+- 上述 candidate 为隔离 installer-smoke profile，只作为合入证据；用户要求的普通 local-test 测试包是合入后的独立交付，不把隔离候选冒充该测试包。
