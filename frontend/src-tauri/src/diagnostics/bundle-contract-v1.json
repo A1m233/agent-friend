@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 16,
+  "schemaRevision": 17,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -39,7 +39,7 @@
       ]
     },
     {
-      "id": "sandbox-incidents-v2",
+      "id": "sandbox-incidents-v3",
       "manifestFields": [],
       "requiredEntries": [
         "diagnostics/command-runtime-incidents.json"

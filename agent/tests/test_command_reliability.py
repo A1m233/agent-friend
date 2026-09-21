@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 from agent.command_runtime import CommandRuntime, CommandRuntimeError
-from agent.command_runtime.diagnostics import MAX_EVENTS, CommandDiagnostics
+from agent.command_runtime.diagnostics import MAX_EVENTS, CommandDiagnostics, classify_setup_error
 from agent.command_runtime.exec_server import ExecServerClient, _PendingResponse
 from agent.command_runtime.network import valid_network_request
 from agent.command_runtime.runtime import managed_network_request, sandbox_context
@@ -35,6 +35,13 @@ def write_state(root: Path) -> None:
     ]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(value), encoding="utf-8")
+
+
+def test_helper_cancellation_without_localized_native_text_is_still_a_failure() -> None:
+    assert classify_setup_error("orchestrator_helper_launch_canceled") == (
+        "helper_launch_failed",
+        None,
+    )
 
 
 @pytest.mark.parametrize("bad", ["version", "empty_users", "password", "bool_port"])
@@ -144,6 +151,88 @@ def test_failure_is_retained_until_successful_repair(
     assert not rt.windows_sandbox_ready
     monkeypatch.setattr(rt, "_probe_windows_sandbox", lambda: None)
     assert rt.setup_windows_sandbox()["windows_sandbox_ready"] is True
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows repair state")
+@pytest.mark.parametrize("intact", [False, True])
+def test_explicit_repair_probes_intact_identity_before_reprovisioning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, intact: bool
+) -> None:
+    exe = tmp_path / "codex.exe"
+    exe.write_bytes(b"fixture")
+    root = tmp_path / "home"
+    if intact:
+        write_state(root)
+    path = tmp_path / "logs/health.json"
+    rt = CommandRuntime(
+        exe,
+        codex_home=root,
+        execution_root=tmp_path / "exec",
+        diagnostics_path=path,
+        base_env={"LANG": "C"},
+    )
+    rt._record_sandbox_failure("visibility", "ShellExecuteExW failed to launch setup helper: 1223")
+    assert not rt.windows_sandbox_ready
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "agent.command_runtime.runtime.probe_setup_helper", lambda _: {"status": "ready"}
+    )
+
+    def setup(*args: object, **kwargs: object) -> None:
+        calls.append("setup")
+        write_state(root)
+
+    monkeypatch.setattr(rt, "_perform_windows_sandbox_setup", setup)
+    monkeypatch.setattr(rt, "_probe_windows_sandbox", lambda: calls.append("probe"))
+    assert rt.setup_windows_sandbox()["windows_sandbox_ready"] is True
+    assert calls == (["probe"] if intact else ["setup", "probe"])
+    restored = CommandDiagnostics(path, "restored")
+    assert not restored.needs_repair()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows repair state")
+def test_repair_retains_initial_probe_error_when_provisioning_also_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exe = tmp_path / "codex.exe"
+    exe.write_bytes(b"fixture")
+    root = tmp_path / "home"
+    write_state(root)
+    rt = CommandRuntime(
+        exe,
+        codex_home=root,
+        execution_root=tmp_path / "exec",
+        diagnostics_path=tmp_path / "logs/health.json",
+        base_env={"LANG": "C"},
+    )
+    monkeypatch.setattr(
+        "agent.command_runtime.runtime.probe_setup_helper", lambda _: {"status": "ready"}
+    )
+
+    def probe() -> None:
+        raise CommandRuntimeError(
+            "windows_sandbox_probe_failed", "CreateProcessWithLogonW failed: 1326 private"
+        )
+
+    def setup(*args: object, **kwargs: object) -> None:
+        persisted = rt.diagnostics()["incidentEvidence"]["incidents"][-1]
+        assert persisted["outcome"] == "in_progress"
+        assert persisted["initialProbeFailure"]["nativeCode"] == 1326
+        raise CommandRuntimeError(
+            "windows_sandbox_setup_failed",
+            "orchestrator_helper_launch_canceled: launch setup helper: 1223 private",
+        )
+
+    monkeypatch.setattr(rt, "_probe_windows_sandbox", probe)
+    monkeypatch.setattr(rt, "_perform_windows_sandbox_setup", setup)
+    with pytest.raises(CommandRuntimeError, match="1223"):
+        rt.setup_windows_sandbox()
+    record = rt.diagnostics()["incidentEvidence"]["incidents"][-1]
+    assert record["initialProbeFailure"]["nativeCode"] == 1326
+    assert record["error"]["nativeCode"] == 1223
+    assert record["repairPath"] == "probe_then_setup"
+    assert not rt.windows_sandbox_ready
+    assert "private" not in json.dumps(record)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows repair probes")

@@ -399,6 +399,12 @@ def _build_bundle(
                     "stage": "start",
                     "outcome": "failed",
                     "error": {"codes": ["orchestrator_helper_incomplete"]},
+                    "initialProbeFailure": {"codes": [], "nativeCode": 1326},
+                    "failureHelperProbe": {
+                        "scope": "host_non_elevated_argument_parsing",
+                        "status": "launch_failed",
+                        "nativeCode": 126,
+                    },
                     "logWindow": {
                         "records": [
                             {
@@ -729,6 +735,9 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
     assert summary["manifest"]["schemaRevision"] == contract["schemaRevision"]
     assert summary["manifest"]["unhandledCapabilities"] == []
     assert summary["sandboxIncidents"]["logWindowCount"] == 1
+    assert summary["sandboxIncidents"]["failureHelperProbes"] == {"launch_failed": 1}
+    assert summary["sandboxIncidents"]["failureHelperNativeCodes"] == {"126": 1}
+    assert summary["sandboxIncidents"]["initialProbeFailureCount"] == 1
     assert summary["sandboxIncidents"]["logSignals"] == {
         "setup_users_missing_or_incompatible": 1,
         "refresh_spawn_requested": 1,

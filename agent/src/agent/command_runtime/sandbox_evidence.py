@@ -14,6 +14,7 @@ from typing import Any
 from uuid import uuid4
 
 from .sandbox_log_evidence import log_cursor, log_window
+from .vendor import probe_setup_helper
 from .windows_state import SETUP_VERSION, compatible_state
 
 MAX_INCIDENTS = 32
@@ -56,7 +57,11 @@ ERROR_CODES = frozenset(
 
 def error_facts(detail: str) -> dict[str, Any]:
     codes = sorted(set(re.findall(r"\b(?:orchestrator|helper)_[a-z_]+\b", detail)) & ERROR_CODES)
-    native = re.search(r"(?:os error |WinError |launch setup helper: )(\d{1,10})", detail)
+    native = re.search(
+        r"(?:os error |WinError |launch setup helper: |native code |"
+        r"CreateProcessWithLogonW failed: )(\d{1,10})",
+        detail,
+    )
     exit_code = re.search(
         r"(?:exit(?:ed)?(?: with)? (?:code|status)[: ]+(?:Some\()?)(-?\d{1,12})", detail
     )
@@ -299,10 +304,42 @@ class SandboxEvidence:
             ],
         }
         self._write(record)
+        # Capture state/logs before this independent, non-elevated load probe.
+        # Persist the original incident first: a blocked probe or crash must not
+        # replace the failure with an empty incident. Never run provisioning here.
+        if (
+            detail is not None
+            and self.directory is not None
+            and self._executable is not None
+            and set(error_facts(detail)["codes"])
+            & {
+                "orchestrator_helper_launch_canceled",
+                "orchestrator_helper_launch_failed",
+                "orchestrator_helper_incomplete",
+            }
+            and operation["stage"] in {"start", "visibility"}
+        ):
+            record["failureHelperProbe"] = {
+                "scope": "host_non_elevated_argument_parsing",
+                "startedAt": datetime.now(UTC).isoformat(),
+                "status": "in_progress",
+            }
+            self._write(record)
+            try:
+                result = probe_setup_helper(self._executable)
+            except Exception:
+                # Evidence gathering must not replace the original runtime error.
+                result = {"status": "unavailable"}
+            record["failureHelperProbe"].update(result, finishedAt=datetime.now(UTC).isoformat())
+            self._write(record)
 
     def repair_started(self, operation: dict[str, Any]) -> None:
         prior = self.snapshot()["incidents"]
         operation["relatedIncidents"] = [r["id"] for r in prior if r.get("outcome") == "failed"]
+        self.repair_checkpoint(operation)
+
+    def repair_checkpoint(self, operation: dict[str, Any]) -> None:
+        """Persist completed observations before entering the next repair action."""
         self._write(
             operation
             | {
