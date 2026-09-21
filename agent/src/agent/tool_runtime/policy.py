@@ -186,6 +186,10 @@ class ToolProgressTracker:
         )
         delta = evidence_keys - self._seen_evidence
         reused = evidence_keys & self._seen_evidence
+        if not result.is_error:
+            self._error_family_counts = {
+                key: count for key, count in self._error_family_counts.items() if key[0] != name
+            }
         self.new_evidence_count += len(delta)
         self.reused_evidence_count += len(reused)
         if delta:
@@ -204,10 +208,6 @@ class ToolProgressTracker:
             self._error_family_counts[error_family] = (
                 self._error_family_counts.get(error_family, 0) + 1
             )
-        elif not result.is_error:
-            self._error_family_counts = {
-                key: count for key, count in self._error_family_counts.items() if key[0] != name
-            }
         empty = (
             (not result.text.strip() and not result.images)
             or error_kind in {"empty_content", "no_results"}

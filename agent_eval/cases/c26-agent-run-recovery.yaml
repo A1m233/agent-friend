@@ -4,6 +4,94 @@ contract:
   expected_behavior: response
 
 cases:
+  - id: C26-07
+    query: 继续核对这份研究报告的作者和日期。
+    facet: 搜索通道故障后读取命令发现的公开链接
+    source: diagnostic-20260921-web-recovery-generalized
+    current_session_events:
+      - type: user_message
+        text: 找一下《城市河流声景观察》研究报告。
+      - type: assistant_message
+        text: 我先检索题名。
+      - type: tool_call_request
+        tool_call_id: search-offline
+        tool_name: web_search
+        args: {query: 城市河流声景观察}
+      - type: tool_call_result
+        tool_call_id: search-offline
+        tool_name: web_search
+        content: 搜索失败：网络错误；内部重试已结束，未取得结果。更换关键词无法修复连接故障。
+        is_error: true
+      - type: assistant_message
+        text: 我换一个公开检索入口。
+      - type: tool_call_request
+        tool_call_id: command-search
+        tool_name: exec_command
+        args: {argv: [python, lookup.py]}
+      - type: tool_call_result
+        tool_call_id: command-search
+        tool_name: exec_command
+        content: '{"exit_code":0,"stdout":"匹配报告：城市河流声景观察 https://example.org/reports/river-sound"}'
+    fake_tools:
+      - name: web_search
+        is_error: true
+        result_text: 搜索失败：网络错误；内部重试已结束。
+      - name: web_fetch
+        result_text: '{"content":"城市河流声景观察；作者林溪，发布日期2026-07-12。"}'
+    judge:
+      required_successful_tool_calls:
+        - name: web_fetch
+          args: {url: "https://example.org/reports/river-sound"}
+      must_not_call_any: [web_search, exec_command]
+      must_mention_all: [林溪, '2026-07-12']
+      require_non_empty_response: true
+
+  - id: C26-08
+    query: 继续检索，按错误提示修正站点参数。
+    facet: 参数校验失败后按字段反馈恢复
+    source: diagnostic-20260921-domain-argument-generalized
+    current_session_events:
+      - type: user_message
+        text: 在 example.org 找《湿地观测手册》。
+      - type: assistant_message
+        text: 我按站点检索。
+      - type: tool_call_request
+        tool_call_id: bad-domain
+        tool_name: web_search
+        args: {query: 湿地观测手册, include_domains: [观测资料站]}
+      - type: tool_call_result
+        tool_call_id: bad-domain
+        tool_name: web_search
+        content: 搜索失败：include_domains[0] 必须是 hostname，不能是站点名称；请更正或移除这一项。
+        is_error: true
+    fake_tools:
+      - name: web_search
+        responses:
+          - match_args: {include_domains: [example.org]}
+            result_text: 湿地观测手册，作者周禾，公开页面 https://example.org/wetlands。
+    judge:
+      required_successful_tool_calls:
+        - name: web_search
+          args: {include_domains: [example.org]}
+      maximum_tool_call_counts: {web_search: 2}
+      must_mention_any: [周禾]
+      require_non_empty_response: true
+
+  - id: C26-09
+    query: 直接读取 https://example.net/releases/v4 核对发布时间，不需要搜索。
+    facet: 相邻 control：直接 URL 读取无需搜索前置步骤
+    source: synthetic-direct-url-control
+    fake_tools:
+      - name: web_fetch
+        result_text: '{"content":"v4 发布于2026-06-09。"}'
+    judge:
+      required_successful_tool_calls:
+        - name: web_fetch
+          args: {url: "https://example.net/releases/v4"}
+      must_not_call_any: [web_search]
+      must_mention_any: ['2026-06-09']
+      require_non_empty_response: true
+
   - id: C26-01
     query: 继续完成刚才的查找。请按真实工具 schema 修正参数，并基于成功结果回答；不要把前两次未执行的失败说成已经搜索过。
     facet: DeepSeek 连续未知字段后修正 filesystem_search

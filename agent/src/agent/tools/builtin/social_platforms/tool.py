@@ -139,14 +139,14 @@ class SocialReadTool:
     execution_kind: ClassVar[str] = "parallel_read"
     timeout_seconds: ClassVar[float] = 45.0
     description: ClassVar[str] = (
-        "读取 social_search 返回的候选或已有公开证据中的受支持小红书/Bilibili 资源，"
+        "读取 social_search 返回的候选或直接传入的受支持小红书/Bilibili 公开 URL，"
         "取得笔记正文、视频简介/字幕、专栏/opus 正文，或 UP 主公开资料和投稿列表。\n\n"
         "resource_ref、url、evidence_ref 三者只能提供一个；继续 creator works 分页时只提供 continuation_ref。"
         "读取普通内容或 UP 主资料用 view=detail；用户询问 UP 主的代表作、热门作品、全部/近期投稿时，"
         "必须用 view=works；代表作/热门作品用 sort=popular，全部/近期投稿用 sort=latest。"
         "works 会区分 direct_upload 与 collaboration；listing_scope=curated_subset 时只取得精选子集，"
         "不得声称已经列出全部作品。"
-        "url/evidence_ref 不能改变 host、path 或资源 ID。"
+        "url 无需先搜索或登记来源；evidence_ref 必须使用工具实际返回的引用。"
         "用户已给精确平台直链时优先用 url，不要先改写成宽泛 social_search，也不要把 web_fetch 描述成"
         "小红书/B站平台工具。"
         "搜索摘要不足以回答时再读取少量最相关候选。工具明确返回 unavailable 的部分不得补写，"
@@ -163,7 +163,7 @@ class SocialReadTool:
             },
             "url": {
                 "type": "string",
-                "description": "用户提供或已有证据中的受支持平台公开 URL。",
+                "description": "受支持平台的公开 URL，无需先搜索或登记来源。",
             },
             "evidence_ref": {
                 "type": "string",
@@ -469,7 +469,7 @@ def _parse_read_args(
         return session_id, resource_ref, None, None, (), view, sort
     if not isinstance(url, str) or not url.strip() or len(url) > 4096:
         raise ValueError("invalid platform url")
-    raw_authorizations = args.get(CURRENT_URL_AUTHORIZATIONS_ARG)
+    raw_authorizations = args.get(CURRENT_URL_AUTHORIZATIONS_ARG, [])
     if not isinstance(raw_authorizations, list) or any(
         not isinstance(item, str) for item in raw_authorizations
     ):

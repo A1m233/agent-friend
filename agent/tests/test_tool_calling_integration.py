@@ -2689,12 +2689,12 @@ def test_edit_resend_does_not_restore_evidence_from_rewritten_branch(tmp_path: P
     assert provider.calls == 0
 
 
-def test_web_fetch_rejects_url_from_no_current_turn_source(tmp_path: Path) -> None:
+def test_web_fetch_accepts_url_from_no_current_turn_source(tmp_path: Path) -> None:
     class FetchProvider:
         name: ClassVar[str] = "fake"
 
         def extract(self, url: str, *, focus: str | None = None) -> ExtractedContent:
-            raise AssertionError("unauthorized provider call")
+            return ExtractedContent(url, url, "direct page body")
 
     fake = _ScriptedLLMClient(
         script=[
@@ -2707,14 +2707,22 @@ def test_web_fetch_rejects_url_from_no_current_turn_source(tmp_path: Path) -> No
                 ),
                 LLMTurnDone(stop_reason="tool_use"),
             ],
-            [LLMTextDelta(text="cannot read"), LLMTurnDone(stop_reason="end_turn")],
+            [LLMTextDelta(text="read page"), LLMTurnDone(stop_reason="end_turn")],
         ]
     )
     registry = ToolRegistry([WebFetchTool(FetchProvider())])
     events = list(_make_conversation(tmp_path, fake_llm=fake, registry=registry).stream("check"))
     result = next(event for event in events if isinstance(event, ToolCallResult))
-    assert result.is_error
-    assert "不在已有可信证据" in result.text
+    assert not result.is_error
+    assert "direct page body" in result.text
+    definitions = fake.received_tools[0]
+    assert definitions is not None
+    definition = next(
+        item["function"] for item in definitions if item["function"]["name"] == "web_fetch"
+    )
+    assert "无需先搜索或登记来源" in definition["description"]
+    assert "不要构造新 URL" not in definition["description"]
+    assert set(definition["parameters"]["properties"]) == {"url", "evidence_ref", "focus"}
 
 
 def test_each_time_sensitive_tool_reads_fresh_action_time_without_prompt_clock(

@@ -17,7 +17,8 @@ class UntrustedDnsResolutionError(UnsafeUrlError):
     """The local resolver cannot prove that an authorized hostname is public."""
 
 
-def validate_public_url(url: str) -> str:
+def validate_public_url_shape(url: str) -> str:
+    """Reject unsafe URL syntax and literal local targets before any provider call."""
     try:
         normalized = normalize_url(url)
     except ValueError as exc:
@@ -31,10 +32,15 @@ def validate_public_url(url: str) -> str:
         literal_address = ipaddress.ip_address(host)
     except ValueError:
         literal_address = None
-    if literal_address is not None:
-        if not literal_address.is_global:
-            raise UnsafeUrlError("URL contains a non-public IP address")
-        return normalized
+    if literal_address is not None and not literal_address.is_global:
+        raise UnsafeUrlError("URL contains a non-public IP address")
+    return normalized
+
+
+def validate_public_url(url: str) -> str:
+    normalized = validate_public_url_shape(url)
+    host = urlsplit(normalized).hostname
+    assert host is not None
     try:
         addresses = {item[4][0] for item in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)}
     except OSError as exc:
