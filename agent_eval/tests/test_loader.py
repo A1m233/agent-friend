@@ -38,7 +38,7 @@ def test_loads_builtin_cases() -> None:
         ("C23", "self-presentation-and-transparency", 8),
         ("C24", "tool-identifier-contract", 10),
         ("C25", "filesystem-authorization-claim-grounding", 2),
-        ("C26", "agent-run-recovery", 6),
+        ("C26", "agent-run-recovery", 9),
         ("C27", "command-lifecycle-handoff", 5),
         ("C28", "current-time-grounding", 3),
     ]
@@ -458,7 +458,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     meta = build_case_set_meta(CASES_DIR, contracts)
 
     assert meta.total_contracts == 28
-    assert meta.total_cases == 244
+    assert meta.total_cases == 247
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -485,7 +485,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C23": 8,
         "C24": 10,
         "C25": 2,
-        "C26": 6,
+        "C26": 9,
         "C27": 5,
         "C28": 3,
     }

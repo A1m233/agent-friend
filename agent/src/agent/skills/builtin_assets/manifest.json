@@ -46,6 +46,24 @@
       "source_path": "skills/agent-friend-guide",
       "license": "Apache-2.0",
       "snapshot_sha256": "64267f659277f40277a5897bf4f6a991f30dd7ecf83213ba8a981b456de648af"
+    },
+    "pdf": {
+      "source_repository": "https://github.com/openai/skills",
+      "source_commit": "49f948faa9258a0c61caceaf225e179651397431",
+      "source_path": "skills/.curated/pdf",
+      "license": "Apache-2.0",
+      "snapshot_sha256": "75605de0c36f3ca8ef3de2631a54233721285c5aa3c6f08ddd3380fc4fe9a330",
+      "retrieved_at": "2026-09-20",
+      "compatibility_patches": []
+    },
+    "screenshot": {
+      "source_repository": "https://github.com/openai/skills",
+      "source_commit": "49f948faa9258a0c61caceaf225e179651397431",
+      "source_path": "skills/.curated/screenshot",
+      "license": "Apache-2.0",
+      "snapshot_sha256": "9c5ac885e307dbb85aea5353a04fabc91ad238fae378d5069ba4dfe01eec3339",
+      "retrieved_at": "2026-09-20",
+      "compatibility_patches": []
     }
   }
 }

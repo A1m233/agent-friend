@@ -2,6 +2,7 @@
 
 | 脚本 | 用途 | mac/linux | Windows |
 |---|---|---|---|
+| execution-environment | 准备、校验及离线 PDF/PowerShell smoke；自带 PowerShell 7、Poppler、PDF Python wheel 基线，工作树外缓存，发行包当前限 Windows x64，其他平台明确报告不支持 | `./scripts/execution-environment/run.sh prepare\|verify\|smoke [--offline]` | `.\scripts\execution-environment\run.ps1 prepare\|verify\|smoke [--offline]` |
 | desktop-application | 原生桌面启动助手构建、测试与 Job 隔离 smoke；smoke 只启动自有夹具，非 Windows 明确不支持 | `./scripts/desktop-application/run.sh build\|test\|smoke` | `.\scripts\desktop-application\run.ps1 build\|test\|smoke` |
 | diagnostics-smoke | 合成长会话最近 10 轮读取／ZIP 体积对照和事故修复留存，无网络、不读客户数据 | `./scripts/diagnostics-smoke/run.sh` | `.\scripts\diagnostics-smoke\run.ps1` |
 
@@ -187,3 +188,5 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 `capabilities --extended` 单独运行 5 次补充验证：服务默认不传强度、JPEG/WebP、扫描 PDF、TXT；`cpa --effort <value>` 对工具/记忆/压缩/通知矩阵使用显式自定义强度，调用数量仍约 9 次。两端 run 包装透传这些参数。
 
 安装矩阵从 Windows Shell 获取安装默认目录、开始菜单与桌面位置，检查和清理共用同一来源。不要通过覆盖 `APPDATA` / `LOCALAPPDATA` 迁移测试目录；环境不一致或写入被虚拟化时，脚本会在安装和清理之前停止。此时从普通、非虚拟化 Windows 终端运行标准 package 脚本。默认目录安装 case 始终保留，迁移 case 继续显式指定安装目标。
+
+NSIS 模板适配对受控 payload 的规范绝对路径使用 Windows 扩展长度前缀，允许完整 PowerShell 发行包从较深的构建目录读入；已有相对资源路径仍保留普通读取语义。资源目录创建、文件写入和卸载也使用扩展路径，避免深层 DLL 被跳过；安装根、receipt 和注册表仍保存普通路径。矩阵的过长迁移失败夹具使程序根本身超过传统路径限制，不再依赖某个资源偶然跨过限制。

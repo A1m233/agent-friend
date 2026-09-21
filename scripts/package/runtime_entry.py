@@ -1581,13 +1581,75 @@ def _smoke_managed_execution_environment() -> dict[str, Any]:
         )
         if import_result.returncode != 0:
             raise RuntimeError("managed local wheel import failed")
+        native_details = _smoke_pdf_native_tools(
+            Path(configured_root),
+            environment.executable_aliases["python"],
+            environment.environment,
+            temporary,
+        )
         return {
             "status": environment.status.value,
             "runtime_version": environment.identity.runtime_version,
             "identity": environment.identity.identity[:16],
             "environment_revision": environment.revision,
             "local_wheel": True,
+            "pdf_native_tools": native_details,
         }
+
+
+def _smoke_pdf_native_tools(
+    root: Path,
+    python: Path,
+    environment: dict[str, str],
+    workdir: Path,
+) -> dict[str, Any]:
+    from agent.execution_environment.native import NativeTools
+
+    native = NativeTools(root / "native")
+    env = native.apply_environment(environment)
+    env.update({"TEMP": str(workdir), "TMP": str(workdir), "TMPDIR": str(workdir)})
+    script = (
+        "from reportlab.pdfgen import canvas;import pypdf,pdfplumber;"
+        "c=canvas.Canvas('probe.pdf');c.drawString(50,780,'agent-friend PDF smoke');"
+        "c.showPage();c.save();assert len(pypdf.PdfReader('probe.pdf').pages)==1;"
+        "p=pdfplumber.open('probe.pdf');assert 'agent-friend' in p.pages[0].extract_text();p.close()"
+    )
+    commands = [
+        [str(python), "-I", "-B", "-c", script],
+        [str(native.resolve("pdftoppm")), "-singlefile", "-png", "probe.pdf", "probe"],
+        [str(native.resolve("pdfinfo")), "probe.pdf"],
+        [
+            str(native.resolve("pwsh")),
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Drawing; "
+            "$image=[System.Drawing.Bitmap]::new(2,2); "
+            "$image.Save([IO.Path]::Combine($PWD.Path,'drawing.png')); $image.Dispose(); "
+            "$PSVersionTable.PSVersion.ToString()",
+        ],
+    ]
+    outputs = []
+    for argv in commands:
+        completed = subprocess.run(
+            argv,
+            env=env,
+            cwd=workdir,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+            timeout=30,
+        )
+        outputs.append(completed.stdout.strip())
+    from PIL import Image
+
+    for filename in ("probe.png", "drawing.png"):
+        with Image.open(workdir / filename) as image:
+            image.verify()
+    return {"pdf_render": True, "powershell_version": outputs[-1], "drawing": True}
 
 
 def _write_doctor_wheel(path: Path) -> None:

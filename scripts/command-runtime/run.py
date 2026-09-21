@@ -157,6 +157,7 @@ def smoke(executable: Path) -> dict[str, object]:
         COMMAND_SESSION_ID_ARG,
         COMMAND_TOOL_CALL_ID_ARG,
     )
+    from agent.execution_environment.native import NativeTools
     from agent.tool_runtime import ToolRunContext
 
     with tempfile.TemporaryDirectory(prefix="agent-friend-command-runtime-") as temp_value:
@@ -169,7 +170,11 @@ def smoke(executable: Path) -> dict[str, object]:
         writable = sandbox_context(
             workdir=root,
             writable=True,
-            additional_roots=(),
+            additional_roots=(
+                ((native.root, False),)
+                if (native := NativeTools.from_environment(os.environ)) is not None
+                else ()
+            ),
             network_enabled=False,
         )
         try:
@@ -939,6 +944,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.action == "smoke":
+        if os.name == "nt":
+            environment = subprocess.run(
+                [sys.executable, str(ROOT / "scripts/execution-environment/run.py"), "prepare"],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+            os.environ["AGENT_FRIEND_EXECUTION_ENVIRONMENT_ROOT"] = environment.stdout.strip()
         print(json.dumps(smoke(executable), ensure_ascii=False))
         return 0
     if args.action == "network-smoke":

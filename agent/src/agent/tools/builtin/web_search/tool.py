@@ -245,6 +245,9 @@ class WebSearchTool:
         "- 搜索结果只证明外部资料里出现过这些内容，不能证明你过去和用户聊过\n"
         "- 只使用结果里实际出现的字段；标题、片段或来源没有给出的细节不要补\n\n"
         "**失败与重试**：\n"
+        "- 参数错误按返回的字段提示修正；网络/服务错误不等于未命中，工具已执行有界重试，"
+        "换关键词不能修复连接故障。持续失败时改用其它可用取证路径，或说明当前能力受限；"
+        "只有连接状态变化或稍后恢复检查时才值得再次调用同一路线\n"
         "- 当前结果窗口未命中不等于目标不存在；出现新的作者、别名、标题、站点、时间或链接线索时，可以据此改写查询或打开来源继续取证\n"
         "- 只有证据路径已经耗尽，或确实缺少用户独有信息时，才说明当前未定位并向用户询问必要线索\n"
         "- 不要对用户说 provider、API、SDK、鉴权、限流、stack trace 等技术字眼"
@@ -303,7 +306,7 @@ class WebSearchTool:
             queries, include_domains, time_range = _parse_args(args)
         except ValueError as exc:
             return ToolResult(
-                text="搜索失败：参数无效",
+                text=f"搜索失败：参数无效：{exc}。请修正对应字段后重试。",
                 is_error=True,
                 meta={
                     "provider": self._provider.name,
@@ -475,7 +478,11 @@ class WebSearchTool:
         elif isinstance(exc, WebSearchRateLimitError):
             text = "搜索失败：触达限流"
         elif isinstance(exc, WebSearchNetworkError):
-            text = "搜索失败：网络错误"
+            text = (
+                f"搜索失败：网络错误；本次已尝试 {len(attempts)} 次，有界重试已结束，"
+                "未取得搜索结果。这不表示没有匹配内容；换关键词不能修复连接故障。"
+                "请改用其它可用搜索或网页读取路径；连接状态变化或稍后检查恢复时再重试。"
+            )
         elif exc.is_retryable:
             text = "搜索失败：搜索服务暂时不可用"
         else:
@@ -489,6 +496,8 @@ class WebSearchTool:
             "final_outcome": "failed",
             **exc.diagnostic_meta(),
         }
+        if isinstance(exc, (WebSearchNetworkError, WebSearchAuthError, WebSearchRateLimitError)):
+            meta["no_progress_family"] = f"search_service:{self._provider.name}:{exc.error_kind}"
         return ToolResult(text=text, is_error=True, meta=meta)
 
 
@@ -562,8 +571,14 @@ def _parse_args(
         raise ValueError("include_domains must contain at most three hostnames")
     domains: list[str] = []
     seen_domains: set[str] = set()
-    for value in raw_domains:
-        domain = _normalize_domain(value)
+    for index, value in enumerate(raw_domains):
+        try:
+            domain = _normalize_domain(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"include_domains[{index}] 必须是 hostname（例如 example.com），"
+                "不能是站点名称、URL 或路径；请更正或移除这一项"
+            ) from exc
         if domain not in seen_domains:
             seen_domains.add(domain)
             domains.append(domain)

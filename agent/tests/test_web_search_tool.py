@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 from typing import ClassVar
 
+import pytest
+from agent.tool_runtime import ToolProgressTracker
 from agent.tools import ToolResult
 from agent.tools.builtin.web_search import (
     SearchHit,
@@ -365,6 +367,45 @@ def test_invalid_domain_is_rejected_before_provider_call() -> None:
     assert result.is_error is True
     assert result.meta["error_kind"] == "input"
     assert provider.calls == []
+
+
+@pytest.mark.parametrize("invalid", ["学术搜索", "https://example.com/path", 7])
+def test_domain_error_identifies_field_and_supports_correction(invalid: object) -> None:
+    provider = _StubProvider()
+    tool = WebSearchTool(provider)
+    failed = tool.invoke({"query": "paper", "include_domains": ["example.com", invalid]})
+    assert failed.is_error
+    assert "include_domains[1]" in failed.text
+    assert "更正或移除" in failed.text
+    assert provider.calls == []
+    assert not tool.invoke({"query": "paper", "include_domains": ["example.com"]}).is_error
+
+
+def test_search_network_failures_advise_across_queries_and_reset_on_recovery() -> None:
+    provider = _StubProvider(
+        outcomes=[
+            WebSearchNetworkError("private detail"),
+            WebSearchNetworkError("private detail"),
+            SearchResponse(hits=[SearchHit("Result", "https://example.com/paper", "body")]),
+            WebSearchNetworkError("private detail"),
+        ]
+    )
+    tool = WebSearchTool(provider, retry_policy=NO_RETRY)
+    tracker = ToolProgressTracker(2)
+    for index in range(4):
+        args = {"query": f"different query {index}"}
+        result = tool.invoke(args)
+        observed = tracker.observe(tool.name, args, result)
+        if result.is_error:
+            assert "本次已尝试 1 次" in result.text
+            assert "换关键词不能修复连接故障" in result.text
+            assert "private detail" not in result.text
+        assert observed.advisory_due is (index == 1)
+        if index == 1:
+            assert tracker.take_advisory() is not None
+        if index == 3:
+            assert observed.same_error_family_count == 1
+    assert len(provider.calls) == 4  # Advisory only; recovery remains possible.
 
 
 def test_alternate_queries_share_the_original_deadline() -> None:

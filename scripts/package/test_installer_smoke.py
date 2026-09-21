@@ -249,3 +249,7 @@ def test_shell_locations_do_not_follow_appdata_overrides(monkeypatch, tmp_path: 
     assert actual["install"].parent == folders["local"]
     assert actual["programs"] == folders["programs"]
     assert actual["desktop"] == folders["desktop"]
+    # The failure fixture must exceed the shell's root-path limit itself;
+    # resource extraction now supports long nested payload paths.
+    assert len(str(actual["long_move_install"])) > 260
+    assert len(actual["long_move_parent"].name) < 255

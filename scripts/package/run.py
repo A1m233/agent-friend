@@ -91,6 +91,7 @@ from vendor.codex import load_lock as load_codex_lock
 from vendor.codex import stage_for_package as stage_codex_for_package
 from vendor.managed_python import load_lock as load_managed_python_lock
 from vendor.managed_python import stage_for_package as stage_managed_python_for_package
+from vendor.native_tools import stage_for_package as stage_native_tools_for_package
 from versioning import (
     ProjectVersion,
     SemVer,
@@ -696,6 +697,9 @@ def _stage_runtime(
     if not managed_python_executable.is_file():
         raise RuntimeError("staged managed Python executable is missing")
     managed_python_lock = load_managed_python_lock()
+    stage_native_tools_for_package(
+        stage_dir / "execution-environments" / "native", cache_base=cache_dir, offline=offline
+    )
 
     xhs_dir = stage_dir / "connectors" / "xiaohongshu"
     xhs_dir.mkdir(parents=True)
@@ -730,6 +734,12 @@ def _stage_runtime(
         f"Source: {managed_python_lock['python']['url']}\n"
         "Distribution: python-build-standalone; includes CPython and bundled notices\n"
         "Licenses: see execution-environments/python/licenses/\n\n"
+        "PDF Python baseline\n"
+        "Source and wheel hashes: execution-environments/python/vendor-lock.json\n"
+        "Licenses: retained in baseline-wheels and installed distribution metadata\n\n"
+        "PowerShell 7 and Poppler\n"
+        "Source, version and hashes: execution-environments/native/vendor-lock.json\n"
+        "Licenses and third-party notices: retained in complete native distributions\n\n"
         "astral-uv\n"
         f"Version: {managed_python_lock['uv']['version']}\n"
         f"Source: {managed_python_lock['uv']['url']}\n"
@@ -910,17 +920,56 @@ def _nsis_path(path: Path) -> str:
     return str(path.resolve())
 
 
+def _nsis_resource_file_overlay(payload_root: Path) -> str:
+    # Tauri also merges relative resource paths from the base config. Extended
+    # paths do not resolve '..', so only prefix our canonical staged payload.
+    source = _nsis_path(payload_root).replace("/", "\\").rstrip("\\") + "\\"
+    if source.startswith("\\\\?\\"):
+        extended = source
+    elif source.startswith("\\\\"):
+        extended = "\\\\?\\UNC\\" + source[2:]
+    else:
+        extended = "\\\\?\\" + source
+    return (
+        r"""    !searchreplace AGENT_FRIEND_RESOURCE "{{no-escape @key}}" "/" "\"
+"""
+        + f'    !searchreplace AGENT_FRIEND_RESOURCE "${{AGENT_FRIEND_RESOURCE}}" "{source}" "{extended}"\n'
+        # Handlebars consumes one backslash before interpolation. A single
+        # backslash escapes the expression and leaves literal {{this.[1]}}.
+        + r"""    File /a "/oname=$AgentFriendResourceRoot\\{{this.[1]}}" "${AGENT_FRIEND_RESOURCE}"
+    !undef AGENT_FRIEND_RESOURCE
+"""
+    )
+
+
+NSIS_RESOURCE_ROOT = r"""Var AgentFriendResourceRoot
+!macro AGENT_FRIEND_SET_RESOURCE_ROOT
+  Push $R9
+  GetFullPathName $AgentFriendResourceRoot "$INSTDIR"
+  StrCpy $R9 $AgentFriendResourceRoot 2
+  ${If} $R9 == "\\"
+    StrCpy $AgentFriendResourceRoot $AgentFriendResourceRoot "" 2
+    StrCpy $AgentFriendResourceRoot "\\?\UNC\$AgentFriendResourceRoot"
+  ${Else}
+    StrCpy $AgentFriendResourceRoot "\\?\$AgentFriendResourceRoot"
+  ${EndIf}
+  Pop $R9
+!macroend
+"""
+
+
 def _apply_nsis_template_overlay(
     source: str,
     *,
     helper_path: Path,
+    payload_root: Path,
     identity: BuildIdentity,
     profile: InstallProfile,
     trusted_resources: tuple[Path, Path] | None,
 ) -> str:
     hooks_anchor = """{{#if installer_hooks}}\n!include \"{{installer_hooks}}\"\n{{/if}}\n"""
     contract_defines = (
-        f'!define AGENT_FRIEND_BUILD_ID "{identity.build_id}"\n'
+        NSIS_RESOURCE_ROOT + "\n" + f'!define AGENT_FRIEND_BUILD_ID "{identity.build_id}"\n'
         f'!define AGENT_FRIEND_PROFILE_ID "{profile.profile_id}"\n'
         f'!define AGENT_FRIEND_PRODUCT_NAME "{profile.product_name}"\n'
         f'!define AGENT_FRIEND_PRODUCT_VERSION "{identity.product_version}"\n'
@@ -959,6 +1008,32 @@ def _apply_nsis_template_overlay(
             f'  File /oname=trusted-credential-seed.key "{_nsis_path(key)}"\n'
         )
     plugin_files += '  SetOutPath "$INSTDIR"\n\n'
+    resources_anchor = '    File /a "/oname={{this.[1]}}" "{{no-escape @key}}"\n'
+    resources_overlay = _nsis_resource_file_overlay(payload_root)
+    resource_dirs_anchor = r"""  {{#each resources_dirs}}
+    CreateDirectory "$INSTDIR\\{{this}}"
+  {{/each}}
+"""
+    resource_dirs_overlay = r"""  !insertmacro AGENT_FRIEND_SET_RESOURCE_ROOT
+  {{#each resources_dirs}}
+    CreateDirectory "$AgentFriendResourceRoot\\{{this}}"
+  {{/each}}
+"""
+    resource_delete_anchor = r"""  ; Delete resources
+  {{#each resources}}
+    Delete "$INSTDIR\\{{this.[1]}}"
+  {{/each}}
+"""
+    resource_delete_overlay = r"""  ; Delete resources
+  !insertmacro AGENT_FRIEND_SET_RESOURCE_ROOT
+  {{#each resources}}
+    Delete "$AgentFriendResourceRoot\\{{this.[1]}}"
+  {{/each}}
+"""
+    resource_rmdir_anchor = r"""  RMDir /REBOOTOK "$INSTDIR\\{{this}}"
+"""
+    resource_rmdir_overlay = r"""  RMDir /REBOOTOK "$AgentFriendResourceRoot\\{{this}}"
+"""
     uninstall_guard_anchor = """  !ifmacrodef NSIS_HOOK_PREUNINSTALL
     !insertmacro NSIS_HOOK_PREUNINSTALL
   !endif
@@ -979,6 +1054,10 @@ def _apply_nsis_template_overlay(
         ("uninstall-only maintenance", uninstall_only_anchor),
         ("directory leave", directory_anchor),
         ("install section", section_anchor),
+        ("resource source paths", resources_anchor),
+        ("resource directories", resource_dirs_anchor),
+        ("resource deletion", resource_delete_anchor),
+        ("resource directory removal", resource_rmdir_anchor),
         ("uninstall guard", uninstall_guard_anchor),
     ):
         if source.count(anchor) != 1:
@@ -991,6 +1070,10 @@ def _apply_nsis_template_overlay(
         .replace(uninstall_only_anchor, uninstall_only_overlay)
         .replace(directory_anchor, directory_overlay)
         .replace(section_anchor, plugin_files)
+        .replace(resources_anchor, resources_overlay)
+        .replace(resource_dirs_anchor, resource_dirs_overlay)
+        .replace(resource_delete_anchor, resource_delete_overlay)
+        .replace(resource_rmdir_anchor, resource_rmdir_overlay)
         .replace(uninstall_guard_anchor, uninstall_guard_overlay)
     )
 
@@ -1013,6 +1096,7 @@ def _generate_nsis_template(
     generated = _apply_nsis_template_overlay(
         cached.read_text(encoding="utf-8"),
         helper_path=helper_path,
+        payload_root=build_paths.payload_stage,
         identity=identity,
         profile=profile,
         trusted_resources=trusted_resources,
@@ -1761,6 +1845,7 @@ def _installer_contract_report(
     generated = _apply_nsis_template_overlay(
         source,
         helper_path=roots.cache_dir / "contract-helper.exe",
+        payload_root=roots.cache_dir / "contract-payload",
         identity=identity,
         profile=resolve_install_profile("installer-smoke"),
         trusted_resources=None,

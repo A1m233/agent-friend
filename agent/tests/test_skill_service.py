@@ -55,6 +55,8 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
 
     assert [(item.source, item.name) for item in snapshot.entries] == [
         ("builtin", "agent-friend-guide"),
+        ("builtin", "pdf"),
+        ("builtin", "screenshot"),
         ("builtin", "skill-creator"),
         ("builtin", "skill-installer"),
         ("personal", "personal-skill"),
@@ -69,6 +71,16 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
     assert installer.id == "builtin/skill-installer"
     manifest = json.loads((creator.package_root.parent / "manifest.json").read_text("utf-8"))
     assert manifest["schema_version"] == 2
+    for name in ("pdf", "screenshot"):
+        record = by_name[name]
+        source = manifest["skills"][name]
+        assert record.id == f"builtin/{name}"
+        assert source["source_repository"] == "https://github.com/openai/skills"
+        assert source["source_commit"] == "49f948faa9258a0c61caceaf225e179651397431"
+        assert source["source_path"] == f"skills/.curated/{name}"
+        assert source["compatibility_patches"] == []
+        assert source["snapshot_sha256"] == _package_digest(record.package_root)
+        assert (record.package_root / "LICENSE.txt").is_file()
     assert (
         manifest["skills"]["skill-creator"]["source_commit"]
         == "9d00bb01c0a712fb7c2f5b002bdf33bcc0fc352c"
@@ -102,6 +114,8 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
     )
     assert [item.record.name for item in turn.activations] == [
         "agent-friend-guide",
+        "pdf",
+        "screenshot",
         "skill-creator",
         "skill-installer",
         "personal-skill",

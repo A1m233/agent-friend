@@ -188,7 +188,7 @@ def _windows_paths() -> dict[str, Path]:
     move_parent = (local / "agent-friend-smoke-move").resolve()
     move_install = (move_parent / INSTALLER_SMOKE_PROFILE.install_dir_name).resolve()
     long_move_parent = (
-        local / f"{INSTALLER_SMOKE_PROFILE.install_dir_name}-migration-target"
+        local / f"{INSTALLER_SMOKE_PROFILE.install_dir_name}-migration-target-{'x' * 180}"
     ).resolve()
     long_move_install = (long_move_parent / INSTALLER_SMOKE_PROFILE.install_dir_name).resolve()
     if install.parent != local or install.name != INSTALLER_SMOKE_PROFILE.install_dir_name:

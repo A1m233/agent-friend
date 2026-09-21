@@ -117,6 +117,9 @@ if ($commandRuntimeExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($codexExecuta
     Write-Error "命令运行时准备失败，dev 未启动：$codexExecutable"
 }
 $env:AGENT_FRIEND_CODEX_EXECUTABLE = $codexExecutable
+$executionEnvironment = @(& uv run python scripts/execution-environment/run.py prepare)
+if ($LASTEXITCODE -ne 0) { throw "Execution environment preparation failed" }
+$env:AGENT_FRIEND_EXECUTION_ENVIRONMENT_ROOT = ($executionEnvironment -join [Environment]::NewLine).Trim()
 Write-Host "  [OK] $codexExecutable"
 $appLauncherOutput = @(& uv run python scripts/desktop-application/run.py ensure)
 if ($LASTEXITCODE -ne 0) { throw "Application launcher build failed" }

@@ -1,0 +1,75 @@
+# 139 进度
+
+## 总体状态
+COMPLETED
+
+已按确认方案实现环境适配。源码检查、离线 smoke、真实沙箱 PDF/截图、冻结 runtime 及完整安装器矩阵均通过。用户已确认验收并授权合入推送；历史未完成项以文末最终收口记录为准。
+
+2026-09-21：用户明确要求合入主干、推送并构建本地测试包，接受当前实现。公开 Guide r56 已发布，打包使用其精确 commit `f38433739ed0ac1a9835bfa1fd34095a48a81657` 的临时 baseline。合入继续受完整安装器矩阵门禁约束。
+
+## 首轮验证记录（旧范围，保留历史）
+- [x] AC-1：复制 15 个上游文件，Git blob 与入库过滤后字节均一致。
+- [x] AC-2：发现并激活 builtin/pdf、builtin/screenshot。
+- [x] AC-3：全新受管 Python 缺少依赖；安装后生成、提取通过，借用 Codex Poppler 渲染通过。
+- [x] AC-4：原命令遭产品 guard 拒绝；只换 pwsh 并指定输出路径后，原脚本在真实沙箱输出有效 PNG。
+- [x] AC-5：记录不同环境的依赖来源与未验证范围。
+- [ ] AC-6：lint、typecheck 失败，用户尚未验收。
+- [ ] 依赖分发方式及上游代码检查隔离方案待确认。
+
+## 当前需求 AC
+- [x] AC-1 / AC-2：上游文件一致性和 catalog 发现、激活已验证。
+- [x] AC-3 / AC-4：产品依赖离线 smoke、移除外部 PATH 后真实沙箱 PDF 与截图均成功；冻结 doctor 的 PDF/PowerShell 绘图能力通过。实际桌面截图测试属于源码工具入口，不冒充安装版完整 E2E。
+- [x] AC-5 / AC-6：两个命令工具共用原生定位；测试覆盖 PATH 冲突、显式外部路径、损坏拒绝与会话包隔离。宿主进程路径通过单测，未做完整用户会话 E2E。
+- [x] AC-7：命令解析、提示、开发入口和 command-runtime smoke 已迁移。
+- [x] AC-8：固定发行包与 wheel URL/SHA，原样保留发行包许可证与 wheel metadata；缺失/损坏拒绝执行。
+- [x] AC-9：项目检查、冻结 runtime、14 项完整安装器矩阵及独立报告核验通过；用户确认验收并授权合入推送。
+
+## 实现日志
+| 日期 | 内容 | 验证 |
+| --- | --- | --- |
+| 2026-09-20 | 从 origin/main e209d1232e1d7612a91024dce40d2e54fa73cf7d 建立 feature/139-builtin-pdf-and-screenshot-skills 并推送占号；引入官方原件、manifest 和 catalog 测试，增加两个图标目录的 PNG 二进制 Git 属性 | [证据索引](evidence-index.md) |
+| 2026-09-20 | 按用户明确范围修订需求，盘点现有 PowerShell 调用；进入环境适配方案设计 | 现有受管 Python 只允许 sandboxed，PowerShell 的共享定位不能直接等同于 Python provider 权限语义 |
+| 2026-09-20 | 用户确认对齐 Codex Desktop 预置环境；实现 PowerShell 7.6.6、Poppler 26.09.0、10 个 PDF wheel 基线，以及离线会话安装、统一路径、构建/开发入口 | 后端全量 3452 passed / 5 skipped；随后新增离线包隔离测试 1 passed。产品依赖离线 smoke 通过，清理外部 PATH 后截图及 PDF 沙箱成功 |
+| 2026-09-20 | 首次 PDF 沙箱退出 0xC0000022；后续最小 Python、分段 PDF、全新会话 PDF 验证均成功 | 未证明首次瞬态错误根因，保留为残余观察；未将其宣称为已修复 |
+| 2026-09-20 | Guide package-baseline 只读验证 r55，准备 frozen runtime 验证 | 首次构建在覆盖保护处停止，未生成候选；未绕过 dirty manifest 门禁 |
+
+## 弹窗诊断与修复
+- 用户两次截图分别显示 `0xC0000022` 与找不到 `python312.dll`，同意一起处理。
+- 原始失败时，沙箱日志显示 Python 基座读 ACL 在后台传播，命令运行器先启动；后续重试时 ACL 已就绪。上游 0.147.0 的 setup helper 确实异步派生 read-acl helper，不等待其完成。
+- 隔离副本对照：保持 DLL 存在，限制初始读取权限并增加 ACL 遍历工作量；首次启动停在系统错误、20 秒无输出，结束该测试进程后相同二进制第二次返回 `cold-start-ok`。新 DLL 弹窗与这次测试时间吻合，但截图无 PID，不能单靠图片确认归属。
+- 修复：已批准命令启动前，对宿主选定的执行环境根同步授予同一 Codex 沙箱组 RX 并等待完成；不重置 ACL、不增加写权限、不自动重试用户命令。失败返回 `executed=false`。上游 Skill 原件未改。
+- 修复后，全新隔离副本第一、第二次启动均成功；另一个全新副本与全新会话经实际 ExecCommandTool 完成 PDF 创建、文本提取与 Poppler 渲染。原始 0xC0000022 缺乏进程级加载证据，其与竞态的关联为 strongly supported，不能视为所有同码故障都已修复。
+- 第一轮冻结 build `20260920T145559Z-d44d66ceae8a-8f119b64` doctor 全绿，含 Python 3.12.14、PDF native tools、PowerShell 7.6.6 与绘图；Guide overlay 恢复成功。此 build 早于 ACL 修复，需重新验证。
+- 原生依赖损坏的模型可见错误现在标识 `provider=native`，避免误标为 Python。
+
+## 最终机器验证
+- `scripts/check/run.ps1 --stage backend`：lint、typecheck 通过；3459 passed、5 skipped。已有第三方清理告警不影响退出码 0。
+- `scripts/check/run.ps1 --stage frontend`：静态检查、1310 tests、production build 通过。依赖通过标准 install 入口按 frozen lockfile 准备，未修改锁文件。
+- `scripts/check/run.ps1 --stage rust`：测试与 release check 通过。
+- 修复后再次经正式工具入口运行原版 screenshot 脚本，自带 pwsh 输出有效 64×64 PNG；PNG 解码和尺寸断言通过。
+- 最新冻结 build：`20260920T153122Z-d44d66ceae8a-beae92ce`，0.3.0 local-test，包含本轮 ACL 修复 overlay。doctor 全绿，bridge/voice 服务 readiness 与关闭检查通过，runner 退出 0。
+- runtime 位于标准 packaging work 根的 `4aa1f81a6164/6a5e06b19ae3/20260920T153122Z-d44d66ceae8a-beae92ce/runtime-stage`；保留此 build ID，未构建 installer 或安装到 production。
+- Guide 仍使用 r55 的临时 baseline；构建结束后 Guide 与 builtin manifest 无残留 diff。
+- 剩余：完整安装器矩阵、用户验收、合入/发布前公开指南同步。未合入 main，未将 runtime-only 结果表述为安装器完整验收。
+
+未运行真实 LLM。初轮结果不代表安装版端到端验收；后续冻结验证状态以新增记录为准。当前安装器 contract 因 scripts/package/run.py 路径报告 full-matrix；runtime-only 不能替代该合入门禁。
+
+## 安装器构建续验
+- 首个完整 candidate `20260920T155638Z-d20ac1265f5c-66823e52` 已通过冻结 doctor、服务 smoke、前端与 Rust 构建，但 NSIS 无法读取 PowerShell 深层文件，未产出 installer。
+- 失败文件存在，源路径长 263 字符，最深资源路径为 294 字符。最小 NSIS 对照在普通路径下失败、扩展长度路径下成功。
+- 现有模板 overlay 仅规范化编译期资源源路径并加入扩展长度前缀；保留完整发行包、安装路径和卸载规则。固定模板资源锚点漂移继续拒绝构建。
+- 第二个 candidate `20260920T162415Z-24d0c0297242-aff6319d` 的 frozen doctor、服务和前端/Rust 构建均通过，但已有头像资源的 `..` 路径在扩展前缀下无法解析，安装器未生成。修复范围收窄到 Python 已解析的受控 payload 根，其余资源保留普通路径语义；新增真实 makensis 回归同时编译超过 260 字符的 payload 与含父目录的普通资源，定向测试通过。
+- candidate `20260920T164415Z-bb4814577862-d5515e92` 完整构建成功。矩阵在 Codex MSIX 环境被目录重定向预检拦截，未写入；通过项目现有 Explorer launcher 在普通同用户 PowerShell 中执行后，预检通过，但安装写入遗漏深层 DLL，verify 拒绝激活并 rollback。未把该候选记为通过。
+- 独立 NSIS 夹具证明扩展目标路径可以写入超过 260 字符的文件；资源创建、写入和卸载统一适配，真实安装/卸载回归通过。过长迁移失败夹具扩长程序根，继续覆盖根路径失败后的旧安装保留。
+- 已中断失败矩阵，并使用既有清理逻辑清除隔离安装。中断留下的 Guide 临时快照经精确 r56 digest 核对后，通过既有 replace_snapshot 恢复进入前 HEAD；恢复后工作区干净。正式安装未改动。
+- candidate `20260920T172729Z-14f4b96ffa71-a1dafc25` 构建成功，但 Tauri Handlebars 将新增路径的单反斜杠视为表达式转义，留下字面占位符，矩阵再次拒绝激活。修正为上游采用的双反斜杠；独立诊断使用实际 Tauri bundle 渲染并在压缩前主动停止，核对 7469 条 payload 写入及删除路径、565 条目录创建与 644 条目录删除均已展开。取实际渲染片段运行小安装器，270 字符 DLL 写入内容一致、卸载成功。失败矩阵停止后 Guide 自动恢复，隔离清理通过；该旧候选不作为成功证据。
+- candidate `20260920T181514Z-c68ef1ad98c2-89b21192` 的完整矩阵得到 13 passed / 1 failed；首次安装、同版本修复、版本拒绝、显式迁移、运行中升级、孤立进程升级、文件占用失败后重试和身份拒绝均通过。唯一失败为 `overlong_migration_target_rolls_back`，旧程序树和注册表保持不变，但目标目录存在残留。
+- 单场景复用该 candidate 取证：超长目标导致 preinstall 的 shortcut 参数截断并被校验拒绝，返回 32；残留只有空 `.installer-transactions`，未写入新程序。事务准备失败已移除 preparing 目录，但遗漏了新建的空父目录。补齐仅删除本次新建空父目录的失败清理，不递归删除兄弟事务；新增回归同时验证既有事务保留。标准 Rust 检查通过（lib 285 passed / 1 ignored、helper 7 passed、launcher 1 passed，release check 通过）。该修复后的完整矩阵仍待执行，不能以 13/14 代替通过。Guide 临时覆盖已恢复。
+
+## 最终交付收口（2026-09-21）
+- 验证源码：`110d30b84898b8373084a7022f7baa0e303bbd9e`；完整候选 `20260921T141530Z-110d30b84898-670c8824` 构建退出 0，冻结 doctor、bridge/voice readiness 与关闭、前端生产构建和 Rust release 编译通过。
+- `installer-smoke`：14/14 passed，退出 0；包含超长迁移失败清理、首次安装、覆盖修复、版本拒绝、目录迁移、进程占用、重试及身份校验。`installer-smoke-verify` 对精确候选独立核验通过。
+- 报告 `smoke-20260921T141530Z-110d30b84898-670c8824.json` 位于标准 packaging work 的 `installer-smoke-reports` 目录；package input SHA256 `729820084fd7a8ba90f403159e4510e538803f952b63108c0ab7aa9e1b9c89cd`，installer SHA256 `ff02a3e94c472769a2bede8859ab3690329d510d1bc38bdc64b565bf4498a443`。
+- 最新后端完整检查 3460 passed / 5 skipped，lint/typecheck 通过；前端 1310 tests 和生产构建通过；清理修复后 Rust 全量与 release check 通过。未调用真实 LLM，未安装到 production，未代做交互式安装器语言视觉验收。
+- Guide r56 已公开发布；构建与矩阵均使用 commit `f38433739ed0ac1a9835bfa1fd34095a48a81657`，每次临时 baseline 事务恢复成功。新增安装器内部修复未改变公开操作说明，无需再次发布 Guide。
+- 上述 candidate 为隔离 installer-smoke profile，只作为合入证据；用户要求的普通 local-test 测试包是合入后的独立交付，不把隔离候选冒充该测试包。

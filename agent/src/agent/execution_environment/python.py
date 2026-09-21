@@ -291,6 +291,7 @@ class PythonEnvironmentProvider:
                 )
                 venv_python = _venv_python(venv_root)
                 self._run_python_probe(venv_python, expect_venv=True)
+                self._install_baseline(venv_python)
                 rebuild_lock = session_root.parent / "rebuild-packages.lock"
                 rebuild_status, rebuild_error, restored_packages, revision = (
                     self._restore_gc_packages(rebuild_lock, venv_python)
@@ -863,6 +864,53 @@ class PythonEnvironmentProvider:
             raise ManagedEnvironmentError(
                 "managed_environment_unavailable", "受管 uv identity 健康检查失败。"
             )
+
+    def _install_baseline(self, executable: Path) -> None:
+        requirements = self._packaged_manifest.get("baselineRequirements", [])
+        if not requirements:
+            return
+        if not isinstance(requirements, list) or not all(
+            isinstance(item, str) and "==" in item and not item.startswith("-")
+            for item in requirements
+        ):
+            raise ManagedEnvironmentError(
+                "managed_environment_unavailable", "产品 Python 依赖基线无效。"
+            )
+        if self._uv_executable is None:
+            raise ManagedEnvironmentError(
+                "managed_environment_unavailable", "产品 Python 依赖准备缺少 uv。"
+            )
+        subprocess.run(
+            [
+                str(self._uv_executable),
+                "--no-config",
+                "--no-python-downloads",
+                "--cache-dir",
+                str(self._shared_cache_root),
+                "pip",
+                "install",
+                "--python",
+                str(executable),
+                "--no-index",
+                "--no-build",
+                "--link-mode",
+                "copy",
+                "--find-links",
+                str(self._base_root.parent / "baseline-wheels"),
+                *requirements,
+            ],
+            cwd=executable.parent,
+            env={
+                **self._base_environment(),
+                "TEMP": str(executable.parent),
+                "TMP": str(executable.parent),
+                "TMPDIR": str(executable.parent),
+            },
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=True,
+            timeout=60,
+        )
 
     def _base_environment(self) -> dict[str, str]:
         allowed = ("COMSPEC", "SYSTEMDRIVE", "SYSTEMROOT", "WINDIR")
