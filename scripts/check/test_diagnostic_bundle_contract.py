@@ -757,6 +757,9 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
     assert summary["webView2"]["eventKinds"] == {"process-failed": 1}
     assert summary["webView2"]["processFailureKinds"] == {"gpu-process-exited": 1}
     assert summary["webView2"]["droppedEventCount"] == 1
+    assert summary["webView2RenderEvidence"]["gpuRecoveryPolicy"] == (
+        "hidden-evidence-then-guarded-restart"
+    )
     assert summary["webView2RenderEvidence"]["captureId"] == "capture-1"
     assert summary["webView2RenderEvidence"]["trigger"] == "webview2-gpu-presented-probe"
     assert summary["webView2RenderEvidence"]["automaticIncident"] is True
@@ -796,6 +799,19 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
     assert summary["petInputEvidence"]["retainedIncidents"][0]["recovery"] == "unknown"
     assert summary["petInputEvidence"]["counters"]["dropped"] == 3
     assert summary["petInputEvidence"]["identities"][0]["identity"]["sourceDirty"] is True
+
+
+def test_inspector_preserves_legacy_gpu_recovery_semantics(tmp_path: Path) -> None:
+    contract = _load_contract()
+    for capability in contract["capabilities"]:
+        if capability["id"] == "webview2-render-evidence-v4":
+            capability["id"] = "webview2-render-evidence-v3"
+    bundle = tmp_path / "legacy-gpu-probe.zip"
+    _build_bundle(bundle, contract)
+    summary = INSPECTOR.inspect_bundle(bundle, verify_crc=True)
+    assert summary["manifest"]["unhandledCapabilities"] == []
+    assert summary["webView2RenderEvidence"]["gpuRecoveryPolicy"] == "legacy-or-unknown"
+    assert summary["webView2RenderEvidence"]["recoveryAssessment"]["verdict"] == "unsafe"
 
 
 def test_inspector_warns_when_render_evidence_artifact_is_missing(tmp_path: Path) -> None:
@@ -870,6 +886,7 @@ def test_inspector_accepts_older_v1_without_webview2_capability(tmp_path: Path) 
                     "webview2-render-evidence-v1",
                     "webview2-render-evidence-v2",
                     "webview2-render-evidence-v3",
+                    "webview2-render-evidence-v4",
                 ):
                     if capability in manifest["capabilities"]:
                         manifest["capabilities"].remove(capability)
@@ -921,6 +938,7 @@ def test_inspector_accepts_schema_v2_without_render_evidence(tmp_path: Path) -> 
                     "webview2-render-evidence-v1",
                     "webview2-render-evidence-v2",
                     "webview2-render-evidence-v3",
+                    "webview2-render-evidence-v4",
                 ):
                     if capability in manifest["capabilities"]:
                         manifest["capabilities"].remove(capability)

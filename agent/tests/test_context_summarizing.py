@@ -45,6 +45,7 @@ from agent.sessions.rollout import SessionRolloutRecorder, restore_rollout
 from agent.system_prompt import IM_QQ_SURFACE
 from agent.tools.builtin.tool_result_recovery import ToolResultRecoveryTool
 from llm_providers.request_witness import witness_from_body
+from llm_providers.stream_events import ProviderAssistantTurn
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -77,7 +78,7 @@ from llm_providers import (
 
 @dataclass
 class _FakeLLM:
-    """同时充当主对话 stream 与摘要 complete 的 fake。"""
+    """按 operation 区分主对话与摘要的流式 fake。"""
 
     context_window: int = 2000
     summary_text: str = "<summary>这是压缩后的结构化摘要</summary>"
@@ -89,6 +90,9 @@ class _FakeLLM:
     generate_requests: list[ModelRequest] = field(default_factory=list)
 
     def generate(self, request: ModelRequest) -> ModelResponse:
+        raise AssertionError("compaction must use streaming transport")
+
+    def summary_response(self, request: ModelRequest) -> ModelResponse:
         self.complete_calls += 1
         self.generate_requests.append(request)
         if self.fail:
@@ -99,6 +103,18 @@ class _FakeLLM:
         self,
         request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
+        if (
+            request.control.trace_context
+            and request.control.trace_context.operation == "context_compaction"
+        ):
+            response = self.summary_response(request)
+            yield LLMTurnDone(
+                stop_reason="end_turn",
+                assistant_turn=ProviderAssistantTurn(content=response.text),
+                usage=response.usage,
+                diagnostics=response.diagnostics,
+            )
+            return
         self.received.append(request.messages)
         yield LLMTextDelta(text="ok")
         usage = (
@@ -121,7 +137,7 @@ class _FakeLLM:
 
 @dataclass
 class _WitnessSummaryLLM(_FakeLLM):
-    def generate(self, request: ModelRequest) -> ModelResponse:
+    def summary_response(self, request: ModelRequest) -> ModelResponse:
         self.complete_calls += 1
         self.generate_requests.append(request)
         witness = witness_from_body(
@@ -148,6 +164,12 @@ class _ContextRejectOnceLLM(_FakeLLM):
         self,
         request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
+        if (
+            request.control.trace_context
+            and request.control.trace_context.operation == "context_compaction"
+        ):
+            yield from super().stream(request)
+            return
         self.stream_calls += 1
         if self.stream_calls == 1:
             raise LLMContextWindowError("provider says context is too large")
@@ -160,7 +182,7 @@ class _SummaryContextRetryLLM(_FakeLLM):
     remaining_context_failures: int = 2
     summary_input_lengths: list[int] = field(default_factory=list)
 
-    def generate(self, request: ModelRequest) -> ModelResponse:
+    def summary_response(self, request: ModelRequest) -> ModelResponse:
         self.complete_calls += 1
         self.summary_input_lengths.append(len(str(request.messages[-1]["content"])))
         if self.remaining_context_failures > 0:
@@ -419,7 +441,7 @@ def test_summary_cancellation_is_forwarded_and_never_downgraded_to_fifo() -> Non
     token = CancellationToken()
 
     class CancellingLLM(_FakeLLM):
-        def generate(self, request: ModelRequest) -> ModelResponse:
+        def summary_response(self, request: ModelRequest) -> ModelResponse:
             self.complete_calls += 1
             assert request.control.cancel_check is not None
             token.cancel(CancelReason.EXPLICIT_REQUEST)
@@ -623,7 +645,7 @@ def test_impossible_retained_tail_skips_summary_even_during_outage(
         llm.complete_calls += 1
         raise failure
 
-    monkeypatch.setattr(llm, "generate", unavailable)
+    monkeypatch.setattr(llm, "summary_response", unavailable)
     cm = SummarizingContextManager(max_failures=1)
     history = [
         *_turns(12, 100),
@@ -648,7 +670,7 @@ def test_summary_outage_retries_without_committing_fifo(monkeypatch: pytest.Monk
         llm.complete_calls += 1
         raise LLMTransientProviderError("502")
 
-    monkeypatch.setattr(llm, "generate", unavailable)
+    monkeypatch.setattr(llm, "summary_response", unavailable)
     cm = SummarizingContextManager(max_failures=1)
     history = _turns(12, 100)
     for _ in range(2):
@@ -663,7 +685,7 @@ def test_summary_outage_does_not_hide_base_budget_error(monkeypatch: pytest.Monk
     def unavailable(request: ModelRequest) -> ModelResponse:
         raise LLMTransientProviderError("502")
 
-    monkeypatch.setattr(llm, "generate", unavailable)
+    monkeypatch.setattr(llm, "summary_response", unavailable)
     with pytest.raises(ContextBaseOverBudgetError):
         SummarizingContextManager().build_messages(
             history=_turns(12, 100), system_prompt="x" * 5000, runtime=_runtime(llm, 2000)
@@ -908,7 +930,7 @@ def test_unsupported_summary_parameter_is_blocked_only_for_same_run_and_model(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     class RejectingLLM(_FakeLLM):
-        def generate(self, request: ModelRequest) -> ModelResponse:
+        def summary_response(self, request: ModelRequest) -> ModelResponse:
             self.complete_calls += 1
             raise LLMUnsupportedParameterError("private prompt must not appear")
 

@@ -255,13 +255,25 @@ An absent observed readiness value means the service had not produced a successf
 
 `webview2-process-health-v1` is a passive Windows-only observer. Each registered WebView contributes `ProcessFailed`; one shared environment contributes `BrowserProcessExited`. The pet WebView also reports `page-visibility` transitions so an armed one-shot capture can trigger after a real hidden interval. The producer records runtime version, whether a failure-report folder is available, metadata for up to 16 recent `.dmp` files (name, size, modified time; never dump contents), registered window labels, registration failures, DXGI adapter/driver identity, DWM composition state, and a bounded oldest-evicted event list. The same events are also written as `source: webview2` records in the bounded `tauri.log.runtime*` journal, so a bundle generated after restarting the desktop shell can still retain the prior process failure. A shared process failure can appear once per affected window; correlate by process session, timestamp, kind, reason, exit code, and a nearby failure-report timestamp instead of counting matching window events as independent crashes.
 
-Interpret `gpu-process-exited` as an observed GPU process failure, not proof that the GPU caused the original symptom; WebView2 normally recreates that process. Current producers deduplicate the per-window fan-out into one recovery trigger while retaining every raw per-window event. The recovery immediately hides the transparent pet overlay, waits for WebView2's normal recovery window, then probes paired render evidence. Persistent failure can request one cooldown-guarded shell restart; structured `gpu-recovery-*` records in `tauri.log.runtime*` establish what action was taken. `render-process-exited` and `browser-process-exited` remain passive evidence and are stronger signals of renderer/browser failure. Absence of events cannot rule out DirectComposition/host-HWND presentation failures because the WebView2 processes may remain healthy while Windows shows stale, black, or white pixels.
+Interpret `gpu-process-exited` as an observed GPU process failure, not proof that the GPU caused the original symptom; WebView2 normally recreates that process. Producers retain every raw per-window event. v3 recovery hides the transparent pet overlay and uses paired render evidence to decide whether to restore it. v4 also coalesces delayed fan-out while recovery is active and keeps the failed host hidden through bounded evidence collection, then requests one cooldown-guarded shell restart regardless of screenshot health; structured `gpu-recovery-*` records in `tauri.log.runtime*` establish what action was taken. `render-process-exited` and `browser-process-exited` remain passive evidence and are stronger signals of renderer/browser failure. Absence of events cannot rule out DirectComposition/host-HWND presentation failures because the WebView2 processes may remain healthy while Windows shows stale, black, or white pixels.
 
 ## WebView2 Render Evidence
 
 `webview2-render-evidence-v2` retains the manual one-shot flow from v1 and adds automatic display-recovery evidence. On a real `Off/Dimmed → On` transition, the native recovery state machine captures a hidden WebView/desktop baseline before showing the pet, then captures the presented desktop and records a fail-closed assessment. Only the latest capture is retained under the bounded log directory. Manual captures still require explicit ZIP inclusion; an automatic recovery incident is included when the user deliberately exports a diagnostic bundle, without requiring prior arming or a second checkbox.
 
 `webview2-render-evidence-v3` retains v2 and adds `webview2-gpu-hidden-baseline` / `webview2-gpu-presented-probe` automatic incidents plus near-white opaque pixel counts and ratios. Both the hidden WebView baseline and presented virtual desktop can now be rejected for an almost-solid white surface as well as black. The capture's `recoveryAssessment` records baseline/presented black and white ratios and deltas. A safe presented probe means the shell kept running; an unsafe, failed, or timed-out GPU probe is fail-closed and should be correlated with `gpu-recovery-restart-requested`, `restart-blocked`, or `restart-disabled` in the runtime journal.
+
+`webview2-render-evidence-v4` preserves older evidence for backward compatibility but
+changes new GPU incidents to containment: the pet stays hidden, a baseline is
+attempted with a bounded deadline, and the existing guarded restart is requested
+without a presented probe. A normal GDI/CapturePreview image cannot establish
+physical presentation health. `gpu-recovery-evidence-timeout` records unavailable
+bounded evidence; `gpu-recovery-suppressed` with stage `gpu-context-invalidated`
+precedes the restart outcome. Disabled/blocked restarts leave the pet hidden;
+explicit user visibility changes cancel the pending recovery. Display-resume
+policy is unchanged. Retained captures can predate the current build, so use the
+capture and process journal identities, not capability v4 alone, to attribute an
+individual historical incident. No extra screenshots or new retention are added.
 
 Use `startDeltaMs` to judge pairing quality, and compare `webView2Image` with `desktopImage` together with process events:
 
