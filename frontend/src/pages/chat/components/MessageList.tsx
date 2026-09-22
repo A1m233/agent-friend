@@ -1557,6 +1557,7 @@ export function MessageList({
       />
       <MessageQuoteSelectionAction
         workspaceKey={quoteWorkspaceKey}
+        onFocusComposer={onFocusComposer}
         disabled={historyLoading || editingMessage?.phase === "submitting"}
       />
     </ExecutionDisclosureStateProvider>
