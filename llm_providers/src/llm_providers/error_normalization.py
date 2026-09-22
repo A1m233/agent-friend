@@ -282,6 +282,15 @@ def map_provider_error(error: Exception, *, provider_id: str | None = None) -> L
         cls, category, source = LLMUnsupportedParameterError, "request", "sdk_validation"
     elif any(isinstance(item, StreamIdleTimeoutExceeded) for item in chain):
         cls, category, source = LLMStreamTimeoutError, "timeout", "transport"
+    elif (
+        metadata.status_code == 401
+        or any(isinstance(item, openai.AuthenticationError) for item in chain)
+        or _ERROR_CODES.get(code or "", (None, None))[0] is LLMAuthError
+        or _ERROR_CODES.get(kind or "", (None, None))[0] is LLMAuthError
+    ):
+        # Providers can pair an authentication failure with a generic request code.
+        # Preserve the actionable auth classification and the original evidence.
+        cls, category = LLMAuthError, "authentication"
     elif code in _ERROR_CODES:
         cls, category = _ERROR_CODES[code]
     elif _is_context_window_exception(error):
@@ -290,8 +299,6 @@ def map_provider_error(error: Exception, *, provider_id: str | None = None) -> L
         cls, category = _ERROR_CODES[kind]
     elif _is_content_policy_exception(error):
         cls, category = LLMContentPolicyError, "content_policy"
-    elif metadata.status_code == 401 or isinstance(error, openai.AuthenticationError):
-        cls, category = LLMAuthError, "authentication"
     elif metadata.status_code == 402:
         cls, category = LLMPaymentRequiredError, "quota"
     elif metadata.status_code == 403 or isinstance(error, openai.PermissionDeniedError):
