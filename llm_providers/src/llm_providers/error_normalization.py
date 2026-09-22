@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from hashlib import sha256
 
+import httpx
 import openai
 from litellm.exceptions import (
     APIConnectionError as LiteLLMAPIConnectionError,
@@ -85,6 +86,7 @@ def _is_network_exception(error: Exception) -> bool:
         ssl.SSLError,
         ConnectionError,
         TimeoutError,
+        httpx.TransportError,
     )
     if any(isinstance(item, known_types) for item in chain):
         return True
@@ -341,8 +343,31 @@ def map_provider_error(error: Exception, *, provider_id: str | None = None) -> L
         )
     else:
         mapped = cls(summary)
+    timeout = next((item for item in chain if isinstance(item, StreamIdleTimeoutExceeded)), None)
+    sdk_timeout_stage = next(
+        (
+            stage
+            for kind, stage in (
+                (httpx.ConnectTimeout, "connect"),
+                (httpx.PoolTimeout, "pool"),
+                (httpx.WriteTimeout, "write"),
+                (httpx.ReadTimeout, "unknown"),
+                (openai.APITimeoutError, "unknown"),
+                (LiteLLMTimeout, "unknown"),
+            )
+            for item in chain
+            if isinstance(item, kind)
+        ),
+        None,
+    )
     mapped.error_evidence = ErrorEvidence(
         source=source,
+        timeout_stage=timeout.stage if timeout else sdk_timeout_stage,
+        timeout_seconds=timeout.timeout_seconds if timeout else None,
+        timeout_elapsed_seconds=timeout.elapsed_seconds if timeout else None,
+        timeout_source=timeout.policy_source if timeout else None,
+        timeout_last_activity=timeout.last_activity if timeout else None,
+        timeout_stage_elapsed_seconds=timeout.stage_elapsed_seconds if timeout else None,
         category=category,
         code=_safe_token(code),
         error_type=_safe_token(kind),

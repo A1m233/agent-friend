@@ -177,6 +177,7 @@ def test_retrieval_consumes_the_same_total_deadline_without_extending_provider_b
 
     def stream(request: ModelRequest) -> Iterator[LLMTextDelta | LLMTurnDone]:
         assert request.settings["timeout"] == 4.0
+        assert request.control.deadline_monotonic == 10.0
         assert request.control.allow_retries is False
         yield LLMTextDelta("尚未完成")
         now[0] = 10.0

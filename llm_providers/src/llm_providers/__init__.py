@@ -110,6 +110,7 @@ from .stream_events import (
     ProviderAssistantTurn,
     ProviderToolCall,
 )
+from .timeouts import ModelCallDeadlineExceeded, ModelTimeoutPolicy
 
 __version__ = "0.1.0"
 
@@ -162,6 +163,7 @@ __all__ = [
     "LanguageModelCapabilities",
     "LanguageModelFactory",
     "ModelCallControl",
+    "ModelCallDeadlineExceeded",
     "ModelCallTraceContext",
     "ModelPurpose",
     "ModelReasoningDefinition",
@@ -169,6 +171,7 @@ __all__ = [
     "ModelResponse",
     "ModelRouteCapabilities",
     "ModelRuntimeConfig",
+    "ModelTimeoutPolicy",
     "MultimodalInputAdapter",
     "OperationLineageBinding",
     "OperationRequestLineageTracker",

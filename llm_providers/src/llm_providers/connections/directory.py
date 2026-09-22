@@ -106,6 +106,7 @@ class ModelDirectory:
             model=model.litellm_model,
             api_key=api_key.strip(),
             api_base=owner.base_url,
+            timeout_is_default=True,
             defaults={
                 "timeout": DEFAULT_LLM_TIMEOUT_SECONDS,
                 **(

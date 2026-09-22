@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -219,6 +220,7 @@ def test_cross_process_resume_never_claims_wire_baseline_or_exact_prefix() -> No
 
 
 def test_non_stream_client_attaches_same_observation_schema(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     response = SimpleNamespace(
@@ -233,7 +235,7 @@ def test_non_stream_client_attaches_same_observation_schema(
             prompt_cache_miss_tokens=10,
         ),
     )
-    monkeypatch.setattr("llm_providers.client.litellm.completion", lambda **_kwargs: response)
+    patch_completion(lambda **_kwargs: response)
     client = LLMClient(
         ProviderSpec(model="deepseek/deepseek-chat", api_key="test"),
         network_retries=0,
@@ -322,13 +324,14 @@ def test_within_operation_reports_lost_prefix_and_unavailable_reason() -> None:
 
 
 def test_observation_failure_does_not_break_model_response(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     response = SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
         usage=SimpleNamespace(prompt_tokens=2, completion_tokens=1, total_tokens=3),
     )
-    monkeypatch.setattr("llm_providers.client.litellm.completion", lambda **_kwargs: response)
+    patch_completion(lambda **_kwargs: response)
     monkeypatch.setattr(
         "llm_providers.client.build_prompt_cache_observation",
         lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("observation failed")),

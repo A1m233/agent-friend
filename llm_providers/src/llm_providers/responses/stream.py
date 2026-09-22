@@ -36,6 +36,7 @@ from ..stream_events import (
     ProviderAssistantTurn,
     ProviderToolCall,
 )
+from ..timeouts import ModelTimeoutPolicy, resolve_timeout_policy
 from ..usage import extract_responses_usage
 from .evidence import (
     REASONING_EVENTS,
@@ -599,10 +600,18 @@ def stream_responses(
     timeout_seconds: float,
     previous_request_witness: ProviderRequestWitness | None,
     stream_response: bool = True,
+    timeout_policy: ModelTimeoutPolicy | None = None,
 ) -> Iterator[LLMStreamEvent]:
     request = prepare_request(spec, messages, tools, overrides)
     request["stream"] = stream_response
-    request["timeout"] = min(float(request.get("timeout", timeout_seconds)), timeout_seconds)
+    policy = timeout_policy or resolve_timeout_policy(
+        spec.defaults,
+        overrides,
+        streaming=stream_response,
+        provider_timeout_is_default=spec.timeout_is_default,
+        legacy_stream_seconds=timeout_seconds,
+    )
+    request["timeout"] = policy.http_timeout()
     started = time.monotonic()
     state = ResponsesState(spec)
     diagnostics = LLMResponseDiagnostics(transport="responses")
@@ -630,7 +639,7 @@ def stream_responses(
     try:
         if cancel_check:
             cancel_check()
-        stream = open_responses_stream(spec, request, cancel_check, timeout_seconds)
+        stream = open_responses_stream(spec, request, cancel_check, timeout_seconds, policy)
         witness = stream.request_witness
         diagnostics = replace(
             diagnostics,

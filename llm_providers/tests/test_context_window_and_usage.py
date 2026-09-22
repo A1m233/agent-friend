@@ -472,6 +472,7 @@ def test_extract_stream_usage_reads_kimi_choice_usage() -> None:
 
 
 def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: dict[str, Any] = {}
@@ -509,8 +510,12 @@ def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
                 ]
             )
 
-        def close(self) -> None:
+        async def close(self) -> None:
             self.closed = True
+
+        async def __aiter__(self) -> Any:
+            for chunk in self:
+                yield chunk
 
     response = FakeResponse()
     clients: list[Any] = []
@@ -522,7 +527,7 @@ def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
             return response
 
     class FakeRawCompletions:
-        def create(self, **kwargs: Any) -> FakeRawResponse:
+        async def create(self, **kwargs: Any) -> FakeRawResponse:
             seen.update(kwargs)
             return FakeRawResponse()
 
@@ -538,14 +543,11 @@ def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
             self.chat = SimpleNamespace(completions=FakeCompletions())
             clients.append(self)
 
-        def close(self) -> None:
+        async def close(self) -> None:
             self.closed = True
 
-    monkeypatch.setattr("llm_providers.kimi_transport.openai.OpenAI", FakeOpenAI)
-    monkeypatch.setattr(
-        _COMPLETION,
-        lambda **_kwargs: pytest.fail("Kimi stream must bypass LiteLLM"),
-    )
+    monkeypatch.setattr("llm_providers.kimi_transport.openai.AsyncOpenAI", FakeOpenAI)
+    patch_completion(lambda **_kwargs: pytest.fail("Kimi stream must bypass LiteLLM"))
     client = LLMClient(
         _spec(
             model="openai/kimi-k2.6",
@@ -605,7 +607,7 @@ def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
     assert seen["prompt_cache_key"] == "session-1"
     assert seen["stream"] is True
     assert seen["stream_options"] == {"include_usage": True}
-    assert seen["timeout"] == 12.5
+    assert seen["timeout"].read == 12.5
     assert "max_retries" not in seen
     assert response.closed is True
     assert len(clients) == 1
@@ -793,22 +795,26 @@ def test_kimi_cancellable_stream_allows_total_duration_beyond_idle_timeout(
 # ===== timeout 透传与异常映射 =====
 
 
-def test_complete_passes_spec_timeout_to_litellm(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_complete_passes_spec_timeout_to_litellm(
+    patch_completion: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     seen_kwargs: dict[str, Any] = {}
 
     def fake_completion(**kwargs: Any) -> Any:
         seen_kwargs.update(kwargs)
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
 
-    monkeypatch.setattr(_COMPLETION, fake_completion)
+    patch_completion(fake_completion)
     client = LLMClient(_spec(defaults={"timeout": 12.5}))
 
     assert client.complete([{"role": "user", "content": "hi"}]) == "ok"
-    assert seen_kwargs["timeout"] == 12.5
+    assert seen_kwargs["timeout"].read == 12.5
     assert seen_kwargs["max_retries"] == 0
 
 
-def test_stream_passes_spec_timeout_to_litellm(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stream_passes_spec_timeout_to_litellm(
+    patch_completion: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     seen_kwargs: dict[str, Any] = {}
 
     def fake_completion(**kwargs: Any) -> Any:
@@ -827,16 +833,17 @@ def test_stream_passes_spec_timeout_to_litellm(monkeypatch: pytest.MonkeyPatch) 
             ]
         )
 
-    monkeypatch.setattr(_COMPLETION, fake_completion)
+    patch_completion(fake_completion)
     client = LLMClient(_spec(defaults={"timeout": 12.5}))
 
     list(client.stream([{"role": "user", "content": "hi"}]))
 
-    assert seen_kwargs["timeout"] == 12.5
+    assert seen_kwargs["timeout"].read == 12.5
     assert seen_kwargs["max_retries"] == 0
 
 
-def test_stream_clamps_provider_timeout_to_bounded_attempt(
+def test_stream_respects_explicit_legacy_idle_override(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen_kwargs: dict[str, Any] = {}
@@ -857,7 +864,7 @@ def test_stream_clamps_provider_timeout_to_bounded_attempt(
             ]
         )
 
-    monkeypatch.setattr(_COMPLETION, fake_completion)
+    patch_completion(fake_completion)
     client = LLMClient(
         _spec(defaults={"timeout": 90.0}),
         stream_timeout_seconds=45.0,
@@ -865,10 +872,12 @@ def test_stream_clamps_provider_timeout_to_bounded_attempt(
 
     list(client.stream([{"role": "user", "content": "hi"}]))
 
-    assert seen_kwargs["timeout"] == 45.0
+    assert seen_kwargs["timeout"].read == 45.0
 
 
-def test_stream_close_closes_upstream_response(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stream_close_closes_upstream_response(
+    patch_completion: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class ClosableResponse:
         closed = False
 
@@ -890,7 +899,7 @@ def test_stream_close_closes_upstream_response(monkeypatch: pytest.MonkeyPatch) 
             self.closed = True
 
     response = ClosableResponse()
-    monkeypatch.setattr(_COMPLETION, lambda **_kwargs: response)
+    patch_completion(lambda **_kwargs: response)
     client = LLMClient(_spec())
 
     stream: Any = client.stream([{"role": "user", "content": "hi"}])
@@ -901,11 +910,13 @@ def test_stream_close_closes_upstream_response(monkeypatch: pytest.MonkeyPatch) 
     assert response.closed is True
 
 
-def test_litellm_timeout_maps_to_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_litellm_timeout_maps_to_network_error(
+    patch_completion: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def fake_completion(**_kwargs: Any) -> Any:
         raise LiteLLMTimeout("timed out", model="deepseek/test", llm_provider="deepseek")
 
-    monkeypatch.setattr(_COMPLETION, fake_completion)
+    patch_completion(fake_completion)
     client = LLMClient(_spec(defaults={"timeout": 0.01}), network_retries=0)
 
     with pytest.raises(LLMNetworkError):
@@ -913,6 +924,7 @@ def test_litellm_timeout_maps_to_network_error(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_litellm_stream_iteration_timeout_maps_to_network_error(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class TimeoutIterator:
@@ -922,28 +934,32 @@ def test_litellm_stream_iteration_timeout_maps_to_network_error(
         def __next__(self) -> Any:
             raise LiteLLMTimeout("timed out", model="deepseek/test", llm_provider="deepseek")
 
-    monkeypatch.setattr(_COMPLETION, lambda **_kwargs: TimeoutIterator())
+    patch_completion(lambda **_kwargs: TimeoutIterator())
     client = LLMClient(_spec(defaults={"timeout": 0.01}), network_retries=0)
 
     with pytest.raises(LLMNetworkError):
         list(client.stream([{"role": "user", "content": "hi"}]))
 
 
-def test_wrapped_ssl_error_maps_to_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wrapped_ssl_error_maps_to_network_error(
+    patch_completion: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def fake_completion(**_kwargs: Any) -> Any:
         try:
             raise ssl.SSLError("UNEXPECTED_EOF_WHILE_READING")
         except ssl.SSLError as cause:
             raise RuntimeError("provider wrapped TLS failure") from cause
 
-    monkeypatch.setattr(_COMPLETION, fake_completion)
+    patch_completion(fake_completion)
     client = LLMClient(_spec(), network_retries=0)
 
     with pytest.raises(LLMNetworkError):
         list(client.stream([{"role": "user", "content": "hi"}]))
 
 
-def test_complete_retries_network_error_before_success(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_complete_retries_network_error_before_success(
+    patch_completion: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls = 0
 
     def fake_completion(**_kwargs: Any) -> Any:
@@ -953,7 +969,7 @@ def test_complete_retries_network_error_before_success(monkeypatch: pytest.Monke
             raise LiteLLMTimeout("timed out", model="deepseek/test", llm_provider="deepseek")
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
 
-    monkeypatch.setattr(_COMPLETION, fake_completion)
+    patch_completion(fake_completion)
     client = LLMClient(_spec(), network_retries=1, network_retry_backoff_seconds=0)
 
     assert client.complete([{"role": "user", "content": "hi"}]) == "ok"
@@ -961,6 +977,7 @@ def test_complete_retries_network_error_before_success(monkeypatch: pytest.Monke
 
 
 def test_stream_retries_network_error_before_first_event(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = 0
@@ -984,7 +1001,7 @@ def test_stream_retries_network_error_before_first_event(
             ]
         )
 
-    monkeypatch.setattr(_COMPLETION, fake_completion)
+    patch_completion(fake_completion)
     client = LLMClient(_spec(), network_retries=1, network_retry_backoff_seconds=0)
 
     events = list(client.stream([{"role": "user", "content": "hi"}]))
@@ -1003,7 +1020,9 @@ def test_stream_timeout_uses_configured_pre_output_retry_budget() -> None:
     assert client._retry_limit(LLMStreamTimeoutError("stalled")) == 2
 
 
-def test_stream_does_not_retry_after_first_event(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stream_does_not_retry_after_first_event(
+    patch_completion: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls = 0
 
     class PartialThenTimeout:
@@ -1032,7 +1051,7 @@ def test_stream_does_not_retry_after_first_event(monkeypatch: pytest.MonkeyPatch
         calls += 1
         return PartialThenTimeout()
 
-    monkeypatch.setattr(_COMPLETION, fake_completion)
+    patch_completion(fake_completion)
     client = LLMClient(_spec(), network_retries=2, network_retry_backoff_seconds=0)
     stream = client.stream([{"role": "user", "content": "hi"}])
 
@@ -1057,6 +1076,7 @@ class _StatusError(RuntimeError):
 
 
 def test_stream_retries_provider_503_before_first_event(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = 0
@@ -1080,7 +1100,7 @@ def test_stream_retries_provider_503_before_first_event(
             ]
         )
 
-    monkeypatch.setattr(_COMPLETION, fake_completion)
+    patch_completion(fake_completion)
     client = LLMClient(_spec(), network_retries=2, network_retry_backoff_seconds=0)
 
     events = list(client.stream([{"role": "user", "content": "hi"}]))
@@ -1135,6 +1155,7 @@ def test_generic_429_remains_rate_limit_error() -> None:
 
 
 def test_kimi_direct_stream_retries_engine_overload_before_first_event(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = 0
@@ -1159,13 +1180,10 @@ def test_kimi_direct_stream_retries_engine_overload_before_first_event(
             ]
         )
 
-    monkeypatch.setattr("llm_providers.client.open_kimi_stream", fake_open_kimi_stream)
+    monkeypatch.setattr("llm_providers.client.open_cancellable_kimi_stream", fake_open_kimi_stream)
     monkeypatch.setattr("llm_providers.client.random.uniform", lambda _low, high: high)
     monkeypatch.setattr("llm_providers.client.time.sleep", sleeps.append)
-    monkeypatch.setattr(
-        _COMPLETION,
-        lambda **_kwargs: pytest.fail("Kimi retry must stay on the direct transport"),
-    )
+    patch_completion(lambda **_kwargs: pytest.fail("Kimi retry must stay on the direct transport"))
     client = LLMClient(
         _spec(
             model="openai/kimi-k2.7-code-highspeed",
@@ -1218,7 +1236,7 @@ def test_kimi_engine_overload_honors_retry_after_and_emits_failure_metadata(
             ]
         )
 
-    monkeypatch.setattr("llm_providers.client.open_kimi_stream", fake_open_kimi_stream)
+    monkeypatch.setattr("llm_providers.client.open_cancellable_kimi_stream", fake_open_kimi_stream)
     monkeypatch.setattr("llm_providers.client.time.sleep", sleeps.append)
     client = LLMClient(
         _spec(
@@ -1254,7 +1272,7 @@ def test_kimi_generic_429_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> Non
         calls += 1
         raise _openai_rate_limit_error("rate_limit_reached_error")
 
-    monkeypatch.setattr("llm_providers.client.open_kimi_stream", fake_open_kimi_stream)
+    monkeypatch.setattr("llm_providers.client.open_cancellable_kimi_stream", fake_open_kimi_stream)
     client = LLMClient(
         _spec(
             model="openai/kimi-k2.7-code-highspeed",
@@ -1272,6 +1290,7 @@ def test_kimi_generic_429_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_stream_does_not_retry_permanent_provider_error(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = 0
@@ -1281,7 +1300,7 @@ def test_stream_does_not_retry_permanent_provider_error(
         calls += 1
         raise _StatusError(400)
 
-    monkeypatch.setattr(_COMPLETION, fake_completion)
+    patch_completion(fake_completion)
     client = LLMClient(_spec(), network_retries=2, network_retry_backoff_seconds=0)
 
     with pytest.raises(LLMBadRequestError):
@@ -1290,6 +1309,7 @@ def test_stream_does_not_retry_permanent_provider_error(
 
 
 def test_stream_logs_privacy_safe_empty_response_shape(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1314,7 +1334,7 @@ def test_stream_logs_privacy_safe_empty_response_shape(
             ]
         )
 
-    monkeypatch.setattr(_COMPLETION, fake_completion)
+    patch_completion(fake_completion)
     caplog.set_level(logging.INFO, logger="llm_providers.client")
     client = LLMClient(_spec(), network_retries=0)
 
@@ -1336,6 +1356,7 @@ def test_stream_logs_privacy_safe_empty_response_shape(
 
 
 def test_stream_emits_content_free_reasoning_activity(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     secret_reasoning = "private chain of thought"
@@ -1372,7 +1393,7 @@ def test_stream_emits_content_free_reasoning_activity(
             ]
         )
 
-    monkeypatch.setattr(_COMPLETION, fake_completion)
+    patch_completion(fake_completion)
     events = list(LLMClient(_spec(), network_retries=0).stream([{"role": "user", "content": "hi"}]))
 
     activity = next(event for event in events if isinstance(event, LLMActivity))
@@ -1382,6 +1403,7 @@ def test_stream_emits_content_free_reasoning_activity(
 
 
 def test_stream_rejects_reasoning_only_output_budget_exhaustion(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fake_completion(**_kwargs: Any) -> Any:
@@ -1403,7 +1425,7 @@ def test_stream_rejects_reasoning_only_output_budget_exhaustion(
             ]
         )
 
-    monkeypatch.setattr(_COMPLETION, fake_completion)
+    patch_completion(fake_completion)
     client = LLMClient(_spec(), network_retries=0)
 
     with pytest.raises(LLMOutputBudgetExhaustedError):

@@ -173,6 +173,7 @@ class NotificationGenerator:
                 },
                 control=ModelCallControl(
                     cancel_check=check,
+                    deadline_monotonic=deadline,
                     allow_retries=False,
                     trace_context=ModelCallTraceContext(
                         operation="notification", call_kind="notification"
