@@ -75,3 +75,32 @@ def test_unknown_error_preserves_digest_not_untrusted_text() -> None:
             raise map_provider_error(raw) from None
     except LLMProviderError:
         assert "sk-secret" not in traceback.format_exc()
+
+
+@pytest.mark.parametrize(
+    "status,kind",
+    [(401, "authentication_error"), (401, "invalid_request_error"), (400, "authentication_error")],
+)
+@pytest.mark.parametrize("carrier", ["http", "stream", "terminal"])
+def test_authentication_overrides_generic_request_code(
+    status: int, kind: str, carrier: str
+) -> None:
+    http = HttpFailure("invalid_request_error", status)
+    http.body["error"]["type"] = kind
+    payload = {**http.body["error"], "status_code": status}
+    original: Exception = http
+    if carrier == "stream":
+        original = _ResponseFailure({"type": "error", "error": payload}, "resp")
+    elif carrier == "terminal":
+        original = _ResponseFailure(payload, "resp")
+
+    mapped = map_provider_error(original)
+
+    assert isinstance(mapped, LLMAuthError)
+    assert mapped.error_evidence is not None
+    assert mapped.error_evidence.category == "authentication"
+    assert mapped.error_evidence.status_code == status
+    assert mapped.error_evidence.code == "invalid_request_error"
+    assert mapped.error_evidence.error_type == kind
+    safe = json.dumps(asdict(mapped.error_evidence)) + str(mapped)
+    assert "private" not in safe and "sk-secret" not in safe

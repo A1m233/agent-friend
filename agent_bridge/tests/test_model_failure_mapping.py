@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import httpx
+import openai
 import pytest
 from agent.context.errors import ContextCompactionUnavailableError
 from agent_bridge.errors import map_exception
+from llm_providers.error_normalization import map_provider_error
 
 from llm_providers import (
     LLMAuthError,
@@ -50,3 +53,28 @@ def test_local_request_and_protocol_errors_keep_their_origin() -> None:
 
     assert map_exception(_invalid("unsupported request settings")).code == "model_request_invalid"
     assert map_exception(_protocol("expected an object")).code == "model_protocol_error"
+
+
+def test_http_401_with_generic_request_code_shows_credential_guidance() -> None:
+    original = openai.AuthenticationError(
+        "private provider detail",
+        response=httpx.Response(
+            401, request=httpx.Request("POST", "https://example.test/responses")
+        ),
+        body={
+            "error": {
+                "code": "invalid_request_error",
+                "type": "authentication_error",
+                "message": "private provider detail",
+            }
+        },
+    )
+
+    result = map_exception(map_provider_error(original))
+
+    assert result.http_status == 401
+    assert result.code == "auth_failed"
+    assert result.recoverable is False
+    assert "模型与凭据" in result.message
+    assert "请求格式" not in result.message
+    assert "private" not in result.message
