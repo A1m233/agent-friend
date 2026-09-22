@@ -211,6 +211,8 @@ def test_draft_probe_without_context_runs_bounded_generation_and_tool_roundtrip(
         def __init__(self, spec: Any, **kwargs: Any) -> None:
             assert spec.responses.model == "unknown-model"
             assert spec.api_key == "draft-secret"
+            assert spec.defaults["timeout"] == 25
+            assert spec.timeout_is_default is False
             assert kwargs == {"network_retries": 0, "engine_overload_retries": 0}
 
         def generate(self, request: ModelRequest) -> Any:
@@ -240,6 +242,8 @@ def test_draft_probe_without_context_runs_bounded_generation_and_tool_roundtrip(
     assert result["generation"]["status"] == result["tools"]["status"] == "passed"
     assert result["metadata"]["contextWindow"] is None
     assert len(calls) == 3 and all(not call.control.allow_retries for call in calls)
+    assert calls[0].control.deadline_monotonic is not None
+    assert len({call.control.deadline_monotonic for call in calls}) == 1
     assert calls[-1].messages[-1]["tool_call_id"] == "call-1"
     assert runtime.reader.path.read_bytes() == before
 

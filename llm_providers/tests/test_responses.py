@@ -290,12 +290,15 @@ def http_mock(monkeypatch: pytest.MonkeyPatch) -> Any:
     ],
 )
 def test_native_sdk_wire_and_normalized_events(
-    http_mock: Any, monkeypatch: pytest.MonkeyPatch, provider: str, model: str, path: str
+    patch_completion: Any,
+    http_mock: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    model: str,
+    path: str,
 ) -> None:
     requests = http_mock(text_events())
-    monkeypatch.setattr(
-        "llm_providers.client.litellm.completion", lambda **_: pytest.fail("Chat bridge called")
-    )
+    patch_completion(lambda **_: pytest.fail("Chat bridge called"))
     client = LLMClient(build_provider_spec(provider_id=provider, model_id=model, api_key="fixture"))
     events = list(client.stream(ModelRequest(messages=[{"role": "user", "content": "hi"}])))
     assert len(requests) == 1
@@ -814,7 +817,9 @@ def test_generate_accepts_unphased_result(http_mock: Any) -> None:
     assert client.complete([{"role": "user", "content": "hi"}]) == "plain JSON"
 
 
-def test_legacy_generate_and_stream_stay_chat(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_legacy_generate_and_stream_stay_chat(
+    patch_completion: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls: list[dict[str, Any]] = []
 
     def complete(**kwargs: Any) -> Any:
@@ -837,7 +842,7 @@ def test_legacy_generate_and_stream_stay_chat(monkeypatch: pytest.MonkeyPatch) -
             choices=[SimpleNamespace(message=SimpleNamespace(content="direct"))], usage=None
         )
 
-    monkeypatch.setattr("llm_providers.client.litellm.completion", complete)
+    patch_completion(complete)
     spec = build_provider_spec(provider_id="deepseek", api_key="fixture")
     client = LLMClient(replace(spec, responses=None))
     assert (

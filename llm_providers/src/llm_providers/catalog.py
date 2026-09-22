@@ -627,6 +627,7 @@ def build_provider_spec(
         api_key=key,
         api_base=model.api_base if model and model.api_base is not None else provider.api_base,
         defaults=defaults,
+        timeout_is_default=timeout_seconds is None,
         context_window=context_window or model_window,
         context_window_source=(
             "runtime_override" if context_window is not None else "catalog" if model else None
@@ -732,7 +733,7 @@ def replace_spec_model(
     """
 
     provider = provider_definition(infer_provider_id_from_model(model_id))
-    timeout = spec.defaults.get("timeout")
+    timeout = None if spec.timeout_is_default else spec.defaults.get("timeout")
     rebuilt = build_provider_spec(
         provider_id=provider.provider_id,
         api_key=spec.api_key,

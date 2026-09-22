@@ -99,6 +99,7 @@ class ProviderSpec:
     attachment_profile: str | None = None
     reasoning_replay_scope: str = "none"
     responses: ResponsesRoute | None = None
+    timeout_is_default: bool = False
 
     @classmethod
     def from_config(
@@ -136,6 +137,7 @@ class ProviderSpec:
             api_key=api_key,
             api_base=api_base,
             defaults=defaults,
+            timeout_is_default=config.timeout_seconds is None,
             context_window=config.context_window,
             context_window_source=("runtime_override" if config.context_window else None),
         )

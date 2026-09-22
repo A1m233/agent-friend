@@ -14,6 +14,7 @@ from llm_providers import (
 
 
 def test_openrouter_request_keeps_exact_model_and_route_constraints(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: dict[str, Any] = {}
@@ -25,7 +26,7 @@ def test_openrouter_request_keeps_exact_model_and_route_constraints(
             usage=None,
         )
 
-    monkeypatch.setattr("llm_providers.client.litellm.completion", completion)
+    patch_completion(completion)
     model = LLMClient(
         build_provider_spec(
             provider_id="openrouter",
@@ -65,16 +66,14 @@ def test_openrouter_request_keeps_exact_model_and_route_constraints(
 
 
 def test_openrouter_http_200_stream_error_uses_same_error_mapper(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     chunk = SimpleNamespace(
         error={"code": 402, "type": "payment_required", "message": "hidden"},
         choices=[],
     )
-    monkeypatch.setattr(
-        "llm_providers.client.litellm.completion",
-        lambda **_: iter([chunk]),
-    )
+    patch_completion(lambda **_: iter([chunk]))
     model = LLMClient(
         build_provider_spec(provider_id="openrouter", api_key="fixture-secret"),
         network_retries=0,

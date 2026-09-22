@@ -47,12 +47,12 @@ def chat_http(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Request]:
 
     def instrumented_client(
         spec: ProviderSpec, capture: ProviderRequestCapture
-    ) -> tuple[openai.OpenAI, openai.OpenAI]:
-        session = httpx.Client(
+    ) -> tuple[openai.AsyncOpenAI, openai.AsyncOpenAI]:
+        session = httpx.AsyncClient(
             transport=httpx.MockTransport(handler),
-            event_hooks={"request": [capture.observe]},
+            event_hooks={"request": [capture.observe_async]},
         )
-        client = openai.OpenAI(
+        client = openai.AsyncOpenAI(
             api_key=spec.api_key,
             base_url=spec.api_base,
             max_retries=0,
@@ -60,7 +60,7 @@ def chat_http(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Request]:
         )
         return client, client
 
-    monkeypatch.setattr("llm_providers.litellm_transport._sync_client", instrumented_client)
+    monkeypatch.setattr("llm_providers.litellm_transport._async_client", instrumented_client)
     return requests
 
 

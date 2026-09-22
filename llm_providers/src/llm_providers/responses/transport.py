@@ -13,6 +13,7 @@ import openai
 from ..cancellable_stream import CancellableAsyncStream, open_cancellable_stream
 from ..request_witness import ProviderRequestCapture, ProviderRequestWitness
 from ..spec import ProviderSpec
+from ..timeouts import ModelTimeoutPolicy
 
 
 class ResponsesSource:
@@ -67,10 +68,12 @@ def open_responses_stream(
     request: dict[str, Any],
     cancel_check: Callable[[], None] | None,
     timeout_seconds: float,
+    timeout_policy: ModelTimeoutPolicy | None = None,
 ) -> CancellableAsyncStream:
     return open_cancellable_stream(
         ResponsesSource(spec, request),
         cancel_check or (lambda: None),
         timeout_seconds=timeout_seconds,
+        timeout_policy=timeout_policy,
         thread_name="llm-responses-stream",
     )

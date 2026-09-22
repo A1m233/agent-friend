@@ -126,6 +126,7 @@ def test_prepare_request_is_exact_model_gated_and_non_mutating() -> None:
 
 
 def test_client_sync_keeps_litellm_safe_messages_and_adds_flat_wire_override(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: dict[str, Any] = {}
@@ -137,7 +138,7 @@ def test_client_sync_keeps_litellm_safe_messages_and_adds_flat_wire_override(
             usage=None,
         )
 
-    monkeypatch.setattr("llm_providers.client.litellm.completion", fake_completion)
+    patch_completion(fake_completion)
 
     response = LLMClient(_spec()).complete(_messages())
 
@@ -191,11 +192,11 @@ def test_client_stream_golden_http_body_uses_flat_deepseek_file_blocks(
     ]
 
     def instrumented_client(spec: ProviderSpec, capture: Any) -> tuple[Any, Any]:
-        session = httpx.Client(
+        session = httpx.AsyncClient(
             transport=httpx.MockTransport(handler),
-            event_hooks={"request": [capture.observe]},
+            event_hooks={"request": [capture.observe_async]},
         )
-        client = openai.OpenAI(
+        client = openai.AsyncOpenAI(
             api_key=spec.api_key,
             base_url=spec.api_base,
             max_retries=0,
@@ -203,7 +204,7 @@ def test_client_stream_golden_http_body_uses_flat_deepseek_file_blocks(
         )
         return client, client
 
-    monkeypatch.setattr("llm_providers.litellm_transport._sync_client", instrumented_client)
+    monkeypatch.setattr("llm_providers.litellm_transport._async_client", instrumented_client)
     events = list(
         LLMClient(
             _spec(
@@ -244,6 +245,7 @@ def test_client_stream_golden_http_body_uses_flat_deepseek_file_blocks(
 
 
 def test_cancellable_stream_keeps_litellm_transport_and_wire_override(
+    patch_completion: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: dict[str, Any] = {}
@@ -254,14 +256,14 @@ def test_cancellable_stream_keeps_litellm_transport_and_wire_override(
         options: dict[str, Any],
         cancel_check: Any,
         *,
-        timeout_seconds: float,
+        timeout_policy: Any,
     ) -> Any:
         seen.update(
             spec=spec,
             messages=messages,
             options=options,
             cancel_check=cancel_check,
-            timeout_seconds=timeout_seconds,
+            timeout_policy=timeout_policy,
         )
         return iter(
             [
@@ -281,9 +283,8 @@ def test_cancellable_stream_keeps_litellm_transport_and_wire_override(
         return None
 
     monkeypatch.setattr("llm_providers.client.open_cancellable_litellm_stream", fake_open)
-    monkeypatch.setattr(
-        "llm_providers.client.litellm.completion",
-        lambda **_kwargs: pytest.fail("cancellable route must use LiteLLM async transport"),
+    patch_completion(
+        lambda **_kwargs: pytest.fail("cancellable route must use LiteLLM async transport")
     )
 
     events = list(LLMClient(_spec()).stream(_messages(), _cancel_check=cancel_check))

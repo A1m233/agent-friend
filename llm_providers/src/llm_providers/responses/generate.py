@@ -20,6 +20,7 @@ def generate_responses(
         diagnostic_callback=request.control.diagnostic_callback,
         diagnostic_attempt=attempt,
         timeout_seconds=timeout_seconds,
+        timeout_policy=request.control.timeout_policy,
         previous_request_witness=request.control.previous_request_witness,
         stream_response=False,
     )

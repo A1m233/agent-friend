@@ -1715,7 +1715,16 @@ def test_network_retry_after_two_tools_does_not_repeat_tools(
             raise response
         return response
 
-    monkeypatch.setattr("llm_providers.client.litellm.completion", fake_completion)
+    async def completion(**kwargs: Any) -> Any:
+        chunks = fake_completion(**kwargs)
+
+        async def iterate() -> Any:
+            for chunk in chunks:
+                yield chunk
+
+        return iterate()
+
+    monkeypatch.setattr("llm_providers.client.litellm.acompletion", completion)
     client = LLMClient(
         ProviderSpec(model="deepseek/test", api_key="test", context_window=128_000),
         network_retries=1,

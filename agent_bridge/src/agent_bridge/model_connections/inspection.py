@@ -112,7 +112,7 @@ def probe(connection: ConnectionDefinition, key: str) -> dict[str, Any]:
     selection = directory.default_config(model_reference(connection.id, connection.models[0].id))
     spec = directory.build_spec(selection, api_key=key)
     client = LLMClient(
-        replace(spec, defaults={**spec.defaults, "timeout": 25}),
+        replace(spec, defaults={**spec.defaults, "timeout": 25}, timeout_is_default=False),
         network_retries=0,
         engine_overload_retries=0,
     )
@@ -122,7 +122,7 @@ def probe(connection: ConnectionDefinition, key: str) -> dict[str, Any]:
         if time.monotonic() >= deadline:
             raise TimeoutError()
 
-    control = ModelCallControl(cancel_check=check, allow_retries=False)
+    control = ModelCallControl(cancel_check=check, allow_retries=False, deadline_monotonic=deadline)
     result: dict[str, Any] = {
         "metadata": model_metadata(connection.models[0].name),
         "generation": {"status": "pending"},

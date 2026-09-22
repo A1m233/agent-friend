@@ -24,7 +24,9 @@ def _chunk(delta: object, *, finish_reason: str | None = None) -> object:
     )
 
 
-def test_stream_collects_reasoning_content_without_emitting_it_as_text(monkeypatch: Any) -> None:
+def test_stream_collects_reasoning_content_without_emitting_it_as_text(
+    patch_completion: Any, monkeypatch: Any
+) -> None:
     chunks = [
         _chunk(SimpleNamespace(reasoning_content="private ", content=None, tool_calls=[])),
         _chunk(SimpleNamespace(reasoning_content="state", content=None, tool_calls=[])),
@@ -34,7 +36,7 @@ def test_stream_collects_reasoning_content_without_emitting_it_as_text(monkeypat
             finish_reason="stop",
         ),
     ]
-    monkeypatch.setattr("llm_providers.client.litellm.completion", lambda **_: iter(chunks))
+    patch_completion(lambda **_: iter(chunks))
     client = LLMClient(
         build_provider_spec(
             provider_id="deepseek",
@@ -57,7 +59,9 @@ def test_stream_collects_reasoning_content_without_emitting_it_as_text(monkeypat
     assert "private state" not in repr(done.reasoning_state)
 
 
-def test_stream_preserves_reasoning_detail_chunks_in_order(monkeypatch: Any) -> None:
+def test_stream_preserves_reasoning_detail_chunks_in_order(
+    patch_completion: Any, monkeypatch: Any
+) -> None:
     first = {"type": "reasoning.text", "text": "part", "index": 0}
     second = {"type": "reasoning.encrypted", "data": "opaque", "index": 1}
     chunks = [
@@ -68,7 +72,7 @@ def test_stream_preserves_reasoning_detail_chunks_in_order(monkeypatch: Any) -> 
             finish_reason="stop",
         ),
     ]
-    monkeypatch.setattr("llm_providers.client.litellm.completion", lambda **_: iter(chunks))
+    patch_completion(lambda **_: iter(chunks))
     client = LLMClient(
         build_provider_spec(
             provider_id="openrouter",

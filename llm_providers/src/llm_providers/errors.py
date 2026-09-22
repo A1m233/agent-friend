@@ -56,6 +56,12 @@ class ErrorEvidence:
     message_length: int = 0
     retry_after_seconds: float | None = None
     protocol: ProtocolEvidence | None = None
+    timeout_stage: str | None = None
+    timeout_seconds: float | None = None
+    timeout_elapsed_seconds: float | None = None
+    timeout_source: str | None = None
+    timeout_last_activity: str | None = None
+    timeout_stage_elapsed_seconds: float | None = None
 
 
 class LLMError(Exception):

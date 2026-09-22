@@ -21,6 +21,7 @@ import openai
 from .cancellable_stream import CancellableAsyncStream, open_cancellable_stream
 from .request_witness import ProviderRequestCapture, ProviderRequestWitness
 from .spec import ProviderSpec
+from .timeouts import ModelTimeoutPolicy
 
 _OPENAI_VERSION = version("openai")
 
@@ -46,6 +47,13 @@ def _sync_client(spec: ProviderSpec, capture: ProviderRequestCapture) -> openai.
         base_url=spec.api_base,
         max_retries=0,
         http_client=http_client,
+    )
+
+
+def _async_client(spec: ProviderSpec, capture: ProviderRequestCapture) -> openai.AsyncOpenAI:
+    http_client = httpx.AsyncClient(event_hooks={"request": [capture.observe_async]})
+    return openai.AsyncOpenAI(
+        api_key=spec.api_key, base_url=spec.api_base, max_retries=0, http_client=http_client
     )
 
 
@@ -111,13 +119,7 @@ class KimiAsyncStreamSource:
             self.messages,
             self.transcript_item_domains,
         )
-        http_client = httpx.AsyncClient(event_hooks={"request": [self._capture.observe_async]})
-        self._client = openai.AsyncOpenAI(
-            api_key=self.spec.api_key,
-            base_url=self.spec.api_base,
-            max_retries=0,
-            http_client=http_client,
-        )
+        self._client = _async_client(self.spec, self._capture)
 
     async def open(self) -> AsyncIterator[Any]:
         assert self._client is not None
@@ -190,6 +192,7 @@ def open_cancellable_kimi_stream(
     cancel_check: Callable[[], None],
     *,
     timeout_seconds: float | None = None,
+    timeout_policy: ModelTimeoutPolicy | None = None,
     transcript_item_domains: tuple[str, ...] | None = None,
 ) -> CancellableAsyncStream:
     """Open a Kimi stream whose response-header wait can be explicitly cancelled."""
@@ -202,5 +205,6 @@ def open_cancellable_kimi_stream(
         KimiAsyncStreamSource(spec, messages, options, transcript_item_domains),
         cancel_check,
         timeout_seconds=timeout_seconds,
+        timeout_policy=timeout_policy,
         thread_name="kimi-cancellable-stream",
     )

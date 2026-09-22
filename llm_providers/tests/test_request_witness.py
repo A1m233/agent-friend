@@ -272,11 +272,11 @@ def test_non_stream_completion_captures_actual_http_body_and_compares_prefix(
         )
 
     def instrumented_client(spec: ProviderSpec, capture: Any) -> tuple[Any, Any]:
-        session = httpx.Client(
+        session = httpx.AsyncClient(
             transport=httpx.MockTransport(handler),
-            event_hooks={"request": [capture.observe]},
+            event_hooks={"request": [capture.observe_async]},
         )
-        client = openai.OpenAI(
+        client = openai.AsyncOpenAI(
             api_key=spec.api_key,
             base_url=spec.api_base,
             max_retries=0,
@@ -284,7 +284,7 @@ def test_non_stream_completion_captures_actual_http_body_and_compares_prefix(
         )
         return client, client
 
-    monkeypatch.setattr("llm_providers.litellm_transport._sync_client", instrumented_client)
+    monkeypatch.setattr("llm_providers.litellm_transport._async_client", instrumented_client)
     client = LLMClient(
         ProviderSpec(
             model="openai/test-model",
@@ -354,12 +354,12 @@ def test_kimi_direct_witness_comes_from_actual_http_body(
             content=chunks.encode(),
         )
 
-    def instrumented_client(spec: ProviderSpec, capture: Any) -> openai.OpenAI:
-        session = httpx.Client(
+    def instrumented_client(spec: ProviderSpec, capture: Any) -> openai.AsyncOpenAI:
+        session = httpx.AsyncClient(
             transport=httpx.MockTransport(handler),
-            event_hooks={"request": [capture.observe]},
+            event_hooks={"request": [capture.observe_async]},
         )
-        return openai.OpenAI(
+        return openai.AsyncOpenAI(
             api_key=spec.api_key,
             base_url=spec.api_base,
             max_retries=0,
@@ -367,7 +367,7 @@ def test_kimi_direct_witness_comes_from_actual_http_body(
         )
 
     monkeypatch.setattr(
-        "llm_providers.kimi_transport._sync_client",
+        "llm_providers.kimi_transport._async_client",
         instrumented_client,
     )
     client = LLMClient(
@@ -423,19 +423,19 @@ def test_same_request_retry_preserves_wire_body_and_reports_relation(
             content=chunks.encode(),
         )
 
-    def instrumented_client(spec: ProviderSpec, capture: Any) -> openai.OpenAI:
-        session = httpx.Client(
+    def instrumented_client(spec: ProviderSpec, capture: Any) -> openai.AsyncOpenAI:
+        session = httpx.AsyncClient(
             transport=httpx.MockTransport(handler),
-            event_hooks={"request": [capture.observe]},
+            event_hooks={"request": [capture.observe_async]},
         )
-        return openai.OpenAI(
+        return openai.AsyncOpenAI(
             api_key=spec.api_key,
             base_url=spec.api_base,
             max_retries=0,
             http_client=session,
         )
 
-    monkeypatch.setattr("llm_providers.kimi_transport._sync_client", instrumented_client)
+    monkeypatch.setattr("llm_providers.kimi_transport._async_client", instrumented_client)
     diagnostics: list[Any] = []
     client = LLMClient(
         ProviderSpec(
@@ -484,19 +484,19 @@ def test_consecutive_actual_http_requests_report_strict_extension(
             content=chunks.encode(),
         )
 
-    def instrumented_client(spec: ProviderSpec, capture: Any) -> openai.OpenAI:
-        session = httpx.Client(
+    def instrumented_client(spec: ProviderSpec, capture: Any) -> openai.AsyncOpenAI:
+        session = httpx.AsyncClient(
             transport=httpx.MockTransport(handler),
-            event_hooks={"request": [capture.observe]},
+            event_hooks={"request": [capture.observe_async]},
         )
-        return openai.OpenAI(
+        return openai.AsyncOpenAI(
             api_key=spec.api_key,
             base_url=spec.api_base,
             max_retries=0,
             http_client=session,
         )
 
-    monkeypatch.setattr("llm_providers.kimi_transport._sync_client", instrumented_client)
+    monkeypatch.setattr("llm_providers.kimi_transport._async_client", instrumented_client)
     client = LLMClient(
         ProviderSpec(
             model="openai/kimi-k2.6",

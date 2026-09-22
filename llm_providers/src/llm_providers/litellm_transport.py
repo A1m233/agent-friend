@@ -17,6 +17,7 @@ from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler
 from .cancellable_stream import CancellableAsyncStream, open_cancellable_stream
 from .request_witness import ProviderRequestCapture, ProviderRequestWitness
 from .spec import ProviderSpec
+from .timeouts import ModelTimeoutPolicy
 
 _LITELLM_VERSION = version("litellm")
 
@@ -272,6 +273,7 @@ def open_cancellable_litellm_stream(
     cancel_check: Callable[[], None],
     *,
     timeout_seconds: float | None = None,
+    timeout_policy: ModelTimeoutPolicy | None = None,
     transcript_item_domains: tuple[str, ...] | None = None,
 ) -> CancellableAsyncStream:
     """Open any LiteLLM-backed provider with interruptible header waiting."""
@@ -284,6 +286,7 @@ def open_cancellable_litellm_stream(
         ),
         cancel_check,
         timeout_seconds=timeout_seconds,
+        timeout_policy=timeout_policy,
         thread_name="litellm-cancellable-stream",
     )
 
@@ -295,6 +298,7 @@ def complete_cancellable_litellm(
     cancel_check: Callable[[], None],
     *,
     transcript_item_domains: tuple[str, ...] | None = None,
+    timeout_policy: ModelTimeoutPolicy | None = None,
 ) -> LiteLLMCompletion:
     """Await one Chat completion with cancellable HTTP and per-call cleanup.
 
@@ -316,6 +320,7 @@ def complete_cancellable_litellm(
             source,
             cancel_check,
             thread_name="litellm-cancellable-completion",
+            timeout_policy=timeout_policy,
         )
         response = next(stream)
         cancel_check()

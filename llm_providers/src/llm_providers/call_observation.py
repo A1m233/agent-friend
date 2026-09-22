@@ -28,6 +28,9 @@ class CallObservation:
     http_attempts: int = 0
     retry_plans: int = 0
     retry_stop: str | None = None
+    timeout_policy: dict[str, Any] | None = None
+    business_deadline: bool = False
+    business_remaining_seconds: float | None = None
 
     def plan_retry(self, error: LLMError, delay: float) -> None:
         self.retry_plans += 1
@@ -126,7 +129,15 @@ def observed_stream[**P, T](fn: Callable[P, Iterator[T]]) -> Callable[P, Iterato
     @wraps(fn)
     def run(*args: P.args, **kwargs: P.kwargs) -> Iterator[T]:
         observation = _new(args, kwargs)
-        upstream = fn(*args, **kwargs)
+        # stream() may resolve local policy before returning its lazy iterator.
+        token = current_call.set(observation)
+        try:
+            upstream = fn(*args, **kwargs)
+        except BaseException as exc:
+            observation.finish(exc)
+            raise
+        finally:
+            current_call.reset(token)
 
         def iterate() -> Iterator[T]:
             error: BaseException | None = None

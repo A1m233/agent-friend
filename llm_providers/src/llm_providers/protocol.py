@@ -19,6 +19,7 @@ from .stream_events import (
     LLMTransportDiagnostic,
     LLMUsage,
 )
+from .timeouts import ModelTimeoutPolicy
 
 if TYPE_CHECKING:
     from .catalog import ModelRuntimeConfig
@@ -49,6 +50,8 @@ class ModelCallControl:
     """Non-provider control signals for one model request."""
 
     cancel_check: Callable[[], None] | None = None
+    timeout_policy: ModelTimeoutPolicy | None = None
+    deadline_monotonic: float | None = None
     allow_retries: bool = True
     # Only consumers that can retract uncommitted text may enable this. Spoken
     # audio and integrations without reset support retain the conservative default.

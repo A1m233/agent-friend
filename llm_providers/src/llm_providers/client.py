@@ -19,7 +19,7 @@ import random
 import time
 from collections.abc import Callable, Iterator
 from contextlib import suppress
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from functools import cached_property
 from typing import Any, cast
 
@@ -41,14 +41,11 @@ from .errors import (
 )
 from .kimi_transport import (
     open_cancellable_kimi_stream,
-    open_kimi_stream,
     uses_kimi_stream_transport,
 )
 from .litellm_transport import (
     complete_cancellable_litellm,
-    complete_litellm,
     open_cancellable_litellm_stream,
-    open_litellm_stream,
 )
 from .prompt_cache_observation import (
     build_prompt_cache_observation,
@@ -79,6 +76,7 @@ from .stream_events import (
     ProviderAssistantTurn,
     ProviderToolCall,
 )
+from .timeouts import ModelTimeoutPolicy, controlled_cancel, resolve_timeout_policy
 from .usage import extract_stream_usage, extract_usage
 from .usage import usage_field as _usage_field
 
@@ -100,8 +98,8 @@ DEFAULT_ENGINE_OVERLOAD_RETRY_JITTER_RATIO = 0.25
 MAX_ENGINE_OVERLOAD_RETRY_DELAY_SECONDS = 30.0
 """交互请求单次过载退避的上限，避免异常响应让一轮会话长期挂起。"""
 
-DEFAULT_STREAM_TIMEOUT_SECONDS = 45.0
-"""聊天流等待响应头或下一条上游事件的最大静默时长；超时不自动重放。"""
+DEFAULT_STREAM_TIMEOUT_SECONDS = 300.0
+"""交互流默认阶段静默时限；没有整次调用累计时限。"""
 
 _HIDDEN_ACTIVITY_EMIT_INTERVAL_SECONDS = 2.0
 """不可见上游增量的状态事件节流间隔，避免把推理 token 逐个推给 UI。"""
@@ -254,7 +252,7 @@ class LLMClient:
         ),
         engine_overload_retry_jitter_ratio: float = (DEFAULT_ENGINE_OVERLOAD_RETRY_JITTER_RATIO),
         engine_overload_max_retry_delay_seconds: float = (MAX_ENGINE_OVERLOAD_RETRY_DELAY_SECONDS),
-        stream_timeout_seconds: float = DEFAULT_STREAM_TIMEOUT_SECONDS,
+        stream_timeout_seconds: float | None = None,
     ):
         if network_retries < 0:
             raise ValueError("network_retries 不能小于 0")
@@ -268,7 +266,7 @@ class LLMClient:
             raise ValueError("engine_overload_retry_jitter_ratio 不能小于 0")
         if engine_overload_max_retry_delay_seconds <= 0:
             raise ValueError("engine_overload_max_retry_delay_seconds 必须大于 0")
-        if stream_timeout_seconds <= 0:
+        if stream_timeout_seconds is not None and stream_timeout_seconds <= 0:
             raise ValueError("stream_timeout_seconds 必须大于 0")
         self.spec = spec
         self._network_retries = network_retries
@@ -368,7 +366,28 @@ class LLMClient:
         """Execute one provider-neutral non-streaming model request."""
 
         started = time.perf_counter()
-        cancel_check = request.control.cancel_check
+        cancel_check = controlled_cancel(
+            request.control.cancel_check, request.control.deadline_monotonic
+        )
+        policy = resolve_timeout_policy(
+            self.spec.defaults,
+            request.settings,
+            streaming=False,
+            provider_timeout_is_default=self.spec.timeout_is_default,
+            explicit=request.control.timeout_policy,
+        )
+        if (observation := current_call.get()) is not None:
+            observation.timeout_policy = asdict(policy)
+            observation.business_deadline = request.control.deadline_monotonic is not None
+            observation.business_remaining_seconds = (
+                max(0.0, request.control.deadline_monotonic - time.monotonic())
+                if request.control.deadline_monotonic is not None
+                else None
+            )
+        request = replace(
+            request,
+            control=replace(request.control, cancel_check=cancel_check, timeout_policy=policy),
+        )
         max_retries = (
             max(self._network_retries, self._engine_overload_retries)
             if request.control.allow_retries
@@ -386,7 +405,7 @@ class LLMClient:
                         generate_responses(
                             self.spec,
                             request,
-                            timeout_seconds=float(self.spec.defaults.get("timeout", 90.0)),
+                            timeout_seconds=policy.response_seconds,
                             attempt=attempt,
                         )
                         if self.spec.responses is not None
@@ -396,6 +415,7 @@ class LLMClient:
                             cancel_check=cancel_check,
                             previous_request_witness=request.control.previous_request_witness,
                             transcript_item_domains=request.control.transcript_item_domains,
+                            wait_policy=policy,
                             **settings,
                         )
                     )
@@ -575,6 +595,23 @@ class LLMClient:
                 overrides.pop("_previous_request_witness", None),
             )
             transcript_item_domains = None
+        cancel_check = controlled_cancel(cancel_check, control.deadline_monotonic)
+        policy = resolve_timeout_policy(
+            self.spec.defaults,
+            overrides,
+            streaming=True,
+            provider_timeout_is_default=self.spec.timeout_is_default,
+            explicit=control.timeout_policy,
+            legacy_stream_seconds=self._stream_timeout_seconds,
+        )
+        if (observation := current_call.get()) is not None:
+            observation.timeout_policy = asdict(policy)
+            observation.business_deadline = control.deadline_monotonic is not None
+            observation.business_remaining_seconds = (
+                max(0.0, control.deadline_monotonic - time.monotonic())
+                if control.deadline_monotonic is not None
+                else None
+            )
         upstream = self._stream_with_network_retries(
             self.spec,
             messages,
@@ -583,6 +620,7 @@ class LLMClient:
             cancel_check=cancel_check,
             previous_request_witness=previous_request_witness,
             transcript_item_domains=transcript_item_domains,
+            wait_policy=policy,
             allow_retries=control.allow_retries,
             allow_output_retries=control.allow_output_retries,
             retry_limit_remaining=control.retry_limit,
@@ -676,6 +714,7 @@ class LLMClient:
         allow_output_retries: bool = False,
         retry_limit_remaining: int | None = None,
         retry_attempt_offset: int = 0,
+        wait_policy: ModelTimeoutPolicy | None = None,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
         """Retry an uncommitted response using one bounded attempt budget."""
@@ -708,6 +747,7 @@ class LLMClient:
                 cancel_check=cancel_check,
                 previous_request_witness=relation_witness,
                 transcript_item_domains=transcript_item_domains,
+                wait_policy=wait_policy,
                 **overrides,
             )
             try:
@@ -865,6 +905,7 @@ class LLMClient:
         cancel_check: Callable[[], None] | None = None,
         previous_request_witness: ProviderRequestWitness | None = None,
         transcript_item_domains: tuple[str, ...] | None = None,
+        wait_policy: ModelTimeoutPolicy | None = None,
         **overrides: Any,
     ) -> ModelResponse:
         """单次同步调用 LiteLLM。
@@ -879,6 +920,13 @@ class LLMClient:
         # LiteLLM/OpenAI SDK 自带重试会与本层的有界重试相乘。统一关闭内层重试，
         # 让 attempt 数、总等待时间与可观测状态只有一个所有者。
         kwargs["max_retries"] = 0
+        policy = wait_policy or resolve_timeout_policy(
+            spec.defaults,
+            overrides,
+            streaming=False,
+            provider_timeout_is_default=spec.timeout_is_default,
+        )
+        kwargs["timeout"] = policy.http_timeout()
         request_messages, kwargs = prepare_litellm_request(spec, messages, kwargs)
         prepared_item_domains = (
             transcript_item_domains
@@ -889,22 +937,13 @@ class LLMClient:
         try:
             if cancel_check is not None:
                 cancel_check()
-            completion = (
-                complete_cancellable_litellm(
-                    spec,
-                    request_messages,
-                    kwargs,
-                    cancel_check,
-                    transcript_item_domains=prepared_item_domains,
-                )
-                if cancel_check is not None
-                else complete_litellm(
-                    spec,
-                    request_messages,
-                    kwargs,
-                    completion_call=litellm.completion,
-                    transcript_item_domains=prepared_item_domains,
-                )
+            completion = complete_cancellable_litellm(
+                spec,
+                request_messages,
+                kwargs,
+                cancel_check or (lambda: None),
+                transcript_item_domains=prepared_item_domains,
+                timeout_policy=policy,
             )
         except BaseException as e:
             if cancel_check is not None:
@@ -1007,6 +1046,7 @@ class LLMClient:
         cancel_check: Callable[[], None] | None = None,
         previous_request_witness: ProviderRequestWitness | None = None,
         transcript_item_domains: tuple[str, ...] | None = None,
+        wait_policy: ModelTimeoutPolicy | None = None,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
         """单次流式调用 LiteLLM（generator function）。
@@ -1036,6 +1076,13 @@ class LLMClient:
             流末——累积 ``stop_reason`` + ``usage`` 后一次性 yield。Provider 不支持
             ``include_usage`` 时 usage 为 ``None``，上层退化到字符估算。
         """
+        policy = wait_policy or resolve_timeout_policy(
+            spec.defaults,
+            overrides,
+            streaming=True,
+            provider_timeout_is_default=spec.timeout_is_default,
+            legacy_stream_seconds=self._stream_timeout_seconds,
+        )
         if spec.responses is not None:
             yield from stream_responses(
                 spec,
@@ -1045,17 +1092,14 @@ class LLMClient:
                 cancel_check=cancel_check,
                 diagnostic_callback=diagnostic_callback,
                 diagnostic_attempt=diagnostic_attempt,
-                timeout_seconds=self._stream_timeout_seconds,
+                timeout_seconds=policy.idle_seconds,
+                timeout_policy=policy,
                 previous_request_witness=previous_request_witness,
             )
             return
         kwargs: dict[str, Any] = {**spec.defaults, **overrides}
         kwargs["max_retries"] = 0
-        configured_timeout = kwargs.get("timeout")
-        if isinstance(configured_timeout, (int, float)):
-            kwargs["timeout"] = min(float(configured_timeout), self._stream_timeout_seconds)
-        elif configured_timeout is None:
-            kwargs["timeout"] = self._stream_timeout_seconds
+        kwargs["timeout"] = policy.http_timeout()
         if tools:
             kwargs["tools"] = tools
         # 009：默认请求尾 chunk 带 usage；调用方可经 defaults/overrides 覆盖
@@ -1105,37 +1149,21 @@ class LLMClient:
             if cancel_check is not None:
                 cancel_check()
             if uses_kimi_stream_transport(spec):
-                response = (
-                    open_cancellable_kimi_stream(
-                        spec,
-                        request_messages,
-                        kwargs,
-                        cancel_check,
-                        timeout_seconds=self._stream_timeout_seconds,
-                        **contributor_options,
-                    )
-                    if cancel_check is not None
-                    else open_kimi_stream(
-                        spec,
-                        request_messages,
-                        kwargs,
-                        **contributor_options,
-                    )
+                response = open_cancellable_kimi_stream(
+                    spec,
+                    request_messages,
+                    kwargs,
+                    cancel_check or (lambda: None),
+                    timeout_policy=policy,
+                    **contributor_options,
                 )
-            elif cancel_check is not None:
+            else:
                 response = open_cancellable_litellm_stream(
                     spec,
                     request_messages,
                     kwargs,
-                    cancel_check,
-                    timeout_seconds=self._stream_timeout_seconds,
-                    **contributor_options,
-                )
-            else:
-                response = open_litellm_stream(
-                    spec,
-                    request_messages,
-                    kwargs,
+                    cancel_check or (lambda: None),
+                    timeout_policy=policy,
                     **contributor_options,
                 )
         except BaseException as e:
