@@ -8,11 +8,13 @@ import { captureQuoteSelection, type CapturedQuoteSelection } from "./messageQuo
 interface MessageQuoteSelectionActionProps {
   workspaceKey: string;
   disabled?: boolean;
+  onFocusComposer?: () => void;
 }
 
 export function MessageQuoteSelectionAction({
   workspaceKey,
   disabled = false,
+  onFocusComposer,
 }: MessageQuoteSelectionActionProps) {
   const addReference = useDraftStore((state) => state.addReference);
   const [captured, setCaptured] = useState<CapturedQuoteSelection | null>(null);
@@ -74,6 +76,7 @@ export function MessageQuoteSelectionAction({
         addReference(workspaceKey, reference);
         window.getSelection()?.removeAllRanges();
         setCaptured(null);
+        onFocusComposer?.();
       }}
     >
       <Quote className="size-3.5" />

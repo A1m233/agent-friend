@@ -15,12 +15,15 @@ import { MessageQuoteSelectionAction } from "./MessageQuoteSelectionAction";
 describe("MessageQuoteSelectionAction", () => {
   let container: HTMLDivElement;
   let root: Root;
+  let composer: HTMLTextAreaElement;
   let originalRangeRect: PropertyDescriptor | undefined;
 
   beforeEach(async () => {
     useDraftStore.setState({ workspaces: {}, submissions: {} });
     container = document.createElement("div");
     document.body.append(container);
+    composer = document.createElement("textarea");
+    document.body.append(composer);
     root = createRoot(container);
     originalRangeRect = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
     Object.defineProperty(Range.prototype, "getBoundingClientRect", {
@@ -28,7 +31,10 @@ describe("MessageQuoteSelectionAction", () => {
       value: () => ({ left: 12, top: 16, right: 40, bottom: 32, width: 28, height: 16 }),
     });
     await act(async () => {
-      root.render(createElement(MessageQuoteSelectionAction, { workspaceKey: "session-1" }));
+      root.render(createElement(MessageQuoteSelectionAction, {
+        workspaceKey: "session-1",
+        onFocusComposer: () => composer.focus(),
+      }));
     });
   });
 
@@ -43,7 +49,7 @@ describe("MessageQuoteSelectionAction", () => {
     }
   });
 
-  it("shows the quote action after selecting message text inside TDesign shadow roots", async () => {
+  it.each(["clear selection", "quote"])("handles %s after selecting message text inside TDesign shadow roots", async (actionType) => {
     const quoteHost = document.createElement("div");
     quoteHost.dataset.quoteableText = "true";
     quoteHost.dataset.quoteMessageId = "assistant-1";
@@ -90,6 +96,20 @@ describe("MessageQuoteSelectionAction", () => {
     expect(action?.style.left).toBe("26px");
     expect(action?.className).toContain("-translate-x-1/2");
     expect(action?.className).toContain("-translate-y-full");
+
+    if (actionType === "quote") {
+      const removeAllRanges = vi.fn();
+      getSelection.mockReturnValue({ ...selection, removeAllRanges } as Selection);
+      await act(async () => action?.click());
+
+      expect(useDraftStore.getState().workspaces["session-1"].references).toEqual([
+        expect.objectContaining({ quotedText: "beta" }),
+      ]);
+      expect(removeAllRanges).toHaveBeenCalledOnce();
+      expect(document.activeElement).toBe(composer);
+      expect(container.querySelector("button")).toBeNull();
+      return;
+    }
 
     getSelection.mockReturnValue({
       isCollapsed: true,
