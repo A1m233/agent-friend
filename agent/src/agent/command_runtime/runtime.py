@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import socket
 import subprocess
 import tempfile
 import threading
@@ -358,6 +359,32 @@ def managed_network_request(
             },
         },
     }
+
+
+def check_inherited_proxy(env: Mapping[str, str]) -> None:
+    """Check only configured loopback listeners; never probe a remote destination.
+
+    A listening port is not proof of working upstream connectivity. This preflight
+    only makes a dead inherited proxy actionable without silently bypassing it.
+    """
+    endpoints = {
+        (urlsplit(value).hostname, urlsplit(value).port)
+        for value in safe_loopback_proxy_environment(env).values()
+    }
+    for host, port in endpoints:
+        assert host is not None and port is not None
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                pass
+        except OSError as exc:
+            raise CommandRuntimeError(
+                "inherited_proxy_unavailable",
+                f"Configured local proxy {host}:{port} is not accepting connections. "
+                "The command was not started. Restore the configured proxy, or explicitly "
+                "correct the desktop application's inherited proxy configuration and restart "
+                "the application before retrying. Do not repeat the unchanged command or "
+                "bypass the proxy with direct/host execution.",
+            ) from exc
 
 
 class CommandRuntime:
@@ -886,6 +913,10 @@ class CommandRuntime:
                 "windows_sandbox_setup_required",
                 "Windows command sandbox is not initialized; run the explicit setup action first",
             )
+        permissions = sandbox.get("permissions") if sandbox is not None else None
+        network_enabled = isinstance(permissions, dict) and permissions.get("network") == "enabled"
+        if network_enabled:
+            check_inherited_proxy(env)
         client = self._ensure_client()
         process_id = process_id or f"proc_{uuid4().hex}"
         if not process_id.startswith("proc_"):
@@ -908,8 +939,6 @@ class CommandRuntime:
         state = _ProcessState(snapshot)
         with self._lock:
             self._processes[process_id] = state
-        permissions = sandbox.get("permissions") if sandbox is not None else None
-        network_enabled = isinstance(permissions, dict) and permissions.get("network") == "enabled"
         params = {
             "processId": process_id,
             "argv": list(argv),

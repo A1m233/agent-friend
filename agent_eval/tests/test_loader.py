@@ -29,7 +29,7 @@ def test_loads_builtin_cases() -> None:
         ("C14", "user-intent-attribution-calibration", 3),
         ("C15", "unprompted-self-evaluation-restraint", 2),
         ("C16", "model-motive-story-calibration", 2),
-        ("C17", "future-action-commitment-grounding", 5),
+        ("C17", "future-action-commitment-grounding", 6),
         ("C18", "clarification-action-consistency", 6),
         ("C19", "source-authority-calibration", 5),
         ("C20", "skill-semantic-activation", 11),
@@ -458,7 +458,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     meta = build_case_set_meta(CASES_DIR, contracts)
 
     assert meta.total_contracts == 28
-    assert meta.total_cases == 247
+    assert meta.total_cases == 248
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -476,7 +476,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C14": 3,
         "C15": 2,
         "C16": 2,
-        "C17": 5,
+        "C17": 6,
         "C18": 6,
         "C19": 5,
         "C20": 11,

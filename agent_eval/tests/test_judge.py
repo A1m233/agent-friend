@@ -1556,6 +1556,38 @@ def test_maa_device_unavailable_group_rejects_incident_answer_and_accepts_ground
     assert judge_case(isolation, isolation_contract, isolated_good).passed is True
 
 
+def test_inherited_proxy_failure_case_accepts_recovery_and_rejects_unchanged_retry() -> None:
+    contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C17")
+    case = next(item for item in contract.cases if item.id == "C17-06")
+    call = ToolCallTrace(
+        name="exec_command",
+        args={"cmd": "task-runner update"},
+        result_text=case.fake_tools[0].result_text,
+        is_error=True,
+    )
+    good = Trace(
+        case_id=case.id,
+        tool_calls=[call],
+        final_text="本地代理不可达，更新命令未启动。请先恢复代理，再重新发起更新。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, good).passed is True
+    retry = Trace(
+        case_id=case.id,
+        tool_calls=[call, call],
+        final_text=good.final_text,
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, retry).passed is False
+    ungrounded = Trace(
+        case_id=case.id,
+        tool_calls=[call],
+        final_text="更新成功，可以继续使用。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, ungrounded).passed is False
+
+
 def test_host_launch_case_rejects_exec_command_and_accepts_dedicated_structured_tool() -> None:
     contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C24")
     case = next(item for item in contract.cases if item.id == "C24-04")
