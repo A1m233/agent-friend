@@ -1,4 +1,4 @@
-import type { AssistantPhase, ChatMessage } from "@/types/chat";
+import type { AssistantPhase, ChatMessage, TextBlock } from "@/types/chat";
 import { normalizeAssistantPhase } from "@/stores/assistantPhase";
 import type { MessagePresentationSegment } from "./toolActivityPresentation";
 import type { SocialAuthRequestStatus } from "@/services";
@@ -25,6 +25,18 @@ export interface ExecutionDisclosurePolicy {
 
 export function executionDisclosurePolicy(message: ChatMessage): ExecutionDisclosurePolicy {
   const unavailable: ExecutionDisclosurePolicy = { source: "none", processTextIds: [], collapse: false };
+  // Unsuccessful runs remain expanded by default. Only known progress text and
+  // tools are foldable; keep the last text and all unclassified output visible.
+  if (message.role === "assistant" && message.runId
+    && (message.status === "error" || message.status === "interrupted")) {
+    const texts = message.blocks.filter((block): block is TextBlock => block.kind === "text" && !!block.text.trim());
+    const retainedTextId = texts.at(-1)?.mid;
+    return {
+      source: "mixed", retainedTextId, collapse: false,
+      processTextIds: texts.filter((block) => block.mid !== retainedTextId
+        && block.phase === "commentary").map((block) => block.mid),
+    };
+  }
   // Run mode is historical capability metadata, not a presentation gate.
   const completed = message.status === "complete" && message.runOutcome === "completed";
   const streaming = message.status === "streaming" && message.runOutcome === undefined;

@@ -2,7 +2,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
-import { ExecutionDisclosure } from "./ExecutionDisclosure";
+import { ExecutionDisclosure, ExecutionDisclosureStateProvider } from "./ExecutionDisclosure";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -29,11 +29,56 @@ it("starts open, collapses on completion, respects manual state and reveals a se
     await act(async () => container.querySelector("button")?.click());
     await render(true, "source-a");
     expect(container.textContent).toContain("progress text");
+    await render(true);
+    expect(container.textContent).not.toContain("progress text");
     expect(onDisclosureChange).toHaveBeenCalled();
   } finally {
     await act(async () => root.unmount());
     container.remove();
   }
+});
+
+it("keeps active work open without a control and collapses when interaction becomes available", async () => {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const render = async (interactive: boolean, revealTarget?: string) => act(async () => root.render(
+    createElement(ExecutionDisclosure, { enabled: true, interactive, collapse: true,
+      label: "Status", revealTarget, children: (open: boolean) => open ? "process" : null }),
+  ));
+  try {
+    await render(false, "search");
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.textContent).toContain("process");
+    await render(false);
+    await render(true);
+    expect(container.textContent).not.toContain("process");
+    await act(async () => container.querySelector("button")?.click());
+    expect(container.textContent).toContain("process");
+    await render(false);
+    await render(true);
+    expect(container.textContent).not.toContain("process");
+  } finally { await act(async () => root.unmount()); }
+});
+
+it("does not persist a search reveal across virtualized remounts", async () => {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const render = async (mounted: boolean, revealTarget?: string) => act(async () => root.render(
+    createElement(ExecutionDisclosureStateProvider, { children: mounted
+      ? createElement(ExecutionDisclosure, { disclosureId: "run", enabled: true, collapse: true,
+        label: "Status", revealTarget, children: (open: boolean) => open ? "process" : null }) : null }),
+  ));
+  try {
+    await render(true, "search");
+    expect(container.textContent).toContain("process");
+    await render(false);
+    await render(true);
+    expect(container.textContent).not.toContain("process");
+    await act(async () => container.querySelector("button")?.click());
+    await render(false);
+    await render(true);
+    expect(container.textContent).toContain("process");
+  } finally { await act(async () => root.unmount()); }
 });
 
 it("has one control for all process sections and no control for unsupported runs", async () => {

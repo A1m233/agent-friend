@@ -12,6 +12,31 @@ function DurationFixture({ message }: { message: ChatMessage }) {
   return createElement(RunExecutionDisclosure, { message, enabled: false, collapse: false, children: () => null });
 }
 
+it.each(["complete", "error", "interrupted"] as const)("enables manual disclosure only after %s", async (status) => {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  let message: ChatMessage = { id: "m", runId: "r", role: "assistant", blocks: [],
+    status: "streaming", createdAt: "t", runStartedAt: "2026-09-05T00:00:00Z" };
+  const render = () => act(async () => root.render(createElement(RunExecutionDisclosure, {
+    message, enabled: true, collapse: status === "complete",
+    children: (open: boolean) => open ? "process" : null,
+  })));
+  try {
+    await render();
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.textContent).toContain("process");
+    message = { ...message, status };
+    await render();
+    expect(container.querySelector("button")?.getAttribute("aria-expanded")).toBe(String(status !== "complete"));
+    await act(async () => container.querySelector("button")?.click());
+    expect(container.querySelector("button")?.getAttribute("aria-expanded")).toBe(String(status === "complete"));
+    state.runSnapshots.r = { run_id: "r", status: "running", started_at: message.runStartedAt } as RunSnapshot;
+    await render();
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.textContent).toContain("process");
+  } finally { await act(async () => root.unmount()); state.runSnapshots = {}; }
+});
+
 const state = vi.hoisted(() => ({
   runSnapshots: {} as Record<string, RunSnapshot>,
   runCalibrationPhase: "ready" as RunCalibrationPhase,
@@ -58,7 +83,7 @@ it.each([false, true])("hides the whole header until admission/start without cou
     await render();
     expect(container.querySelector("[data-run-duration]")?.textContent).toBe("已进行 0秒");
     expect(container.querySelectorAll("[data-run-separator]")).toHaveLength(1);
-    expect(container.querySelectorAll("button")).toHaveLength(enabled ? 1 : 0);
+    expect(container.querySelectorAll("button")).toHaveLength(0);
     expect(container.querySelector("[data-body]")).toBe(body);
     await act(async () => vi.advanceTimersByTime(1000));
     expect(container.querySelector("[data-run-duration]")?.textContent).toBe("已进行 1秒");
