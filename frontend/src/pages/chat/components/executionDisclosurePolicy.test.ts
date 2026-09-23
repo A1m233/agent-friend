@@ -83,8 +83,6 @@ describe("execution disclosure without native assistant phases", () => {
   });
 
   it.each([
-    { status: "interrupted", runOutcome: "cancelled" },
-    { status: "error", runOutcome: "failed" },
     { runOutcome: "skipped" },
     { runOutcome: "expired" },
     { runOutcome: "rejected" },
@@ -212,7 +210,7 @@ describe("history and stream projection use the same fallback evidence", () => {
     expect(executionDisclosurePolicy(history({ status: "completed" })))
       .toMatchObject({ source: "inferred", retainedTextId: "answer", collapse: true });
     expect(executionDisclosurePolicy(history({ status: "interrupted", recovered: true })))
-      .toMatchObject({ source: "none", collapse: false });
+      .toMatchObject({ source: "mixed", collapse: false });
   });
 
   it("allows old history with trusted run completion without backfilling a phase fact", () => {
@@ -248,6 +246,16 @@ describe("history and stream projection use the same fallback evidence", () => {
 });
 
 describe("unified execution disclosure", () => {
+  it.each(["error", "interrupted"] as const)("allows manual folding after %s without hiding the last response", (status) => {
+    const message = completed([text("before", "Progress", "commentary"),
+      tool("lookup", { status: "error" }), text("last", "Partial response", "commentary")], {
+      status, runOutcome: status === "error" ? "failed" : "cancelled", error: status === "error" ? "Failure" : undefined,
+    });
+    expect(executionDisclosurePolicy(message)).toMatchObject({ collapse: false, retainedTextId: "last" });
+    expect(partition(message).process).toHaveLength(2);
+    expect(partition(message).visible).toMatchObject([{ kind: "block", block: { mid: "last" } }]);
+  });
+
   it.each([
     ["commentary", "final_answer"],
     ["commentary", "commentary"],

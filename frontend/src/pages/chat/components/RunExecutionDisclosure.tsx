@@ -12,6 +12,8 @@ export function RunExecutionDisclosure({ message, ...props }: {
   const snapshot = useConversationStore((state) => message.runId ? state.runSnapshots[message.runId] : undefined);
   const calibration = useConversationStore((state) => state.runCalibrationPhase);
   const run = snapshot?.status === "terminal" || calibration === "ready" ? snapshot : undefined;
-  return <ExecutionDisclosure {...props} showHeader={!isRunAwaitingStart(message, run)}
+  const interactive = run ? run.status === "terminal" : message.status !== "streaming";
+  return <ExecutionDisclosure {...props} interactive={interactive} showHeader={!isRunAwaitingStart(message, run)}
+    collapse={props.collapse && (!run || run.outcome === "completed")}
     label={<RunDurationLabel key={run?.started_at ?? message.runStartedAt} message={message} run={run} />} />;
 }
