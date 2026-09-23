@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import subprocess
 import sys
 import time
 import zipfile
@@ -12,6 +13,163 @@ from typing import cast
 
 import pytest
 from agent.skills import SkillCatalogService, SkillSelection
+
+
+class _WindowsPathTooLongError(OSError):
+    winerror = 206
+
+
+def test_archive_flattens_commit_wrapper_inside_authorized_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_installer()
+    destination = tmp_path / ("t" * max(1, 155 - len(str(tmp_path))))
+    destination.mkdir()
+    payload = io.BytesIO()
+    wrapper = "maa-daily-skill-" + "a" * 40
+    relative = "maa-daily/assets/strict-credit-recruit-permit/tasks/task.json"
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr(f"{wrapper}/{relative}", "{}")
+    monkeypatch.setattr(module, "_request", lambda _url: payload.getvalue())
+    original_makedirs = module.os.makedirs
+
+    def windows_makedirs(path: str, *args: object, **kwargs: object) -> None:
+        if len(str(path)) >= 248:
+            raise _WindowsPathTooLongError("directory path too long")
+        original_makedirs(path, *args, **kwargs)
+
+    monkeypatch.setattr(module.os, "makedirs", windows_makedirs)
+    assert len(str(destination / wrapper / relative).rsplit("task.json", 1)[0]) >= 248
+    extracted = Path(module._download_repo_zip("fixture", "repo", "a" * 40, str(destination)))
+    assert extracted == destination / "repo"
+    assert (extracted / relative).read_text("utf-8") == "{}"
+    assert not (destination / wrapper).exists()
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "../escape",
+        "/absolute",
+        "root/../../escape",
+        "root/../escape",
+        "root/C:/escape",
+        "root/..\\escape",
+    ],
+)
+def test_flattening_rejects_unsafe_members_before_writing(tmp_path: Path, unsafe: str) -> None:
+    module = _load_installer()
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("root/SKILL.md", "safe")
+        archive.writestr(unsafe, "unsafe")
+    with zipfile.ZipFile(payload) as archive, pytest.raises(module.InstallError):
+        module._safe_extract_zip(archive, str(tmp_path))
+    assert not (tmp_path / "repo").exists()
+
+
+@pytest.mark.parametrize("kind", ["length", "permission", "corrupt"])
+def test_archive_failure_keeps_installed_skill_and_source_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], kind: str
+) -> None:
+    module = _load_installer()
+    personal, downloads = tmp_path / "personal", tmp_path / "downloads"
+    downloads.mkdir()
+    assert _install_fixture(module, monkeypatch, personal, downloads, _fixture_archive()) == 0
+    lock = personal / ".agent-friend-skill-lock.json"
+    before = lock.read_bytes(), module.package_digest(personal / "fixture-skill")
+    if kind == "corrupt":
+        monkeypatch.setattr(module, "_request", lambda _url: b"not a zip")
+        code = "archive_invalid"
+    else:
+        error = (
+            PermissionError("write denied")
+            if kind == "permission"
+            else _WindowsPathTooLongError("long path")
+        )
+
+        def fail_extract(*_args: object) -> str:
+            raise error
+
+        monkeypatch.setattr(module, "_safe_extract_zip", fail_extract)
+        code = "archive_io_failed" if kind == "permission" else "archive_path_too_long"
+    assert module.main(["--update", "fixture-skill"]) == 1
+    assert f"Error [{code}]" in capsys.readouterr().err
+    assert before == (lock.read_bytes(), module.package_digest(personal / "fixture-skill"))
+
+
+def test_auto_download_failure_retains_each_transport_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_installer()
+
+    def api_failed(*_args: object) -> str:
+        raise module.InstallError("proxy refused", code="resolve_failed")
+
+    def git_failed(url: str, *_args: object) -> str:
+        raise module.InstallError("https failure" if url.startswith("https:") else "ssh failure")
+
+    monkeypatch.setattr(module, "_api_commit", api_failed)
+    monkeypatch.setattr(module, "_git_sparse_checkout", git_failed)
+    with pytest.raises(module.InstallError) as failure:
+        module._prepare_repo(module.Source("fixture", "repo", "main", ["."]), "auto", str(tmp_path))
+    assert all(
+        message in str(failure.value)
+        for message in ["proxy refused", "https failure", "ssh failure"]
+    )
+
+
+@pytest.mark.parametrize("retry_ok", [True, False])
+def test_git_schannel_retry_is_process_local_and_bounded(
+    monkeypatch: pytest.MonkeyPatch, retry_ok: bool
+) -> None:
+    module = _load_installer()
+    monkeypatch.setattr(sys, "platform", "win32")
+    original = "schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS (0x8009030E)"
+    calls: list[list[str]] = []
+
+    def run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if len(calls) == 1:
+            return subprocess.CompletedProcess(args, 128, "", original)
+        return subprocess.CompletedProcess(args, 0 if retry_ok else 128, "refs\n", "openssl failed")
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    command = ["git", "-C", "repo", "fetch", "origin", "main"]
+    if retry_ok:
+        assert module._run_git(command) == "refs"
+    else:
+        with pytest.raises(module.InstallError) as failure:
+            module._run_git(command)
+        assert original in str(failure.value) and "openssl failed" in str(failure.value)
+    assert calls == [
+        command,
+        ["git", "-c", "http.sslBackend=openssl", "-c", "http.sslVerify=true", *command[1:]],
+    ]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Authentication failed",
+        "SSL certificate problem",
+        "Could not resolve host",
+        "schannel: certificate verify failed",
+    ],
+)
+def test_git_does_not_retry_other_errors(monkeypatch: pytest.MonkeyPatch, message: str) -> None:
+    module = _load_installer()
+    monkeypatch.setattr(sys, "platform", "win32")
+    calls = []
+
+    def run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 128, "", message)
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    with pytest.raises(module.InstallError):
+        module._run_git(["git", "fetch"])
+    assert len(calls) == 1
 
 
 def _load_installer(*, mock_api: bool = True) -> ModuleType:
