@@ -160,7 +160,11 @@ def _result(
         meta["executed"] = executed
     if authorization_requested is not None:
         meta["authorization_requested"] = authorization_requested
-    if error_kind in {"windows_sandbox_setup_required", "command_runtime_unavailable"}:
+    if error_kind in {
+        "windows_sandbox_setup_required",
+        "command_runtime_unavailable",
+        "inherited_proxy_unavailable",
+    }:
         meta["requires_user_action"] = True
         meta["no_progress_family"] = error_kind
     elif error_kind in {
@@ -227,6 +231,12 @@ def _command_runtime_error_result(
 ) -> ToolResult:
     if exc.code == "command_runtime_unavailable":
         return _command_runtime_unavailable_result()
+    if exc.code == "inherited_proxy_unavailable":
+        return _result(
+            {"status": "failed", "error": exc.code, "message": str(exc), "executed": False},
+            error=True,
+            executed=False,
+        )
     return _result(
         {"status": fallback_status, "error": exc.code, "message": str(exc)},
         error=True,

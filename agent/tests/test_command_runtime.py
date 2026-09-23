@@ -5,6 +5,7 @@ import json
 import locale
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -31,6 +32,7 @@ from agent.command_runtime.models import (
 )
 from agent.command_runtime.runtime import (
     _windows_setup_process_detail,
+    check_inherited_proxy,
     managed_network_request,
     path_to_file_uri,
     safe_loopback_proxy_environment,
@@ -51,6 +53,7 @@ from agent.command_runtime.tools import (
     TerminateCommandTool,
     WriteStdinTool,
     _bounded_process_result,
+    _command_runtime_error_result,
     _result,
     make_command_tools,
 )
@@ -68,6 +71,78 @@ from agent.tool_runtime import ToolRunContext
 from agent.tools import ToolRegistry
 
 FIXTURE = Path(__file__).parent / "fixtures" / "fake_exec_server.py"
+
+
+def test_inherited_proxy_checks_listener_without_sending_data() -> None:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        check_inherited_proxy({"HTTPS_PROXY": f"http://127.0.0.1:{port}"})
+        connection, _ = listener.accept()
+        with connection:
+            connection.settimeout(1)
+            assert connection.recv(1) == b""
+
+
+def test_dead_inherited_proxy_does_not_start_command_or_allocate_process(
+    runtime: CommandRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refused(*_args: object, **_kwargs: object) -> None:
+        raise ConnectionRefusedError()
+
+    monkeypatch.setattr(socket, "create_connection", refused)
+
+    def unexpected_client() -> None:
+        pytest.fail("exec-server must not start when the inherited proxy is unavailable")
+
+    monkeypatch.setattr(runtime, "_ensure_client", unexpected_client)
+    with pytest.raises(CommandRuntimeError) as failure:
+        runtime.start_process(
+            argv=("git", "fetch"),
+            workdir=FIXTURE.parent,
+            env={"HTTPS_PROXY": "http://127.0.0.1:15236"},
+            mode="buffered",
+            session_id="session-a",
+            run_id="run-a",
+            tool_call_id="call-a",
+            sandbox={"permissions": {"type": "managed", "network": "enabled"}},
+        )
+    assert failure.value.code == "inherited_proxy_unavailable"
+    assert "not started" in str(failure.value)
+    assert not runtime._processes
+
+
+def test_network_disabled_command_does_not_probe_inherited_proxy(
+    runtime: CommandRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unexpected_connection(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("network-restricted commands must not connect to a proxy")
+
+    monkeypatch.setattr(socket, "create_connection", unexpected_connection)
+    result = runtime.start_process(
+        argv=("shell", "-c", "echo"),
+        workdir=FIXTURE.parent,
+        env={"HTTPS_PROXY": "http://127.0.0.1:15236"},
+        mode="buffered",
+        session_id="session-a",
+        run_id="run-a",
+        tool_call_id="call-a",
+        sandbox={"permissions": {"type": "managed", "network": "restricted"}},
+    )
+    assert result.process_id
+
+
+def test_proxy_failure_tool_result_is_actionable() -> None:
+    result = _command_runtime_error_result(
+        CommandRuntimeError("inherited_proxy_unavailable", "proxy unavailable"),
+        fallback_status="failed",
+    )
+    assert result.is_error
+    assert result.meta["requires_user_action"] is True
+    assert result.meta["no_progress_family"] == "inherited_proxy_unavailable"
+    assert result.meta["executed"] is False
+    assert json.loads(result.text)["process_status"] == "not_started"
 
 
 @pytest.fixture

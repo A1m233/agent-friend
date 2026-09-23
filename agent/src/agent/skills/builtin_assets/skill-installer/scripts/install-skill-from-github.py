@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -79,9 +81,8 @@ class InstallError(Exception):
 
 
 def _tmp_root() -> str:
-    base = os.path.join(tempfile.gettempdir(), "agent-friend")
-    os.makedirs(base, exist_ok=True)
-    return base
+    # Stay inside the host-authorized TEMP root without adding another layer.
+    return tempfile.gettempdir()
 
 
 def _request(url: str) -> bytes:
@@ -122,15 +123,20 @@ def _download_repo_zip(owner: str, repo: str, ref: str, dest_dir: str) -> str:
         with open(zip_path, "wb") as file_handle:
             file_handle.write(payload)
         with zipfile.ZipFile(zip_path, "r") as zip_file:
-            _safe_extract_zip(zip_file, dest_dir)
-            top_levels = {name.split("/")[0] for name in zip_file.namelist() if name}
-    except (OSError, zipfile.BadZipFile) as exc:
+            return _safe_extract_zip(zip_file, dest_dir)
+    except zipfile.BadZipFile as exc:
         raise InstallError(f"Downloaded archive is invalid: {exc}", code="archive_invalid") from exc
-    if not top_levels:
-        raise InstallError("Downloaded archive was empty.")
-    if len(top_levels) != 1:
-        raise InstallError("Unexpected archive layout.")
-    return os.path.join(dest_dir, next(iter(top_levels)))
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 206 or exc.errno == errno.ENAMETOOLONG:
+            raise InstallError(
+                "Downloaded archive could not be extracted: path too long. "
+                "Use a shorter authorized temporary root before retrying; "
+                "the installed Skill and source record were not changed.",
+                code="archive_path_too_long",
+            ) from exc
+        raise InstallError(
+            f"Cannot write or extract downloaded archive: {exc}", code="archive_io_failed"
+        ) from exc
 
 
 def _run_git(args: list[str]) -> str:
@@ -139,18 +145,82 @@ def _run_git(args: list[str]) -> str:
     except OSError as exc:
         raise InstallError(f"Cannot run git: {exc}", code="git_failed") from exc
     if result.returncode != 0:
-        raise InstallError(result.stderr.strip() or "Git command failed.", code="git_failed")
+        original_error = result.stderr.strip() or "Git command failed."
+        if (
+            sys.platform == "win32"
+            and "schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS" in original_error
+        ):
+            # A bounded process-local compatibility retry, not a global Git setting.
+            # Do not retry authentication/certificate failures or disable verification.
+            try:
+                retry = subprocess.run(
+                    [
+                        args[0],
+                        "-c",
+                        "http.sslBackend=openssl",
+                        "-c",
+                        "http.sslVerify=true",
+                        *args[1:],
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+            except OSError as exc:
+                raise InstallError(
+                    f"Git Schannel failed: {original_error}\nOpenSSL retry could not start: {exc}",
+                    code="git_failed",
+                ) from exc
+            if retry.returncode == 0:
+                return retry.stdout.strip()
+            raise InstallError(
+                f"Git Schannel failed: {original_error}\n"
+                f"OpenSSL retry failed: {retry.stderr.strip() or 'Git command failed.'}",
+                code="git_failed",
+            )
+        raise InstallError(original_error, code="git_failed")
     return result.stdout.strip()
 
 
-def _safe_extract_zip(zip_file: zipfile.ZipFile, dest_dir: str) -> None:
-    dest_root = os.path.realpath(dest_dir)
+def _safe_extract_zip(zip_file: zipfile.ZipFile, dest_dir: str) -> str:
+    # Like pip's leading-directory flattening, omit GitHub's repo-<40-char-SHA>
+    # wrapper. Validate every member before writing anything; never normalize an
+    # unsafe member into an apparently safe relative path.
+    dest_root = os.path.realpath(os.path.join(dest_dir, "repo"))
+    members = []
+    top_levels = set()
     for info in zip_file.infolist():
-        extracted_path = os.path.realpath(os.path.join(dest_dir, info.filename))
-        if extracted_path == dest_root or extracted_path.startswith(dest_root + os.sep):
+        name = info.filename.rstrip("/")
+        parts = name.split("/")
+        if (
+            not name
+            or "\\" in name
+            or any(part in {"", ".", ".."} or ":" in part for part in parts)
+            or stat.S_ISLNK(info.external_attr >> 16)
+        ):
+            raise InstallError("Archive contains an unsafe member.", code="archive_invalid")
+        top_levels.add(parts[0])
+        if len(parts) == 1:
+            if not info.is_dir():
+                raise InstallError("Unexpected archive layout.", code="archive_invalid")
             continue
-        raise InstallError("Archive contains files outside the destination.")
-    zip_file.extractall(dest_dir)
+        target = os.path.realpath(os.path.join(dest_root, *parts[1:]))
+        if not target.startswith(dest_root + os.sep):
+            raise InstallError(
+                "Archive contains files outside the destination.", code="archive_invalid"
+            )
+        members.append((info, target))
+    if len(top_levels) != 1 or not members:
+        raise InstallError(
+            "Archive must contain one nonempty root directory.", code="archive_invalid"
+        )
+    for info, target in members:
+        if info.is_dir():
+            os.makedirs(target, exist_ok=True)
+        else:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with zip_file.open(info) as source, open(target, "xb") as destination:
+                shutil.copyfileobj(source, destination)
+    return dest_root
 
 
 def _validate_relative_path(path: str) -> None:
@@ -263,6 +333,7 @@ def _build_repo_ssh(owner: str, repo: str) -> str:
 
 
 def _prepare_repo(source: Source, method: str, tmp_dir: str) -> str:
+    download_error: InstallError | None = None
     if method in ("download", "auto"):
         try:
             if source.check_branch:
@@ -281,7 +352,7 @@ def _prepare_repo(source: Source, method: str, tmp_dir: str) -> str:
             if exc.code in {"download_failed", "resolve_failed"} or str(exc).startswith(
                 "Download failed: HTTP "
             ):
-                pass
+                download_error = exc
             else:
                 raise
     if method in ("git", "auto"):
@@ -296,7 +367,12 @@ def _prepare_repo(source: Source, method: str, tmp_dir: str) -> str:
                 return _git_sparse_checkout(repo_url, source, tmp_dir)
             except InstallError as ssh_exc:
                 raise InstallError(
-                    f"HTTPS git clone failed: {https_exc}\nSSH git clone failed: {ssh_exc}"
+                    (
+                        f"API/ZIP download failed [{download_error.code}]: {download_error}\n"
+                        if download_error is not None
+                        else ""
+                    )
+                    + f"HTTPS git clone failed: {https_exc}\nSSH git clone failed: {ssh_exc}"
                 ) from ssh_exc
     raise InstallError("Unsupported method.")
 
@@ -632,7 +708,7 @@ def _run_install(args: Args, root: Path) -> None:
         targets=targets,
         replace_unmanaged=args.replace_unmanaged,
     )
-    temporary = tempfile.mkdtemp(prefix="skill-install-", dir=_tmp_root())
+    temporary = tempfile.mkdtemp(prefix="si-", dir=_tmp_root())
     try:
         repo_root = _prepare_repo(source, args.method, temporary)
         for source_path, skill_name in targets:
@@ -719,7 +795,7 @@ def _run_update(args: Args, root: Path) -> None:
         _write_receipt(root, skill_name, "pinned", record.content_sha256, record)
         print(f"Pinned: {skill_name}: {_describe_record(record)}; remote update check skipped.")
         return
-    temporary = tempfile.mkdtemp(prefix="skill-update-", dir=_tmp_root())
+    temporary = tempfile.mkdtemp(prefix="su-", dir=_tmp_root())
     candidate: Path | None = None
     try:
         repo_root = _prepare_repo(source, args.method, temporary)

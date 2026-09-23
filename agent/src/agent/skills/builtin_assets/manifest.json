@@ -22,7 +22,7 @@
       "source_commit": "9ded177ce7c1c0bd2047f902936c177612ab3434",
       "source_path": "codex-rs/skills/src/assets/samples/skill-installer",
       "license": "Apache-2.0",
-      "snapshot_sha256": "86c8cd4a4837e5f14cef9c78f2c292eb3afbe5f6a0004c0f92b4928d1d07d1d0",
+      "snapshot_sha256": "80e8d2f634f35b68a9c7e2c095bc3e62a433915594942cd852f6150d0ad7fddb",
       "retrieved_at": "2026-08-17",
       "compatibility_patches": [
         "Added agent-friend runtime capability and governed command instructions to SKILL.md.",
@@ -37,7 +37,8 @@
         "Regenerated agents/openai.yaml with agent-friend-facing Chinese metadata.",
         "Omitted optional icon assets while retaining the upstream Apache-2.0 license.",
         "Added run-owned structured update receipts and same-turn automatic reactivation instructions.",
-        "Separated branch sources, explicit pins, one-time revisions and commit verification; added legacy-aware v2 records, metadata-only transactions, and policy-aware update receipts."
+        "Separated branch sources, explicit pins, one-time revisions and commit verification; added legacy-aware v2 records, metadata-only transactions, and policy-aware update receipts.",
+        "Flattened the validated GitHub archive wrapper inside short authorized temp directories; distinguished archive I/O failures, retained API/ZIP transport errors, and added one process-local verified OpenSSL retry for Schannel credential initialization failure."
       ]
     },
     "agent-friend-guide": {
