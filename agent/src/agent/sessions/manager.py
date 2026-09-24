@@ -31,7 +31,11 @@ from llm_providers import (
 )
 
 from ..approvals.models import SessionApprovalModeState
-from ..command_runtime.workspace import session_workspace_path
+from ..command_runtime.workspace import (
+    reject_linked_path,
+    remove_readonly_file,
+    session_workspace_path,
+)
 from ..errors import AgentError
 from ..prompt_cache_trace import PromptCacheTraceTracker
 from ..time_provider import SystemTimeProvider, TimeProvider
@@ -494,8 +498,9 @@ class SessionManager:
             return
         try:
             if target.exists():
-                shutil.rmtree(target)
-        except OSError:
+                reject_linked_path(target)
+                shutil.rmtree(target, onexc=remove_readonly_file)
+        except (OSError, ValueError):
             logger.exception(
                 "failed to remove deleted session command workspace",
                 extra={"session_id": session_id, "path": str(target)},

@@ -43,6 +43,62 @@ class _CredentialStore(Protocol):
     def delete(self, name: str) -> None: ...
 
 
+def _smoke_session_files() -> dict[str, Any]:
+    """Exercise durable upload -> workspace -> restart -> readonly cleanup offline."""
+    import asyncio
+    from collections.abc import AsyncIterator
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from agent.attachments import AttachmentStore
+    from agent.session_files import SessionFileService
+    from agent.sessions import Event, JsonlSessionStore, Session, SessionManager
+    from agent.tools import ToolRegistry
+    from agent.tools.builtin.session_files import SessionFilesTool
+
+    data = b"%PDF-1.7\nFrozen session file smoke"
+
+    async def chunks() -> AsyncIterator[bytes]:
+        yield data
+
+    with tempfile.TemporaryDirectory(prefix="session-file-smoke-") as directory:
+        root = Path(directory)
+        sessions = JsonlSessionStore(root / "sessions")
+        session = Session.new(title="smoke", persona="default", model="fake", session_id="smoke")
+        sessions.create(session)
+        assets = AttachmentStore(root / "assets")
+        _, ref = asyncio.run(assets.import_stream(chunks(), display_name="report.pdf"))
+        sessions.append_event(
+            "smoke",
+            Event(
+                type="user_message",
+                uuid=str(uuid4()),
+                ts=datetime.now(UTC),
+                payload={"content": "read", "attachments": [ref.to_dict()]},
+            ),
+        )
+        service = SessionFileService(
+            JsonlSessionStore(root / "sessions"), assets, root / "workspace"
+        )
+        registry = ToolRegistry([SessionFilesTool(service)])
+        context = {"__agent_friend_current_session_id": "smoke"}
+        listing = registry.invoke("session_files", {"action": "list", **context})
+        file_ref = json.loads(listing.text)["files"][0]["file_ref"]
+        result = registry.invoke(
+            "session_files", {"action": "prepare", "file_ref": file_ref, **context}
+        )
+        if result.is_error:
+            raise RuntimeError(result.text)
+        prepared = json.loads(result.text)
+        path = Path(prepared["workspace"]) / prepared["relative_path"]
+        if path.read_bytes() != data or path.samefile(assets.verify(ref.asset_id)):
+            raise RuntimeError("session file copy identity mismatch")
+        SessionManager(store=sessions, command_workspaces_root=root / "workspace").delete("smoke")
+        if path.exists() or assets.verify(ref.asset_id).read_bytes() != data:
+            raise RuntimeError("session file cleanup changed canonical asset")
+    return {"restart": True, "verified_copy": True, "readonly_cleanup": True}
+
+
 def _runtime_root() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
@@ -1434,6 +1490,13 @@ def _doctor() -> int:
         }
     else:
         checks["capability:skill_catalog_hot_reload"] = {"ok": True, **skill_details}
+
+    try:
+        file_details = _smoke_session_files()
+    except Exception as exc:
+        checks["capability:session_files"] = {"ok": False, "error": str(exc)}
+    else:
+        checks["capability:session_files"] = {"ok": True, **file_details}
 
     try:
         filesystem_details = _smoke_filesystem_tools()

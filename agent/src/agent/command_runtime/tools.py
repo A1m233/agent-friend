@@ -53,7 +53,13 @@ from .runtime import (
     sandbox_context,
 )
 from .skill_snapshot import SkillExecutionSnapshot, prepare_skill_snapshot
-from .workspace import session_workspace_path
+from .workspace import (
+    MAX_SESSION_WORKSPACE_BYTES,
+    MAX_SESSION_WORKSPACE_FILE_BYTES,
+    MAX_SESSION_WORKSPACE_FILES,
+    check_workspace_budget,
+    session_workspace_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +78,6 @@ TERMINATION_CONFIRMATION_TIMEOUT_SECONDS = 5.0
 DEFAULT_TIMEOUT_SECONDS = 900.0
 MAX_TIMEOUT_SECONDS = 3600.0
 MAX_COMMAND_REASON_CHARS = 300
-MAX_SESSION_WORKSPACE_FILES = 2_000
-MAX_SESSION_WORKSPACE_FILE_BYTES = 25 * 1024 * 1024
-MAX_SESSION_WORKSPACE_BYTES = 100 * 1024 * 1024
 _WINDOWS_CMD_BUILTINS = {
     "assoc",
     "break",
@@ -1553,25 +1556,17 @@ class ExecCommandTool:
 
     @staticmethod
     def _check_session_workspace_budget(workdir: Path) -> None:
-        files = 0
-        total_bytes = 0
         try:
-            for candidate in workdir.rglob("*"):
-                if not candidate.is_file():
-                    continue
-                files += 1
-                size = candidate.stat().st_size
-                total_bytes += size
-                if size > MAX_SESSION_WORKSPACE_FILE_BYTES:
-                    raise CommandRuntimeError(
-                        "session_workspace_quota_exceeded",
-                        "会话命令目录中已有文件超过单文件大小限制；新的写入请求已拒绝",
-                    )
-                if files > MAX_SESSION_WORKSPACE_FILES or total_bytes > MAX_SESSION_WORKSPACE_BYTES:
-                    raise CommandRuntimeError(
-                        "session_workspace_quota_exceeded",
-                        "会话命令目录已超过容量限制；新的写入请求已拒绝",
-                    )
+            check_workspace_budget(
+                workdir,
+                max_file_bytes=MAX_SESSION_WORKSPACE_FILE_BYTES,
+                max_bytes=MAX_SESSION_WORKSPACE_BYTES,
+                max_files=MAX_SESSION_WORKSPACE_FILES,
+            )
+        except ValueError as exc:
+            raise CommandRuntimeError(
+                str(exc), "会话命令目录超过容量限制或存在不安全路径；新的写入请求已拒绝"
+            ) from exc
         except OSError as exc:
             raise CommandRuntimeError(
                 "session_workspace_usage_unavailable",

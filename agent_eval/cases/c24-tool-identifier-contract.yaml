@@ -13,6 +13,57 @@ contract:
   expected_behavior: response
 
 cases:
+  - id: C24-11
+    query: 请找到我之前上传的那份报告，先确认原文件身份并准备好，暂时不用读正文。
+    facet: 上传附件引用恢复 · 摘要只有文件名时从会话入口恢复身份
+    source: session-files-20260924-derived-synthetic-not-byte-replay
+    current_session_messages:
+      - role: user
+        text: 我上传了实验报告.pdf，之后需要继续处理。
+      - role: assistant
+        text: 好的。
+    fixture_compaction:
+      summary: 用户曾上传实验报告.pdf。
+      covered_through_message: 1
+    fake_tools:
+      - name: session_files
+        responses:
+          - match_args: {action: list}
+            result_text: >-
+              {"files":[{"file_ref":"file-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source":"user_upload","source_message_ref":"upload-message","display_name":"实验报告.pdf","size_bytes":8192,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"total":1,"next_offset":null,"integrity":"not_checked_until_prepare"}
+          - match_args: {action: prepare, file_ref: file-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+            result_text: >-
+              {"file_ref":"file-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source":"user_upload","integrity":"sha256_verified","workspace":"C:/fixture/workspace","relative_path":"inputs/report/input.pdf","read_only_copy":true}
+    judge:
+      required_tool_sequence: [session_files, session_files]
+      required_successful_tool_calls:
+        - name: session_files
+          args: {action: list}
+        - name: session_files
+          args: {action: prepare, file_ref: file-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+      must_not_call_any: [exec_command, filesystem_search, web_search]
+      require_non_empty_response: true
+
+  - id: C24-12
+    query: 继续读取我上传的那份 PDF；如果原件拿不到，告诉我即可。
+    facet: 原件缺失 isolation · 不搜索用户目录或以同名文件替代
+    source: session-files-20260924-derived-synthetic-not-byte-replay
+    fake_tools:
+      - name: session_files
+        responses:
+          - match_args: {action: list}
+            result_text: >-
+              {"files":[{"file_ref":"file-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","source":"user_upload","display_name":"记录.pdf"}],"total":1,"next_offset":null}
+          - match_args: {action: prepare, file_ref: file-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc}
+            is_error: true
+            result_text: >-
+              {"error":"attachment_asset_missing","message":"附件原件缺失，请重新上传；不能用已有副本或同名本地文件冒充原件。"}
+    judge:
+      required_tool_sequence: [session_files, session_files]
+      must_not_call_any: [exec_command, filesystem_search, web_search]
+      must_mention_any: [缺失, 不存在, 找不到, 无法读取, 无法取得, 重新上传]
+      require_non_empty_response: true
+
   - id: C24-10
     query: 查一下刚才提交的启动调用有没有结果。如果没有，先告诉我状态，不要再启动。
     facet: 恢复记录无结果 · 不把未知当作未执行或成功，不重放

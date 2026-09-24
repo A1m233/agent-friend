@@ -84,7 +84,10 @@ def render_transcript(messages: list[Message]) -> str:
         if synthetic in {"model_context", "skill_catalog_state"}:
             continue
         attachment_markers = " ".join(
-            f"[附件: {item.display_name} | {item.media_type}]" for item in m.attachments
+            f"[附件: {item.display_name} | {item.media_type} | "
+            f"source_message_ref={m.uuid} | asset_id={item.asset_id}; "
+            "使用 session_files 列举并准备原附件，不以同名本地文件替代]"
+            for item in m.attachments
         )
         if m.role == "user":
             label = (

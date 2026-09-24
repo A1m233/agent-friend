@@ -5118,7 +5118,7 @@ class Conversation:
             )
         if name == "todo_manage":
             invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
-        if name in {_RECOVER_TOOL_RESULT_TOOL_NAME, "inspect_tool_calls"}:
+        if name in {_RECOVER_TOOL_RESULT_TOOL_NAME, "inspect_tool_calls", "session_files"}:
             invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
         if name in {"social_search", "social_read"}:
             invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
