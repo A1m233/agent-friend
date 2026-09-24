@@ -331,6 +331,11 @@ class _FixtureTool:
         elif fixture.name == "exec_command":
             self.description = ExecCommandTool.description
             self.parameters_schema = ExecCommandTool.parameters_schema
+        elif fixture.name == "session_files":
+            from agent.tools.builtin.session_files import SessionFilesTool
+
+            self.description = SessionFilesTool.description
+            self.parameters_schema = SessionFilesTool.parameters_schema
         elif fixture.name == "host_process_start":
             self.description = HostProcessStartTool.description
             self.parameters_schema = HostProcessStartTool.parameters_schema

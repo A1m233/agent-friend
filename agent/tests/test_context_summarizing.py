@@ -272,9 +272,14 @@ def test_render_transcript_preserves_attachment_marker() -> None:
         sha256="a" * 64,
     )
 
-    text = render_transcript([Message(role="user", content="请看", attachments=[attachment])])
+    text = render_transcript(
+        [Message(role="user", content="请看", uuid="upload-source", attachments=[attachment])]
+    )
 
-    assert "[附件: evidence.pdf | application/pdf]" in text
+    assert "[附件: evidence.pdf | application/pdf |" in text
+    assert "source_message_ref=upload-source" in text
+    assert "asset_id=" + "a" * 64 in text
+    assert "session_files" in text
 
 
 def test_build_summary_messages_shape() -> None:
@@ -433,6 +438,51 @@ def test_over_threshold_triggers_summary_and_keeps_recent_tail() -> None:
     assert "压缩后的结构化摘要" in joined
     assert "U0-" not in joined
     assert "U11-" in joined
+
+
+def test_compacted_upload_is_recoverable_from_durable_session(tmp_path: Path) -> None:
+    import asyncio
+    from collections.abc import AsyncIterator
+
+    from agent.attachments import AttachmentStore
+    from agent.session_files import SessionFileService
+
+    async def chunks() -> AsyncIterator[bytes]:
+        yield b"%PDF-1.7\noriginal-upload"
+
+    assets = AttachmentStore(tmp_path / "assets")
+    _, ref = asyncio.run(assets.import_stream(chunks(), display_name="report.pdf"))
+    store = JsonlSessionStore(tmp_path / "sessions")
+    session = Session.new(title="test", persona="default", model="fake")
+    store.create(session)
+    for message in _turns(12, 100):
+        store.append_event(
+            session.session_id,
+            Event(
+                type="user_message" if message.role == "user" else "assistant_message",
+                uuid=message.uuid,
+                ts=datetime.now(UTC),
+                payload={
+                    "content": message.content,
+                    "attachments": [ref.to_dict()] if message.uuid == "u0" else [],
+                },
+            ),
+        )
+    llm = _FakeLLM()
+    result = SummarizingContextManager().build_messages(
+        history=store.load(session.session_id).messages,
+        system_prompt="sys",
+        runtime=_runtime(llm, window=1600),
+    )
+    assert result.new_compaction is not None
+    assert all(message.uuid != "u0" and not message.attachments for message in result.messages)
+    service = SessionFileService(
+        JsonlSessionStore(tmp_path / "sessions"), assets, tmp_path / "workspace"
+    )
+    recovered = service.prepare(session.session_id, service.files(session.session_id)[0].file_ref)
+    assert (
+        Path(recovered["workspace"]) / recovered["relative_path"]
+    ).read_bytes() == b"%PDF-1.7\noriginal-upload"
 
 
 def test_summary_cancellation_is_forwarded_and_never_downgraded_to_fifo() -> None:

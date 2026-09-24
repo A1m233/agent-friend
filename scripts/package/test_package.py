@@ -937,6 +937,15 @@ def test_nsis_custom_messages_have_chinese_and_english_pairs() -> None:
     )
 
 
+def test_runtime_session_files_smoke() -> None:
+    runtime_entry = _load("runtime_session_files", PACKAGE_DIR / "runtime_entry.py")
+    assert runtime_entry._smoke_session_files() == {
+        "restart": True,
+        "verified_copy": True,
+        "readonly_cleanup": True,
+    }
+
+
 def test_runtime_entry_parser_requires_explicit_subcommand() -> None:
     runtime_entry = _load("runtime_entry", PACKAGE_DIR / "runtime_entry.py")
     assert runtime_entry._parse_args(["doctor"]).command == "doctor"

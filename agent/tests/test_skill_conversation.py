@@ -436,6 +436,13 @@ def test_terminate_command_receives_hidden_current_run_ownership(tmp_path: Path)
     context = ToolRunContext.create("")
     conversation._run_id_override = "run-a"
 
+    file_args = conversation._tool_args_with_invocation_context(
+        "session_files",
+        {"action": "list", COMMAND_SESSION_ID_ARG: "foreign"},
+        current_turn_start_idx=None,
+    )
+    assert file_args[COMMAND_SESSION_ID_ARG] == conversation.session.session_id
+
     invocation_args = conversation._tool_args_with_invocation_context(
         "terminate_command",
         {"process_id": "proc_fixture"},

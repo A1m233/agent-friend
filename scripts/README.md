@@ -1,5 +1,7 @@
 # scripts/
 
+`package/run.* runtime` 的 frozen doctor 还验证会话附件的持久发现、哈希校验、工作副本读取及只读输入清理；不访问网络或调用模型。
+
 | 脚本 | 用途 | mac/linux | Windows |
 |---|---|---|---|
 | execution-environment | 准备、校验及离线 PDF/PowerShell smoke；自带 PowerShell 7、Poppler、PDF Python wheel 基线，工作树外缓存，发行包当前限 Windows x64，其他平台明确报告不支持 | `./scripts/execution-environment/run.sh prepare\|verify\|smoke [--offline]` | `.\scripts\execution-environment\run.ps1 prepare\|verify\|smoke [--offline]` |
