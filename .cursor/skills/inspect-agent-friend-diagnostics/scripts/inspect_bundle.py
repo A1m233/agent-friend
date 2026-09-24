@@ -46,6 +46,7 @@ CAPABILITY_HANDLERS = {
     "desktop-instance-governance-v1": "desktopInstance",
     "managed-execution-environment-v1": "executionEnvironments",
     "command-runtime-health-v1": "commandRuntime",
+    "command-runtime-health-v2": "commandRuntime",
     "pet-input-evidence-v1": "petInputEvidence",
     "pet-input-evidence-v2": "petInputEvidence",
     "pet-render-evidence-v1": "petRenderEvidence",
@@ -1773,6 +1774,7 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 if "diagnostics/command-runtime.json" in names
                 else None,
                 collected="command-runtime-health-v1" in capabilities
+                or "command-runtime-health-v2" in capabilities
                 or "diagnostics/command-runtime.json" in names,
             ),
             "sandboxIncidents": summarize_sandbox_incidents(
@@ -1847,11 +1849,16 @@ def summarize_command_runtime(value: Any, *, collected: bool) -> dict[str, Any]:
         "payload_rejected",
     }
     counts: dict[str, int] = {}
+    recovery_counts: dict[str, int] = {}
     invalid = 0
     for event in events:
         code = event.get("code") if isinstance(event, dict) else None
         if isinstance(code, str) and code in allowed_codes:
             counts[code] = counts.get(code, 0) + 1
+            stage = event.get("stage")
+            if stage in ("automatic_recovery", "manual_recovery", "recovery_resume"):
+                key = f"{stage}:{code}"
+                recovery_counts[key] = recovery_counts.get(key, 0) + 1
         else:
             invalid += 1
     states = {
@@ -1870,6 +1877,7 @@ def summarize_command_runtime(value: Any, *, collected: bool) -> dict[str, Any]:
         else "unknown",
         "eventCount": len(events),
         "codes": counts,
+        "recovery": recovery_counts,
         "invalidCount": invalid,
         "gapCount": len(value["gaps"]) if isinstance(value.get("gaps"), list) else None,
     }

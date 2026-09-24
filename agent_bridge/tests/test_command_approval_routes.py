@@ -422,7 +422,7 @@ def test_windows_sandbox_setup_requires_explicit_endpoint_call() -> None:
     assert command_runtime.setup_calls == 1
 
 
-def test_command_allow_is_rejected_while_global_sandbox_is_not_ready() -> None:
+def test_command_allow_can_authorize_before_sandbox_recovery() -> None:
     broker = ApprovalBroker()
     request = PendingCommandApproval.create(
         session_id="session-1",
@@ -450,6 +450,7 @@ def test_command_allow_is_rejected_while_global_sandbox_is_not_ready() -> None:
         time.sleep(0.01)
 
     command_runtime = SimpleNamespace(
+        available=True,
         status=lambda: {
             "platform": "windows",
             "sandbox_capability": {
@@ -458,7 +459,7 @@ def test_command_allow_is_rejected_while_global_sandbox_is_not_ready() -> None:
                 "ready": False,
                 "version": 1,
             },
-        }
+        },
     )
     app = FastAPI()
     register_routes(
@@ -480,9 +481,8 @@ def test_command_allow_is_rejected_while_global_sandbox_is_not_ready() -> None:
             "lifetime": "once",
         },
     )
-    assert response.status_code == 409
-    assert broker.pending(kind="command")
-    broker.cancel_run("session-1", "run-1")
+    assert response.status_code == 200
+    assert not broker.pending(kind="command")
     worker.join(timeout=2)
 
 

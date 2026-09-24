@@ -325,18 +325,7 @@ def _ensure_command_request_ready(runtime: BridgeRuntime, request: object) -> No
     details = getattr(request, "details", None)
     if getattr(details, "execution", None) != "sandboxed" or runtime.command_runtime is None:
         return
-    status = runtime.command_runtime.status()
-    capability = status.get("sandbox_capability")
-    if (
-        status.get("platform") == "windows"
-        and isinstance(capability, dict)
-        and capability.get("state") != "ready"
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "windows_sandbox_setup_required",
-                "message": "请先在全局系统权限中初始化或修复命令沙箱。",
-                "sandbox_capability": capability,
-            },
-        )
+    # Approval authorizes the command; readiness is restored inside the same
+    # invocation after approval. Never force a separate settings/setup round-trip.
+    if not runtime.command_runtime.available:
+        raise HTTPException(status_code=503, detail={"error": "command_runtime_unavailable"})

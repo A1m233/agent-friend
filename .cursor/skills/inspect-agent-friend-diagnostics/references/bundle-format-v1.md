@@ -50,7 +50,17 @@ The generator does not upload the bundle or intentionally call an external provi
 | `diagnostics/runtime-services.json` | Bridge/voice lifecycle snapshots | Snapshot at bundle generation time, not the whole incident history |
 | `diagnostics/runtime-config.json` | Config item name, group, configured/source/effect/error | Contains configuration presence, never intended credential values |
 | `diagnostics/execution-environments.json` | Managed provider status, runtime/version identity, prepare duration bucket, overlay/cache size buckets, recent GC state and packaged-payload validation | Present when `managed-execution-environment-v1` is declared; deliberately excludes session ids/keys, paths, package names, scripts, file content, environment values, commands and output |
-| `diagnostics/command-runtime.json` | Current sandbox state, helper presence and bounded content-free command setup/network history | `command-runtime-health-v1`; counts and stable codes only in inventory; raw output, credentials and paths are excluded |
+| `diagnostics/command-runtime.json` | Current sandbox state, helper presence and bounded content-free command setup/network/recovery history | `command-runtime-health-v2` (v1 remains readable); counts and stable codes only in inventory; raw output, credentials and paths are excluded |
+
+`command-runtime-health-v2` adds `automatic_recovery`, `manual_recovery`, and
+`recovery_resume` event stages. A repair flight and the actions resumed after it
+share a hashed `operation` identifier. `requested` means a repair flight began;
+`ok` on recovery requires the existing execution probe to pass. An `ok` resume
+means preparation or process dispatch returned successfully, not that the business
+command completed. Original failures remain separate start/visibility records;
+correlate their runtime and time ordering without claiming an unobserved native
+root cause. Inventory exposes only allowlisted stage/code counts. Missing stages
+in older bundles mean recovery evidence was not collected, not proof of no faults.
 | `diagnostics/desktop-instance.json` | Resolved runtime kind, shared instance domain, process session, and current owner evidence | Present when `desktop-instance-governance-v1` is declared; paths are home-redacted and no command-line or environment content is included |
 | `install/integrity.json` | Embedded shell identity, active receipt, verified payload/runtime hashes, observed readiness identity, Job Object state, and installer residue | Present when `install-integrity-v1` is declared; uses relative paths and stable error codes, never credential values |
 | `diagnostics/webview2.json` | WebView2 runtime version, recent crash-report metadata, handler registration coverage, graphics inventory, and a bounded process-failure event buffer | `supported: false` on non-Windows; raw dump files are never included; `gpu-process-exited` can trigger the product's bounded recovery flow |

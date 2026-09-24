@@ -39,12 +39,14 @@ def test_command_inventory_is_bounded_to_codes_and_counts() -> None:
         "status": "repair_required",
         "events": [
             {"code": "helper_launch_failed", "message": "secret", "path": "private-file"},
+            {"stage": "automatic_recovery", "code": "ok", "operation": "private-id"},
             {"code": "secret-code"},
         ],
         "gaps": ["private-gap"],
     }
     summary = INSPECTOR.summarize_command_runtime(value, collected=True)
-    assert summary["codes"] == {"helper_launch_failed": 1}
+    assert summary["codes"] == {"helper_launch_failed": 1, "ok": 1}
+    assert summary["recovery"] == {"automatic_recovery:ok": 1}
     assert summary["invalidCount"] == 1
     assert "secret" not in json.dumps(summary)
     assert "private" not in json.dumps(summary)
@@ -387,7 +389,11 @@ def _build_bundle(
         "diagnostics/command-runtime.json": {
             "schemaVersion": 1,
             "status": "repair_required",
-            "events": [{"code": "helper_launch_failed"}],
+            "events": [
+                {"code": "helper_launch_failed"},
+                {"stage": "automatic_recovery", "code": "ok", "operation": "private-id"},
+                {"stage": "recovery_resume", "code": "ok", "operation": "private-id"},
+            ],
             "gaps": [],
         },
         "diagnostics/command-runtime-incidents.json": {
@@ -773,7 +779,12 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
         "render-evidence/webview2-pet.png",
         "render-evidence/windows-desktop.png",
     ]
-    assert summary["commandRuntime"]["codes"] == {"helper_launch_failed": 1}
+    assert summary["commandRuntime"]["codes"] == {"helper_launch_failed": 1, "ok": 2}
+    assert summary["commandRuntime"]["recovery"] == {
+        "automatic_recovery:ok": 1,
+        "recovery_resume:ok": 1,
+    }
+    assert "private-id" not in json.dumps(summary["commandRuntime"])
     assert summary["desktopApplications"]["statuses"] == {"accepted": 1}
     assert "private" not in json.dumps(summary["desktopApplications"])
     assert summary["installIntegrity"]["status"] == "consistent"

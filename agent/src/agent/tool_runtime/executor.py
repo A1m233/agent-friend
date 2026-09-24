@@ -196,8 +196,12 @@ class ToolBatchExecutor:
                 pending.call, pending.immediate_result, time.monotonic() - pending.started_at
             )
         assert pending.future is not None
-        deadline = pending.started_at + pending.timeout_seconds
         while True:
+            deadline = (
+                pending.started_at
+                + pending.timeout_seconds
+                + (pending.control.recovery_wait_seconds if pending.control is not None else 0.0)
+            )
             if cancel_check is not None:
                 try:
                     cancel_check()
@@ -218,6 +222,16 @@ class ToolBatchExecutor:
                 return self._timeout_result(pending)
             try:
                 completed = pending.future.result(timeout=min(remaining, 0.05))
+                # Recovery may reserve its allowance while result() is waiting.
+                deadline = (
+                    pending.started_at
+                    + pending.timeout_seconds
+                    + (
+                        pending.control.recovery_wait_seconds
+                        if pending.control is not None
+                        else 0.0
+                    )
+                )
                 if completed.completed_at > deadline:
                     return self._timeout_result(pending)
                 return ExecutedToolCall(

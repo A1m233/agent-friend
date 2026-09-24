@@ -655,6 +655,47 @@ def _smoke_filesystem_tools() -> dict[str, Any]:
         }
 
 
+def _smoke_sandbox_recovery() -> dict[str, Any]:
+    """Exercise frozen coordinator imports and no-replay behavior without UAC."""
+    from agent.command_runtime.recovery import SandboxRecovery
+
+    attempts = 0
+    repairs = 0
+
+    def repair(check: Any) -> None:
+        nonlocal repairs
+        check()
+        repairs += 1
+
+    def action() -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ValueError("known pre-start fixture rejection")
+        return "continued"
+
+    recovery = SandboxRecovery(
+        ready=lambda: True,
+        idle=lambda: True,
+        repair=repair,
+        retryable=lambda exc: isinstance(exc, ValueError),
+    )
+    try:
+        if recovery.run(action) != "continued" or attempts != 2 or repairs != 1:
+            raise RuntimeError("frozen sandbox continuation failed")
+        try:
+            recovery.run(lambda: (_ for _ in ()).throw(ConnectionError("unknown start")))
+        except ConnectionError:
+            pass
+        else:
+            raise RuntimeError("ambiguous start was replayed")
+        if repairs != 1:
+            raise RuntimeError("ambiguous start triggered provisioning")
+        return {"safe_continuation": True, "unknown_not_replayed": True}
+    finally:
+        recovery.close()
+
+
 def _smoke_command_runtime() -> dict[str, Any]:
     """Exercise the packaged official exec-server without network or an LLM."""
 
@@ -1407,6 +1448,13 @@ def _doctor() -> int:
             "ok": bool(filesystem_details.get("deleted")),
             **filesystem_details,
         }
+
+    try:
+        recovery_details = _smoke_sandbox_recovery()
+    except Exception as exc:
+        checks["capability:sandbox_recovery"] = {"ok": False, "error": str(exc)}
+    else:
+        checks["capability:sandbox_recovery"] = {"ok": True, **recovery_details}
 
     try:
         command_details = _smoke_command_runtime()

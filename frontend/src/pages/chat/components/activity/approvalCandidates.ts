@@ -123,7 +123,6 @@ export function buildPendingApprovalQueue(input: {
     activeRunId,
     commandApprovals,
     commandSubmitting,
-    commandRuntimeStatus,
     filesystemEntries,
   } = input;
   if (!currentSessionId || !activeRunId) return [];
@@ -145,11 +144,7 @@ export function buildPendingApprovalQueue(input: {
         : request.details.cmd,
       detailLines: commandDetailLines(request),
       submitting: commandSubmitting.has(request.request_id),
-      needsSandboxSetup: Boolean(
-        request.kind === "command" && request.details.execution === "sandboxed"
-        && commandRuntimeStatus?.sandbox_capability.supported
-        && !commandRuntimeStatus.sandbox_capability.ready,
-      ),
+      needsSandboxSetup: false,
       riskCode: request.risk?.code ?? null,
       riskMessage: request.risk?.message ?? null,
     }));

@@ -159,6 +159,8 @@ Python通知代码调整后可显式执行 `restart-bridge`，复用前端的 `r
 
 ## ⚠️ Windows PowerShell 第一次运行
 
+`package/` 的 runtime doctor 同时执行离线沙箱恢复故障注入，验证有界续接与未知启动结果不重放；该注入本身不提权、不调用 LLM。
+
 Windows 默认禁止运行未签名的 `.ps1`（execution policy）。第一次跑可能报错：
 
 ```

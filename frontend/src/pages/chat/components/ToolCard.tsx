@@ -404,7 +404,8 @@ function CommandRuntimeCard({
   const sandboxCapability = runtimeStatus?.sandbox_capability;
   const execution = details?.execution
     || (block.name === "host_process_start" ? "host_user" : args.execution || "sandboxed");
-  const needsSandboxSetup = commandNeedsSandboxPreparation(resultError, runtimeStatus, execution);
+  const needsSandboxSetup = block.status !== "running"
+    && commandNeedsSandboxPreparation(resultError, runtimeStatus, execution);
   const preferPersistedResult = block.status !== "running"
     && result.status !== undefined
     && result.status !== "running";

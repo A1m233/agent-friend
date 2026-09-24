@@ -68,7 +68,7 @@ from agent.skills.models import (
     SkillTurnSnapshot,
 )
 from agent.tool_runtime import ToolRunContext
-from agent.tools import ToolRegistry
+from agent.tools import ToolRegistry, ToolResult
 
 FIXTURE = Path(__file__).parent / "fixtures" / "fake_exec_server.py"
 
@@ -673,6 +673,55 @@ def test_output_notifications_are_coalesced(runtime: CommandRuntime) -> None:
     time.sleep(0.3)
     assert len(published) == 2
     assert published[-1]["output_seq"] == 100
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows sandbox setup is Windows-specific")
+def test_approved_tool_repairs_then_returns_one_business_result(
+    runtime: CommandRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ready = False
+    repairs: list[str] = []
+    results: list[ToolResult] = []
+
+    def repair(**_kwargs: object) -> None:
+        nonlocal ready
+        assert not results
+        repairs.append("repair")
+        ready = True
+
+    monkeypatch.setattr(type(runtime), "windows_sandbox_ready", property(lambda _: ready))
+    monkeypatch.setattr(runtime, "_setup_windows_sandbox", repair)
+    broker = ApprovalBroker()
+    context = ToolRunContext.create("")
+    tool = ExecCommandTool(runtime, broker)
+    args = {
+        "cmd": "fake:buffered",
+        "workdir": str(tmp_path.resolve()),
+        "reason": "recover",
+        COMMAND_SESSION_ID_ARG: "session-a",
+        COMMAND_RUN_ID_ARG: "run-a",
+        COMMAND_TOOL_CALL_ID_ARG: "call-a",
+        COMMAND_SURFACE_ARG: "desktop_chat",
+        COMMAND_RUN_CONTEXT_ARG: context,
+    }
+    worker = threading.Thread(target=lambda: results.append(tool.invoke(args)))
+    worker.start()
+    request = _wait_for_request(broker)
+    assert not repairs
+    assert broker.decide(
+        request.request_id,
+        CommandApprovalDecision(allow=True),
+        session_id="session-a",
+        run_id="run-a",
+        expected_kind="command",
+    )
+    worker.join(5)
+    assert not worker.is_alive()
+    assert repairs == ["repair"]
+    assert len(results) == 1
+    assert not results[0].is_error
+    assert not broker.pending(kind="command")
+    context.close_commands()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows sandbox setup is Windows-specific")
