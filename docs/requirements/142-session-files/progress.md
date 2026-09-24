@@ -28,6 +28,9 @@ COMPLETED
 | 2026-09-25 | runtime-only package-sensitive 验证通过 | 0.3.0 / local-test；build ID `20260924T154609Z-c30f2b96882d-11187284`；doctor 全部通过，Bridge/Voice 启动 smoke 通过，runner 退出码 0 |
 | 2026-09-25 | 收尾核对完成 | 临时 Guide baseline 已恢复为构建前 b26c637f9a3518fa32da157462334ef9d38ad900 / snapshot 64267f659277f40277a5897bf4f6a991f30dd7ecf83213ba8a981b456de648af；没有该 build ID 的运行进程；git diff --check 通过 |
 
+| 2026-09-25 | 用户确认交付并要求合入主干、推送远端 | 实现提交 b652533ef3041cf8a80cb2acfc4b312fd40c3cf5；已推送功能分支 |
+| 2026-09-25 | 公开 Guide 更新并发布 | r66 / fdd6c9e9aa7f52bcf98bc6352108a3d97fe973ca；validator、verify 通过，immutable=true，发布资产摘要核验通过；不更新产品 builtin |
+
 ## 最终验证证据
 
 | 验证 | 入口或证据 |
