@@ -120,7 +120,7 @@ describe("buildPendingApprovalQueue", () => {
     expect(queue.map((item) => item.requestId)).toEqual(["cmd-1", "fs-1"]);
   });
 
-  it("turns sandbox preparation into the single current command action", () => {
+  it("keeps approval actionable while sandbox recovery happens after approval", () => {
     const queue = buildPendingApprovalQueue({
       currentSessionId: "session-a",
       activeRunId: "run-a",
@@ -142,7 +142,7 @@ describe("buildPendingApprovalQueue", () => {
     expect(queue[0]).toMatchObject({
       kind: "command",
       requestId: "cmd-1",
-      needsSandboxSetup: true,
+      needsSandboxSetup: false,
     });
   });
 

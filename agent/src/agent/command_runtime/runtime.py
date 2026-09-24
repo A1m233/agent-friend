@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import copy
+import functools
 import ipaddress
 import json
 import logging
@@ -20,10 +21,11 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
+from ..tool_runtime.control import ToolInvocationControl
 from .diagnostics import CommandDiagnostics, classify_setup_error
 from .exec_server import ExecServerClient, ExecServerError
 from .models import (
@@ -33,6 +35,7 @@ from .models import (
     decode_process_output,
 )
 from .network import network_decision, valid_network_request
+from .recovery import RecoveryUnavailable, SandboxRecovery
 from .sandbox_evidence import SandboxEvidence, error_facts
 from .vendor import probe_setup_helper
 from .windows_state import compatible_state, read_state
@@ -46,9 +49,51 @@ logger = logging.getLogger(__name__)
 
 
 class CommandRuntimeError(RuntimeError):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, safe_to_retry: bool = False) -> None:
         super().__init__(message)
         self.code = code
+        self.safe_to_retry = safe_to_retry
+
+
+def _recover_sandbox_call[RuntimeMethod: Callable[..., Any]](
+    method: RuntimeMethod,
+) -> RuntimeMethod:
+    @functools.wraps(method)
+    def wrapped(self: CommandRuntime, *args: Any, **kwargs: Any) -> Any:
+        sandbox = kwargs.get("sandbox")
+        if method.__name__ == "prepare_owned_read_only_workdir":
+            sandbox = sandbox or (args[1] if len(args) > 1 else None)
+        if os.name != "nt" or sandbox is None or kwargs.get("_setup_probe"):
+            return method(self, *args, **kwargs)
+        try:
+            return self._recovery.run(lambda: method(self, *args, **kwargs))
+        except RecoveryUnavailable as exc:
+            raise CommandRuntimeError(
+                "windows_sandbox_recovery_failed",
+                "沙箱自动恢复未完成，当前操作未自动重放。请检查系统权限或导出诊断。",
+            ) from exc
+
+    return cast(RuntimeMethod, wrapped)
+
+
+def _known_setup_rejection(exc: ExecServerError) -> bool:
+    """Only explicit RPC setup rejection proves a command did not start."""
+    error = exc.rpc_error
+    if not isinstance(error, dict) or not isinstance(error.get("message"), str):
+        return False
+    message: str = error["message"]
+    for prefix in ("windows sandbox failed: ", "windows sandbox: "):
+        if message.startswith(prefix):
+            message = message[len(prefix) :]
+            break
+    return message.startswith(
+        (
+            "orchestrator_helper_launch_canceled:",
+            "orchestrator_helper_launch_failed:",
+            "orchestrator_helper_incomplete:",
+            "orchestrator_helper_exit_nonzero:",
+        )
+    )
 
 
 class _ProcessState:
@@ -431,6 +476,17 @@ class CommandRuntime:
         )
         self._network_grants: set[str] = set()
         self._setup_lock = threading.Lock()
+        self._sandbox_process_ids: set[str] = set()
+        self._uncertain_starts: set[str] = set()
+        self._recovery = SandboxRecovery(
+            observe=lambda stage, code, operation: self._diagnostics.record(
+                stage, code, operation=operation
+            ),
+            ready=lambda: self.windows_sandbox_ready,
+            idle=self._sandbox_idle,
+            repair=lambda check: self._setup_windows_sandbox(check_cancelled=check),
+            retryable=lambda exc: isinstance(exc, CommandRuntimeError) and exc.safe_to_retry,
+        )
         self._client: ExecServerClient | None = None
         self._processes: dict[str, _ProcessState] = {}
         self._listeners: list[Callable[[dict[str, object]], None]] = []
@@ -564,12 +620,37 @@ class CommandRuntime:
             ),
         }
 
+    def _sandbox_idle(self) -> bool:
+        with self._lock:
+            return not (self._uncertain_starts & self._sandbox_process_ids) and not any(
+                process_id in self._sandbox_process_ids and not state.snapshot.terminal()
+                for process_id, state in self._processes.items()
+            )
+
+    def sandbox_recovery_scope(
+        self, control: ToolInvocationControl, validate: Callable[[], None]
+    ) -> Any:
+        return self._recovery.scope(control, validate)
+
     def setup_windows_sandbox(self, *, timeout_seconds: float = 300.0) -> dict[str, object]:
+        if os.name != "nt" or self._exec_server_command is not None:
+            return self._setup_windows_sandbox(timeout_seconds=timeout_seconds)
+        try:
+            self._recovery.repair_explicit(timeout_seconds=timeout_seconds)
+        except RecoveryUnavailable as exc:
+            cause = exc.__cause__
+            if isinstance(cause, CommandRuntimeError):
+                raise cause from exc
+            raise CommandRuntimeError("windows_sandbox_recovery_failed", str(exc)) from exc
+        return self.status()
+
+    def _setup_windows_sandbox(
+        self, *, timeout_seconds: float = 300.0, check_cancelled: Callable[[], None] = lambda: None
+    ) -> dict[str, object]:
         """Run Codex's explicit administrator-backed Windows sandbox setup.
 
-        This method is intentionally separate from process startup.  The bridge only
-        calls it from a user-initiated setup endpoint, so an ordinary command can
-        never surprise the user with a UAC prompt or mutate machine sandbox state.
+        Shared by manual repair and the bounded recovery coordinator. The
+        coordinator drains active sandbox work before entering this method.
         """
         if os.name != "nt":
             raise CommandRuntimeError(
@@ -584,6 +665,7 @@ class CommandRuntime:
                 "command_runtime_unavailable", "product Codex executable is unavailable"
             )
         with self._setup_lock:
+            check_cancelled()
             evidence = self._sandbox_evidence.begin("repair")
             self._sandbox_evidence.repair_started(evidence)
             # A retained failure blocks business commands, but does not prove that
@@ -610,6 +692,7 @@ class CommandRuntime:
                         "Windows 沙箱初始化助手无法加载，未执行系统初始化。请导出诊断检查安装与系统依赖。",
                     )
                 if was_ready:
+                    check_cancelled()
                     evidence["repairPath"] = "probe_existing"
                     try:
                         self._probe_windows_sandbox()
@@ -617,14 +700,23 @@ class CommandRuntime:
                         evidence["initialProbeFailure"] = error_facts(str(exc))
                         evidence["repairPath"] = "probe_then_setup"
                         self._sandbox_evidence.repair_checkpoint(evidence)
+                        check_cancelled()
                         self._perform_windows_sandbox_setup(
-                            executable, timeout_seconds=timeout_seconds
+                            executable,
+                            timeout_seconds=self._recovery.setup_timeout_seconds(timeout_seconds),
                         )
+                        check_cancelled()
                         self._probe_windows_sandbox()
                 else:
+                    check_cancelled()
                     evidence["repairPath"] = "setup_then_probe"
-                    self._perform_windows_sandbox_setup(executable, timeout_seconds=timeout_seconds)
+                    self._perform_windows_sandbox_setup(
+                        executable,
+                        timeout_seconds=self._recovery.setup_timeout_seconds(timeout_seconds),
+                    )
+                    check_cancelled()
                     self._probe_windows_sandbox()
+                check_cancelled()
             except Exception as exc:
                 runtime_error = (
                     exc
@@ -888,6 +980,7 @@ class CommandRuntime:
         with self._lock:
             self._capability_listeners.append(listener)
 
+    @_recover_sandbox_call
     def start_process(
         self,
         *,
@@ -912,6 +1005,7 @@ class CommandRuntime:
             raise CommandRuntimeError(
                 "windows_sandbox_setup_required",
                 "Windows command sandbox is not initialized; run the explicit setup action first",
+                safe_to_retry=True,
             )
         permissions = sandbox.get("permissions") if sandbox is not None else None
         network_enabled = isinstance(permissions, dict) and permissions.get("network") == "enabled"
@@ -939,6 +1033,8 @@ class CommandRuntime:
         state = _ProcessState(snapshot)
         with self._lock:
             self._processes[process_id] = state
+            if sandbox is not None:
+                self._sandbox_process_ids.add(process_id)
         params = {
             "processId": process_id,
             "argv": list(argv),
@@ -974,21 +1070,40 @@ class CommandRuntime:
             # dedicated sandbox identities before the first process starts.
             response = client.request("process/start", params, timeout_seconds=60)
         except ExecServerError as exc:
+            with state.condition:
+                observed = (
+                    state.snapshot.output_seq > 0
+                    or state.snapshot.exit_code is not None
+                    or state.snapshot.terminal()
+                )
+            rejected = _known_setup_rejection(exc) and not observed
             with self._lock:
                 self._network_grants.discard(process_id)
-                self._processes.pop(process_id, None)
+                if rejected:
+                    self._processes.pop(process_id, None)
+                    self._sandbox_process_ids.discard(process_id)
+                else:
+                    if not state.snapshot.terminal():
+                        self._uncertain_starts.add(process_id)
             stderr = client.stderr_tail.strip()
             detail = f"{exc}; exec-server stderr: {stderr}" if stderr else str(exc)
             self._record_sandbox_failure("start", str(exc), operation=process_id)
             if evidence is not None:
                 self._sandbox_evidence.finish(evidence, detail)
-            raise CommandRuntimeError("process_start_failed", detail) from exc
+            if not rejected:
+                self._publish_state(state)
+            raise CommandRuntimeError(
+                "process_start_failed" if rejected else "process_start_outcome_unknown",
+                detail,
+                safe_to_retry=rejected,
+            ) from exc
         sandbox_type = response.get("sandboxType") if isinstance(response, dict) else None
         if sandbox is not None and (
             not isinstance(sandbox_type, str) or sandbox_type.lower() == "none"
         ):
             with self._lock:
                 self._network_grants.discard(process_id)
+                self._uncertain_starts.add(process_id)
             with suppress(ExecServerError):
                 client.request("process/terminate", {"processId": process_id}, timeout_seconds=5)
             self._finish(state, "runtime_lost", "sandbox_visibility_unavailable")
@@ -1007,6 +1122,7 @@ class CommandRuntime:
         self._publish_state(state)
         return self._copy_snapshot(state.snapshot)
 
+    @_recover_sandbox_call
     def prepare_owned_read_only_workdir(
         self,
         workdir: Path,
@@ -1055,6 +1171,7 @@ class CommandRuntime:
             raise CommandRuntimeError(
                 "sandbox_visibility_unavailable",
                 f"failed to prepare product-owned read-only workdir {target_uri}: {exc}",
+                safe_to_retry=classify_setup_error(str(exc))[0] != "unknown",
             ) from exc
         if evidence is not None:
             self._sandbox_evidence.finish(evidence)
@@ -1231,6 +1348,7 @@ class CommandRuntime:
             )
 
     def close(self) -> None:
+        self._recovery.close()
         with self._lock:
             self._network_grants.clear()
             states = tuple(self._processes.values())
@@ -1354,6 +1472,9 @@ class CommandRuntime:
                 self._client = None
             for state in states:
                 if not state.snapshot.terminal():
+                    with self._lock:
+                        if state.snapshot.process_id in self._sandbox_process_ids:
+                            self._uncertain_starts.add(state.snapshot.process_id)
                     self._finish(state, "runtime_lost", str(params.get("reason") or "lost"))
             return
         process_id = params.get("processId")
@@ -1375,6 +1496,8 @@ class CommandRuntime:
                 process_state.snapshot.version += 1
                 process_state.condition.notify_all()
         elif method == "process/closed":
+            with self._lock:
+                self._uncertain_starts.discard(process_id)
             with process_state.condition:
                 termination_reason = (
                     process_state.termination_reason

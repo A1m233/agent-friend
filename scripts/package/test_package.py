@@ -963,6 +963,11 @@ def test_doctor_without_configured_model_checks_static_html_extraction(monkeypat
     assert runtime_entry._doctor() == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["checks"]["capability:web_fetch_static_html"]["ok"] is True
+    assert payload["checks"]["capability:sandbox_recovery"] == {
+        "ok": True,
+        "safe_continuation": True,
+        "unknown_not_replayed": True,
+    }
     assert payload["checks"]["capability:desktop_application_launch"] == {
         "ok": True,
         "fixture": True,

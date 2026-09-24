@@ -19,7 +19,9 @@ MAX_STDERR_TAIL_BYTES = 64 * 1024
 
 
 class ExecServerError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, rpc_error: object = None) -> None:
+        super().__init__(message)
+        self.rpc_error = rpc_error
 
 
 @dataclass
@@ -101,7 +103,10 @@ class ExecServerClient:
             if not pending.event.wait(timeout_seconds):
                 raise ExecServerError(f"exec_server_request_timeout: {method}")
             if pending.error is not None:
-                raise ExecServerError(f"exec_server_rpc_error: {method}: {pending.error}")
+                raise ExecServerError(
+                    f"exec_server_rpc_error: {method}: {pending.error}",
+                    rpc_error=pending.error,
+                )
             return pending.result
         finally:
             with self._state_lock:

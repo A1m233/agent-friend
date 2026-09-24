@@ -19,6 +19,17 @@ class ToolInvocationControl:
         self._cancelled = threading.Event()
         self._reason = "cancelled"
         self._callbacks: dict[str, Callable[[str], None]] = {}
+        self._recovery_wait_seconds = 0.0
+
+    def reserve_recovery_wait(self) -> None:
+        """Host-only, one bounded allowance; never reset on repeated recovery."""
+        with self._lock:
+            self._recovery_wait_seconds = 480.0
+
+    @property
+    def recovery_wait_seconds(self) -> float:
+        with self._lock:
+            return self._recovery_wait_seconds
 
     def check_cancelled(self) -> None:
         if self._cancelled.is_set():

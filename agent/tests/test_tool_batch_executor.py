@@ -144,6 +144,29 @@ def test_timeout_signals_cooperative_tool_control() -> None:
     assert cancelled.wait(0.2)
 
 
+def test_recovery_continues_original_tool_without_timeout_or_extra_invocation() -> None:
+    calls: list[str] = []
+
+    class Recovering(_ControlledTool):
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            calls.append("original")
+            control = args[TOOL_INVOCATION_CONTROL_ARG]
+            control.reserve_recovery_wait()
+            time.sleep(0.06)
+            control.check_cancelled()
+            return ToolResult("continued")
+
+    registry = ToolRegistry(cast(list[Tool], [Recovering(threading.Event())]))
+    result = ToolBatchExecutor(max_workers=1).execute(
+        [_call("controlled", "value")],
+        registry=registry,
+        default_timeout_seconds=1,
+        invocation_args=lambda _name, args, _id: args,
+    )[0]
+    assert result.result.text == "continued"
+    assert calls == ["original"]
+
+
 def test_parallel_completed_result_survives_wait_for_earlier_call() -> None:
     registry = ToolRegistry(
         cast(

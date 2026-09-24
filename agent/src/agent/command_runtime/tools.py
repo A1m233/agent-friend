@@ -164,6 +164,8 @@ def _result(
         "windows_sandbox_setup_required",
         "command_runtime_unavailable",
         "inherited_proxy_unavailable",
+        "windows_sandbox_recovery_failed",
+        "process_start_outcome_unknown",
     }:
         meta["requires_user_action"] = True
         meta["no_progress_family"] = error_kind
@@ -234,6 +236,30 @@ def _command_runtime_error_result(
     if exc.code == "inherited_proxy_unavailable":
         return _result(
             {"status": "failed", "error": exc.code, "message": str(exc), "executed": False},
+            error=True,
+            executed=False,
+        )
+    if exc.code == "process_start_outcome_unknown":
+        return _result(
+            {
+                "status": "runtime_lost",
+                "process_status": "unknown",
+                "error": exc.code,
+                "message": "启动确认未取得，命令可能已执行；请核对现有进程或结果，不要重放命令。",
+                "retryable": False,
+            },
+            error=True,
+        )
+    if exc.code == "windows_sandbox_recovery_failed":
+        return _result(
+            {
+                "status": "failed",
+                "process_status": "not_started",
+                "error": exc.code,
+                "message": "沙箱自动恢复未完成，原命令未启动。请停止重试，"
+                "等待用户检查系统确认或手动修复；必要时导出诊断。",
+                "retryable": False,
+            },
             error=True,
             executed=False,
         )
@@ -378,8 +404,8 @@ class ExecCommandTool:
         "Windows 受限沙箱中的找不到文件或拒绝访问只描述该沙箱进程的视角，不能据此"
         "断言宿主机未安装软件；结果中的 host_path_validation 会明确哪些路径已由宿主验证。"
         "宿主会解析能够确定的 PATH 启动程序，并自动把必要的最小程序目录作为只读派生"
-        "范围纳入同一次授权；不要猜测安装目录或为此修改 workdir。首次使用 Windows 沙箱时，原命令会保持等待，直到用户完成初始化"
-        "并批准、拒绝、超时或取消；不要改写命令来绕过初始化。"
+        "范围纳入同一次授权；不要猜测安装目录或为此修改 workdir。命令批准后，Windows 沙箱初始化或可恢复故障"
+        "由执行层在原调用内处理，可能需要系统 UAC 确认；不要改写命令来绕过初始化。"
         "若结果为 command_runtime_unavailable，当前运行实例内不可恢复：停止重试，说明需"
         "重启运行实例，若仍不可用则更新或修复安装；不要改申请文件权限或所谓全局系统权限。"
     )
@@ -740,20 +766,6 @@ class ExecCommandTool:
                 executed=False,
                 authorization_requested=True,
             )
-        if details.execution == "sandboxed" and not self._runtime.windows_sandbox_ready:
-            # The approval endpoint normally prevents this transition. Keep a
-            # fail-closed check for bridge/runtime races without coupling setup
-            # to the command invocation itself.
-            return _result(
-                {
-                    "status": "failed",
-                    "error": "windows_sandbox_became_unavailable",
-                    "message": "Windows 命令沙箱在批准后失去就绪状态，请修复后重新发起命令。",
-                },
-                error=True,
-                executed=False,
-                authorization_requested=True,
-            )
         try:
             self._validate_path_identities(path_identities)
             pending_update = prepare_update_receipt(
@@ -780,69 +792,107 @@ class ExecCommandTool:
             else None
         )
         launch_started = time.monotonic()
-        try:
-            if sandbox is not None and self._native_tools is not None:
-                from agent.execution_environment.windows_read_access import prepare_read_access
+        control = args.get(TOOL_INVOCATION_CONTROL_ARG)
+        recovery_control = (
+            control if isinstance(control, ToolInvocationControl) else ToolInvocationControl()
+        )
 
-                environment_roots = [self._native_tools.root]
-                if details.managed_command is not None:
-                    environment_roots.extend(details.managed_command.read_only_roots)
-                prepare_read_access(environment_roots)
+        def validate_resume() -> None:
+            recovery_control.check_cancelled()
+            assert self._broker is not None
+            self._validate_path_identities(path_identities)
+            assessment = self._broker.reassess(request)
             if (
-                sandbox is not None
-                and details.cwd_source == "session_managed"
-                and details.filesystem_access == "read_only"
+                request.risk_assessment is not None
+                and assessment is not None
+                and assessment.fingerprint != request.risk_assessment.fingerprint
             ):
-                self._runtime.prepare_owned_read_only_workdir(
-                    workdir, sandbox, operation_id=tool_call_id
+                raise CommandRuntimeError(
+                    "approval_target_changed", "授权目标发生变化，未继续执行。"
                 )
-            process_id = f"proc_{uuid4().hex}"
-            if pending_update is not None:
-                details.environment_overrides.update(
-                    {
-                        RECEIPT_ENV: str(pending_update.receipt),
-                        NONCE_ENV: pending_update.nonce,
-                    }
-                )
-                context.register_command_resource(
-                    f"skill-update:{process_id}",
-                    pending_update,
-                    lambda: pending_update.receipt.unlink(missing_ok=True),
-                )
-            evidence_ref = (
-                self._tool_execution_evidence_store.new_reference()
-                if self._tool_execution_evidence_store is not None and details.mode == "buffered"
-                else None
-            )
-            checkpoint = args.get(COMMAND_EXECUTION_CHECKPOINT_ARG)
-            if callable(checkpoint):
-                cast(Callable[[str, str, str | None], None], checkpoint)(
-                    process_id,
-                    "resident_only",
-                    evidence_ref,
-                )
-            snapshot = self._runtime.start_process(
-                process_id=process_id,
-                argv=details.launch_argv or details.argv,
-                workdir=workdir,
-                env=(
-                    self._host_user_env()
-                    if details.execution == "host_user"
-                    else self._child_env(
-                        run_temp,
-                        network_enabled=details.network_access == "enabled",
-                        overrides=details.environment_overrides,
+            if request.decision_source == "session_auto":
+                current_mode = self._broker.mode_state(session_id)
+                if (
+                    current_mode.mode != "session_auto"
+                    or current_mode.version != request.approval_mode_version
+                ):
+                    raise CommandRuntimeError(
+                        "approval_target_changed", "会话自动授权已变化，未继续执行。"
                     )
-                ),
-                mode=details.mode,
-                session_id=session_id,
-                run_id=run_id,
-                tool_call_id=tool_call_id,
-                sandbox=sandbox,
-                tool_name=self.name,
-                evidence_ref=evidence_ref,
-            )
+
+        process_id: str | None = None
+        try:
+            with self._runtime.sandbox_recovery_scope(recovery_control, validate_resume):
+                if sandbox is not None and self._native_tools is not None:
+                    from agent.execution_environment.windows_read_access import prepare_read_access
+
+                    environment_roots = [self._native_tools.root]
+                    if details.managed_command is not None:
+                        environment_roots.extend(details.managed_command.read_only_roots)
+                    prepare_read_access(environment_roots)
+                if (
+                    sandbox is not None
+                    and details.cwd_source == "session_managed"
+                    and details.filesystem_access == "read_only"
+                ):
+                    self._runtime.prepare_owned_read_only_workdir(
+                        workdir, sandbox, operation_id=tool_call_id
+                    )
+                process_id = f"proc_{uuid4().hex}"
+                if pending_update is not None:
+                    details.environment_overrides.update(
+                        {
+                            RECEIPT_ENV: str(pending_update.receipt),
+                            NONCE_ENV: pending_update.nonce,
+                        }
+                    )
+                    context.register_command_resource(
+                        f"skill-update:{process_id}",
+                        pending_update,
+                        lambda: pending_update.receipt.unlink(missing_ok=True),
+                    )
+                evidence_ref = (
+                    self._tool_execution_evidence_store.new_reference()
+                    if self._tool_execution_evidence_store is not None
+                    and details.mode == "buffered"
+                    else None
+                )
+                checkpoint = args.get(COMMAND_EXECUTION_CHECKPOINT_ARG)
+                if callable(checkpoint):
+                    cast(Callable[[str, str, str | None], None], checkpoint)(
+                        process_id,
+                        "resident_only",
+                        evidence_ref,
+                    )
+                snapshot = self._runtime.start_process(
+                    process_id=process_id,
+                    argv=details.launch_argv or details.argv,
+                    workdir=workdir,
+                    env=(
+                        self._host_user_env()
+                        if details.execution == "host_user"
+                        else self._child_env(
+                            run_temp,
+                            network_enabled=details.network_access == "enabled",
+                            overrides=details.environment_overrides,
+                        )
+                    ),
+                    mode=details.mode,
+                    session_id=session_id,
+                    run_id=run_id,
+                    tool_call_id=tool_call_id,
+                    sandbox=sandbox,
+                    tool_name=self.name,
+                    evidence_ref=evidence_ref,
+                )
         except CommandRuntimeError as exc:
+            if exc.code == "process_start_outcome_unknown" and process_id is not None:
+                uncertain_id = process_id
+
+                def terminate_uncertain(reason: str) -> None:
+                    self._terminate_for_context(uncertain_id, session_id, run_id, reason)
+
+                context.register_command_handle(uncertain_id, terminate_uncertain)
             return _command_runtime_error_result(exc, fallback_status="failed")
         except ManagedEnvironmentError as exc:
             return _managed_environment_error_result(exc)

@@ -14,7 +14,18 @@ from typing import Any
 
 MAX_EVENTS = 128
 MAX_BYTES = 64 * 1024
-STAGES = {"start", "setup", "probe", "helper", "policy", "visibility", "connection"}
+STAGES = {
+    "start",
+    "setup",
+    "probe",
+    "helper",
+    "policy",
+    "visibility",
+    "connection",
+    "automatic_recovery",
+    "manual_recovery",
+    "recovery_resume",
+}
 CODES = {
     "requested",
     "ok",
