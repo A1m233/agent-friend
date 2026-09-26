@@ -5,8 +5,11 @@ import io
 import json
 import stat
 import zipfile
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 from agent.skills import SkillCatalogService, SkillSelection
 from agent.skills.first_party_updates import (
@@ -27,19 +30,30 @@ class _FakeReleaseClient:
         self,
         page: ReleasePage,
         assets: dict[str, bytes],
+        *,
+        asset_errors: dict[str, Exception] | None = None,
+        list_error: BaseException | None = None,
     ) -> None:
         self.page = page
         self.assets = assets
+        self.asset_errors = asset_errors or {}
+        self.list_error = list_error
         self.etags: list[str | None] = []
         self.downloads: list[str] = []
+        self.download_urls: list[str] = []
         self.closed = False
 
     def list_releases(self, *, etag: str | None) -> ReleasePage:
         self.etags.append(etag)
+        if self.list_error is not None:
+            raise self.list_error
         return self.page
 
     def download_asset(self, asset: ReleaseAsset, *, max_bytes: int) -> bytes:
         self.downloads.append(asset.name)
+        self.download_urls.append(asset.api_url)
+        if error := self.asset_errors.get(asset.api_url):
+            raise error
         value = self.assets[asset.api_url]
         if len(value) > max_bytes:
             raise ValueError("fake asset exceeds max_bytes")
@@ -173,6 +187,41 @@ def _runtime(
     )
     catalog.initialize()
     return store, catalog
+
+
+def _release_batch(
+    tmp_path: Path,
+    sequences: tuple[int, ...],
+    *,
+    incompatible: tuple[int, ...] = (),
+) -> tuple[tuple[ReleaseInfo, ...], dict[str, bytes]]:
+    source = tmp_path / "batch-source"
+    _write_package(source, "REMOTE GUIDE", sentinel=tmp_path / "script-ran")
+    archive = _archive(source)
+    snapshot = package_snapshot_digest(source)
+    releases: list[ReleaseInfo] = []
+    all_assets: dict[str, bytes] = {}
+    for sequence in sequences:
+        release, assets = _release(
+            sequence=sequence,
+            archive=archive,
+            snapshot_sha256=snapshot,
+            source_commit=f"{sequence:040x}",
+            minimum="1.0.0" if sequence in incompatible else "0.2.0",
+            maximum="2.0.0" if sequence in incompatible else "0.3.0",
+        )
+        releases.append(release)
+        all_assets.update(assets)
+    return tuple(releases), all_assets
+
+
+def _http_status_error(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", "https://api.github.com/repos/example/releases/assets/1")
+    return httpx.HTTPStatusError(
+        f"HTTP {status}",
+        request=request,
+        response=httpx.Response(status, request=request),
+    )
 
 
 def test_full_package_update_switches_next_turn_without_executing_script(
@@ -469,3 +518,355 @@ def test_incompatible_release_is_recorded_without_downloading_package(tmp_path: 
 
     assert upgraded.check_once().last_result == "updated"
     assert upgraded_client.etags == [None]
+
+
+def test_many_compatible_releases_only_download_latest_manifest_and_package(tmp_path: Path) -> None:
+    sequences = tuple(range(1, 31, 2)) + tuple(range(30, 0, -2))
+    releases, assets = _release_batch(tmp_path, sequences)
+    client = _FakeReleaseClient(ReleasePage(False, '"many"', releases), assets)
+    store, catalog = _runtime(tmp_path)
+    updater = FirstPartySkillUpdateService(
+        store=store,
+        catalog=catalog,
+        product_version="0.2.1",
+        client_factory=lambda: client,
+    )
+
+    diagnostic = updater.check_once()
+
+    assert diagnostic.last_result == "updated"
+    assert diagnostic.active_sequence == diagnostic.highest_seen_sequence == 30
+    assert len(client.etags) + len(client.download_urls) == 3
+    assert client.download_urls == ["memory://manifest/30", "memory://package/30"]
+
+
+def test_highest_compatible_release_preserves_higher_incompatible_observation(
+    tmp_path: Path,
+) -> None:
+    releases, assets = _release_batch(tmp_path, (1, 3, 2), incompatible=(3,))
+    client = _FakeReleaseClient(ReleasePage(False, '"mixed"', releases), assets)
+    store, catalog = _runtime(tmp_path)
+    updater = FirstPartySkillUpdateService(
+        store=store,
+        catalog=catalog,
+        product_version="0.2.1",
+        client_factory=lambda: client,
+    )
+
+    diagnostic = updater.check_once()
+
+    assert diagnostic.last_result == "updated"
+    assert diagnostic.active_sequence == 2
+    assert diagnostic.highest_seen_sequence == 3
+    assert client.download_urls == [
+        "memory://manifest/3",
+        "memory://manifest/2",
+        "memory://package/2",
+    ]
+
+
+def test_invalid_newest_manifest_falls_back_without_promoting_its_sequence(tmp_path: Path) -> None:
+    releases, assets = _release_batch(tmp_path, (1, 3, 2))
+    assets["memory://manifest/3"] += b"tampered"
+    client = _FakeReleaseClient(ReleasePage(False, '"invalid-newest"', releases), assets)
+    store, catalog = _runtime(tmp_path)
+    updater = FirstPartySkillUpdateService(
+        store=store,
+        catalog=catalog,
+        product_version="0.2.1",
+        client_factory=lambda: client,
+    )
+
+    diagnostic = updater.check_once()
+
+    assert diagnostic.last_result == "updated"
+    assert diagnostic.active_sequence == diagnostic.highest_seen_sequence == 2
+    assert client.download_urls == [
+        "memory://manifest/3",
+        "memory://manifest/2",
+        "memory://package/2",
+    ]
+
+
+@pytest.mark.parametrize("conflict", ["release_id", "manifest_digest"])
+def test_duplicate_old_sequence_is_rejected_before_compatible_early_exit(
+    tmp_path: Path, conflict: str
+) -> None:
+    releases, assets = _release_batch(tmp_path, (3, 1))
+    older = releases[-1]
+    if conflict == "release_id":
+        duplicate = replace(older, release_id=older.release_id + 10_000)
+    else:
+        duplicate = replace(
+            older,
+            assets=(replace(older.assets[0], digest="0" * 64), older.assets[1]),
+        )
+    client = _FakeReleaseClient(ReleasePage(False, '"conflict"', (*releases, duplicate)), assets)
+    store, catalog = _runtime(tmp_path)
+    updater = FirstPartySkillUpdateService(
+        store=store,
+        catalog=catalog,
+        product_version="0.2.1",
+        client_factory=lambda: client,
+    )
+
+    diagnostic = updater.check_once()
+
+    assert diagnostic.last_result == "check_failed"
+    assert diagnostic.active_sequence is None
+    assert diagnostic.highest_seen_sequence == 0
+    assert "same sequence" in (diagnostic.last_detail or "")
+    assert not client.download_urls
+
+
+@pytest.mark.parametrize("failure", [403, 429, 500, "connection"])
+def test_manifest_transport_failure_stops_check_without_installing_older_release(
+    tmp_path: Path, failure: int | str
+) -> None:
+    releases, assets = _release_batch(tmp_path, (1, 3, 2))
+    error = (
+        _http_status_error(failure)
+        if isinstance(failure, int)
+        else httpx.ConnectError("connection closed")
+    )
+    client = _FakeReleaseClient(
+        ReleasePage(False, '"unavailable"', releases),
+        assets,
+        asset_errors={"memory://manifest/3": error},
+    )
+    store, catalog = _runtime(tmp_path)
+    updater = FirstPartySkillUpdateService(
+        store=store,
+        catalog=catalog,
+        product_version="0.2.1",
+        client_factory=lambda: client,
+    )
+
+    diagnostic = updater.check_once()
+
+    assert diagnostic.last_result == "check_failed"
+    assert diagnostic.active_sequence is None
+    assert diagnostic.highest_seen_sequence == 0
+    assert client.download_urls == ["memory://manifest/3"]
+    assert client.closed
+
+
+@pytest.mark.parametrize("status", [404, 410])
+def test_missing_newest_manifest_can_fall_back_to_older_release(
+    tmp_path: Path, status: int
+) -> None:
+    releases, assets = _release_batch(tmp_path, (1, 3, 2))
+    client = _FakeReleaseClient(
+        ReleasePage(False, '"missing"', releases),
+        assets,
+        asset_errors={"memory://manifest/3": _http_status_error(status)},
+    )
+    store, catalog = _runtime(tmp_path)
+    updater = FirstPartySkillUpdateService(
+        store=store,
+        catalog=catalog,
+        product_version="0.2.1",
+        client_factory=lambda: client,
+    )
+
+    diagnostic = updater.check_once()
+
+    assert diagnostic.last_result == "updated"
+    assert diagnostic.active_sequence == diagnostic.highest_seen_sequence == 2
+    assert client.download_urls == [
+        "memory://manifest/3",
+        "memory://manifest/2",
+        "memory://package/2",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected_result"),
+    [("success", "no_releases"), ("failure", "check_failed"), ("interrupted", "checking")],
+)
+def test_background_cooldown_survives_restart_after_each_check_outcome(
+    tmp_path: Path, outcome: str, expected_result: str
+) -> None:
+    started = datetime(2026, 9, 25, 12, tzinfo=UTC)
+    error: BaseException | None = None
+    if outcome == "failure":
+        error = httpx.ConnectError("connection closed")
+    elif outcome == "interrupted":
+        error = SystemExit("simulated process interruption")
+    client = _FakeReleaseClient(ReleasePage(False, '"empty"'), {}, list_error=error)
+    store, catalog = _runtime(tmp_path)
+    store.save_state(
+        store.load_state().with_result(
+            checked_at=(started - timedelta(days=1)).isoformat(),
+            result="no_releases",
+            etag='"previous"',
+            product_version="0.2.1",
+        )
+    )
+    updater = FirstPartySkillUpdateService(
+        store=store,
+        catalog=catalog,
+        product_version="0.2.1",
+        client_factory=lambda: client,
+        clock=lambda: started,
+    )
+
+    if outcome == "interrupted":
+        with pytest.raises(SystemExit, match="simulated process interruption"):
+            updater.check_once()
+    else:
+        updater.check_once()
+
+    state = store.load_state()
+    assert state.last_checked_at == started.isoformat()
+    assert state.last_checked_product_version == "0.2.1"
+    assert state.last_result == expected_result
+    assert client.etags == ['"previous"']
+    assert state.etag == ('"empty"' if outcome == "success" else None)
+    restarted_store = FirstPartySkillStore(store.personal_root)
+    restarted = FirstPartySkillUpdateService(
+        store=restarted_store,
+        catalog=catalog,
+        product_version="0.2.1",
+        clock=lambda: started + timedelta(hours=6),
+    )
+    assert restarted._background_delay() == pytest.approx(18 * 60 * 60)
+
+
+@pytest.mark.parametrize("elapsed_hours", [6, 24])
+def test_background_start_waits_only_until_persisted_check_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, elapsed_hours: int
+) -> None:
+    started = datetime(2026, 9, 25, 12, tzinfo=UTC)
+    store, catalog = _runtime(tmp_path)
+    store.save_state(
+        store.load_state().with_result(
+            checked_at=started.isoformat(), result="check_failed", product_version="0.2.1"
+        )
+    )
+    client = _FakeReleaseClient(ReleasePage(False, '"empty"'), {})
+    updater = FirstPartySkillUpdateService(
+        store=FirstPartySkillStore(store.personal_root),
+        catalog=catalog,
+        product_version="0.2.1",
+        client_factory=lambda: client,
+        clock=lambda: started + timedelta(hours=elapsed_hours),
+    )
+    waits: list[float] = []
+
+    def stop_at_next_wait(timeout: float) -> bool:
+        if timeout <= 0:
+            return False
+        waits.append(timeout)
+        updater._stop_event.set()
+        return True
+
+    monkeypatch.setattr(updater._stop_event, "wait", stop_at_next_wait)
+
+    updater._run()
+
+    if elapsed_hours == 6:
+        assert not client.etags
+        assert store.load_state().last_result == "check_failed"
+        assert waits == [18 * 60 * 60]
+    else:
+        assert client.etags == [None]
+        assert store.load_state().last_result == "no_releases"
+        assert waits == [24 * 60 * 60]
+
+
+@pytest.mark.parametrize(
+    ("checked_at", "previous_product", "expected_delay"),
+    [
+        ("2026-09-25T12:00:00+00:00", "0.2.0", 0),
+        ("invalid timestamp", "0.2.1", 0),
+        ("2026-09-25T12:00:00", "0.2.1", 0),
+        ("2026-10-25T12:00:00+00:00", "0.2.1", 24 * 60 * 60),
+    ],
+)
+def test_background_cooldown_handles_upgrade_invalid_time_and_clock_rollback(
+    tmp_path: Path, checked_at: str, previous_product: str, expected_delay: float
+) -> None:
+    store, catalog = _runtime(tmp_path)
+    store.save_state(
+        store.load_state().with_result(
+            checked_at=checked_at, result="no_update", product_version=previous_product
+        )
+    )
+    updater = FirstPartySkillUpdateService(
+        store=store,
+        catalog=catalog,
+        product_version="0.2.1",
+        clock=lambda: datetime(2026, 9, 25, 18, tzinfo=UTC),
+    )
+
+    assert updater._background_delay() == pytest.approx(expected_delay)
+
+
+@pytest.mark.parametrize("previous_product", ["0.2.0", "0.2.1"])
+def test_failed_package_download_clears_etag_before_explicit_retry(
+    tmp_path: Path, previous_product: str
+) -> None:
+    releases, assets = _release_batch(tmp_path, (1,))
+    page = ReleasePage(False, '"new"', releases)
+    failing = _FakeReleaseClient(
+        page, assets, asset_errors={"memory://package/1": _http_status_error(500)}
+    )
+    store, catalog = _runtime(tmp_path)
+    store.save_state(
+        store.load_state().with_result(
+            checked_at="2026-09-24T12:00:00+00:00",
+            result="no_compatible_release",
+            etag='"old"',
+            product_version=previous_product,
+        )
+    )
+    updater = FirstPartySkillUpdateService(
+        store=store,
+        catalog=catalog,
+        product_version="0.2.1",
+        client_factory=lambda: failing,
+    )
+
+    assert updater.check_once().last_result == "check_failed"
+    assert failing.etags == ['"old"' if previous_product == "0.2.1" else None]
+    assert store.load_state().etag is None
+    retry_client = _FakeReleaseClient(page, assets)
+    retry = FirstPartySkillUpdateService(
+        store=FirstPartySkillStore(store.personal_root),
+        catalog=catalog,
+        product_version="0.2.1",
+        client_factory=lambda: retry_client,
+    )
+
+    diagnostic = retry.check_once()
+
+    assert diagnostic.last_result == "updated"
+    assert retry_client.etags == [None]
+    assert retry_client.download_urls == ["memory://manifest/1", "memory://package/1"]
+    assert store.load_state().etag == '"new"'
+
+
+def test_successful_not_modified_response_keeps_etag_for_next_check(tmp_path: Path) -> None:
+    store, catalog = _runtime(tmp_path)
+    store.save_state(
+        store.load_state().with_result(
+            checked_at="2026-09-24T12:00:00+00:00",
+            result="no_releases",
+            etag='"unchanged"',
+            product_version="0.2.1",
+        )
+    )
+    client = _FakeReleaseClient(ReleasePage(True, '"unchanged"'), {})
+    updater = FirstPartySkillUpdateService(
+        store=store,
+        catalog=catalog,
+        product_version="0.2.1",
+        client_factory=lambda: client,
+    )
+
+    assert updater.check_once().last_result == "not_modified"
+    assert store.load_state().etag == '"unchanged"'
+    assert updater.check_once().last_result == "not_modified"
+    assert client.etags == ['"unchanged"', '"unchanged"']
+    assert not client.download_urls
