@@ -108,7 +108,6 @@ class _Candidate:
     release: ReleaseInfo
     manifest: ReleaseManifest
     package_asset: ReleaseAsset
-    manifest_digest: str
 
 
 class FirstPartySkillUpdateService:
@@ -122,11 +121,13 @@ class FirstPartySkillUpdateService:
         product_version: str | None,
         config: FirstPartySkillConfig | None = None,
         client_factory: Callable[[], ReleaseClient] | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.config = config or store.config
         self.store = store
         self.catalog = catalog
         self._client_factory = client_factory or (lambda: GitHubReleaseClient(self.config))
+        self._clock = clock or (lambda: datetime.now(UTC))
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._status_lock = threading.RLock()
@@ -171,9 +172,10 @@ class FirstPartySkillUpdateService:
             thread.join(timeout=timeout)
 
     def check_once(self) -> UpdateDiagnostic:
+        """Explicitly check now; automatic checks additionally honor persisted cooldown."""
         if self._host_version is None:
             return self.diagnostic()
-        checked_at = datetime.now(UTC).isoformat()
+        checked_at = self._clock().isoformat()
         _root, source, _reference, state = self.store.resolve_effective()
         request_etag = (
             state.etag
@@ -185,6 +187,21 @@ class FirstPartySkillUpdateService:
         with self._client_lock:
             self._active_client = client
         try:
+            # Persist the attempt before I/O so a crash cannot bypass the cooldown.
+            # Only a completed check may retain an ETag: a 304 must never prevent
+            # retrying an interrupted download, activation, or compatibility check.
+            with self.store.locked():
+                current = self.store.load_state()
+                self.store.save_state(
+                    replace(
+                        current,
+                        last_checked_at=checked_at,
+                        last_checked_product_version=str(self._host_version),
+                        last_result="checking",
+                        last_detail=None,
+                        etag=None,
+                    )
+                )
             page = client.list_releases(etag=request_etag)
             if page.not_modified:
                 self._record_result(
@@ -205,20 +222,10 @@ class FirstPartySkillUpdateService:
                     etag=page.etag if not page.releases else None,
                 )
                 return self.diagnostic()
-            by_sequence: dict[int, _Candidate] = {}
-            for candidate in candidates:
-                existing = by_sequence.get(candidate.manifest.release_sequence)
-                if existing is not None and (
-                    existing.release.release_id != candidate.release.release_id
-                    or existing.manifest_digest != candidate.manifest_digest
-                ):
-                    raise ValueError("multiple immutable releases claim the same sequence")
-                by_sequence[candidate.manifest.release_sequence] = candidate
-            ordered = sorted(by_sequence.values(), key=lambda item: item.manifest.release_sequence)
-            observed = ordered[-1]
+            observed = candidates[0]
             compatible = [
                 candidate
-                for candidate in ordered
+                for candidate in candidates
                 if candidate.manifest.compatible_with(self._host_version)
             ]
             if not compatible:
@@ -231,7 +238,7 @@ class FirstPartySkillUpdateService:
                     etag=page.etag,
                 )
                 return self.diagnostic()
-            selected = compatible[-1]
+            selected = compatible[0]
             self._apply_candidate(
                 client,
                 selected=selected,
@@ -278,27 +285,62 @@ class FirstPartySkillUpdateService:
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
+            delay = self._background_delay()
+            if delay > 0 and self._stop_event.wait(delay):
+                return
+            if self._stop_event.is_set():
+                return
             self.check_once()
             if self._stop_event.wait(self.config.interval_seconds):
                 return
+
+    def _background_delay(self) -> float:
+        state = self.store.load_state()
+        if state.last_checked_at is None or state.last_checked_product_version != str(
+            self._host_version
+        ):
+            return 0.0
+        try:
+            checked_at = datetime.fromisoformat(state.last_checked_at)
+            if checked_at.tzinfo is None:
+                return 0.0
+            elapsed = (self._clock() - checked_at).total_seconds()
+        except ValueError:
+            return 0.0
+        # Clock rollback must not postpone updates indefinitely.
+        return max(0.0, min(self.config.interval_seconds, self.config.interval_seconds - elapsed))
 
     def _load_candidates(
         self,
         client: ReleaseClient,
         releases: tuple[ReleaseInfo, ...],
     ) -> tuple[list[_Candidate], int]:
-        candidates: list[_Candidate] = []
+        # Check every identity before early exit, including older releases whose
+        # manifests no longer need downloading. Never trust API ordering or dates.
+        eligible: dict[int, tuple[ReleaseInfo, ReleaseAsset, ReleaseAsset]] = {}
         invalid = 0
         for release in releases:
             if release.draft or release.prerelease or not release.immutable:
                 continue
-            if self.config.sequence_from_tag(release.tag) is None:
+            sequence = self.config.sequence_from_tag(release.tag)
+            if sequence is None:
                 continue
             manifest_asset = release.asset(self.config.manifest_asset_name)
             package_asset = release.asset(self.config.package_asset_name)
             if manifest_asset is None or package_asset is None:
                 invalid += 1
                 continue
+            existing = eligible.get(sequence)
+            if existing is not None and (
+                existing[0].release_id != release.release_id
+                or existing[1].digest != manifest_asset.digest
+            ):
+                raise ValueError("multiple immutable releases claim the same sequence")
+            eligible[sequence] = (release, manifest_asset, package_asset)
+
+        candidates: list[_Candidate] = []
+        for sequence in sorted(eligible, reverse=True):
+            release, manifest_asset, package_asset = eligible[sequence]
             try:
                 manifest_bytes = client.download_asset(
                     manifest_asset,
@@ -315,7 +357,14 @@ class FirstPartySkillUpdateService:
                     raise ValueError("package size differs between manifest and GitHub metadata")
                 if package_asset.size > self.config.max_package_bytes:
                     raise ValueError("package asset exceeds the configured byte limit")
-            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, httpx.HTTPError):
+            except httpx.HTTPStatusError as exc:
+                # Missing assets invalidate one release. Rate limits, outages and
+                # access failures affect the whole check; do not fan them out.
+                if exc.response.status_code not in {404, 410}:
+                    raise
+                invalid += 1
+                continue
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                 invalid += 1
                 continue
             candidates.append(
@@ -323,9 +372,10 @@ class FirstPartySkillUpdateService:
                     release=release,
                     manifest=manifest,
                     package_asset=package_asset,
-                    manifest_digest=manifest_digest,
                 )
             )
+            if self._host_version is not None and manifest.compatible_with(self._host_version):
+                break
         return candidates, invalid
 
     def _apply_candidate(
