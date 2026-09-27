@@ -157,12 +157,15 @@ def test_measured_reasoning_survives_text_edit_and_unknown_reasoning_is_reserved
 
 
 def test_unchanged_native_file_is_reused_and_new_file_cost_is_not_base64_length() -> None:
-    old = [{"role": "user", "content": [{"type": "file", "file": {"file_id": "old"}}]}]
+    old = [{"role": "user", "content": [{"type": "input_file", "file_id": "old"}]}]
     anchor = anchor_for(old, tokens=1000)
     assert estimate(old, anchor).tokens == 1000
     for data in ("B", "B" * 1000000):
         new = [{"role": "user", "content": [{"type": "file", "file": {"file_data": data}}]}]
-        assert estimate(old + new, anchor).tokens == 65000
+        result = estimate(old + new, anchor)
+        assert result.tokens == 1000 + 272000
+        assert result.unknown_components == 1
+        assert result.notes()["input_cost_known"] is False
 
 
 def test_conversation_tool_change_and_restart_keep_usage_below_compaction_threshold(

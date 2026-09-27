@@ -1336,7 +1336,8 @@ def test_usage_restore_projects_model_once_and_keeps_latest_active_usage(
     conv._restore_context_usage()
     assert reads == 1
     assert conv._last_input_tokens == 1196
-    assert conv._calibration_by_model == {current_model: 1.5, "other-model": 2.0}
+    # Legacy factors cannot be attributed to the new document delivery policy.
+    assert conv._calibration_by_input == {}
 
 
 def test_usage_calibration_persists_and_restores_per_model(tmp_path: Path) -> None:

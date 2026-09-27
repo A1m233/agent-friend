@@ -680,6 +680,15 @@ def test_edit_resend_latest_preserves_attachments(tmp_path: Path) -> None:
     user = next(message for message in conv.session.messages if message.role == "user")
     assert user.content == "read carefully"
     assert user.attachments == [attachment]
+    for request in fake.received:
+        visible_user = next(
+            message
+            for message in request
+            if message["role"] == "user" and "report.pdf" in str(message["content"])
+        )
+        assert isinstance(visible_user["content"], str)
+        assert "session_files" in visible_user["content"]
+        assert "report.pdf" in visible_user["content"]
 
 
 def test_edit_resend_latest_replaces_attachments_and_allows_attachment_only(

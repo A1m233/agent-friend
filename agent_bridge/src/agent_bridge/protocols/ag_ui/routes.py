@@ -97,6 +97,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 model_id=prepared_model,
                 store=runtime.attachment_store,
                 capability_resolver=runtime.attachment_capabilities,
+                session_files_available=runtime.session_files_available,
                 cancel_check=cancel_check,
             )
             conv = bridge.bind_persistent(
@@ -114,6 +115,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     model_id=conv.current_model_config.model_id,
                     store=runtime.attachment_store,
                     capability_resolver=runtime.attachment_capabilities,
+                    session_files_available=runtime.session_files_available,
                     cancel_check=cancel_check,
                 )
             resolved_attachments = attachment_plan.resolve()
@@ -181,6 +183,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 model_id=bridge.persistent_model(decoded.thread_id, default=boot.default_model),
                 store=runtime.attachment_store,
                 capability_resolver=runtime.attachment_capabilities,
+                session_files_available=runtime.session_files_available,
             )
 
         return StreamingResponse(

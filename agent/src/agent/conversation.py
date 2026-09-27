@@ -82,6 +82,7 @@ from memory import (
 from .approvals.models import SessionApprovalModeState
 from .assistant_phase import PhaseRun, normalize_phase
 from .attachments import AttachmentRef
+from .attachments.input_projection import INPUT_PROJECTION_VERSION
 from .attachments.models import parse_image_refs
 from .command_runtime.tools import (
     COMMAND_EXECUTION_CHECKPOINT_ARG,
@@ -115,7 +116,6 @@ from .context.usage_anchor import (
     digest,
     estimate_full_input,
     estimate_input,
-    estimate_rendered_tokens,
 )
 from .conversation_events import (
     AssistantMessageEnd,
@@ -253,6 +253,7 @@ def _interruption_reason_code(exc: BaseException | None) -> str | None:
 
 PostToolHook = Callable[[str, dict[str, Any], ToolResult], None]
 MessageRenderer = Callable[[Message, LanguageModel], dict[str, Any]]
+MessageProjector = Callable[[Message], Message]
 
 
 MAX_TOOL_TURNS_DEFAULT = 5
@@ -440,6 +441,7 @@ class Conversation:
         tool_run_policy: ToolRunPolicy | None = None,
         post_turn_external: bool = False,
         message_renderer: MessageRenderer | None = None,
+        message_projector: MessageProjector | None = None,
         tool_run_context_factory: Callable[[str], ToolRunContext] | None = None,
         skill_service: SkillCatalogService | None = None,
         session_model_history: SessionModelHistory | None = None,
@@ -468,6 +470,9 @@ class Conversation:
         self._tool_post_hook = tool_post_hook
         self._post_turn_external = post_turn_external
         self._message_renderer = message_renderer
+        from .attachments.input_projection import project_pdf_message
+
+        self._message_projector = message_projector or project_pdf_message
         self._time_provider = time_provider or SystemTimeProvider()
         self._tool_run_context_factory = tool_run_context_factory or (
             lambda user_input: ToolRunContext.create(
@@ -497,7 +502,7 @@ class Conversation:
         # 更新）；``_last_context_notes``：最近一轮上下文组装的度量观测（token 估算 /
         # 有效窗口 / 触发阈值），供调试入口读取（AC-1.3）。
         self._last_input_tokens: int | None = None
-        self._calibration_by_model: dict[str, float] = {}
+        self._calibration_by_input: dict[str, float] = {}
         self._usage_anchor: UsageAnchor | None = None
         self._pending_request_measurement: RequestMeasurement | None = None
         self._pending_context_usage: dict[str, Any] | None = None
@@ -3068,7 +3073,9 @@ class Conversation:
                 and spec["function"].get("name") == _RECOVER_TOOL_RESULT_TOOL_NAME
                 for spec in tool_specs or []
             ),
-            calibration_factor=self._calibration_by_model.get(model_id, 1.0),
+            calibration_factor=self._calibration_by_input.get(
+                self._input_calibration_key(history or []), 1.0
+            ),
             request_estimator=lambda messages: (
                 self._estimate_context_input(messages, tool_specs).tokens
             ),
@@ -3197,6 +3204,7 @@ class Conversation:
         return event
 
     def _render_context_message(self, message: Message) -> dict[str, Any]:
+        message = self._message_projector(message)
         rendered = (
             message.to_openai()
             if self._message_renderer is None
@@ -3233,6 +3241,7 @@ class Conversation:
             "reasoning": self._active_model_config().reasoning_preset,
             "replay_scope": getattr(spec, "reasoning_replay_scope", None),
             "attachment_profile": getattr(spec, "attachment_profile", None),
+            "attachment_input_projection": INPUT_PROJECTION_VERSION,
             "defaults": getattr(spec, "defaults", None),
             "responses": repr(getattr(spec, "responses", None)),
             "input_usage_scope": get_model_capabilities(client).input_usage_scope,
@@ -3245,12 +3254,38 @@ class Conversation:
             return input_compatibility_scope(identity)
         return digest(identity)
 
+    def _input_calibration_key(self, messages: list[Message]) -> str:
+        kinds = {
+            "session_pdf"
+            if ref.media_type == "application/pdf"
+            else "inline_text"
+            if ref.media_type == "text/plain"
+            else "native_image"
+            if ref.kind == "image"
+            else "native_document"
+            for message in messages
+            for ref in message.attachments
+        }
+        if any(message.images for message in messages):
+            kinds.add("tool_image")
+        return digest(
+            {
+                "model": self._active_model_id(),
+                "route": self._active_provider_route_identity(),
+                "projection": INPUT_PROJECTION_VERSION,
+                "kinds": sorted(kinds),
+            }
+        )
+
     def _estimate_context_input(
         self, messages: list[Message], tools: list[dict[str, Any]] | None
     ) -> InputEstimate:
         from .context import estimate_tokens
+        from .context.budget import estimate_attachment_allowance
 
-        factor = self._calibration_by_model.get(self._active_model_id(), 1.0)
+        calibration_key = self._input_calibration_key(messages)
+        messages = [self._message_projector(message) for message in messages]
+        factor = self._calibration_by_input.get(calibration_key, 1.0)
 
         def fallback() -> int:
             return math.ceil(
@@ -3269,19 +3304,12 @@ class Conversation:
             for message in messages:
                 if message.attachments or message.images:
                     rendered.append(message.to_openai())
-                    allowance += estimate_tokens(
-                        [
-                            Message(
-                                role=message.role,
-                                content="",
-                                attachments=message.attachments,
-                                images=message.images,
-                            )
-                        ]
-                    )
+                    allowance += estimate_attachment_allowance([message])
                 else:
                     rendered.append(self._render_context_message(message))
-            estimate = self._estimate_rendered_input(rendered, tools)
+            estimate = self._estimate_rendered_input(
+                rendered, tools, calibration_key=calibration_key
+            )
             return replace(
                 estimate,
                 tokens=estimate.tokens + allowance,
@@ -3289,7 +3317,9 @@ class Conversation:
                 reason="attachments_pending_render",
             )
         rendered = [self._render_context_message(message) for message in messages]
-        return self._estimate_rendered_input(rendered, tools, fallback_floor=fallback)
+        return self._estimate_rendered_input(
+            rendered, tools, fallback_floor=fallback, calibration_key=calibration_key
+        )
 
     def _estimate_rendered_input(
         self,
@@ -3298,50 +3328,22 @@ class Conversation:
         settings: dict[str, Any] | None = None,
         *,
         fallback_floor: int | Callable[[], int] = 0,
+        calibration_key: str | None = None,
     ) -> InputEstimate:
-        factor = self._calibration_by_model.get(self._active_model_id(), 1.0)
-
-        native_files = sum(
-            1
-            for message in messages
-            for block in (message["content"] if isinstance(message.get("content"), list) else [])
-            if isinstance(block, dict) and block.get("type") in {"file", "input_file"}
-        )
-        if native_files and (self._usage_anchor is None or self._usage_anchor.version < 3):
-            from .context import estimate_tokens
-            from .context.budget import DOCUMENT_ATTACHMENT_TOKEN_CAP
-
-            attachments = [
-                attachment
-                for message in self._last_built_model_messages or []
-                for attachment in message.attachments
-            ]
-            allowance = (
-                estimate_tokens([Message(role="user", content="", attachments=attachments)])
-                if len(attachments) >= native_files
-                else native_files * DOCUMENT_ATTACHMENT_TOKEN_CAP
-            )
-            # Native file IDs/base64 are not extracted text. Retain source bounds;
-            # never price a file by the length of its ID or its base64 encoding.
-            return InputEstimate(
-                math.ceil(
-                    (
-                        estimate_rendered_tokens(messages, file_tokens=0)
-                        + estimate_tool_schema_tokens(tools)
-                        + allowance
-                    )
-                    * factor
-                ),
-                "full_estimate",
-                "opaque_attachment",
-            )
+        key = calibration_key or self._input_calibration_key(self._last_built_model_messages or [])
+        factor = self._calibration_by_input.get(key, 1.0)
 
         def fallback() -> int:
-            if self._usage_anchor is not None and self._usage_anchor.version >= 3:
-                compatible = self._usage_anchor.compatibility_scope == self._usage_scope(
-                    tools, settings, compatibility_only=True
-                )
-                return math.ceil(
+            compatible = (
+                self._usage_anchor is not None
+                and self._usage_anchor.version >= 3
+                and self._usage_anchor.compatibility_scope
+                == self._usage_scope(tools, settings, compatibility_only=True)
+            )
+            floor = fallback_floor() if callable(fallback_floor) else fallback_floor
+            return max(
+                floor,
+                math.ceil(
                     estimate_full_input(
                         messages,
                         tools,
@@ -3349,24 +3351,18 @@ class Conversation:
                         anchor=self._usage_anchor if compatible else None,
                     )
                     * factor
-                )
-            floor = fallback_floor() if callable(fallback_floor) else fallback_floor
-            return max(
-                floor,
-                math.ceil(
-                    (estimate_rendered_tokens(messages) + estimate_tool_schema_tokens(tools))
-                    * factor
                 ),
             )
 
         # Only adapters which own the complete request may reuse input usage.
         # Explicit reasoning replay is accounted for by the delta estimator.
-        if get_model_capabilities(self._active_llm_client()).input_usage_scope != "request":
-            return InputEstimate(fallback(), "full_estimate", "opaque_provider_continuation")
-        return estimate_input(
+        input_usage_opaque = (
+            get_model_capabilities(self._active_llm_client()).input_usage_scope != "request"
+        )
+        result = estimate_input(
             messages,
             scope=self._usage_scope(tools, settings),
-            anchor=self._usage_anchor,
+            anchor=None if input_usage_opaque else self._usage_anchor,
             fallback_tokens=fallback,
             compatibility_scope=self._usage_scope(tools, settings, compatibility_only=True),
             tools=tools,
@@ -3376,6 +3372,11 @@ class Conversation:
                 self._last_input_tokens,
                 emergency_ratio=self._context_emergency_ratio,
             ).trigger_threshold,
+        )
+        return (
+            replace(result, reason="opaque_provider_continuation")
+            if input_usage_opaque and not result.unknown_components
+            else result
         )
 
     def _record_context_notes(
@@ -3387,15 +3388,25 @@ class Conversation:
         """把本轮组装的度量观测刷进 :attr:`last_context_notes`（AC-1.3）。"""
         from .context import estimate_tokens
 
+        projected_messages = [self._message_projector(message) for message in build.messages]
+        calibration_key = self._input_calibration_key(build.messages)
         notes: dict[str, Any] = {
+            "attachment_input_projection": INPUT_PROJECTION_VERSION,
+            "calibration_key": calibration_key,
+            "session_file_inputs": sum(
+                ref.media_type == "application/pdf"
+                for message in build.messages
+                for ref in message.attachments
+            ),
             "token_estimate": estimate_tokens(build.messages),
             "effective_window": runtime.budget.effective_window,
             "trigger_threshold": runtime.budget.trigger_threshold,
             "last_input_tokens": runtime.budget.last_input_tokens,
             "dropped_count": build.dropped_count,
             "request_overhead_tokens": runtime.request_overhead_tokens,
-            "calibration_factor": runtime.calibration_factor,
-            "raw_request_tokens": estimate_tokens(build.messages) + runtime.request_overhead_tokens,
+            "calibration_factor": self._calibration_by_input.get(calibration_key, 1.0),
+            "raw_request_tokens": estimate_tokens(projected_messages)
+            + runtime.request_overhead_tokens,
             "trigger_reason": runtime.trigger_reason,
             "checkpoint_status": self._checkpoint_status,
             "checkpoint_invalid_reason": self._checkpoint_invalid_reason,
@@ -3491,6 +3502,7 @@ class Conversation:
             )
             model = usage.get("model")
             factor = usage.get("calibration_factor")
+            calibration_key = usage.get("calibration_key")
             prompt_tokens = usage.get("prompt_tokens")
             if model == current_model and not anchor_candidate_seen and "input_anchor" in usage:
                 # Candidate only: prefix/scope verification happens against the
@@ -3499,12 +3511,14 @@ class Conversation:
                 self._legacy_usage_event = event
                 anchor_candidate_seen = True
             if (
-                isinstance(model, str)
-                and model not in self._calibration_by_model
+                isinstance(calibration_key, str)
+                and len(calibration_key) == 64
+                and calibration_key not in self._calibration_by_input
+                and usage.get("attachment_input_projection") == INPUT_PROJECTION_VERSION
                 and isinstance(factor, (int, float))
                 and math.isfinite(float(factor))
             ):
-                self._calibration_by_model[model] = min(4.0, max(1.0, float(factor)))
+                self._calibration_by_input[calibration_key] = min(4.0, max(1.0, float(factor)))
             if (
                 model == current_model
                 and self._last_input_tokens is None
@@ -4467,15 +4481,20 @@ class Conversation:
         """
         model_id = self._active_model_id()
         raw_estimate = int(self._last_context_notes.get("raw_request_tokens") or 0)
-        factor = self._calibration_by_model.get(model_id, 1.0)
+        calibration_key = self._input_calibration_key(self._last_built_model_messages or [])
+        factor = self._calibration_by_input.get(calibration_key, 1.0)
         if ev.usage is not None and ev.usage.prompt_tokens > 0:
             self._last_input_tokens = ev.usage.prompt_tokens
             previous = factor
             if raw_estimate > 0:
                 observed = ev.usage.prompt_tokens / raw_estimate
                 factor = min(4.0, max(1.0, 0.75 * previous + 0.25 * observed))
-            self._calibration_by_model[model_id] = factor
-        pending_usage: dict[str, Any] = {"model": model_id}
+            self._calibration_by_input[calibration_key] = factor
+        pending_usage: dict[str, Any] = {
+            "model": model_id,
+            "attachment_input_projection": INPUT_PROJECTION_VERSION,
+            "calibration_key": calibration_key,
+        }
         request_measurement = self._pending_request_measurement
         self._pending_request_measurement = None
         if request_measurement is not None:

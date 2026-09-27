@@ -780,9 +780,7 @@ async def test_unsupported_inbound_attachment_does_not_open_stream(
     await router.handle_inbound("qq", _make_event(), provider, attachments=(attachment,))
 
     assert provider.contexts == []
-    assert [item.text for item in provider.sent] == [
-        "当前会话使用的模型不支持这类附件，请先切换到支持图片或文档的模型。"
-    ]
+    assert [item.text for item in provider.sent] == ["当前模型不支持此附件类型。"]
 
 
 @pytest.mark.asyncio
@@ -805,6 +803,31 @@ async def test_deepseek_vision_rejects_oversized_inbound_image_before_stream(
     await router.handle_inbound("qq", _make_event(), provider, attachments=(attachment,))
 
     assert provider.contexts == []
-    assert [item.text for item in provider.sent] == [
-        "当前会话使用的模型不支持这类附件，请先切换到支持图片或文档的模型。"
-    ]
+    assert [item.text for item in provider.sent] == ["单个附件大小超过限制。"]
+
+
+@pytest.mark.asyncio
+async def test_text_model_pdf_uses_available_session_files(
+    router: IMRouter,
+    session_bridge: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent.attachments import AttachmentRef
+
+    session_bridge.persistent_model.return_value = "deepseek/deepseek-v4-pro"
+    session_bridge.bind_persistent.return_value = _make_conv(
+        [TextDelta(text="file answer"), TurnDone()]
+    )
+    router._session_files_available = lambda: True
+    stream = StubStreamSession()
+    provider = StubStreamingProvider(stream)
+    attachment = AttachmentRef(
+        "a" * 64, "report.pdf", "document", "application/pdf", 50000, "a" * 64
+    )
+
+    async def fake_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("agent_bridge.protocols.im.router.asyncio.sleep", fake_sleep)
+    await router.handle_inbound("qq", _make_event(), provider, attachments=(attachment,))
+    assert stream.finishes == ["file answer"]

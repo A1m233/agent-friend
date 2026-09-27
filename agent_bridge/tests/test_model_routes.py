@@ -3,12 +3,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
 from agent_bridge.assembly import BridgeRuntime
 from agent_bridge.routes.models import register_routes
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from llm_providers import LLMModelMetadataError, ModelRuntimeConfig
+from llm_providers import LLMModelMetadataError, ModelRuntimeConfig, model_capabilities
 from runtime_config import CredentialMissingError
 
 
@@ -66,6 +67,37 @@ def _validation_client(factory: object) -> TestClient:
     )
     register_routes(app, runtime)
     return TestClient(app)
+
+
+@pytest.mark.parametrize("files_available", [False, True])
+def test_catalog_separates_native_modalities_from_session_file_inputs(
+    files_available: bool,
+) -> None:
+    app = FastAPI()
+    runtime = cast(
+        BridgeRuntime,
+        SimpleNamespace(
+            connection_runtime=None,
+            attachment_capabilities=model_capabilities,
+            session_files_available=files_available,
+            attachment_store=SimpleNamespace(max_attachment_bytes=100 * 1024 * 1024),
+        ),
+    )
+    register_routes(app, runtime)
+    response = TestClient(app).get("/v1/models/catalog")
+    assert response.status_code == 200
+    models = [model for provider in response.json()["providers"] for model in provider["models"]]
+    deepseek = next(model for model in models if model["id"] == "deepseek/deepseek-flash")
+    kimi = next(model for model in models if model["id"] == "kimi/kimi-k2.6")
+    assert "application/pdf" not in deepseek["capabilities"]["acceptedMediaTypes"]
+    assert "application/pdf" in kimi["capabilities"]["acceptedMediaTypes"]
+    for model in (deepseek, kimi):
+        inputs = model["attachmentInputs"]
+        assert ("application/pdf" in inputs["acceptedMediaTypes"]) is files_available
+        assert inputs["deliveryByMediaType"]["image/png"] == "native"
+        if files_available:
+            assert inputs["deliveryByMediaType"]["application/pdf"] == "session_file"
+            assert inputs["maxAttachmentBytesByType"]["application/pdf"] == 100 * 1024 * 1024
 
 
 def test_model_validation_preflights_client_without_creating_session() -> None:

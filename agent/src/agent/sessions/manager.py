@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from ..context import ContextManager
     from ..conversation import (
         Conversation,
+        MessageProjector,
         MessageRenderer,
         PostToolHook,
         PreToolHook,
@@ -142,6 +143,7 @@ class SessionManager:
         metadata_store: SessionMetadataStore | None = None,
         session_change_broker: SessionChangeBroker | None = None,
         message_renderer: MessageRenderer | None = None,
+        message_projector: MessageProjector | None = None,
         skill_service: SkillCatalogService | None = None,
         command_workspaces_root: Path | None = None,
         time_provider: TimeProvider | None = None,
@@ -160,6 +162,7 @@ class SessionManager:
         self._metadata_store = metadata_store
         self._session_change_broker = session_change_broker
         self._message_renderer = message_renderer
+        self._message_projector = message_projector
         self._skill_service = skill_service
         self._time_provider = time_provider or SystemTimeProvider()
         self._runtime_states: dict[str, _SessionRuntimeState] = {}
@@ -680,6 +683,7 @@ class SessionManager:
                 tool_run_context_factory=tool_run_context_factory,
                 post_turn_external=post_turn_external,
                 message_renderer=self._message_renderer,
+                message_projector=self._message_projector,
                 skill_service=self._skill_service,
                 session_model_history=runtime_state.model_history,
                 session_model_context=runtime_state.model_context,

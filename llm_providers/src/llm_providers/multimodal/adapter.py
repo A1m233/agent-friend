@@ -46,6 +46,11 @@ class MultimodalInputAdapter:
         if not attachments or getattr(message, "role", None) != "user":
             return cast(dict[str, Any], message.to_openai())
 
+        if any(item.media_type == "application/pdf" for item in attachments):
+            raise LLMBadRequestError(
+                "attachment_projection_required: PDF 必须通过会话文件投影按需读取，不能原生投递。"
+            )
+
         concrete_client = self._concrete_client(client)
         model_id = self._canonical_model_id(concrete_client)
         capabilities = concrete_client.spec.attachment_capabilities or model_capabilities(model_id)

@@ -39,7 +39,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
-from agent.attachments import AttachmentRef
+from agent.attachments import AttachmentError, AttachmentRef
+from agent.attachments.input_policy import AttachmentInputPolicy
 from agent.latency import RunLatencyContext, log_run_latency, monotonic_ms
 from agent.message_references import QuotedTextReference
 from agent.runtime import AgentRuntime, RunOutcome, RunRequest, UserEvent
@@ -124,8 +125,10 @@ class IMRouter:
         agent_runtime: AgentRuntime | None = None,
         reference_aliases: IMReferenceAliasIndex | None = None,
         capability_resolver: Callable[[str], ModelRouteCapabilities] = model_capabilities,
+        session_files_available: Callable[[], bool] | None = None,
     ) -> None:
         self._capability_resolver = capability_resolver
+        self._session_files_available = session_files_available or (lambda: False)
         self._bridge = session_bridge
         self._default_persona = default_persona
         self._default_model = default_model
@@ -206,22 +209,16 @@ class IMRouter:
         if attachments:
             model = self._bridge.persistent_model(session_id, default=self._default_model)
             capabilities = self._capability_resolver(model)
-            unsupported = (
-                not capabilities.attachments
-                or len(attachments) > capabilities.max_attachments_per_turn
-                or sum(item.size_bytes for item in attachments)
-                > capabilities.max_total_attachment_bytes
-                or any(item.size_bytes > capabilities.max_attachment_bytes for item in attachments)
-                or any(
-                    item.media_type not in capabilities.accepted_media_types for item in attachments
+            try:
+                AttachmentInputPolicy(capabilities, self._session_files_available()).validate(
+                    list(attachments)
                 )
-            )
-            if unsupported:
+            except AttachmentError as exc:
                 await send_fn(
                     OutboundContent(
                         chat_id=event.chat_id,
                         chat_scope=event.chat_scope,
-                        text="当前会话使用的模型不支持这类附件，请先切换到支持图片或文档的模型。",
+                        text=str(exc),
                         reply_to_message_id=event.message_id,
                     )
                 )

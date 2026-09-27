@@ -146,7 +146,7 @@ def test_old_interruption_moves_to_source_turn_and_does_not_replace_latest_reque
 
 
 @pytest.mark.parametrize("change", ["same", "effort", "window", "route"])
-def test_tool_only_legacy_usage_anchor_can_be_restored(
+def test_tool_only_legacy_usage_anchor_cannot_cross_input_projection_version(
     tmp_path: Path, change: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent.context.usage_anchor import digest
@@ -200,4 +200,8 @@ def test_tool_only_legacy_usage_anchor_can_be_restored(
         )
     compatible = conv._usage_scope(None, compatibility_only=True)
     assert conv._usage_anchor.version == (3 if change == "route" else 4)
-    assert (conv._usage_anchor.compatibility_scope == compatible) == (change != "route")
+    assert conv._usage_anchor.compatibility_scope != compatible
+    result = conv._estimate_context_input([Message(role="user", content="hi")], None)
+    assert result.mode == "full_estimate"
+    assert result.anchor_tokens == 0
+    assert result.tokens < 100

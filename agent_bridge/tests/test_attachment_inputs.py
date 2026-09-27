@@ -10,6 +10,8 @@ from agent import AttachmentRef, AttachmentStore
 
 
 class _VerifyingStore:
+    max_attachment_bytes = 100 * 1024 * 1024
+
     def verify(self, _asset_id: str) -> None:
         return None
 
@@ -45,3 +47,32 @@ def test_deepseek_vision_admission_enforces_model_single_file_limit() -> None:
     detail = caught.value.detail
     assert isinstance(detail, dict)
     assert detail["error"] == "attachment_size_limit_exceeded"
+
+
+def test_pdf_admission_uses_session_files_without_enabling_native_images() -> None:
+    from dataclasses import replace
+
+    store = cast(AttachmentStore, _VerifyingStore())
+    pdf = replace(_image(80 * 1024 * 1024), kind="document", media_type="application/pdf")
+    plan = prepare_attachment_input(
+        [ExistingAttachmentInput(pdf)],
+        model_id="deepseek/deepseek-v4-pro",
+        store=store,
+        session_files_available=True,
+    )
+    assert plan.resolve() == [pdf]
+    with pytest.raises(HTTPException) as unavailable:
+        prepare_attachment_input(
+            [ExistingAttachmentInput(pdf)], model_id="deepseek/deepseek-v4-pro", store=store
+        )
+    assert isinstance(unavailable.value.detail, dict)
+    assert unavailable.value.detail["error"] == "attachment_file_processing_unavailable"
+    with pytest.raises(HTTPException) as unsupported:
+        prepare_attachment_input(
+            [ExistingAttachmentInput(_image(1))],
+            model_id="deepseek/deepseek-v4-pro",
+            store=store,
+            session_files_available=True,
+        )
+    assert isinstance(unsupported.value.detail, dict)
+    assert unsupported.value.detail["error"] == "attachment_type_unsupported"

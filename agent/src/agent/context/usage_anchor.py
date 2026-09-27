@@ -13,7 +13,6 @@ from typing import Any
 
 from .budget import (
     CHARS_TO_TOKENS,
-    DOCUMENT_ATTACHMENT_TOKEN_CAP,
     IMAGE_ATTACHMENT_TOKENS,
     TOOL_IMAGE_TOKENS,
     estimate_tool_schema_tokens,
@@ -22,10 +21,31 @@ from .usage_components import components, valid_digest
 from .usage_components import digest as digest
 
 
+def is_opaque_document(block: Any) -> bool:
+    if not isinstance(block, dict):
+        return False
+    if block.get("type") == "input_file":
+        return True
+    if block.get("type") != "file":
+        return False
+    # The internal nested file_id block is the DeepSeek image contract;
+    # Responses conversion maps it to input_image, never input_file.
+    file = block.get("file")
+    return not (isinstance(file, dict) and set(file) == {"file_id"})
+
+
+def _has_documents(messages: list[dict[str, Any]]) -> bool:
+    return any(
+        is_opaque_document(block)
+        for message in messages
+        for block in (message["content"] if isinstance(message.get("content"), list) else [])
+    )
+
+
 def estimate_rendered_tokens(
     messages: list[dict[str, Any]],
     *,
-    file_tokens: int = DOCUMENT_ATTACHMENT_TOKEN_CAP,
+    file_tokens: int | None = None,
 ) -> int:
     """Retain the existing character heuristic, including replayed reasoning.
 
@@ -40,9 +60,11 @@ def estimate_rendered_tokens(
         if isinstance(value, str):
             return len(value) * CHARS_TO_TOKENS
         if isinstance(value, dict):
-            if value.get("type") in {"file", "input_file"}:
+            if is_opaque_document(value):
+                if file_tokens is None:
+                    raise ValueError("unmeasured_document_input")
                 return float(file_tokens)
-            if value.get("type") in {"image_url", "input_image"}:
+            if value.get("type") in {"image_url", "input_image", "file"}:
                 return float(image_tokens)
             if "text" in value:
                 return cost(value["text"])
@@ -198,6 +220,9 @@ def _estimate_delta(messages: list[dict[str, Any]], anchor: UsageAnchor) -> int 
     """Count only replayed output; unknown opaque deltas cannot spend an anchor."""
     tokens = 0
     for message in messages:
+        content = message.get("content")
+        if isinstance(content, list) and any(is_opaque_document(block) for block in content):
+            return None
         details = message.get("reasoning_details")
         if not details:
             tokens += estimate_rendered_tokens([message])
@@ -286,7 +311,7 @@ def estimate_input(
         return InputEstimate(
             fallback,
             "full_estimate",
-            reason,
+            "unmeasured_document_input" if unknown and _has_documents(messages) else reason,
             unknown_tokens=unknown_token_reserve if unknown else 0,
             unknown_components=unknown,
         )
@@ -350,7 +375,11 @@ def _estimate_components(
     reserve = unknown_token_reserve if unknown else 0
     tokens = anchor.input_tokens + delta + reserve
     mode = "usage_anchor" if not retained else "usage_anchor_partial"
-    reason = "unmeasured_reasoning_delta" if unknown else "none"
+    reason = (
+        ("unmeasured_document_input" if _has_documents(messages) else "unmeasured_reasoning_delta")
+        if unknown
+        else "none"
+    )
     # A shorter candidate must be able to shed retained slack after compaction
     # or FIFO trimming. Never subtract an estimated old fragment from real usage.
     if not unknown and (

@@ -163,7 +163,7 @@ def test_kimi_expired_cached_image_is_reuploaded(
         "openai/kimi-k2.7-code-highspeed",
     ),
 )
-def test_kimi_document_extract_keeps_attachment_source_envelope(
+def test_kimi_text_extract_keeps_attachment_source_envelope(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     model: str,
@@ -174,7 +174,7 @@ def test_kimi_document_extract_keeps_attachment_source_envelope(
         lambda **_kwargs: SimpleNamespace(files=files),
     )
     adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"pdf"), cache_dir=tmp_path)
-    message = _Message(_attachment(kind="document", media_type="application/pdf"), current=True)
+    message = _Message(_attachment(kind="document", media_type="text/plain"), current=True)
 
     rendered = adapter.render_message(message, _client(model))
 
@@ -200,7 +200,7 @@ def test_kimi_rejects_extracted_document_that_cannot_fit_context(
 
     with pytest.raises(LLMBadRequestError, match="attachment_context_too_large"):
         adapter.render_message(
-            _Message(_attachment(kind="document", media_type="application/pdf"), current=True),
+            _Message(_attachment(kind="document", media_type="text/plain"), current=True),
             client,
         )
 
@@ -356,7 +356,12 @@ def test_deepseek_rejects_unsupported_attachment_types(
 ) -> None:
     adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"x"), cache_dir=tmp_path)
 
-    with pytest.raises(LLMBadRequestError, match="attachment_type_unsupported"):
+    error = (
+        "attachment_projection_required"
+        if media_type == "application/pdf"
+        else "attachment_type_unsupported"
+    )
+    with pytest.raises(LLMBadRequestError, match=error):
         adapter.render_message(
             _Message(_attachment(kind=kind, media_type=media_type), current=True),
             _client("openai/deepseek-flash"),
@@ -427,6 +432,11 @@ def test_custom_attachments_use_native_blocks_without_file_upload(
     client = LLMClient(spec)
     adapter = MultimodalInputAdapter(open_asset=lambda _: BytesIO(data), cache_dir=tmp_path)
     message = _Message(_attachment(kind=kind, media_type=media, size_bytes=len(data)), current=True)
+    if media == "application/pdf":
+        with pytest.raises(LLMBadRequestError, match="attachment_projection_required"):
+            adapter.render_message(message, client)
+        assert not list(tmp_path.iterdir())
+        return
     rendered = adapter.render_message(message, client)
     assert rendered["content"][-1]["type"] == block
     assert adapter.render_message(message, client) == rendered
