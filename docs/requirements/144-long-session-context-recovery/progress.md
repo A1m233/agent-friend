@@ -2,9 +2,9 @@
 
 ## 总体状态
 
-IN_PROGRESS
+COMPLETED
 
-需求与方案已确认，用户已最终验收并要求合入推送，然后从最新主干构建 local-test 包。基线 `2ededbf8246027c6679979e8d140a29bd2d963d5`，分支 `feature/144-long-session-context-recovery`。交付前新增脚本要求的冻结 runtime 验证，完成后收口。
+需求与方案已确认，用户已最终验收并要求合入推送，然后从最新主干构建 local-test 包。基线 `2ededbf8246027c6679979e8d140a29bd2d963d5`，实现提交 `2df2de49a6acc9182d3e532ddb3ee2de6bca4108`。全部 AC、完整检查、真实观察、桌面检查和合入前冻结 runtime 验证已完成。
 
 ## 任务列表
 
@@ -17,7 +17,7 @@ IN_PROGRESS
 - [x] T6a：真实模型观察与摘要人工复核。
 - [x] T6b：真实桌面交互验收。
 - [x] T6c：用户最终验收。
-- [ ] T7：打包脚本要求的冻结 runtime 验证及交付。
+- [x] T7：打包脚本要求的合入前冻结 runtime 验证。
 
 ## AC 验证
 
@@ -58,9 +58,13 @@ IN_PROGRESS
 
 实现阶段按静态 import、无新增依赖/资源加载变化判断为 `standard`。用户请求打包后的 `installer-contract` 将 `agent/src/agent/prompt_sections/README.md` 归为 `package-sensitive`，最低等级为二级；本次遵守脚本 floor，在合入前补充冻结 runtime doctor/capability 验证，再从最新主干构建完整 local-test 安装包。不以 source-env 检查替代冻结验证。
 
+冻结验证已通过：build ID `20260927T174209Z-2df2de49a6ac-f5814190`，版本 `0.3.0`，local-test，effective level `package-sensitive`。doctor、能力检查与冻结服务启动/退出检查通过，整体 exit 0。首次临时 Guide 目录替换曾返回 Windows 拒绝访问，事务成功回滚且工作区干净；一次标准重试通过，未修改权限或打包校验。构建结束后临时 baseline 已恢复。
+
+公开 Guide 已更新并发布 immutable `agent-friend-guide-r68`，提交 `54f980a33e082a76f0b649b88a1b2c7b2be6b34f`，snapshot `a6590065a338fd81a6eef6233abcae7cf2fd6da18caafe061c7fc6cecc64c6b5`；兼容区间为 `[0.3.0, 0.4.0)`。公开内容只更新会话使用与排障说明，未持久同步产品 builtin。用户后续要求的完整测试包将从推送后的主干构建，其精确来源由 release manifest 记录。
+
 ## 验证授权与限制
 
 - 完整自动化检查使用 fake/mock。两轮真实观察分别获授权，均采用 `gpt-6-sol / medium`，各使用 6 次请求。第二轮报告的模型输入用量合计 38,388、输出 1,470 token（含重复输入计数，不据此推断计费金额）。本次真实调用已结束，不再扩跑。
 - 真实观察使用合成记录。首场景在工具事务闭合后由 harness 强制触发压缩，第二场景注入已保存失败；它们验证真实摘要承接，不冒充真实满窗口压力或用户旧会话恢复。
 - 当前候选版本为 [candidate-02-source.json](candidate-02-source.json) 的基线加源码、测试与脚本字节指纹；[candidate-source.json](candidate-source.json) 保留首轮来源。真实观察保留各自独立请求报告；桌面结论需核对真实 Tauri 实例身份及证据层级。
-- 用户已明确要求合入推送，视为最终验收确认；完成新增冻结验证后标记 COMPLETED，保留 merge commit，再从最新主干打包。
+- 用户已明确要求合入推送，视为最终验收确认；新增冻结验证已完成，状态标记 COMPLETED。合入保留 merge commit，后续打包不改变已通过的需求验收结论。
