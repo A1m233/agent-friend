@@ -302,7 +302,9 @@ def test_compaction_unavailable_is_retryable_and_sanitized() -> None:
     assert error.code == "context_compaction_unavailable"
     assert error.recoverable is True
     assert "会话压缩" in error.message
-    assert "稍后重试" in error.message
+    assert "压缩后继续" in error.message
+    assert error.reason == "unavailable"
+    assert error.recovery_action == "compact_then_resume"
     assert "private provider detail" not in error.message
     assert "减少附件" not in error.message
     assert error.sanitize_failed_model_call is False

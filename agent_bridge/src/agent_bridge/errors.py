@@ -87,6 +87,16 @@ class ProtocolError:
     message: str
     recoverable: bool
     sanitize_failed_model_call: bool = False
+    reason: str | None = None
+    recovery_action: str | None = None
+
+    def recovery_details(self) -> dict[str, str] | None:
+        if self.reason is None and self.recovery_action is None:
+            return None
+        return {
+            **({"reason": self.reason} if self.reason else {}),
+            **({"recoveryAction": self.recovery_action} if self.recovery_action else {}),
+        }
 
 
 def map_exception(exc: BaseException) -> ProtocolError:
@@ -144,6 +154,10 @@ def map_exception(exc: BaseException) -> ProtocolError:
                 code=exc.code,
                 message="会话压缩未完成，已保留原历史。" + cause.message,
                 recoverable=cause.recoverable,
+                reason=exc.reason,
+                recovery_action="compact_then_resume"
+                if cause.recoverable
+                else "adjust_configuration",
             )
         return ProtocolError(
             http_status=503,
@@ -151,11 +165,46 @@ def map_exception(exc: BaseException) -> ProtocolError:
             message=(
                 "当前模型不支持会话压缩参数，已保留原历史。请切换模型或修正配置后继续。"
                 if exc.reason == "unsupported_model_parameter"
-                else "当前任务必须保留的内容已超过上下文预算，已保留原历史。请减少本轮输入或调整模型容量后重试。"
+                else "压缩后需要保留的输入仍超过预算，已保留原历史。请调整输入或模型容量后继续。"
                 if exc.reason == "retained_context_over_budget"
-                else "会话压缩暂时失败，已保留原历史，暂时无法继续这轮任务。请稍后重试。"
+                else "部分上下文缺少可靠的用量证据，已保留原历史。可以尝试压缩后继续。"
+                if exc.reason == "input_cost_unknown"
+                else "仍有工具执行结果待确认，已保留原历史。请先等待或核实执行状态。"
+                if exc.reason == "tool_transaction_pending"
+                else "当前模型连接无法安全重建上下文，已保留原历史。请调整模型连接后继续。"
+                if exc.reason == "checkpoint_unsupported"
+                else "会话已变化，已保留最新输入。请刷新后继续最新任务。"
+                if exc.reason == "source_changed"
+                else "上下文压缩没有进一步缩小输入，已保留原历史。请调整任务范围或模型容量后继续。"
+                if exc.reason == "compaction_no_progress"
+                else "本次压缩已达到处理上限，已保留原历史。请调整任务范围或模型容量后继续。"
+                if exc.reason
+                in {"summary_segment_limit", "summary_attempt_limit", "summary_input_too_large"}
+                else "无法确认当前任务的原始目标，已保留原历史。请在原会话补充当前目标。"
+                if exc.reason == "task_source_unavailable"
+                else "会话压缩暂时失败，已保留原历史。可以尝试压缩后继续；若仍失败，请调整输入或模型配置。"
             ),
             recoverable=True,
+            reason=exc.reason,
+            recovery_action=(
+                "adjust_configuration"
+                if exc.reason in {"unsupported_model_parameter", "checkpoint_unsupported"}
+                else "adjust_input"
+                if exc.reason
+                in {
+                    "retained_context_over_budget",
+                    "compaction_no_progress",
+                    "summary_segment_limit",
+                    "summary_attempt_limit",
+                    "summary_input_too_large",
+                    "task_source_unavailable",
+                }
+                else "wait"
+                if exc.reason == "tool_transaction_pending"
+                else "retry"
+                if exc.reason == "source_changed"
+                else "compact_then_resume"
+            ),
         )
     if isinstance(exc, ContextBaseOverBudgetError):
         return ProtocolError(
@@ -362,6 +411,7 @@ def build_openai_error_envelope(err: ProtocolError) -> dict[str, Any]:
             "message": err.message,
             "type": "agent_friend_error",
             "code": err.code,
+            **({"details": err.recovery_details()} if err.recovery_details() else {}),
         }
     }
 

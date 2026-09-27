@@ -1589,6 +1589,48 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
 });
 
 describe("conversation store · continue tool result", () => {
+  it.each([
+    ["context_compaction_unavailable", "compact_then_resume", "compact_then_resume"],
+    ["context_compaction_unavailable", undefined, "compact_then_resume"],
+    ["context_compaction_unavailable", "retry", "automatic"],
+    ["rate_limit", undefined, "automatic"],
+  ] as const)("continues %s / %s using %s and the stopped source run", async (code, action, mode) => {
+    mockGet.mockResolvedValue({
+      session_id: "sid-1", title: "task", persona: "default", model: "test",
+      recovery: { sourceRunId: "failed", rootRunId: "failed" },
+      events: [
+        { type: "user_message", uuid: "user", ts: "2026-09-16T00:00:00Z", payload: { content: "finish" } },
+        { type: "run_error", uuid: "error", ts: "2026-09-16T00:00:01Z", meta: { run_id: "failed" },
+          payload: { code, recoverable: true, message: "failed", recovery_action: action } },
+      ],
+    });
+    mockContinueStream.mockImplementation(async function* () {
+      yield ev({ type: EventType.RUN_FINISHED });
+    });
+    await useConversationStore.getState().openSession("sid-1");
+    await useConversationStore.getState().continueToolResult(lastMessage().id);
+    expect(mockContinueStream).toHaveBeenCalledWith("sid-1", expect.any(String), expect.objectContaining({
+      sourceRunId: "failed", recoveryMode: mode, signal: expect.any(AbortSignal),
+    }));
+    expect(useConversationStore.getState().messages.filter((item) => item.role === "user")).toHaveLength(1);
+  });
+
+  it("does not grant continuation to a nonrecoverable error carrying a recovery action", async () => {
+    mockGet.mockResolvedValue({
+      session_id: "sid-1", title: "task", persona: "default", model: "test",
+      events: [
+        { type: "user_message", uuid: "user", ts: "2026-09-16T00:00:00Z", payload: { content: "finish" } },
+        { type: "run_error", uuid: "error", ts: "2026-09-16T00:00:01Z", meta: { run_id: "failed" },
+          payload: { code: "context_compaction_unavailable", recoverable: false, message: "failed", recovery_action: "compact_then_resume" } },
+      ],
+    });
+    await useConversationStore.getState().openSession("sid-1");
+    expect(lastMessage().recoveryAction).toBe("compact_then_resume");
+    expect(lastMessage().canContinue).toBe(false);
+    await useConversationStore.getState().continueToolResult(lastMessage().id);
+    expect(mockContinueStream).not.toHaveBeenCalled();
+  });
+
   it("拒绝过期恢复请求后移除乐观占位，不生成第二条错误或残留忙碌状态", async () => {
     mockGet.mockResolvedValue({
       session_id: "sid-1", title: "task", persona: "default", model: "test",

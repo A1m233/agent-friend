@@ -32,6 +32,7 @@ import type {
 } from "@/types/chat";
 import type { PushEvent } from "@/types/push";
 import { applyAssistantPhase, setAssistantItem, updateAssistantItemPhase } from "./assistantPhase";
+import { parseRunErrorRecovery } from "./taskRecovery";
 
 /** 工具结果里 bridge 用此前缀表达 is_error（006 encoders：无专用字段，约定前缀）。 */
 export const TOOL_ERROR_PREFIX = "[error] ";
@@ -171,6 +172,7 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
         status: "error",
         error: e.message,
         errorCode: e.code,
+        ...parseRunErrorRecovery(e.rawEvent, "camel"),
         runStatus: undefined,
         blocks: removeRunningCompactions(msg.blocks),
       };

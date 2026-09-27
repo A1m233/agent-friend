@@ -48,8 +48,55 @@ def recent_turn_start_candidates(history: list[Message]) -> list[int]:
 
 
 def is_real_user_message(message: Message) -> bool:
-    """Synthetic Skill instructions share user priority but never open a new turn."""
-    return message.role == "user" and message.meta.get("synthetic") != "skill_instructions"
+    """Host advisories, Skill instructions and task anchors never open a user turn."""
+    return (
+        message.role == "user"
+        and not message.meta.get("synthetic")
+        and not message.meta.get("model_only")
+        and not message.meta.get("trusted_host_context")
+    )
+
+
+def safe_compaction_boundaries(history: list[Message]) -> list[int]:
+    """Return prefix ends which preserve complete responses and tool transactions.
+
+    A provider response can occupy several assistant items followed by parallel
+    results. A boundary cannot bisect any of those identities. Open or malformed
+    transactions fail closed rather than inventing a result for compaction.
+    """
+    pending: dict[str, int] = {}
+    pending_group: object = None
+    response_ranges: dict[str, tuple[int, int]] = {}
+    intervals: list[tuple[int, int]] = []
+    for index, message in enumerate(history):
+        if message.role == "tool":
+            call_id = message.meta.get("tool_call_id")
+            if not isinstance(call_id, str) or call_id not in pending:
+                raise ValueError("orphan_tool_result")
+            intervals.append((pending.pop(call_id), index))
+            continue
+        group = message.meta.get("assistant_response_id")
+        if pending and not (message.role == "assistant" and group and group == pending_group):
+            raise ValueError("tool_transaction_pending")
+        pending_group = group
+        if message.role != "assistant":
+            continue
+        if isinstance(group, str) and group:
+            start = response_ranges.get(group, (index, index))[0]
+            response_ranges[group] = (start, index)
+        calls = message.meta.get("tool_calls", [])
+        if not isinstance(calls, list):
+            raise ValueError("invalid_tool_calls")
+        for call in calls:
+            call_id = call.get("id") if isinstance(call, dict) else None
+            if not isinstance(call_id, str) or not call_id or call_id in pending:
+                raise ValueError("invalid_tool_call_identity")
+            pending[call_id] = index
+    if pending:
+        raise ValueError("tool_transaction_pending")
+    intervals.extend(response_ranges.values())
+    blocked = {cut for start, end in intervals for cut in range(start + 1, end + 1)}
+    return [cut for cut in range(1, len(history) + 1) if cut not in blocked]
 
 
 def preserve_latest_skill_catalog(

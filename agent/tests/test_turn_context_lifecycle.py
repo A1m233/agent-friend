@@ -226,17 +226,20 @@ def test_edit_reuses_verified_summary_and_records_new_compaction(tmp_path: Path)
     conv._session_model_history.items = history
     conv._rollout_recorder = SessionRolloutRecorder(store=store, session=session)
     conv.send("compress")
+    first_summary_calls = llm.complete_calls
+    assert 1 <= first_summary_calls <= 3
     conv.send("second")
+    assert llm.complete_calls == first_summary_calls
     original = session.latest_compaction()
     assert original is not None
     assert original.payload["covered_through_uuid"] not in {
         event.uuid for event in session.active_events
     }
     list(conv.edit_resend_latest("edited", expected_user_content="second"))
-    assert llm.complete_calls == 1
+    assert llm.complete_calls == first_summary_calls
     assert conv._checkpoint_invalid_reason == ""
     list(conv.edit_resend_latest("edited again", expected_user_content="edited"))
-    assert llm.complete_calls == 1
+    assert llm.complete_calls == first_summary_calls
     assert all(message.get("content") not in {"second", "edited"} for message in llm.received[-1])
     restored = restore_rollout(store.load(session.session_id))
     assert (
@@ -298,7 +301,9 @@ def test_builder_and_skill_capabilities_agree_on_real_surface(
     surface: Any,
     compress: bool,
 ) -> None:
-    llm = _FakeLLM(context_window=14_000 if compress else 128_000)
+    # Still trigger compaction, while allowing complete source coverage within
+    # the three-segment budget instead of relying on omitted old turns.
+    llm = _FakeLLM(context_window=18_000 if compress else 128_000)
     conv, session, store = _make_conversation(
         tmp_path,
         fake_llm=llm,
@@ -317,6 +322,8 @@ def test_builder_and_skill_capabilities_agree_on_real_surface(
         _seed_turns(session, store, n=80, size=200)
     for operation in (conv.stream, conv.edit_resend_latest):
         list(operation("question", surface=surface))
+        if compress:
+            assert session.latest_compaction() is not None
         content = _host_messages(conv)["runtime_capabilities"].content
         assert render_runtime_capability_notice(names, surface=surface) in content
         assert ("cannot grant a new local-file approval" in content) == (surface != "desktop_chat")

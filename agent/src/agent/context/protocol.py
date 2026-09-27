@@ -28,6 +28,32 @@ from ..messages import Message
 if TYPE_CHECKING:
     from llm_providers import LanguageModel
 
+    from .usage_anchor import InputEstimate
+
+MAX_SUMMARY_REQUESTS = 4
+MAX_SUMMARY_SEGMENTS = 3
+
+
+@dataclass
+class CompactionControl:
+    """One request's bounded recovery cycle, shared with capacity recovery.
+
+    This is transient orchestration, not another task/history store. The caller
+    supplies the accepted business user, and replaces the control only after real
+    progress or an explicit new attempt. Nested builders must reuse this object.
+    """
+
+    mode: Literal["automatic", "compact_then_resume"] = "automatic"
+    current_user: Message | None = None
+    source_fingerprint: str = ""
+    summary_requests: int = 0
+    successful_segments: int = 0
+    attempted_inputs: set[str] = field(default_factory=set)
+    candidate_fingerprint: str = ""
+    summarized_source: tuple[str, ...] = ()
+    summary_text: str = ""
+    summary_goal_fingerprint: str = ""
+
 
 @dataclass(frozen=True)
 class BudgetSnapshot:
@@ -78,6 +104,12 @@ class PriorSummary:
     checkpoint_id: str = ""
     materialized: bool = False
     business_covered_through_uuid: str = ""
+    task_anchor_uuid: str = ""
+    source_user_event_uuid: str = ""
+    source_user_sha256: str = ""
+    task_anchor_sha256: str = ""
+    task_anchor_version: int = 0
+    task_anchor: Message | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +149,11 @@ class CompactionRecord:
     model_prefix_sha256: str = ""
     business_covered_through_uuid: str = ""
     business_prefix_sha256: str = ""
+    task_anchor_uuid: str = ""
+    source_user_event_uuid: str = ""
+    source_user_sha256: str = ""
+    task_anchor_sha256: str = ""
+    task_anchor_version: int = 0
 
 
 @dataclass(frozen=True)
@@ -168,6 +205,8 @@ class RuntimeContext:
     trigger_reason: str = "budget"
     run_id: str | None = None
     request_estimator: Callable[[list[Message]], int] | None = None
+    request_assessment: Callable[[list[Message]], InputEstimate] | None = None
+    compaction_control: CompactionControl | None = None
     session_id: str | None = None
     surface: str | None = None
     cancel_check: Callable[[], None] | None = None

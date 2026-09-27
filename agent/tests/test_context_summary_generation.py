@@ -156,6 +156,8 @@ def test_compaction_http_progress_idle_timeout_and_cancel(
         error = RunCancelled if outcome == "cancel" else ContextCompactionUnavailableError
         with pytest.raises(error):
             manager.build_messages(history, "system", runtime=runtime)
-    assert len(requests) == (2 if outcome == "stall" else 1)
+    # Summary transports do not multiply the compaction planner's shared retry
+    # budget. This compatibility build has no planner-controlled retry cycle.
+    assert len(requests) == 1
     assert all(event.wait(1) for event in closed)
     assert [(message.uuid, message.content) for message in history] == original

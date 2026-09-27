@@ -42,7 +42,7 @@ Windows `dev/run.*` 会通过 `desktop-application/run.* ensure` 构建并绑定
 
 | 验收入口 | 用途 | mac / linux | windows |
 | --- | --- | --- | --- |
-| `context-recovery-smoke/` | CPA 隔离会话 3 轮真实调用：low/medium 用量复用、失败编辑后冷恢复；须逐次授权，不读写用户会话 | `./scripts/context-recovery-smoke/run.sh --allow-llm --model REF --output NEW_PATH` | `.\scripts\context-recovery-smoke\run.ps1 --allow-llm --model REF --output NEW_PATH` |
+| `context-recovery-smoke/` | CPA 隔离会话：默认 137 的 3 轮用量/编辑恢复；`--scenario long-session` 为 144 的任务内压缩、显式恢复与冷恢复，预计 6 请求、硬上限 8；须单次授权，不读写用户会话 | `./scripts/context-recovery-smoke/run.sh --allow-llm --model REF --output NEW_PATH [--scenario long-session]` | `.\scripts\context-recovery-smoke\run.ps1 --allow-llm --model REF --output NEW_PATH [--scenario long-session]` |
 | `image-reading-visual/` | 已核验身份的真实 Tauri 空会话中注入仅 UI 的 read_image 授权夹具、截图并验证拒绝按钮，恢复原状态；不调用模型、不验证后端授权 | `./scripts/image-reading-visual/run.sh --output-dir NEW_DIR` | `.\scripts\image-reading-visual\run.ps1 --output-dir NEW_DIR` |
 | `session-latency/` | 经授权附着真实 Tauri dev CDP，交替点击两个已有会话，记录首次内容与就绪时间、请求时间；不发送模型消息，报告拒绝覆盖 | `./scripts/session-latency/run.sh --title-a A --title-b B --output PATH` | `.\scripts\session-latency\run.ps1 --title-a A --title-b B --output PATH` |
 | `notification-visual/` | 经授权连接已有 Tauri WebView2/CDP，检查通知几何、点击 ActionBar 调试按钮、拖动与截图；不启动/关闭桌面主程序、不调用 LLM。显式 `restart-bridge` 可经既有supervisor重载Python。Windows 额外同步系统光标以匹配桌宠穿透；其它平台只使用 CDP 输入，未提供原生光标适配。 | `./scripts/notification-visual/run.sh inspect\|hover\|action short\|action long\|action stack\|action clear\|drag X Y\|restart-bridge` | `.\scripts\notification-visual\run.ps1 inspect\|hover\|action short\|action long\|action stack\|action clear\|drag X Y\|restart-bridge` |
@@ -50,6 +50,10 @@ Windows `dev/run.*` 会通过 `desktop-application/run.* ensure` 构建并绑定
 `session-latency/run.* restore --session-id ID --baseline-ref HEAD --output PATH` 只读加载一次本机会话，在同一输入上比较 Git 基线与当前 rollout 恢复，报告时间和完整恢复结果摘要；不执行回合、不调用模型。基线先跑且加载器统一使用当前版本，不能冒充独立随机实验；仅从可信项目 Git revision 加载基线代码。原始会话不写入报告。
 
 `context-recovery-smoke/run.*` 的 `--connection-name NAME` 指定已核验的 CPA 连接显示名（默认 CPA）。Windows/WebView2 桌面验收另用 `--desktop-stage open MODEL_REF` 创建专用验收会话，后续 `inspect|oversize|edit-oversize|reload|evidence|recover|success SESSION_ID` 连接已核验的真实 Tauri CDP；必须在隔离数据目录启动 runtime。`recover` 另须 `--allow-llm`，产生 1 轮 CPA 对话，产品启用的通知/记忆可能产生配套调用，执行前须一并计入授权量。其它阶段不主动发起真实模型请求；不将本 runner 用于已有用户会话。桌面 JSON/截图写入系统临时目录，跨平台入口语义一致。
+
+`context-recovery-smoke/run.* --scenario long-session --allow-llm --connection-name NAME --model REF --reasoning-preset effort:low --output NEW_PRIVATE_JSON` 运行 144 的三个合成场景，默认模式仍保持 137 行为。普通请求、摘要和冷恢复共享最多 8 次 provider 调用，禁用内部重试；预计 6 次，异常立即保留失败报告。逻辑窗口最多 20,000 token；首场景由夹具在真实工具事务闭合后强制压缩，报告标为 `synthetic_force_at_completed_tool_boundary`，用于观察真实摘要承接，不代表真实满窗或自动压力复现。唯一工具只增加内存计数，不执行外部动作；失败场景明确为合成的 provider 调用前失败。报告校验最新目标/约束、已完成/运行中/未知/待处理状态、无重复工具副作用和 checkpoint 冷复用，保留源码哈希、模型配置、实际请求数、合成摘要/回答；输出拒绝仓库内路径及覆盖，临时会话建于该项目外输出目录并在结束后清理。不启动 UI、后台记忆或通知，不凭 fake 测试宣称真实模型已通过；实际运行仍须获得本次真实调用授权。
+
+144 首场景还注入合成预算压力，要求替换完整的 fixture 工具事务，并断言生成 v4 任务锚点；避免只压缩旧宿主前缀便误称验证了当前任务摘要。此压力不是真实 provider 用量，报告用 `synthetic_retained_fixture_result_over_threshold` 明确标记。自动 JSON 断言只核对最终回答，仍需人工检查保存的摘要是否混入宿主压缩指令、虚构用户原话或误写执行状态。
 
 `session-latency/run.* config PATH` 经授权在当前已选的 kimi-k3/max 会话中点击切换推理与模型，最终恢复原配置；报告完成上界和 HTTP 关联 ID，不调用模型。`session-latency/run.* locks --session-id ID --output PATH` 在临时副本中并发读取大会话、追加合成事件、读写合成通知库，校验追加完整性和锁计时；不修改原会话、不调用模型。两者均支持同参数的 `.sh` / `.ps1` 入口；执行前避免其它测试负载，真实模型授权由调用方另行管理。
 

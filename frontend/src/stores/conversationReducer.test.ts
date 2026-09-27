@@ -99,6 +99,32 @@ describe("applyAguiEvent", () => {
     expect(out.errorCode).toBeUndefined();
   });
 
+  it("preserves structured recovery details without granting continuation", () => {
+    const out = applyAguiEvent(base, emit({
+      type: EventType.RUN_ERROR,
+      message: "summary unavailable",
+      code: "context_compaction_unavailable",
+      rawEvent: { reason: "budget_evidence_insufficient", recoveryAction: "compact_then_resume" },
+    }));
+    expect(out.errorReason).toBe("budget_evidence_insufficient");
+    expect(out.recoveryAction).toBe("compact_then_resume");
+    expect(out.canContinue).toBeUndefined();
+    const next = applyAguiEvent(out, emit({
+      type: EventType.RUN_ERROR, message: "another error", code: "rate_limit",
+    }));
+    expect(next.errorReason).toBeUndefined();
+    expect(next.recoveryAction).toBeUndefined();
+  });
+
+  it("ignores malformed recovery fields in an error event", () => {
+    const out = applyAguiEvent(base, emit({
+      type: EventType.RUN_ERROR, message: "failure",
+      rawEvent: { reason: { secret: "not a reason" }, recoveryAction: "unsupported_action" },
+    }));
+    expect(out.errorReason).toBeUndefined();
+    expect(out.recoveryAction).toBeUndefined();
+  });
+
   it("自定义 run status 投影重试状态，并在文本到达时清除", () => {
     const waiting = applyAguiEvent(
       base,

@@ -33,6 +33,7 @@ import type {
 import type { SessionEvent } from "@/types/meta";
 import { TOOL_ERROR_PREFIX } from "./conversationReducer";
 import { normalizeAssistantPhase, parseAssistantPhaseState } from "./assistantPhase";
+import { parseRunErrorRecovery } from "./taskRecovery";
 
 function textMessage(
   id: string,
@@ -302,6 +303,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       message.error = asString(p.message) || "这轮回答中断了，没有生成完整回复。请稍后重试。";
       const code = asString(p.code);
       if (code) message.errorCode = code;
+      Object.assign(message, parseRunErrorRecovery(p, "snake"));
       currentAssistant = null;
       continue;
     }

@@ -130,3 +130,21 @@ def test_legacy_business_checkpoints_remain_compatible(version: int) -> None:
     result = resolve_prior_summary(events, history)
     assert result.prior_summary is not None
     assert result.prior_summary.covered_through_uuid == "a1"
+
+
+def test_empty_retained_tail_allows_later_accepted_messages_without_losing_identity() -> None:
+    events, history, record = _fixture()
+    source = history[:3]
+    record = replace(record, retained_from_uuid="")
+    events.append(_event("compaction", record.activity_id, asdict(record)))
+    appended = [*source, Message(role="user", content="later", uuid="later-user")]
+    resolution = resolve_prior_summary(events, appended, scope="model")
+    assert resolution.status == "valid"
+    assert resolution.prior_summary is not None
+    assert resolution.prior_summary.covered_through_uuid == source[-1].uuid
+    # An empty original tail never permits an altered covered source.
+    rewritten = [source[0], replace(source[1], uuid="changed"), *appended[2:]]
+    assert (
+        resolve_prior_summary(events, rewritten, scope="model").invalid_reason
+        == "model_prefix_mismatch"
+    )

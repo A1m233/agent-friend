@@ -286,6 +286,7 @@ class LLMClient:
             # rejects server-side conversation storage / previous_response_id;
             # opaque reasoning items are replayed explicitly in that request.
             input_usage_scope="request",
+            context_checkpoint_mode="replace_complete_groups",
         )
 
     @property

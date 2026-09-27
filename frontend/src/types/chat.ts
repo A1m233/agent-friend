@@ -118,6 +118,15 @@ export interface ChatTextReference {
   };
 }
 
+export type RunRecoveryAction =
+  | "compact_then_resume"
+  | "retry"
+  | "adjust_input"
+  | "adjust_configuration"
+  | "wait";
+
+export type ContextRecoveryMode = "automatic" | "compact_then_resume";
+
 /** 一条对话消息（user 或一整轮 assistant，assistant 轮可含多块文本/工具）。 */
 export interface ChatMessage {
   id: string;
@@ -148,6 +157,9 @@ export interface ChatMessage {
   error?: string;
   /** 后端错误码，用于后续 retry / 诊断入口做类型化处理。 */
   errorCode?: string;
+  /** Stable backend reason and suggested action; neither grants recovery eligibility. */
+  errorReason?: string;
+  recoveryAction?: RunRecoveryAction;
   /** 当前 run 的瞬态模型请求状态；不参与历史持久化。 */
   runStatus?: ModelResponseProgress;
 }

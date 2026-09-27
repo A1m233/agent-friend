@@ -107,8 +107,10 @@ from .context import (
     resolve_prior_summary,
     stream_build_messages,
 )
-from .context.budget import estimate_request_tokens
-from .context.checkpoints import bind_business_boundary
+from .context.budget import assess_request_budget, estimate_request_tokens
+from .context.checkpoints import bind_business_boundary, compaction_payload
+from .context.errors import ContextCompactionUnavailableError
+from .context.protocol import CompactionControl
 from .context.usage_anchor import (
     InputEstimate,
     RequestMeasurement,
@@ -514,6 +516,8 @@ class Conversation:
         self._last_prompt_cache_diagnostics: dict[str, Any] | None = None
         self._unscoped_llm_call_index = 0
         self._pending_compaction: CompactionRecord | None = None
+        self._compaction_control = CompactionControl()
+        self._pending_compaction_source = ""
         self._pending_tool_context_edit: ToolContextEditRecord | None = None
         self._context_emergency_ratio = 1.0
         self._context_trigger_reason = "budget"
@@ -853,6 +857,7 @@ class Conversation:
         turn_context: str | None = None,
         rewrite_plan: _RewritePlan | None = None,
         resume_task: bool = False,
+        recovery_mode: Literal["automatic", "compact_then_resume"] = "automatic",
     ) -> Iterator[ConversationEvent]:
         self._session_model_history.reconcile(self._session)
         self._repair_incomplete_model_tool_transactions()
@@ -867,6 +872,8 @@ class Conversation:
         previous_run_model_snapshot = self._run_model_snapshot
         previous_skill_turn_snapshot = self._active_skill_turn_snapshot
         previous_skill_selections = self._active_skill_selections
+        previous_compaction_control = self._compaction_control
+        self._compaction_control = CompactionControl(mode=recovery_mode)
         self._prompt_channel_override = channel
         self._prompt_surface_override = surface
         self._interaction_destination_id_override = interaction_destination_id
@@ -1021,6 +1028,7 @@ class Conversation:
 
         except BaseException:
             self._restore_run_model_snapshot(previous_run_model_snapshot)
+            self._compaction_control = previous_compaction_control
             raise
         try:
             # Once execution accepts the turn, the query is durable before cancellation,
@@ -1115,6 +1123,7 @@ class Conversation:
             self._restore_run_model_snapshot(previous_run_model_snapshot)
             self._active_skill_turn_snapshot = previous_skill_turn_snapshot
             self._active_skill_selections = previous_skill_selections
+            self._compaction_control = previous_compaction_control
             self._active_tool_run_state = None
             tool_run_context.close_commands("run_finished")
             self._active_tool_run_context = previous_tool_run_context
@@ -1181,6 +1190,7 @@ class Conversation:
         run_id: str | None = None,
         source_run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
+        recovery_mode: Literal["automatic", "compact_then_resume"] = "automatic",
     ) -> Iterator[ConversationEvent]:
         """Continue the original task using committed history and normal tools."""
         target = continuation_target(
@@ -1202,6 +1212,7 @@ class Conversation:
             run_id=run_id,
             cancel_check=cancel_check,
             resume_task=True,
+            recovery_mode=recovery_mode,
         )
 
     def continue_after_external_action(
@@ -2460,6 +2471,8 @@ class Conversation:
         source: str,
         run_id: str | None = None,
         sanitize_failed_model_call: bool = False,
+        reason: str | None = None,
+        recovery_action: str | None = None,
     ) -> None:
         """持久化一轮运行失败状态，供 UI 刷新后恢复同一错误。
 
@@ -2480,6 +2493,10 @@ class Conversation:
             payload["run_id"] = run_id
         if sanitize_failed_model_call:
             payload["sanitize_failed_model_call"] = True
+        if reason:
+            payload["reason"] = reason
+        if recovery_action:
+            payload["recovery_action"] = recovery_action
         event = Event(
             type="run_error",
             uuid=str(uuid4()),
@@ -2940,6 +2957,9 @@ class Conversation:
             request_estimator=lambda messages: estimate_request_tokens(
                 projection.apply(messages), budget_runtime
             ),
+            request_assessment=lambda messages: assess_request_budget(
+                projection.apply(messages), budget_runtime
+            ),
         )
         skill_additions = [
             m
@@ -2995,6 +3015,32 @@ class Conversation:
                     phase=progress.phase,
                 )
         self._check_cancel(cancel_check)
+        current_user = (
+            runtime.compaction_control.current_user
+            if runtime.compaction_control is not None
+            else None
+        )
+        if (
+            runtime.compaction_control is not None
+            and runtime.compaction_control.mode == "compact_then_resume"
+            and build.new_compaction is None
+        ):
+            raise ContextCompactionUnavailableError(
+                "当前上下文策略无法执行显式压缩。", reason="checkpoint_unsupported"
+            )
+        if new_user_input is not None and current_user is not None:
+            build.messages[:] = [
+                replace(
+                    message,
+                    meta={
+                        **message.meta,
+                        "source_user_event_uuid": current_user.uuid,
+                    },
+                )
+                if message.meta.get("current_input")
+                else message
+                for message in build.messages
+            ]
         build.messages[:] = projection.apply(build.messages)
         self._pending_model_context_plan = projection.accepted_plan(build.messages)
         self._pending_compaction = (
@@ -3002,6 +3048,12 @@ class Conversation:
             if build.new_compaction is not None
             else None
         )
+        self._pending_compaction_source = (
+            runtime.compaction_control.source_fingerprint
+            if build.new_compaction is not None and runtime.compaction_control is not None
+            else ""
+        )
+        self._validate_pending_compaction_source()
         self._pending_tool_context_edit = (
             build.new_tool_context_edit if build.new_tool_context_edit is not None else None
         )
@@ -3035,6 +3087,64 @@ class Conversation:
             new_user=bool(new_user_input is not None),
         )
         return rendered_messages
+
+    def _compaction_source_fingerprint(self) -> str:
+        """Bind a candidate to the active business branch and committed model view."""
+        return digest(
+            {
+                "generation": self._session_model_history.generation,
+                "messages": [m.uuid for m in self._session_model_history.items],
+                "events": [
+                    event.uuid
+                    for event in self._session.active_events
+                    if event.type
+                    in {
+                        "user_message",
+                        "assistant_message",
+                        "tool_call_request",
+                        "tool_call_result",
+                        "provider_reasoning_state",
+                        "turn_rewrite",
+                        "system_trigger",
+                    }
+                ],
+                "input_scope": self._usage_scope(None, compatibility_only=True),
+            }
+        )
+
+    def _current_compaction_control(self) -> CompactionControl:
+        fingerprint = self._compaction_source_fingerprint()
+        if self._compaction_control.source_fingerprint != fingerprint:
+            boundary = next(
+                (
+                    event
+                    for event in reversed(self._session.active_events)
+                    if event.type in {"user_message", "system_trigger"}
+                ),
+                None,
+            )
+            messages = (
+                self._messages_from_events([self._session.events[0], boundary])
+                if boundary is not None and boundary.type == "user_message"
+                else []
+            )
+            self._compaction_control = CompactionControl(
+                mode=self._compaction_control.mode,
+                current_user=next((m for m in messages if m.role == "user"), None),
+                source_fingerprint=fingerprint,
+            )
+        return self._compaction_control
+
+    def _validate_pending_compaction_source(self) -> None:
+        if (
+            self._pending_compaction is not None
+            and self._pending_compaction_source
+            and self._pending_compaction_source != self._compaction_source_fingerprint()
+        ):
+            self._discard_pending_context_checkpoints()
+            raise ContextCompactionUnavailableError(
+                "会话已变化，请按最新内容重新恢复。", reason="source_changed"
+            )
 
     def _build_runtime_context(
         self,
@@ -3079,6 +3189,8 @@ class Conversation:
             request_estimator=lambda messages: (
                 self._estimate_context_input(messages, tool_specs).tokens
             ),
+            request_assessment=lambda messages: self._estimate_context_input(messages, tool_specs),
+            compaction_control=self._current_compaction_control(),
             trigger_reason=self._context_trigger_reason,
             run_id=(
                 self._run_id_override
@@ -3156,29 +3268,7 @@ class Conversation:
             type="compaction",
             uuid=record.activity_id or str(uuid4()),
             ts=datetime.now(UTC),
-            payload={
-                "summary": record.summary,
-                "covered_through_uuid": record.covered_through_uuid,
-                "tokens_before": record.tokens_before,
-                "tokens_after": record.tokens_after,
-                "model": record.model,
-                "checkpoint_version": record.checkpoint_version,
-                "summary_prompt_version": record.summary_prompt_version,
-                "summary_source_from_uuid": record.summary_source_from_uuid,
-                "retained_from_uuid": record.retained_from_uuid,
-                "omitted_before_count": record.omitted_before_count,
-                "effective_window": record.effective_window,
-                "calibration_factor": record.calibration_factor,
-                "trigger_reason": record.trigger_reason,
-                "summary_attempts": record.summary_attempts,
-                "tool_results_truncated": record.tool_results_truncated,
-                "tool_results_omitted": record.tool_results_omitted,
-                "scope": record.scope,
-                "summary_message_uuid": record.summary_message_uuid,
-                "model_prefix_sha256": record.model_prefix_sha256,
-                "business_covered_through_uuid": record.business_covered_through_uuid,
-                "business_prefix_sha256": record.business_prefix_sha256,
-            },
+            payload=compaction_payload(record),
             meta=self._run_event_meta(),
         )
         return event
@@ -3670,6 +3760,7 @@ class Conversation:
 
     def _commit_pending_context_checkpoints(self) -> ContextCompactionStatus | None:
         """Commit accepted history and its checkpoints in one rollout boundary."""
+        self._validate_pending_compaction_source()
         compaction = self._pending_compaction
         tool_context_edit = self._pending_tool_context_edit
         events: list[Event] = []
@@ -3682,6 +3773,9 @@ class Conversation:
             events.append(self._tool_context_edit_event(tool_context_edit))
         self._commit_pending_model_request_state(events)
         self._pending_compaction = None
+        self._pending_compaction_source = ""
+        if compaction is not None:
+            self._compaction_control.mode = "automatic"
         self._pending_tool_context_edit = None
         return completed
 
@@ -3691,6 +3785,7 @@ class Conversation:
         self._discard_pending_model_request_state()
         compaction = self._pending_compaction
         self._pending_compaction = None
+        self._pending_compaction_source = ""
         self._pending_tool_context_edit = None
         if compaction is None or not compaction.activity_id:
             return None
@@ -3752,7 +3847,11 @@ class Conversation:
                     and isinstance(threshold, int)
                     and estimate.tokens > threshold
                 ):
-                    raise LLMContextWindowError("final_request_budget_exceeded")
+                    raise LLMContextWindowError(
+                        "final_request_budget_exceeded"
+                        if estimate.input_cost_known
+                        else "input_cost_unknown"
+                    )
                 self._pending_request_measurement = RequestMeasurement.capture(
                     current_messages,
                     self._usage_scope(tools, request_overrides),
@@ -3795,6 +3894,7 @@ class Conversation:
                 continuation_disposition = self._model_history_disposition()
                 self._stage_pending_rollout_request()
                 self._check_cancel(cancel_check)
+                self._validate_pending_compaction_source()
                 stream = client.stream(
                     ModelRequest(
                         messages=current_messages,
@@ -3820,17 +3920,20 @@ class Conversation:
                     if isinstance(event, LLMRetryScheduled):
                         retries_used = max(retries_used, event.attempt - 1)
                     if isinstance(event, (LLMTextDelta, LLMTurnDone)):
+                        self._check_cancel(cancel_check)
                         request_accepted = True
                         completed = self._commit_pending_context_checkpoints()
                         if completed is not None:
                             yield completed
                     yield event
+                self._check_cancel(cancel_check)
                 completed = self._commit_pending_context_checkpoints()
                 if completed is not None:
                     yield completed
                 return
             except LLMContextWindowError as exc:
-                self._usage_anchor = None
+                if str(exc) != "input_cost_unknown":
+                    self._usage_anchor = None
                 self._pending_request_measurement = None
                 discarded = self._discard_pending_context_checkpoints()
                 if discarded is not None:
@@ -3840,6 +3943,10 @@ class Conversation:
                     or context_recovery_used
                     or retries_used >= DEFAULT_MODEL_RETRIES
                 ):
+                    if str(exc) == "input_cost_unknown":
+                        raise ContextCompactionUnavailableError(
+                            "当前候选缺少可靠的输入用量证据。", reason="input_cost_unknown"
+                        ) from None
                     raise
                 context_recovery_used = True
                 request_attempt += 1
@@ -3848,8 +3955,8 @@ class Conversation:
                 previous_reason = self._context_trigger_reason
                 self._context_emergency_ratio = 0.8
                 self._context_trigger_reason = (
-                    "final_request_budget_exceeded"
-                    if str(exc) == "final_request_budget_exceeded"
+                    str(exc)
+                    if str(exc) in {"final_request_budget_exceeded", "input_cost_unknown"}
                     else "provider_context_exceeded"
                 )
                 try:

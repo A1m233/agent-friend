@@ -385,6 +385,8 @@ def test_encode_stream_reports_compaction_outage_without_claiming_success() -> N
     )
     assert b"RUN_ERROR" in body
     assert b"context_compaction_unavailable" in body
+    assert b'"recoveryAction":"compact_then_resume"' in body
+    assert b'"reason":"unavailable"' in body
     assert "会话压缩暂时失败".encode() in body
     assert b"turn_input_too_large" not in body
     assert b"private provider detail" not in body

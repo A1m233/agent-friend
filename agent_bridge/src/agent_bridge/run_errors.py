@@ -18,4 +18,6 @@ def persist_run_error(conv: Conversation, exc: BaseException, request: RunReques
         source=str(request.metadata.get("protocol") or "runtime"),
         run_id=request.run_id,
         sanitize_failed_model_call=error.sanitize_failed_model_call,
+        reason=error.reason,
+        recovery_action=error.recovery_action,
     )

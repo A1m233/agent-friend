@@ -1,4 +1,33 @@
-import type { ChatMessage } from "@/types/chat";
+import type { ChatMessage, ContextRecoveryMode, RunRecoveryAction } from "@/types/chat";
+
+const RECOVERY_ACTIONS = new Set<RunRecoveryAction>([
+  "compact_then_resume", "retry", "adjust_input", "adjust_configuration", "wait",
+]);
+
+/** Decode optional protocol details without inferring actions from user-facing prose. */
+export function parseRunErrorRecovery(
+  value: unknown,
+  casing: "camel" | "snake",
+): Pick<ChatMessage, "errorReason" | "recoveryAction"> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { errorReason: undefined, recoveryAction: undefined };
+  }
+  const record = value as Record<string, unknown>;
+  const action = record[casing === "camel" ? "recoveryAction" : "recovery_action"];
+  return {
+    errorReason: typeof record.reason === "string" && record.reason ? record.reason : undefined,
+    recoveryAction: typeof action === "string" && RECOVERY_ACTIONS.has(action as RunRecoveryAction)
+      ? action as RunRecoveryAction : undefined,
+  };
+}
+
+/** Select how an already eligible task continues; never grant canContinue here. */
+export function continuationRecoveryMode(message: ChatMessage): ContextRecoveryMode {
+  if (message.canContinue !== true) return "automatic";
+  return message.recoveryAction === "compact_then_resume"
+    || (message.recoveryAction === undefined && message.errorCode === "context_compaction_unavailable")
+    ? "compact_then_resume" : "automatic";
+}
 
 /** Display grouping only. Stores keep each run separate for event routing/fencing. */
 export function groupRecoveryMessages(input: ChatMessage[]): ChatMessage[] {

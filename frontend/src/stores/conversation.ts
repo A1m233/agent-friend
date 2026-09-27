@@ -47,6 +47,7 @@ import type { RunOutcome, RunSnapshot } from "@/types/run";
 import type { SearchNavigationTarget, SessionSearchResult } from "@/types/search";
 import { applyAguiEvent, applyPushConversationEvent } from "./conversationReducer";
 import { projectSessionEvents } from "./sessionProjection";
+import { continuationRecoveryMode } from "./taskRecovery";
 import { useSessionsStore } from "./sessions";
 import {
   draftKey,
@@ -2165,6 +2166,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       for await (const evt of continueToolResultStream(sessionId, runId, {
         signal: controller.signal,
         sourceRunId: target.runId,
+        recoveryMode: continuationRecoveryMode(target),
       })) {
         if (evt.type === EventType.RUN_FINISHED || evt.type === EventType.RUN_ERROR) {
           sawTerminalEvent = true;

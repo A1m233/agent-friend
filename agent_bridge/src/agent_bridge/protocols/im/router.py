@@ -707,6 +707,8 @@ class IMRouter:
                 source="im",
                 run_id=run_id if isinstance(run_id, str) else None,
                 sanitize_failed_model_call=err.sanitize_failed_model_call,
+                reason=err.reason,
+                recovery_action=err.recovery_action,
             )
         except Exception:
             logger.warning("IM run_error 持久化失败", exc_info=True)
