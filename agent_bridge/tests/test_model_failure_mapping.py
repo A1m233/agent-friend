@@ -55,6 +55,29 @@ def test_local_request_and_protocol_errors_keep_their_origin() -> None:
     assert map_exception(_protocol("expected an object")).code == "model_protocol_error"
 
 
+@pytest.mark.parametrize(
+    "reason,action",
+    [
+        ("input_cost_unknown", "compact_then_resume"),
+        ("retained_context_over_budget", "adjust_input"),
+        ("tool_transaction_pending", "wait"),
+        ("checkpoint_unsupported", "adjust_configuration"),
+        ("source_changed", "retry"),
+        ("compaction_no_progress", "adjust_input"),
+        ("summary_attempt_limit", "adjust_input"),
+        ("task_source_unavailable", "adjust_input"),
+    ],
+)
+def test_compaction_reason_and_action_are_structured(reason: str, action: str) -> None:
+    result = map_exception(ContextCompactionUnavailableError("private", reason=reason))
+    assert result.reason == reason
+    assert result.recovery_action == action
+    assert result.recovery_details() == {"reason": reason, "recoveryAction": action}
+    assert "private" not in result.message
+    if reason == "input_cost_unknown":
+        assert "超过" not in result.message
+
+
 def test_http_401_with_generic_request_code_shows_credential_guidance() -> None:
     original = openai.AuthenticationError(
         "private provider detail",

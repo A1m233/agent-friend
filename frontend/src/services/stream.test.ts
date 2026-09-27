@@ -6,12 +6,38 @@ vi.mock("@/services/runtime", () => ({
 
 import {
   buildRunAgentInput,
+  continueToolResultStream,
   editResendLatestStream,
   isEventStreamContentType,
 } from "./stream";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("continueToolResultStream", () => {
+  it.each([undefined, "automatic", "compact_then_resume"] as const)(
+    "preserves source identity and the optional %s recovery mode", async (recoveryMode) => {
+      const controller = new AbortController();
+      const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          runId: "new-run", sourceRunId: "failed-run",
+          ...(recoveryMode ? { recoveryMode } : {}),
+        });
+        expect(init?.signal).toBe(controller.signal);
+        return new Response('data: {"type":"RUN_FINISHED"}\n\n', {
+          status: 200, headers: { "content-type": "text/event-stream" },
+        });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const events = [];
+      for await (const event of continueToolResultStream("session-1", "new-run", {
+        sourceRunId: "failed-run", recoveryMode, signal: controller.signal,
+      })) events.push(event);
+      expect(events).toHaveLength(1);
+      expect(fetchMock).toHaveBeenCalledOnce();
+    },
+  );
 });
 
 describe("isEventStreamContentType", () => {

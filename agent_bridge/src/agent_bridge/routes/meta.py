@@ -172,6 +172,9 @@ class ContinueToolResultBody(BaseModel):
     )
 
     source_run_id: str | None = Field(None, alias="sourceRunId")
+    recovery_mode: Literal["automatic", "compact_then_resume"] = Field(
+        "automatic", alias="recoveryMode"
+    )
 
 
 class SessionPatchBody(BaseModel):
@@ -615,6 +618,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                         source="ag_ui",
                         run_id=run_request.run_id,
                         sanitize_failed_model_call=err.sanitize_failed_model_call,
+                        reason=err.reason,
+                        recovery_action=err.recovery_action,
                     )
 
                 handle = None
@@ -640,6 +645,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                                 surface=run_request.surface,
                                 run_id=run_request.run_id,
                                 source_run_id=target.source_run_id,
+                                recovery_mode=body.recovery_mode if body else "automatic",
                                 cancel_check=token.raise_if_cancelled,
                             )
                         ),
@@ -672,6 +678,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     surface=DESKTOP_CHAT_SURFACE,
                     run_id=run_id,
                     source_run_id=target.source_run_id,
+                    recovery_mode=body.recovery_mode if body else "automatic",
                 )
                 status = "completed"
             except Exception:

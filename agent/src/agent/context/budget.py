@@ -16,10 +16,13 @@ from __future__ import annotations
 
 import json
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..messages import Message
 from .protocol import BudgetSnapshot, RuntimeContext
+
+if TYPE_CHECKING:
+    from .usage_anchor import InputEstimate
 
 CHARS_TO_TOKENS = 0.75
 """字符 → token 的保守系数（009 design §3.3 / Q-4）。
@@ -94,10 +97,25 @@ def estimate_tool_schema_tokens(tool_specs: list[dict[str, Any]] | None) -> int:
 
 def estimate_request_tokens(messages: list[Message], runtime: RuntimeContext) -> int:
     """按当前模型 usage 校准和 tool schema 开销估算完整请求输入。"""
+    return assess_request_budget(messages, runtime).tokens
+
+
+def assess_request_budget(messages: list[Message], runtime: RuntimeContext) -> InputEstimate:
+    """Keep candidate evidence intact while accepting legacy numeric estimators."""
+    # usage_anchor imports the token heuristics above; defer this reverse import
+    # until evaluation so importing either module remains safe.
+    from .usage_anchor import InputEstimate
+
+    if runtime.request_assessment is not None:
+        return runtime.request_assessment(messages)
     if runtime.request_estimator is not None:
-        return runtime.request_estimator(messages)
+        return InputEstimate(
+            runtime.request_estimator(messages), "full_estimate", "legacy_request_estimator"
+        )
     raw = estimate_tokens(messages) + runtime.request_overhead_tokens
-    return math.ceil(raw * runtime.calibration_factor)
+    return InputEstimate(
+        math.ceil(raw * runtime.calibration_factor), "full_estimate", "no_trusted_usage"
+    )
 
 
 def make_budget_snapshot(

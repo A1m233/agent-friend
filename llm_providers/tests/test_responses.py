@@ -704,6 +704,8 @@ def test_catalog_capabilities_and_hidden_legacy_provider() -> None:
             assert capability == ("native" if provider.provider_id == "deepseek" else "unavailable")
             usage_scope = get_model_capabilities(LLMClient(spec)).input_usage_scope
             assert usage_scope == "request"
+            checkpoint_mode = get_model_capabilities(LLMClient(spec)).context_checkpoint_mode
+            assert checkpoint_mode == "replace_complete_groups"
     assert {item["id"] for item in public_model_catalog()["providers"]} == {"deepseek", "kimi"}
     assert build_provider_spec(provider_id="openrouter", api_key="fixture").responses is None
 
@@ -712,10 +714,12 @@ def test_capability_query_preserves_old_model_contract() -> None:
     legacy = SimpleNamespace(context_window=100, generate=lambda _: None, stream=lambda _: iter(()))
     assert get_model_capabilities(legacy) == LanguageModelCapabilities()
     assert get_model_capabilities(legacy).input_usage_scope == "opaque"
+    assert get_model_capabilities(legacy).context_checkpoint_mode == "unavailable"
     legacy.capabilities = {"assistant_message_phase": "native"}
     assert get_model_capabilities(legacy) == LanguageModelCapabilities()
     legacy.capabilities = LanguageModelCapabilities(assistant_message_phase="native")
     assert get_model_capabilities(legacy).assistant_message_phase == "native"
+    assert get_model_capabilities(legacy).context_checkpoint_mode == "unavailable"
 
 
 @pytest.mark.parametrize("nonstream", [False, True])

@@ -395,6 +395,8 @@ async def test_stream_exception_falls_back(router: IMRouter, session_bridge: Mag
         source="im",
         run_id=None,
         sanitize_failed_model_call=False,
+        reason=None,
+        recovery_action=None,
     )
 
 
@@ -429,6 +431,8 @@ async def test_engine_overload_uses_specific_fallback(
         source="im",
         run_id=None,
         sanitize_failed_model_call=False,
+        reason=None,
+        recovery_action=None,
     )
 
 

@@ -241,6 +241,20 @@ describe("projectSessionEvents", () => {
     }
   });
 
+  it("restores context recovery reason and action without synthesizing eligibility", () => {
+    const out = projectSessionEvents([
+      ev("user_message", { content: "finish the task" }),
+      ev("run_error", {
+        code: "context_compaction_unavailable", message: "summary unavailable", recoverable: false,
+        reason: "budget_evidence_insufficient", recovery_action: "compact_then_resume",
+      }),
+    ]);
+    expect(out.at(-1)).toMatchObject({
+      errorReason: "budget_evidence_insufficient", recoveryAction: "compact_then_resume",
+    });
+    expect(out.at(-1)?.canContinue).toBeUndefined();
+  });
+
   it("工具结果 [error] 前缀映射为 error 状态并剥前缀", () => {
     const out = projectSessionEvents([
       ev("tool_call_request", { tool_call_id: "c", tool_name: "t", args: {} }),

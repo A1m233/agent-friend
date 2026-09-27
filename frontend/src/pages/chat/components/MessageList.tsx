@@ -1,4 +1,4 @@
-import { groupRecoveryMessages } from "@/stores/taskRecovery";
+import { continuationRecoveryMode, groupRecoveryMessages } from "@/stores/taskRecovery";
 import {
   type KeyboardEvent,
   type PointerEvent,
@@ -518,7 +518,7 @@ function MessageContent({
       {message.status === "error" && message.error && (
         <div className="flex flex-col items-start gap-2">
           <RunNotice message={message.error}>
-            {message.errorCode === "auth_failed" && (
+            {(message.errorCode === "auth_failed" || message.recoveryAction === "adjust_configuration") && (
               <Button
                 type="button"
                 variant="outline"
@@ -532,12 +532,12 @@ function MessageContent({
                   });
                 }}
               >
-                打开凭据设置
+                {message.errorCode === "auth_failed" ? "打开凭据设置" : "打开模型设置"}
               </Button>
             )}
             {onContinueToolResult && (
               <Button type="button" variant="outline" size="xs" onClick={onContinueToolResult}>
-                继续任务
+                {continuationRecoveryMode(message) === "compact_then_resume" ? "压缩后继续" : "继续任务"}
               </Button>
             )}
           </RunNotice>

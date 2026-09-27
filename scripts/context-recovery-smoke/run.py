@@ -42,6 +42,16 @@ def main() -> None:
     parser.add_argument("--model", required=True)
     parser.add_argument("--connection-name", default="CPA")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--scenario",
+        choices=("configuration-recovery", "long-session"),
+        default="configuration-recovery",
+    )
+    parser.add_argument(
+        "--reasoning-preset",
+        default="effort:low",
+        help="long-session model preset; does not alter the default 137 scenario",
+    )
     args = parser.parse_args()
     if not args.allow_llm or args.output.exists():
         parser.error("Requires --allow-llm and a new output path")
@@ -55,6 +65,31 @@ def main() -> None:
     if connection.name.casefold() != args.connection_name.casefold():
         parser.error("Selected connection does not match the explicitly named CPA connection")
     factory = config.llm_client_factory
+    if args.scenario == "long-session":
+        from llm_providers.binding import bind_language_model
+        from long_session import run_long_session
+
+        model_config = ModelRuntimeConfig(args.model, args.reasoning_preset)
+        with bind_language_model(factory(model_config)) as client:
+            result = run_long_session(
+                client,
+                config=model_config,
+                output=args.output,
+                connection_name=connection.name,
+                model_label=directory.model(args.model).label,
+            )
+        print(
+            json.dumps(
+                {
+                    "status": result["status"],
+                    "request_count": result["request_count"],
+                    "output": str(args.output),
+                }
+            )
+        )
+        if result["status"] != "passed":
+            raise SystemExit(1)
+        return
     report: dict = {
         "connection": connection.name,
         "model": directory.model(args.model).label,

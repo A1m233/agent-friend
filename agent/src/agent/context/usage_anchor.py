@@ -269,6 +269,13 @@ class InputEstimate:
     retained_components: int = 0
     unknown_tokens: int = 0
     unknown_components: int = 0
+    # A previous whole-request measurement still includes removed content.
+    # Exceeding the budget with that ceiling does not prove this input exceeds it.
+    is_upper_bound: bool = False
+
+    @property
+    def input_cost_known(self) -> bool:
+        return self.unknown_components == 0 and not self.is_upper_bound
 
     def notes(self) -> dict[str, Any]:
         return {
@@ -283,7 +290,8 @@ class InputEstimate:
             "retained_components": self.retained_components,
             "unknown_input_tokens": self.unknown_tokens,
             "unknown_input_components": self.unknown_components,
-            "input_cost_known": self.unknown_components == 0,
+            "input_cost_known": self.input_cost_known,
+            "input_is_upper_bound": self.is_upper_bound,
         }
 
 
@@ -303,9 +311,12 @@ def estimate_input(
         bound = compatible or UsageAnchor("", "", 0, 0)
         remaining = Counter(bound.component_digests)
         unknown = 0
+        retained_opaque = False
         for key, payload in components(messages, tools):
             if remaining[key] > 0:
                 remaining[key] -= 1
+                if "_tool_schema" not in payload and _estimate_delta([payload], bound) is None:
+                    retained_opaque = True
             elif "_tool_schema" not in payload and _estimate_delta([payload], bound) is None:
                 unknown += 1
         return InputEstimate(
@@ -314,6 +325,7 @@ def estimate_input(
             "unmeasured_document_input" if unknown and _has_documents(messages) else reason,
             unknown_tokens=unknown_token_reserve if unknown else 0,
             unknown_components=unknown,
+            is_upper_bound=retained_opaque,
         )
 
     reason = "no_trusted_usage"
@@ -355,10 +367,13 @@ def _estimate_components(
 ) -> InputEstimate:
     remaining = Counter(anchor.component_digests)
     added = reused = delta = unknown = 0
+    retained_opaque = False
     for key, payload in components(messages, tools):
         if remaining[key] > 0:
             remaining[key] -= 1
             reused += 1
+            if "_tool_schema" not in payload and _estimate_delta([payload], anchor) is None:
+                retained_opaque = True
             continue
         added += 1
         if "_tool_schema" in payload:
@@ -388,7 +403,15 @@ def _estimate_components(
     ):
         fallback = fallback_tokens() if callable(fallback_tokens) else fallback_tokens
         if fallback < tokens:
-            return InputEstimate(fallback, "full_estimate", "rewritten_candidate")
+            # A whole-request measurement only bounds a retained opaque item;
+            # it does not measure this shorter candidate. Keep that distinction
+            # even when the fallback is cheaper than anchor plus new content.
+            return InputEstimate(
+                fallback,
+                "full_estimate",
+                "rewritten_candidate",
+                is_upper_bound=retained_opaque,
+            )
     return InputEstimate(
         tokens,
         mode,
@@ -401,6 +424,7 @@ def _estimate_components(
         retained,
         reserve,
         unknown,
+        is_upper_bound=bool(retained),
     )
 
 

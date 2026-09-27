@@ -3,7 +3,7 @@ import { EventType, type BaseEvent } from "@ag-ui/core";
 import type { ChatMessage } from "@/types/chat";
 import { applyAguiEvent, applyPushConversationEvent } from "./conversationReducer";
 import { projectSessionEvents } from "./sessionProjection";
-import { groupRecoveryMessages } from "./taskRecovery";
+import { continuationRecoveryMode, groupRecoveryMessages, parseRunErrorRecovery } from "./taskRecovery";
 
 const message = (runId: string, sourceRunId?: string): ChatMessage => ({
   id: runId, runId, sourceRunId, role: "assistant", status: "error", error: `error-${runId}`,
@@ -12,6 +12,28 @@ const message = (runId: string, sourceRunId?: string): ChatMessage => ({
 });
 
 describe("task recovery projection", () => {
+  it("selects explicit compaction and legacy compaction without reading error prose", () => {
+    const eligible = { ...message("failed"), canContinue: true };
+    expect(continuationRecoveryMode({ ...eligible, recoveryAction: "compact_then_resume" }))
+      .toBe("compact_then_resume");
+    expect(continuationRecoveryMode({ ...eligible, errorCode: "context_compaction_unavailable" }))
+      .toBe("compact_then_resume");
+    expect(continuationRecoveryMode({ ...eligible, errorCode: "context_compaction_unavailable", recoveryAction: "retry" }))
+      .toBe("automatic");
+    expect(continuationRecoveryMode({ ...eligible, error: "当前任务必须保留的内容已超过上下文预算" }))
+      .toBe("automatic");
+    expect(continuationRecoveryMode({ ...eligible, canContinue: false, recoveryAction: "compact_then_resume" }))
+      .toBe("automatic");
+  });
+
+  it.each(["compact_then_resume", "retry", "adjust_input", "adjust_configuration", "wait"])(
+    "normalizes the %s action from either protocol projection", (action) => {
+      expect(parseRunErrorRecovery({ reason: "reason", recoveryAction: action }, "camel"))
+        .toEqual(parseRunErrorRecovery({ reason: "reason", recovery_action: action }, "snake"));
+      expect(parseRunErrorRecovery({ recovery_action: action }, "snake").recoveryAction).toBe(action);
+    },
+  );
+
   it("uses one current error across multiple linked attempts without losing completed work", () => {
     const grouped = groupRecoveryMessages([message("a"), message("b", "a"), message("c", "b")]);
     expect(grouped).toHaveLength(1);

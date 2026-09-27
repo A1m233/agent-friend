@@ -33,14 +33,14 @@
 | 消费者 | 装配入口 | 身份契约 |
 |---|---|---|
 | 普通聊天／CLI | `agent.prompts.MarkdownPromptBuilder` → 默认 composer | 默认 section |
-| 任务手动继续 | `Conversation.continue_after_tool_error` → 原用户轮上下文 → 正常工具循环 | 默认 section，复用原任务附件与 Skill 选择 |
+| 任务手动继续／压缩后继续 | `Conversation.continue_after_tool_error` → 原用户目标／有来源的 task anchor → 正常工具循环 | 默认 section；摘要不恢复权限，原任务附件与 Skill 选择仍由宿主核对 |
 | 桌面／语音／IM | Bridge ag_ui／openai／im → AgentRuntime → Conversation | 同上，渠道规则独立 |
 | 定时任务／系统触发提醒／授权跟进 | Bridge scheduled_tasks／reminders／social_auth → AgentRuntime | 同上，不改变任务状态 |
 | 气泡 | `agent_bridge.notifications.generation.NotificationGenerator` | 共享资源 + 正式人格 + 通知任务；失败通知由 service 使用本地事实文案，不调用模型 |
 | 人格编辑 | `agent.personas.editor.PersonaEditorPromptBuilder` | 共享资源 + 编辑任务 + 正式人格；候选仅为数据 |
 | 历史检索／记忆召回 | conversation_history／memory.retrieval.renderer | 保留来源；由消费它们的发言入口解释身份 |
 | 原工具调用恢复 | tool_call_history → SessionQuerySnapshot | 只读历史证据，不恢复权限、不执行原动作；结果正文仍由 tool_result_recovery 读取 |
-| 压缩摘要／记忆抽取 | context.summary_prompt／memory.extraction | 内部处理，不注入对外人格；保留来源及状态 |
+| 压缩摘要／记忆抽取 | context.summary_prompt／memory.extraction | 内部处理，不注入对外人格；任务内与分段归纳共用摘要契约，保留目标来源、调用引用及执行状态。摘要格式指令只由 system 承载，资料分区和宿主压缩任务不得记成用户请求 |
 | 通知历史 | notifications.store → memory.host_episodes | 保存实际展示证据，不改写旧文本 |
 | 模型连接探测 | agent_bridge.model_connections.inspection | 能力探测，不代表朋友发言 |
 

@@ -39,7 +39,7 @@ from llm_providers import (
 
 from ..attachments import AttachmentError, AttachmentRef
 from ..messages import Message
-from .budget import estimate_request_tokens, estimate_tokens
+from .budget import assess_request_budget, estimate_request_tokens, estimate_tokens
 from .checkpoints import checkpoint_prefix_digest, summary_message
 from .errors import (
     ContextBaseOverBudgetError,
@@ -64,6 +64,7 @@ from .summary_prompt import (
     render_transcript,
     strip_analysis,
 )
+from .task_compaction import compact_task_history
 from .tool_projection import ToolProjectionStats, project_tool_results
 from .turns import preserve_latest_skill_catalog, recent_turn_start_candidates
 
@@ -76,9 +77,9 @@ SUMMARY_RECENT_TAIL_TURNS = 2
 POST_COMPACTION_TARGET_RATIO = 0.7
 """压缩后目标占用相对触发阈值的比例，给后续 turn 与 usage 校准留出余量。"""
 
-SUMMARY_PROMPT_VERSION = 2
+SUMMARY_PROMPT_VERSION = 4
 MAX_SUMMARY_CONTEXT_RETRIES = 2
-SUMMARY_NETWORK_RETRIES = 1
+SUMMARY_NETWORK_RETRIES = 0
 logger = logging.getLogger(__name__)
 
 
@@ -229,7 +230,12 @@ class SummarizingContextManager:
         )
         folded_msgs = parts.assemble(projected_history)
         est = estimate_request_tokens(folded_msgs, runtime)
-        if est <= threshold:
+        control = runtime.compaction_control
+        force = control is not None and control.mode == "compact_then_resume"
+        admitted = est <= threshold and (
+            control is None or not assess_request_budget(folded_msgs, runtime).unknown_components
+        )
+        if admitted and not force:
             return BuildResult(
                 messages=folded_msgs,
                 new_tool_context_edit=projection.new_edit,
@@ -303,6 +309,18 @@ class SummarizingContextManager:
         new_tool_context_edit: ToolContextEditRecord | None,
         activity_id: str,
     ) -> BuildResult:
+        if runtime.compaction_control is not None:
+            return compact_task_history(
+                history,
+                parts.assemble,
+                runtime,
+                has_new_user_input=parts.new_user_input is not None,
+                projection=projection,
+                new_tool_context_edit=new_tool_context_edit,
+                activity_id=activity_id,
+                prompt_version=SUMMARY_PROMPT_VERSION,
+                lineage_tracker=self._prompt_cache_lineage,
+            )
         summary_output_budget = max(512, min(4096, int(runtime.budget.effective_window * 0.05)))
         cut = self._recent_tail_cut(history, parts, runtime, summary_output_budget)
         if cut <= 0:
@@ -566,8 +584,10 @@ class SummarizingContextManager:
         summary_msg = summary_message(
             prior.summary, message_uuid, getattr(prior, "checkpoint_id", "")
         )
+        anchor: Message | None = getattr(prior, "task_anchor", None)
         return [
             summary_msg,
+            *([anchor] if anchor is not None else []),
             *preserve_latest_skill_catalog(history, history[idx + 1 :]),
         ]
 

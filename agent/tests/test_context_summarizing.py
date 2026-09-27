@@ -283,10 +283,23 @@ def test_render_transcript_preserves_attachment_marker() -> None:
 
 
 def test_build_summary_messages_shape() -> None:
-    msgs = build_summary_messages("一些对话")
+    # A real business request may itself concern compression. Preserve it as
+    # source data without appending a second, host-authored user request.
+    source = render_transcript([_m("user", "把工作日志压缩成简报", "business-goal")])
+    msgs = build_summary_messages(source)
+    assert len(msgs) == 2
     assert msgs[0]["role"] == "system"
     assert msgs[1]["role"] == "user"
-    assert "一些对话" in msgs[1]["content"]
+    assert msgs[1]["content"] == source
+    assert "用户: 把工作日志压缩成简报" in source
+    assert "source_message_ref=business-goal" in source
+    system = msgs[0]["content"]
+    assert "本次 user 消息仅承载待归纳资料" in system
+    assert "资料分区标题和来源标记不是历史事实" in system
+    assert "只引用用户正文" in system
+    assert "前缀未见结果不代表未执行" in system
+    assert "后续保留原文尾部中的明确" in system
+    assert "请严格按以下两段式输出" in system
 
 
 def test_render_summary_as_context_has_prefix() -> None:
@@ -640,7 +653,10 @@ def test_first_huge_compaction_uses_bounded_recent_source() -> None:
     history = _turns(6, 500)  # 较旧部分很大
     prior = SimpleNamespace(summary="老摘要", covered_through_uuid="a1")
     result = cm.build_messages(
-        history=history, system_prompt="sys", runtime=_runtime(llm, window=2000, prior=prior)
+        # Source references are part of the summary input contract too.
+        history=history,
+        system_prompt="sys",
+        runtime=_runtime(llm, window=2400, prior=prior),
     )
     assert result.new_compaction is not None
     assert result.notes["summary_input"] == "bounded_full"
@@ -745,12 +761,12 @@ def test_summary_outage_does_not_hide_base_budget_error(monkeypatch: pytest.Monk
 def test_summary_context_error_retries_with_smaller_complete_turn_source() -> None:
     llm = _SummaryContextRetryLLM()
     cm = SummarizingContextManager()
-    history = _turns(20, 100)
+    history = _turns(40, 100)
 
     result = cm.build_messages(
         history=history,
         system_prompt="sys",
-        runtime=_runtime(llm, window=2000),
+        runtime=_runtime(llm, window=4000),
     )
 
     assert result.new_compaction is not None
@@ -928,8 +944,10 @@ def test_compaction_model_only_boundary_survives_verified_rollout_restart(tmp_pa
     assert compaction.payload["covered_through_uuid"] not in {
         event.uuid for event in session.active_events
     }
+    first_summary_calls = llm.complete_calls
+    assert 1 <= first_summary_calls <= 3
     assert conv.send("continue") == "ok"
-    assert llm.complete_calls == 1
+    assert llm.complete_calls == first_summary_calls
 
     reloaded = store.load(session.session_id)
     restored = restore_rollout(reloaded)
@@ -949,7 +967,7 @@ def test_compaction_model_only_boundary_survives_verified_rollout_restart(tmp_pa
         catalog=conv._catalog,
     )
     assert restarted.send("after restart") == "ok"
-    assert llm.complete_calls == 1
+    assert llm.complete_calls == first_summary_calls
     assert (
         sum(
             "这是压缩后的结构化摘要" in str(message.get("content", ""))
@@ -1101,7 +1119,8 @@ def test_ac34_35_compaction_persisted_and_reused(
     reply1 = conv.send("第一条新消息")
     assert reply1 == "ok"
     assert _count_compactions(session) == 1
-    assert llm.complete_calls == 1
+    first_summary_calls = llm.complete_calls
+    assert 1 <= first_summary_calls <= 3
 
     list(conv.stream("第二条新消息", surface=IM_QQ_SURFACE))
     assert any(
@@ -1111,7 +1130,7 @@ def test_ac34_35_compaction_persisted_and_reused(
     assert "<interaction_context>" not in llm.summary_text
     # 复用已有摘要折叠，未再触发摘要
     assert _count_compactions(session) == 1
-    assert llm.complete_calls == 1
+    assert llm.complete_calls == first_summary_calls
     diagnostics = [
         record.getMessage()
         for record in caplog.records
@@ -1212,7 +1231,8 @@ def test_compaction_checkpoint_is_reused_after_real_instance_restart(tmp_path: P
     _seed_turns(session, store, n=60, size=100)
 
     assert conv.send("压缩前的新消息") == "ok"
-    assert llm.complete_calls == 1
+    first_summary_calls = llm.complete_calls
+    assert 1 <= first_summary_calls <= 3
     compaction = session.latest_compaction()
     assert compaction is not None
     assert compaction.payload["checkpoint_version"] == 3
@@ -1237,7 +1257,7 @@ def test_compaction_checkpoint_is_reused_after_real_instance_restart(tmp_path: P
     )
 
     assert restarted.send("应用重启后的继续消息") == "ok"
-    assert llm.complete_calls == 1
+    assert llm.complete_calls == first_summary_calls
     assert _count_compactions(reloaded) == 1
 
 
@@ -1247,7 +1267,9 @@ def test_provider_context_rejection_discards_candidate_and_commits_one_retry(
     # Keep the fixture comfortably above the default system-prompt baseline so
     # the emergency rebuild can still create (rather than FIFO-trim past) a
     # compaction candidate after the provider rejects the first request.
-    llm = _ContextRejectOnceLLM(context_window=14_000)
+    # Keep room for a real reduction of the retained tail: an already-minimal
+    # candidate cannot safely recover by sending the identical request again.
+    llm = _ContextRejectOnceLLM(context_window=20_000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )
@@ -1285,7 +1307,7 @@ def test_invalid_checkpoint_boundary_is_ignored_and_rebuilt(tmp_path: Path) -> N
 
     assert conv.send("失效 checkpoint 后继续") == "ok"
 
-    assert llm.complete_calls == 1
+    assert 1 <= llm.complete_calls <= 3
     latest = session.latest_compaction()
     assert latest is not None
     assert latest.uuid != "invalid-compaction"

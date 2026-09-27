@@ -824,6 +824,58 @@ class TestContinueToolResultEndpoint:
         )
 
 
+def test_continue_route_forwards_compaction_mode_after_source_validation(
+    client: TestClient, runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent import TurnDone
+
+    sid = client.post("/v1/sessions", json={}).json()["session_id"]
+    for event in (
+        Event(
+            type="user_message",
+            uuid="compact-goal",
+            ts=datetime.now(UTC),
+            payload={"content": "keep this task"},
+        ),
+        Event(
+            type="run_error",
+            uuid="compact-failure",
+            ts=datetime.now(UTC),
+            payload={
+                "code": "context_compaction_unavailable",
+                "recoverable": True,
+                "run_id": "old",
+                "message": "fixture",
+            },
+        ),
+    ):
+        runtime.persistent_store.append_event(sid, event)
+    seen: list[dict[str, Any]] = []
+
+    def capture(self: Conversation, **kwargs: Any) -> Iterator[TurnDone]:
+        seen.append(kwargs)
+        yield TurnDone(stop_reason="end_turn")
+
+    monkeypatch.setattr(Conversation, "continue_after_tool_error", capture)
+    invalid = client.post(
+        f"/v1/sessions/{sid}/continue-tool-result", json={"recoveryMode": "unsafe"}
+    )
+    assert invalid.status_code == 422 and not seen
+    response = client.post(
+        f"/v1/sessions/{sid}/continue-tool-result",
+        json={
+            "runId": "compact-retry",
+            "sourceRunId": "old",
+            "recoveryMode": "compact_then_resume",
+        },
+    )
+    assert response.status_code == 200
+    assert seen[0]["recovery_mode"] == "compact_then_resume"
+    assert seen[0]["source_run_id"] == "old"
+    saved = runtime.persistent_store.load(sid)
+    assert sum(event.type == "user_message" for event in saved.active_events) == 1
+
+
 # ===== POST /ag-ui/run channel boundary =====
 
 
