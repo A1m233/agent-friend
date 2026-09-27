@@ -141,7 +141,7 @@ def test_agui_attachment_validation_is_registered_before_preparation_failure(
         assert response.status_code == 200
         assert '"type":"RUN_STARTED"' in response.text
         assert '"type":"RUN_ERROR"' in response.text
-        assert '"code":"attachment_model_unsupported"' in response.text
+        assert '"code":"attachment_store_unavailable"' in response.text
         assert '"inputAccepted":false' in response.text
         snapshot = agent_runtime.get_run_snapshot("preparing-run")
         assert snapshot is not None and snapshot.input_accepted is False

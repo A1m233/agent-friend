@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from agent.attachments.input_policy import AttachmentInputPolicy
 from agent.context import (
     estimate_tokens,
     estimate_tool_schema_tokens,
@@ -44,7 +45,20 @@ class ModelValidateBody(BaseModel):
 def register_routes(app: FastAPI, runtime: BridgeRuntime | None = None) -> None:
     @app.get("/v1/models/catalog")
     def model_catalog() -> dict[str, object]:
-        return connection_model_catalog(runtime.connection_runtime if runtime else None)
+        catalog = connection_model_catalog(runtime.connection_runtime if runtime else None)
+        if runtime is not None:
+            for provider in catalog["providers"]:
+                for model in provider["models"]:
+                    model["attachmentInputs"] = AttachmentInputPolicy(
+                        runtime.attachment_capabilities(model["id"]),
+                        session_files_available=runtime.session_files_available,
+                        **(
+                            {"file_max_bytes": runtime.attachment_store.max_attachment_bytes}
+                            if runtime.attachment_store
+                            else {}
+                        ),
+                    ).public_payload()
+        return catalog
 
     @app.post("/v1/models/validate")
     def validate_model(body: ModelValidateBody) -> object:

@@ -128,8 +128,12 @@ class Message:
             else self.content
         )
         if self.attachments and self.role == "user":
+            from .attachments.input_projection import pdf_reference
+
             markers = "\n".join(
-                f"[附件 {item.display_name} | {item.media_type} | {item.asset_id}]"
+                pdf_reference(item)
+                if item.media_type == "application/pdf"
+                else f"[附件 {item.display_name} | {item.media_type} | {item.asset_id}]"
                 for item in self.attachments
             )
             content = f"{content}\n{markers}".strip()

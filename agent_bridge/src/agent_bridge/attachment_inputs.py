@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from agent.attachments.input_policy import AttachmentInputPolicy
 from fastapi import HTTPException
 from llm_providers.catalog import ModelRouteCapabilities
 
@@ -89,6 +90,7 @@ def prepare_attachment_input(
     model_id: str,
     store: AttachmentStore | None,
     capability_resolver: Callable[[str], ModelRouteCapabilities] = model_capabilities,
+    session_files_available: bool = False,
     cancel_check: Callable[[], None] | None = None,
 ) -> AttachmentInputPlan:
     """Validate attachment identities and model limits before SSE admission."""
@@ -96,22 +98,6 @@ def prepare_attachment_input(
     if cancel_check is not None:
         cancel_check()
     capabilities = capability_resolver(model_id)
-    if entries and not capabilities.attachments:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "attachment_model_unsupported",
-                "message": "当前模型不支持附件，请切换到支持图片或文档的模型。",
-            },
-        )
-    if len(entries) > capabilities.max_attachments_per_turn:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "attachment_turn_limit_exceeded",
-                "message": f"单轮最多添加 {capabilities.max_attachments_per_turn} 个附件。",
-            },
-        )
     if entries and store is None:
         raise HTTPException(status_code=503, detail="attachment store unavailable")
 
@@ -136,9 +122,7 @@ def prepare_attachment_input(
                 cancel_check()
             raise _attachment_http_error(exc) from exc
 
-        if (
-            isinstance(entry, DraftAttachmentInput) and ref.kind != entry.kind
-        ) or ref.media_type not in capabilities.accepted_media_types:
+        if isinstance(entry, DraftAttachmentInput) and ref.kind != entry.kind:
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -146,27 +130,16 @@ def prepare_attachment_input(
                     "message": "当前模型不支持此附件类型。",
                 },
             )
-        if ref.size_bytes > capabilities.max_attachment_bytes:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "attachment_size_limit_exceeded",
-                    "message": "单个附件大小超过当前模型限制。",
-                },
-            )
         prepared.append(_PreparedAttachment(ref, draft_index))
 
-    if (
-        sum(entry.validated_ref.size_bytes for entry in prepared)
-        > capabilities.max_total_attachment_bytes
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "attachment_total_limit_exceeded",
-                "message": "本轮附件总大小超过限制。",
-            },
-        )
+    try:
+        AttachmentInputPolicy(
+            capabilities,
+            session_files_available=session_files_available,
+            **({"file_max_bytes": store.max_attachment_bytes} if store else {}),
+        ).validate([entry.validated_ref for entry in prepared])
+    except AttachmentError as exc:
+        raise _attachment_http_error(exc) from exc
 
     if cancel_check is not None:
         cancel_check()
@@ -187,6 +160,7 @@ def prepare_run_attachment_input(
     model_id: str,
     store: AttachmentStore | None,
     capability_resolver: Callable[[str], ModelRouteCapabilities] = model_capabilities,
+    session_files_available: bool = False,
     cancel_check: Callable[[], None],
 ) -> AttachmentInputPlan:
     try:
@@ -196,6 +170,7 @@ def prepare_run_attachment_input(
             store=store,
             cancel_check=cancel_check,
             capability_resolver=capability_resolver,
+            session_files_available=session_files_available,
         )
     except HTTPException as exc:
         cancel_check()

@@ -164,7 +164,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // 正常情况下新对话草稿和已有会话都持有自己的模型快照。固定默认值只用于
   // history loading 等短暂空态，不能回读实时设置并改写已存在草稿的展示。
   const selectedModel = draftRuntimeConfig?.model ?? currentModel ?? DEFAULT_SETTINGS.chatModel.model;
-  const capabilities = modelOption(selectedModel)?.capabilities ?? null;
+  const selectedModelOption = modelOption(selectedModel);
+  const capabilities = selectedModelOption?.attachmentInputs ?? selectedModelOption?.capabilities ?? null;
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentImagePreview | null>(null);
   const draftTextRef = useRef("");
   const submittedValueEchoRef = useRef<{ workspaceKey: string; value: string } | null>(null);
@@ -193,7 +194,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     ?? (!catalog
       ? "模型能力尚未就绪，请稍后再添加附件"
       : !capabilities?.attachments
-        ? selectedModel.startsWith("custom/") ? "此自定义模型尚未启用附件输入，请在连接设置中配置。" : "当前模型不支持图片或文档"
+        ? "当前会话没有可用的附件处理方式，请检查模型能力和文件处理环境。"
         : availableAttachmentSlots <= 0
           ? `单轮最多添加 ${capabilities.maxAttachmentsPerTurn} 个附件`
           : undefined);
@@ -296,25 +297,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (selected.length < files.length) {
       toast.error(`单轮最多添加 ${capabilities.maxAttachmentsPerTurn} 个附件`);
     }
-    let selectedBytes = draftAttachments.reduce(
-      (total, item) => total + draftAttachmentSize(item),
-      0,
-    );
+    const candidates = draftAttachments.map((item) => ({
+      name: draftAttachmentName(item),
+      mediaType: draftAttachmentMediaType(item),
+      size: draftAttachmentSize(item),
+    }));
     for (const file of selected) {
       const mediaType = effectiveMediaType(file);
-      if (!capabilities.acceptedMediaTypes.includes(mediaType)) {
-        toast.error(`当前模型不支持 ${file.name} 的文件类型`);
+      const candidate = { name: file.name, mediaType, size: file.size };
+      const compatibility = evaluateAttachmentCompatibility([...candidates, candidate], capabilities);
+      if (!compatibility.compatible) {
+        toast.error(compatibility.reason ?? "附件暂不可用", { description: file.name });
         continue;
       }
-      if (file.size > capabilities.maxAttachmentBytes) {
-        toast.error(`${file.name} 超过单文件大小限制`);
-        continue;
-      }
-      if (selectedBytes + file.size > capabilities.maxTotalAttachmentBytes) {
-        toast.error("本轮附件总大小超过限制");
-        continue;
-      }
-      selectedBytes += file.size;
+      candidates.push(candidate);
       const localId = crypto.randomUUID();
       const targetWorkspaceKey = workspaceKey;
       addDraftAttachment(targetWorkspaceKey, { status: "uploading", localId, file });

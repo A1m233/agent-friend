@@ -22,6 +22,18 @@ export interface ModelCapabilities {
 
 export type ReasoningControl = "unsupported" | "toggle" | "effort" | "fixed";
 
+export interface AttachmentInputCapabilities {
+  attachments: boolean;
+  acceptedMediaTypes: string[];
+  maxAttachmentBytes: number;
+  maxAttachmentsPerTurn: number;
+  maxTotalAttachmentBytes: number;
+  maxAttachmentBytesByType?: Record<string, number>;
+  nativeMaxAttachmentsPerTurn?: number;
+  nativeMaxTotalAttachmentBytes?: number;
+  deliveryByMediaType?: Record<string, "session_file" | "native">;
+}
+
 export interface ReasoningPresetOption {
   id: string;
   label: string;
@@ -46,6 +58,7 @@ export interface ProviderModelOption {
   transportProfile: string;
   processingProfile: string;
   capabilities: ModelCapabilities;
+  attachmentInputs?: AttachmentInputCapabilities;
   reasoning?: ModelReasoningDefinition;
 }
 

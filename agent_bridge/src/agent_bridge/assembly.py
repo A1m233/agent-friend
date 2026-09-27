@@ -301,6 +301,16 @@ class BridgeRuntime:
             else model_capabilities(model_id)
         )
 
+    @property
+    def session_files_available(self) -> bool:
+        return bool(
+            self.attachment_store is not None
+            and self.command_runtime is not None
+            and self.command_runtime.available
+            and "session_files" in self.tool_registry
+            and "exec_command" in self.tool_registry
+        )
+
     def make_transient_session_manager(self) -> SessionManager:
         """构造 OpenAI 无状态分支用的临时 :class:`SessionManager`。
 
@@ -357,7 +367,9 @@ def _make_persistent_session_manager(
     transaction_reconciler: ToolTransactionReconciler | None = None,
     tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
     runtime_identity: RuntimeInstanceIdentity | None = None,
+    attachment_store: AttachmentStore | None = None,
 ) -> SessionManager:
+    from agent.attachments.input_projection import AttachmentInputProjector
     from agent.paths import command_workspaces_dir
 
     return SessionManager(
@@ -370,6 +382,9 @@ def _make_persistent_session_manager(
         metadata_store=metadata_store,
         session_change_broker=session_change_broker,
         message_renderer=(multimodal_adapter.render_message if multimodal_adapter else None),
+        message_projector=AttachmentInputProjector(attachment_store.open)
+        if attachment_store
+        else None,
         skill_service=skill_service,
         command_workspaces_root=command_workspaces_dir(),
         time_provider=time_provider,
@@ -703,6 +718,7 @@ def build_runtime(
         transaction_reconciler,
         tool_evidence_store,
         runtime_identity,
+        attachment_store,
     )
 
     turn_coordinator = SessionTurnCoordinator()
@@ -860,6 +876,7 @@ def build_runtime(
             agent_runtime=agent_runtime,
             reference_aliases=im_reference_aliases,
             capability_resolver=base_runtime.attachment_capabilities,
+            session_files_available=lambda: base_runtime.session_files_available,
         )
         im_state_store = IMStateStore(settings.im_state_path)
         im_binding_coordinator = IMBindingCoordinator()

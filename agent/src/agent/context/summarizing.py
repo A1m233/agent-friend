@@ -213,7 +213,7 @@ class SummarizingContextManager:
                 content="",
                 attachments=list(parts.new_user_attachments),
             )
-            if estimate_tokens([attachment_only]) > threshold:
+            if estimate_request_tokens([attachment_only], runtime) > threshold:
                 raise AttachmentError(
                     "attachment_context_too_large",
                     "附件内容超过当前模型的上下文容量，请减少附件后重试。",

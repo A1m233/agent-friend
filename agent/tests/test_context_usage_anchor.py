@@ -384,7 +384,7 @@ def test_final_budget_recovery_is_bounded(tmp_path: Path) -> None:
     assert conv._pending_request_measurement is None
 
 
-def test_native_file_uses_declared_cost_instead_of_file_id_or_base64(tmp_path: Path) -> None:
+def test_native_document_cost_is_unknown_and_image_file_id_stays_image(tmp_path: Path) -> None:
     conv, _, _ = _make_conversation(
         tmp_path,
         fake_llm=MeasuredLLM(),
@@ -405,8 +405,11 @@ def test_native_file_uses_declared_cost_instead_of_file_id_or_base64(tmp_path: P
 
     by_id = conv._estimate_rendered_input(request({"file_id": "abc"}), None)
     by_data = conv._estimate_rendered_input(request({"file_data": "A" * 1_000_000}), None)
-    assert by_id.tokens == by_data.tokens == 10000
-    assert by_id.reason == "opaque_attachment"
+    assert by_id.tokens == 1536
+    assert by_id.unknown_components == 0
+    assert by_data.tokens >= conv._active_llm_client().context_window
+    assert by_data.unknown_components == 1
+    assert by_data.notes()["input_cost_known"] is False
 
 
 def test_normalized_exclusive_cache_buckets_are_already_included() -> None:

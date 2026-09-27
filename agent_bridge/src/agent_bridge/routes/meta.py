@@ -472,6 +472,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             model_id=preflight_session.current_model,
             store=runtime.attachment_store,
             capability_resolver=runtime.attachment_capabilities,
+            session_files_available=runtime.session_files_available,
         )
         if not text and not attachment_plan.validated_refs and not replacement_references:
             raise HTTPException(

@@ -18,7 +18,6 @@ import json
 import math
 from typing import Any
 
-from ..message_references import render_user_content_for_model
 from ..messages import Message
 from .protocol import BudgetSnapshot, RuntimeContext
 
@@ -42,10 +41,6 @@ IMAGE_ATTACHMENT_TOKENS = 1536
 TOOL_IMAGE_TOKENS = 16_384
 """Uncalibrated allowance for bounded tool snapshots; not a universal token upper bound."""
 
-DOCUMENT_BYTES_TO_TOKENS = 0.25
-DOCUMENT_ATTACHMENT_TOKEN_CAP = 64_000
-"""文档预估只用于压缩预检；实际抽取文本会在 provider 适配层再次按窗口校验。"""
-
 
 def estimate_tokens(messages: list[Message]) -> int:
     """对消息序列做保守的 token 估算（按字符数 × :data:`CHARS_TO_TOKENS`）。
@@ -60,8 +55,8 @@ def estimate_tokens(messages: list[Message]) -> int:
     total_chars = 0
     for msg in messages:
         content = (
-            render_user_content_for_model(msg.content, msg.references)
-            if msg.role == "user" and msg.references
+            msg.to_openai()["content"]
+            if msg.role == "user" and (msg.references or msg.attachments)
             else msg.content
         )
         total_chars += len(content or "")
@@ -69,20 +64,24 @@ def estimate_tokens(messages: list[Message]) -> int:
         tool_calls = msg.meta.get("tool_calls") if msg.meta else None
         if tool_calls:
             total_chars += len(str(tool_calls))
+    return int(total_chars * CHARS_TO_TOKENS) + estimate_attachment_allowance(messages)
+
+
+def estimate_attachment_allowance(messages: list[Message]) -> int:
+    """Unrendered media cost only; textual source markers are counted separately."""
     attachment_tokens = 0
     for msg in messages:
         for attachment in msg.attachments:
             if attachment.kind == "image":
                 attachment_tokens += IMAGE_ATTACHMENT_TOKENS
-            else:
-                attachment_tokens += min(
-                    DOCUMENT_ATTACHMENT_TOKEN_CAP,
-                    max(256, int(attachment.size_bytes * DOCUMENT_BYTES_TO_TOKENS)),
-                )
+            elif attachment.media_type != "application/pdf":
+                # Only a fallback for unprepared text. Production projects the
+                # actual UTF-8 text before budgeting; never cap document cost.
+                attachment_tokens += max(1, attachment.size_bytes)
     # Tool images have bounded bytes/pixels, but their actual token cost is model-specific.
     # Reserve more than thumbnail attachments; real request usage still owns calibration.
     image_tokens = sum(len(msg.images) * TOOL_IMAGE_TOKENS for msg in messages)
-    return int(total_chars * CHARS_TO_TOKENS) + attachment_tokens + image_tokens
+    return attachment_tokens + image_tokens
 
 
 def estimate_tool_schema_tokens(tool_specs: list[dict[str, Any]] | None) -> int:
