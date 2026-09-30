@@ -192,6 +192,108 @@ def _run(manager: SessionManager, session_id: str, text: str) -> None:
     list(conversation.stream(text, surface=DESKTOP_CHAT_SURFACE))
 
 
+def test_execution_load_keeps_business_events_and_verified_current_context(tmp_path: Path) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    manager = _manager(tmp_path, _RecordingLLM(), store=store)
+    sid = _create(manager)
+    _run(manager, sid, "first")
+    _run(manager, sid, "second")
+    manager.close()
+    full = store.load(sid)
+    expected = restore_rollout(full)
+
+    compact = store.load_execution(sid)
+    actual = compact.restored_rollout
+    assert actual is not None
+    assert actual.disposition == expected.disposition
+    assert actual.commit == expected.commit
+    assert compact.active_events == full.active_events
+    assert all(not e.type.startswith("rollout_") for e in compact.events)
+    assert not any(e.type == "model_transcript_item" for e in compact.events)
+
+    reader = compact.journal_reader
+    assert reader is not None
+    assert list(reader()) == full.events
+    next_manager = _manager(tmp_path, _RecordingLLM(), store=store)
+    conversation = next_manager.start_conversation(compact)
+    list(conversation.stream("third", surface=DESKTOP_CHAT_SURFACE))
+    assert compact.restored_rollout is None
+    assert not any(e.type == "rollout_commit" for e in conversation.session.events)
+    next_manager.close()
+    final = store.load_execution(sid)
+    assert final.restored_rollout is not None
+    assert final.restored_rollout.disposition == "exact"
+    assert [e.payload["content"] for e in final.active_events if e.type == "user_message"] == [
+        "first",
+        "second",
+        "third",
+    ]
+
+
+def test_compact_history_rewrite_recovers_same_verified_prefix(tmp_path: Path) -> None:
+    from agent.sessions.turn_origin import history_before_rewrite
+
+    store = JsonlSessionStore(tmp_path / "sessions")
+    manager = _manager(tmp_path, _RecordingLLM(), store=store)
+    sid = _create(manager)
+    _run(manager, sid, "first")
+    _run(manager, sid, "second")
+    manager.close()
+    full, compact = store.load(sid), store.load_execution(sid)
+    target = [e for e in full.active_events if e.type == "user_message"][-1]
+    prefix = full.active_events[: full.active_events.index(target)]
+    expected = history_before_rewrite(full, target.uuid, prefix)
+    assert history_before_rewrite(compact, target.uuid, prefix) == expected
+
+
+def test_execution_load_validates_corruption_after_rejected_commit(tmp_path: Path) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    manager = _manager(tmp_path, _RecordingLLM(), store=store)
+    sid = _create(manager)
+    _run(manager, sid, "first")
+    manager.close()
+    path = tmp_path / "sessions" / f"{sid}.jsonl"
+    events = store.load(sid).events
+    first_commit = next(e for e in events if e.type == "rollout_commit")
+    first_commit.payload["base_commit_id"] = "invalid"
+    path.write_text(
+        "".join(e.to_jsonl() + "\n" for e in events) + "broken\n" + events[-1].to_jsonl() + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SessionCorruptError, match="中间损坏"):
+        store.load_execution(sid)
+
+
+def test_idle_release_preserves_current_session_and_reopens_exact_history(tmp_path: Path) -> None:
+    from agent.sessions.residency import SessionResidency
+
+    store = JsonlSessionStore(tmp_path / "sessions")
+    llm = _RecordingLLM()
+    manager = _manager(tmp_path, llm, store=store)
+    current, idle = _create(manager), _create(manager)
+    _run(manager, current, "current question")
+    _run(manager, idle, "idle question")
+    policy = SessionResidency(max_bytes=1, max_entries=0)
+    with policy.using(current):
+        assert policy.sweep(
+            manager.resident_states(),
+            protected=lambda _: False,
+            size=manager.resident_size,
+            release=manager.release_idle_runtime,
+        ) == (idle,)
+        assert manager.runtime_state_diagnostics(current) is not None
+        assert manager.runtime_state_diagnostics(idle) is None
+        lease = JsonlSessionStore(store.base_dir).acquire_writer_lease(idle)
+        lease.release()
+        reopened = manager.open_for_execution(idle)
+        assert reopened.restored_rollout is not None
+        assert reopened.restored_rollout.disposition == "exact"
+        conversation = manager.start_conversation(reopened)
+        list(conversation.stream("after idle release", surface=DESKTOP_CHAT_SURFACE))
+        assert any(message.get("content") == "idle question" for message in llm.received[-1])
+    manager.close()
+
+
 def test_warm_execution_never_loads_history_and_preserves_turns(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

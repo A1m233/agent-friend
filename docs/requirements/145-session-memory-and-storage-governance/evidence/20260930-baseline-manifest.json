@@ -1,0 +1,54 @@
+{
+  "date": "2026-09-30",
+  "source_commit": "f22fbb6d4df7db3f600a7bb5c35d73e05419abf2",
+  "fixtures": [
+    {
+      "label": "A",
+      "bytes": 1112568824,
+      "sha256": "f7fb01fe65115c23f38f2786c51236878624b4e0d4a57f90f7f444d0551048f6"
+    },
+    {
+      "label": "B",
+      "bytes": 933172807,
+      "sha256": "0acb966347a306e138c3d00fc1ba52bfbf157ed817e73f10664521778cef6dd1"
+    }
+  ],
+  "private_location": "%LOCALAPPDATA%/agent-friend-research/145/20260930-memory-baseline",
+  "scripts": [
+    {
+      "file": "snapshot-analysis.py",
+      "sha256": "8c20f03dd4117097911323ebe7629168f0a70293b697a4aa5f9cbcd6d193cc66"
+    },
+    {
+      "file": "phase-probe.py",
+      "sha256": "424433cbf7e198bb2ad93c7d6c9ef4e5b21bec28b41f5fcf5bfa89e55c97560f"
+    }
+  ],
+  "measurement": "3 fresh child processes per fixture and variant, sequential query then load_restore; warm OS cache not controlled; no provider calls; no live heap tracing",
+  "source_files": [
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "sha256": "65b0879dedfc7691e48daf80e8057fc62b1678bbfd9915daec9c2150d57314ca"
+    },
+    {
+      "path": "agent/src/agent/sessions/query.py",
+      "sha256": "f2301c3a9f18cc87e7532534ffbfdb9ced410ed905346fe839589696b8d1d504"
+    },
+    {
+      "path": "agent/src/agent/sessions/rollout.py",
+      "sha256": "cd7443e2da6c3a8d317e091dea0c6582ebf68ed6ce4554974ef82c9d20d08036"
+    },
+    {
+      "path": "agent/src/agent/sessions/turn_origin.py",
+      "sha256": "772cdd832db4dce82b907a906ef9a27f3e383bc3ee0ff19f081075f8e89d8481"
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "sha256": "181f2d33a6801dd1550424da7fe3ff3b13ce7abae99f94e3bec016096fb90889"
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/app.py",
+      "sha256": "5af3151d5a1b4cbd82abc46c5f75f0259e16609ed810dd7bf6dd42cde5e33993"
+    }
+  ]
+}

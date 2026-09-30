@@ -355,6 +355,17 @@ def load_session(
     return result
 
 
+def load_business_session(
+    store: SessionStore, session_id: str, *, cancel_check: CancelCheck = None
+) -> Session:
+    """Mutable business facts for consumers that never restore the model journal."""
+    check_cancel(cancel_check)
+    method = getattr(store, "load_business", None)
+    if callable(method):
+        return cast(Session, method(session_id, cancel_check=cancel_check))
+    return load_session(store, session_id, cancel_check=cancel_check)
+
+
 def query_session(
     store: SessionStore, session_id: str, *, cancel_check: CancelCheck = None
 ) -> SessionQuerySnapshot:

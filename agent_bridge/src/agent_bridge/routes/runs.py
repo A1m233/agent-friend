@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+from collections.abc import AsyncIterator
 from typing import Any
 
 from agent.runtime import AgentRuntime, RunCancelResult, RunSnapshot
-from fastapi import APIRouter, FastAPI, HTTPException, Query
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 
 from ..assembly import BridgeRuntime
 
@@ -19,6 +22,26 @@ def _snapshot_payload(snapshot: RunSnapshot) -> dict[str, Any]:
 
 def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     router = APIRouter(prefix="/v1", tags=["runs"])
+
+    @router.get("/sessions/{session_id}/usage")
+    async def session_usage(session_id: str, request: Request) -> StreamingResponse:
+        async def events() -> AsyncIterator[str]:
+            # The connection itself owns this token. Late disconnects cannot
+            # release a newer connection, and multiple windows hold separate tokens.
+            with runtime.session_residency.using(session_id):
+                yield "data: ready\n\n"
+                while not await request.is_disconnected():
+                    await asyncio.sleep(5)
+                    yield ": keepalive\n\n"
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     def _agent_runtime() -> AgentRuntime:
         if runtime.agent_runtime is None:

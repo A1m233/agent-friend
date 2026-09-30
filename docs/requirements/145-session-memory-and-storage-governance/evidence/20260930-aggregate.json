@@ -1,0 +1,298 @@
+[
+  {
+    "label": "A",
+    "source_bytes": 1112568824,
+    "sha256": "f7fb01fe65115c23f38f2786c51236878624b4e0d4a57f90f7f444d0551048f6",
+    "records": 39294,
+    "max_line_bytes": 371572,
+    "types": [
+      {
+        "type": "rollout_commit",
+        "count": 2756,
+        "bytes": 750676028
+      },
+      {
+        "type": "model_transcript_item",
+        "count": 29783,
+        "bytes": 207451676
+      },
+      {
+        "type": "rollout_request_prepared",
+        "count": 789,
+        "bytes": 110614990
+      },
+      {
+        "type": "tool_call_request",
+        "count": 1369,
+        "bytes": 19219196
+      },
+      {
+        "type": "assistant_message",
+        "count": 507,
+        "bytes": 12453852
+      },
+      {
+        "type": "tool_call_result",
+        "count": 1369,
+        "bytes": 8624437
+      },
+      {
+        "type": "provider_reasoning_state",
+        "count": 820,
+        "bytes": 2553969
+      },
+      {
+        "type": "tool_execution_checkpoint",
+        "count": 562,
+        "bytes": 311468
+      },
+      {
+        "type": "assistant_phase",
+        "count": 860,
+        "bytes": 201108
+      },
+      {
+        "type": "tool_context_edit",
+        "count": 13,
+        "bytes": 114510
+      },
+      {
+        "type": "user_message",
+        "count": 104,
+        "bytes": 67326
+      },
+      {
+        "type": "compaction",
+        "count": 9,
+        "bytes": 59124
+      },
+      {
+        "type": "rollout_segment",
+        "count": 113,
+        "bytes": 44164
+      },
+      {
+        "type": "run_terminal",
+        "count": 91,
+        "bytes": 44119
+      },
+      {
+        "type": "skill_catalog_state",
+        "count": 27,
+        "bytes": 39472
+      },
+      {
+        "type": "skill_context",
+        "count": 2,
+        "bytes": 39078
+      },
+      {
+        "type": "run_started",
+        "count": 83,
+        "bytes": 35831
+      },
+      {
+        "type": "turn_rewrite",
+        "count": 11,
+        "bytes": 8932
+      },
+      {
+        "type": "model_config_change",
+        "count": 14,
+        "bytes": 5216
+      },
+      {
+        "type": "run_error",
+        "count": 11,
+        "bytes": 3942
+      },
+      {
+        "type": "session_meta",
+        "count": 1,
+        "bytes": 386
+      }
+    ],
+    "field_repetition": {
+      "model_context": {
+        "count": 3545,
+        "bytes": 75729327,
+        "unique_values": 57,
+        "unique_bytes": 1000610
+      },
+      "epoch_envelope": {
+        "count": 3544,
+        "bytes": 415008124,
+        "unique_values": 11,
+        "unique_bytes": 1279818
+      },
+      "wire_witness": {
+        "count": 2624,
+        "bytes": 64088217,
+        "unique_values": 780,
+        "unique_bytes": 19198253
+      }
+    },
+    "active_ids_delta_payload_bytes": 1015407,
+    "active_ids_nonprefix_changes": 8,
+    "limits": "Exact-value dedup and prefix-length arithmetic only; not a new writer, validated recovery encoding, migration or measured memory saving",
+    "seconds": 5.39
+  },
+  {
+    "label": "B",
+    "source_bytes": 933172807,
+    "sha256": "0acb966347a306e138c3d00fc1ba52bfbf157ed817e73f10664521778cef6dd1",
+    "records": 55979,
+    "max_line_bytes": 526861,
+    "types": [
+      {
+        "type": "rollout_commit",
+        "count": 2190,
+        "bytes": 660166438
+      },
+      {
+        "type": "model_transcript_item",
+        "count": 46589,
+        "bytes": 172012262
+      },
+      {
+        "type": "rollout_request_prepared",
+        "count": 676,
+        "bytes": 79964134
+      },
+      {
+        "type": "tool_call_result",
+        "count": 1247,
+        "bytes": 6880475
+      },
+      {
+        "type": "assistant_message",
+        "count": 1122,
+        "bytes": 5888589
+      },
+      {
+        "type": "tool_call_request",
+        "count": 1247,
+        "bytes": 4728329
+      },
+      {
+        "type": "provider_reasoning_state",
+        "count": 707,
+        "bytes": 1827011
+      },
+      {
+        "type": "compaction",
+        "count": 114,
+        "bytes": 771916
+      },
+      {
+        "type": "tool_execution_checkpoint",
+        "count": 387,
+        "bytes": 213135
+      },
+      {
+        "type": "user_message",
+        "count": 535,
+        "bytes": 184397
+      },
+      {
+        "type": "assistant_phase",
+        "count": 623,
+        "bytes": 145491
+      },
+      {
+        "type": "skill_catalog_state",
+        "count": 41,
+        "bytes": 89379
+      },
+      {
+        "type": "model_context",
+        "count": 66,
+        "bytes": 69469
+      },
+      {
+        "type": "run_terminal",
+        "count": 110,
+        "bytes": 50132
+      },
+      {
+        "type": "rollout_segment",
+        "count": 89,
+        "bytes": 34770
+      },
+      {
+        "type": "tool_context_edit",
+        "count": 17,
+        "bytes": 32724
+      },
+      {
+        "type": "run_started",
+        "count": 74,
+        "bytes": 30901
+      },
+      {
+        "type": "system_trigger",
+        "count": 26,
+        "bytes": 27018
+      },
+      {
+        "type": "todo_reminder",
+        "count": 25,
+        "bytes": 21653
+      },
+      {
+        "type": "turn_rewrite",
+        "count": 29,
+        "bytes": 15005
+      },
+      {
+        "type": "model_config_change",
+        "count": 37,
+        "bytes": 11937
+      },
+      {
+        "type": "run_error",
+        "count": 14,
+        "bytes": 4853
+      },
+      {
+        "type": "model_change",
+        "count": 6,
+        "bytes": 1243
+      },
+      {
+        "type": "channel_change",
+        "count": 7,
+        "bytes": 1176
+      },
+      {
+        "type": "session_meta",
+        "count": 1,
+        "bytes": 370
+      }
+    ],
+    "field_repetition": {
+      "model_context": {
+        "count": 2866,
+        "bytes": 9865724,
+        "unique_values": 30,
+        "unique_bytes": 105973
+      },
+      "epoch_envelope": {
+        "count": 2861,
+        "bytes": 320234104,
+        "unique_values": 13,
+        "unique_bytes": 1471600
+      },
+      "wire_witness": {
+        "count": 1997,
+        "bytes": 54240494,
+        "unique_values": 667,
+        "unique_bytes": 18012643
+      }
+    },
+    "active_ids_delta_payload_bytes": 397571,
+    "active_ids_nonprefix_changes": 1,
+    "limits": "Exact-value dedup and prefix-length arithmetic only; not a new writer, validated recovery encoding, migration or measured memory saving",
+    "seconds": 4.42
+  }
+]

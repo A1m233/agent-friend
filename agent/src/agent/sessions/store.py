@@ -48,6 +48,7 @@ from .query import (
     SourceVersion,
     check_cancel,
     list_session_activity,
+    load_business_session,
     load_session,
     query_session,
 )
@@ -56,8 +57,9 @@ from .query_observation import (
     observe_query_maintenance_failure,
     observe_session_query,
 )
+from .rollout_encoding import RolloutDecoder
 from .session import Session
-from .store_types import SessionLoadDiagnostics
+from .store_types import SessionLoadDiagnostics, SessionReadState
 
 _LOCK_TIMEOUT_SECONDS = 10.0
 """Maximum wait for a session file lock; timeout alone does not identify its owner."""
@@ -378,6 +380,24 @@ class JsonlSessionStore:
     def append_events(self, session_id: str, events: list[Event]) -> None:
         if not events:
             return
+        self._append_events(session_id, events)
+
+    @contextmanager
+    def maintenance_guard(self, session_id: str) -> Iterator[None]:
+        """Serialize file replacement with appends, including the open/rename gap."""
+        path = self._base_dir / f"{_session_filename_stem(session_id)}.maintenance.lock"
+        with portalocker.Lock(path, "a+b", timeout=_LOCK_TIMEOUT_SECONDS):
+            yield
+
+    @contextmanager
+    def _append_lock(self, path: Path, session_id: str) -> Iterator[BinaryIO]:
+        with self.maintenance_guard(session_id):
+            if self._existing_path(session_id) != path:
+                raise SessionNotFoundError(f"会话不存在: {session_id}")
+            with portalocker.Lock(path, "a+b", timeout=_LOCK_TIMEOUT_SECONDS) as handle:
+                yield cast(BinaryIO, handle)
+
+    def _append_events(self, session_id: str, events: list[Event]) -> None:
         path = self._existing_path(session_id)
         if path is None:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
@@ -386,9 +406,7 @@ class JsonlSessionStore:
             encoded = [(item.to_jsonl().encode("utf-8") + b"\n") for item in events]
             with (
                 observe_session_file("append", session_id) as observation,
-                observation.locked(
-                    portalocker.Lock(path, "a+b", timeout=_LOCK_TIMEOUT_SECONDS)
-                ) as f,
+                observation.locked(self._append_lock(path, session_id)) as f,
             ):
                 binary = cast(BinaryIO, f)
                 with observation.phase("boundary"):
@@ -540,6 +558,42 @@ class JsonlSessionStore:
             and session.loaded_source_version == self._source_version(path)
         )
 
+    def load_business(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
+        records, diagnostics, version, _count = self._read_records(
+            session_id, query_only=True, cancel_check=cancel_check
+        )
+        session = Session.from_events([event for _, event in records])
+        session.load_diagnostics = diagnostics
+        session.loaded_source_version = version
+        return session
+
+    def load_execution(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
+        from .execution_loading import load_execution_session
+
+        session = load_execution_session(
+            lambda state: self.iter_events(session_id, state, cancel_check=cancel_check),
+            cancel_check=cancel_check,
+        )
+        self.bind_execution_projection(session)
+        return session
+
+    def bind_execution_projection(self, session: Session) -> None:
+        session_id = session.session_id
+
+        def journal() -> Iterator[Event]:
+            state = SessionReadState()
+            yield from self.iter_events(session_id, state)
+            path = self._existing_path(session_id)
+            if path is None or self._source_version(path) != state.source_version:
+                raise SessionPersistError("会话在历史前缀读取期间发生变化")
+            assert state.source_version is not None
+            self._validate_writer_version(session_id, state.source_version)
+
+        session.journal_reader = journal
+        session.events[:] = [
+            event for event in session.events if event.type not in ROLLOUT_EVENT_TYPES
+        ]
+
     def cancellable_load(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
         return self.load(session_id, cancel_check=cancel_check)
 
@@ -606,13 +660,32 @@ class JsonlSessionStore:
         query_only: bool = False,
         cancel_check: CancelCheck = None,
     ) -> tuple[list[tuple[int, Event]], SessionLoadDiagnostics, SourceVersion, int]:
+        state = SessionReadState()
+        records = [
+            (index, event)
+            for index, event in enumerate(
+                self.iter_events(session_id, state, cancel_check=cancel_check)
+            )
+            if not query_only or event.type not in ROLLOUT_EVENT_TYPES
+        ]
+        assert state.source_version is not None
+        return records, state.diagnostics, state.source_version, state.event_count
+
+    def iter_events(
+        self,
+        session_id: str,
+        state: SessionReadState,
+        *,
+        cancel_check: CancelCheck = None,
+    ) -> Iterator[Event]:
+        """Read a pinned prefix; consumers must exhaust it to validate corruption."""
         path = self._existing_path(session_id)
         if path is None:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
-        records: list[tuple[int, Event]] = []
         parsed_records: list[tuple[int, Event]] = []
         parse_errors: list[tuple[int, int]] = []
         event_count = 0
+        decoder = RolloutDecoder()
         try:
             with (
                 observe_session_file("load", session_id) as observation,
@@ -623,6 +696,7 @@ class JsonlSessionStore:
                 with observation.locked(self._read_lock(path, cancel_check)) as f:
                     binary = cast(BinaryIO, f)
                     version = self._handle_version(binary, path)
+                    state.source_version = version
                     try:
                         descriptor = os.dup(binary.fileno())
                     except io.UnsupportedOperation:
@@ -651,6 +725,7 @@ class JsonlSessionStore:
                         except (UnicodeDecodeError, SessionCorruptError):
                             parse_errors.append((lineno, len(line)))
                             continue
+                        event = decoder.decode(event)
                         parsed_records.append(
                             (
                                 lineno,
@@ -666,13 +741,15 @@ class JsonlSessionStore:
                                 ),
                             )
                         )
-                        if not query_only or event.type not in ROLLOUT_EVENT_TYPES:
-                            records.append((event_count, event))
+                        if event_count == 0:
+                            Session.from_events([event])
                         event_count += 1
+                        yield event
                     diagnostics = self._validate_recoverable_errors(
                         path, parsed_records, parse_errors
                     )
-                    Session.from_events([records[0][1]] if records else [])
+                    if not event_count:
+                        Session.from_events([])
         except LockException as e:
             raise SessionPersistError(
                 f"获取会话文件读锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {path}: {e}"
@@ -680,7 +757,8 @@ class JsonlSessionStore:
         except OSError as e:
             raise SessionPersistError(f"读取会话文件失败: {path}: {e}") from e
         check_cancel(cancel_check)
-        return records, diagnostics, version, event_count
+        state.diagnostics = diagnostics
+        state.event_count = event_count
 
     @staticmethod
     def _read_snapshot_bytes(
@@ -826,6 +904,10 @@ class JsonlSessionStore:
         return summaries
 
     def delete(self, session_id: str) -> None:
+        with self.maintenance_guard(session_id):
+            self._delete(session_id)
+
+    def _delete(self, session_id: str) -> None:
         path = self._existing_path(session_id)
         if path is None:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
@@ -1186,6 +1268,20 @@ class NotifyingSessionStore:
 
     def cancellable_load(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
         return load_session(self._inner, session_id, cancel_check=cancel_check)
+
+    def load_business(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
+        return load_business_session(self._inner, session_id, cancel_check=cancel_check)
+
+    def load_execution(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
+        method = getattr(self._inner, "load_execution", None)
+        if callable(method):
+            return cast(Session, method(session_id, cancel_check=cancel_check))
+        return load_session(self._inner, session_id, cancel_check=cancel_check)
+
+    def bind_execution_projection(self, session: Session) -> None:
+        method = getattr(self._inner, "bind_execution_projection", None)
+        if callable(method):
+            method(session)
 
     def can_reuse_loaded(self, session: Session) -> bool:
         method = getattr(self._inner, "can_reuse_loaded", None)

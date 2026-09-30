@@ -965,6 +965,7 @@ class TestAgUiRunChannelBoundary:
                 "model_transcript_item",
                 "rollout_request_prepared",
                 "rollout_commit",
+                "rollout_value",
             }
         ] == [
             "session_meta",

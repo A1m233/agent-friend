@@ -23,6 +23,19 @@ def collect(events: list[dict[str, object]], limit: int | None = 1) -> dict[str,
     return export.export_prefix(io.BytesIO(raw), len(raw), limit)
 
 
+def test_versioned_rollout_values_use_existing_internal_snapshot_redaction() -> None:
+    result = collect(
+        [
+            event("session_meta", "meta"),
+            event("user_message", "u"),
+            event("rollout_value", "value", value="private system prompt"),
+        ]
+    )
+    assert "private system prompt" not in json.dumps(result)
+    assert result["events"][-1]["payload"] == {"redacted": True, "diagnosticSummaryOnly": True}
+    assert result["coverage"]["internalSnapshotCount"] == 1
+
+
 def test_recent_turn_keeps_tool_pair_without_full_history() -> None:
     result = collect(
         [

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import gc
 import json
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -416,6 +418,29 @@ def test_background_and_lazy_reconciliation_share_idempotent_guard(tmp_path: Pat
     assert sum(report.interrupted_tool_calls for report in reports) == 1
     assert lazy.interrupted_tool_calls == 0
     assert sum(event.type == "tool_call_result" for event in lazy.session.events) == 1
+
+
+def test_startup_results_do_not_retain_sessions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, session_id = _store_with_request(tmp_path, checkpoint_mode="resident_only")
+    reconciler = ToolTransactionReconciler(store, runtime_instance_id="runtime-new")
+    references: list[weakref.ReferenceType[Session]] = []
+    original = store.load_business
+
+    def observe(session_id: str, **kwargs: object) -> Session:
+        session = original(session_id)
+        references.append(weakref.ref(session))
+        return session
+
+    monkeypatch.setattr(store, "load_business", observe)
+    monkeypatch.setattr(store, "load", lambda *_: pytest.fail("startup loaded raw rollout"))
+    reports = reconciler.reconcile_known_sessions()
+    gc.collect()
+
+    assert reports[0].session_id == session_id
+    assert reports[0].interrupted_tool_calls == 1
+    assert references and all(reference() is None for reference in references)
 
 
 def test_concurrent_reconciliation_writes_only_one_result_and_terminal(tmp_path: Path) -> None:

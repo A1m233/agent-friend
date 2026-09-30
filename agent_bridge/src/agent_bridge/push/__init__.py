@@ -71,7 +71,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             try:
                 # 立刻发一条 heartbeat 让客户端确认连接活
                 yield encode_envelope_sse(_heartbeat())
-                while True:
+                while not sub.disconnected.is_set():
                     if await request.is_disconnected():
                         return
                     try:

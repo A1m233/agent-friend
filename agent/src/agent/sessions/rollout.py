@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import threading
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -15,7 +16,7 @@ from llm_providers import ProviderRequestWitness
 
 from ..messages import Message
 from .cache_epoch import CacheEnvelopeState, PreparedCacheEpoch, SessionCacheEpoch
-from .events import Event
+from .events import ROLLOUT_EVENT_TYPES, Event
 from .model_context import (
     CalendarState,
     ModelContextSnapshot,
@@ -23,6 +24,8 @@ from .model_context import (
 )
 from .model_history import SessionModelHistory, model_relevant_event_uuids
 from .query import CancelCheck, check_cancel
+from .rollout_encoding import RolloutEncoder
+from .rollout_items import RolloutItems
 from .session import Session
 from .store import SessionStore, append_session_events
 
@@ -481,17 +484,28 @@ def _degraded_restore(
     )
 
 
-def restore_rollout(session: Session, *, cancel_check: CancelCheck = None) -> RolloutRestoreResult:
+def restore_rollout(
+    session: Session, *, cancel_check: CancelCheck = None, events: Iterable[Event] | None = None
+) -> RolloutRestoreResult:
+    with RolloutItems() as items:
+        return _restore_rollout(session, items, cancel_check=cancel_check, events=events)
+
+
+def _restore_rollout(
+    session: Session,
+    item_events: RolloutItems,
+    *,
+    cancel_check: CancelCheck,
+    events: Iterable[Event] | None,
+) -> RolloutRestoreResult:
     """Apply only complete, hash-valid rollout commits from the session stream."""
 
-    item_events: dict[str, tuple[Event, dict[str, Any], Message, bytes | None]] = {}
-    cached_canonical_bytes = 0
     committed: RolloutCommitState | None = None
     # Same v1 canonical JSON digest, retained before the list's closing bracket.
     # Appends extend that prefix; rewrites start a new one. Every commit is still checked.
     transcript_prefix = sha256(b"agent-friend:model-transcript:v1\0[")
     transcript_items = 0
-    for event in session.events:
+    for event in session.events if events is None else events:
         check_cancel(cancel_check)
         if event.type == "rollout_segment":
             if event.payload.get("schema_version") != ROLLOUT_SCHEMA_VERSION:
@@ -511,20 +525,8 @@ def restore_rollout(session: Session, *, cancel_check: CancelCheck = None) -> Ro
                 != sha256(b"agent-friend:model-message:v1\0" + canonical_message).hexdigest()
             ):
                 continue
-            previous_item = item_events.get(event.uuid)
-            if previous_item is not None and previous_item[3] is not None:
-                cached_canonical_bytes -= len(previous_item[3])
-            cached = (
-                canonical_message
-                if cached_canonical_bytes + len(canonical_message) <= 8 * 1024 * 1024
-                else None
-            )
-            cached_canonical_bytes += len(cached) if cached is not None else 0
-            item_events[event.uuid] = (
-                event,
-                cast(dict[str, Any], raw_message),
-                message,
-                cached,
+            item_events.put(
+                event.uuid, canonical_message, cast(dict[str, Any], raw_message), message
             )
             continue
         if event.type != "rollout_commit":
@@ -541,36 +543,29 @@ def restore_rollout(session: Session, *, cancel_check: CancelCheck = None) -> Ro
             return _degraded_restore(session, committed, "corrupt_committed_history")
         if any(not isinstance(ref, str) or ref not in item_events for ref in refs):
             return _degraded_restore(session, committed, "corrupt_committed_history")
-        selected = [item_events[ref] for ref in refs]
+        selected = [item_events.get(ref) for ref in refs]
         previous_serialized = committed.serialized_messages if committed is not None else ()
         previous_messages = committed.messages if committed is not None else ()
         serialized = (
-            [*previous_serialized, *(raw for _, raw, _, _ in selected)]
+            [*previous_serialized, *(raw for raw, _, _ in selected)]
             if relation == "append"
-            else [raw for _, raw, _, _ in selected]
+            else [raw for raw, _, _ in selected]
         )
         messages = (
-            [*previous_messages, *(message for _, _, message, _ in selected)]
+            [*previous_messages, *(message for _, _, message in selected)]
             if relation == "append"
-            else [message for _, _, message, _ in selected]
+            else [message for _, _, message in selected]
         )
         if payload.get("item_count") != len(messages):
             return _degraded_restore(session, committed, "corrupt_committed_history")
         if relation == "rewrite":
             transcript_prefix = sha256(b"agent-friend:model-transcript:v1\0[")
             transcript_items = 0
-        for item_event, raw, message, cached_message in selected:
+        for _raw, canonical_message, _message in selected:
             check_cancel(cancel_check)
             if transcript_items:
                 transcript_prefix.update(b",")
-            transcript_prefix.update(
-                cached_message if cached_message is not None else _canonical(raw).encode("utf-8")
-            )
-            # Do not retain a second serialized history after its first commit.
-            cached_item = item_events[item_event.uuid][3]
-            if cached_item is not None:
-                cached_canonical_bytes -= len(cached_item)
-            item_events[item_event.uuid] = (item_event, raw, message, None)
+            transcript_prefix.update(canonical_message)
             transcript_items += 1
         transcript_digest = transcript_prefix.copy()
         transcript_digest.update(b"]")
@@ -615,6 +610,13 @@ def restore_rollout(session: Session, *, cancel_check: CancelCheck = None) -> Ro
             ),
         )
 
+    return finish_rollout_restore(session, committed, cancel_check=cancel_check)
+
+
+def finish_rollout_restore(
+    session: Session, committed: RolloutCommitState | None, *, cancel_check: CancelCheck = None
+) -> RolloutRestoreResult:
+    """Compare verified model state with the current business/reconciliation state."""
     check_cancel(cancel_check)
     if committed is None:
         return _no_rollout_baseline(session)
@@ -715,6 +717,7 @@ class SessionRolloutRecorder:
     _pending_witness: ProviderRequestWitness | None = field(default=None, init=False, repr=False)
     _pending_cache_diagnostics: dict[str, Any] | None = field(default=None, init=False, repr=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
+    _encoder: RolloutEncoder = field(default_factory=RolloutEncoder, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.rollout_id = self.restored.rollout_id if self.restored is not None else str(uuid4())
@@ -725,13 +728,20 @@ class SessionRolloutRecorder:
             if self.restored is not None
             else []
         )
+        # The seed is no longer needed once its current state has been adopted.
+        self.restored = None
         if self.starts_after_corruption:
             self._start_segment(self.recovery_reason, starts_after_corruption=True)
 
     def _append(self, events: list[Event]) -> None:
-        append_session_events(self.store, self.session.session_id, events)
+        encoder = self._encoder.fork()
+        encoded = [record for event in events for record in encoder.encode(event)]
+        append_session_events(self.store, self.session.session_id, encoded)
+        self._encoder = encoder
         for event in events:
-            self.session.append(event)
+            if self.session.journal_reader is None or event.type not in ROLLOUT_EVENT_TYPES:
+                self.session.append(event)
+        self.session.loaded_source_version = None
 
     def _start_segment(self, reason: str, *, starts_after_corruption: bool = False) -> None:
         self.segment_id = str(uuid4())

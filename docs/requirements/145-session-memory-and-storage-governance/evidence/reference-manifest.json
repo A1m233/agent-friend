@@ -1,0 +1,80 @@
+{
+  "repository": "https://github.com/openai/codex",
+  "revision": "b1e72963c3b71a9265a551e54beff078384efed9",
+  "accessed_date": "2026-09-30",
+  "method": "GitHub commit API and raw files at pinned revision; content hashes refer to downloaded bytes",
+  "files": [
+    {
+      "path": "codex-rs/app-server/src/request_processors/thread_lifecycle.rs",
+      "url": "https://github.com/openai/codex/blob/b1e72963c3b71a9265a551e54beff078384efed9/codex-rs/app-server/src/request_processors/thread_lifecycle.rs",
+      "sha256": "204a9b470a4ee86fbc7cdbc6737291a8dea678c562220153df4ccd57f4545ea4",
+      "review": "targeted_read"
+    },
+    {
+      "path": "codex-rs/app-server/tests/suite/v2/thread_unsubscribe.rs",
+      "url": "https://github.com/openai/codex/blob/b1e72963c3b71a9265a551e54beff078384efed9/codex-rs/app-server/tests/suite/v2/thread_unsubscribe.rs",
+      "sha256": "8fb81cfcce42f9c1e63846c4f80dde67ed0040c3ec8c1ed5a8a2f694565ae022",
+      "review": "targeted_read"
+    },
+    {
+      "path": "codex-rs/core/src/session/rollout_reconstruction.rs",
+      "url": "https://github.com/openai/codex/blob/b1e72963c3b71a9265a551e54beff078384efed9/codex-rs/core/src/session/rollout_reconstruction.rs",
+      "sha256": "782e63f57878d1e591c154ec1bb2bb5412cda74b80ac903b098e505444593cc8",
+      "review": "downloaded_not_reviewed"
+    },
+    {
+      "path": "codex-rs/core/src/thread_manager.rs",
+      "url": "https://github.com/openai/codex/blob/b1e72963c3b71a9265a551e54beff078384efed9/codex-rs/core/src/thread_manager.rs",
+      "sha256": "1c356242684633729042aaac6350295b759a8fe1fc05eff28b78895f6ff2fa9d",
+      "review": "downloaded_not_reviewed"
+    },
+    {
+      "path": "codex-rs/rollout/src/compression.rs",
+      "url": "https://github.com/openai/codex/blob/b1e72963c3b71a9265a551e54beff078384efed9/codex-rs/rollout/src/compression.rs",
+      "sha256": "b96fc520e96a65ed54b611b602e139ec0c48781194f4ea056ba4e12693bb2124",
+      "review": "targeted_read"
+    },
+    {
+      "path": "codex-rs/rollout/src/maintenance.rs",
+      "url": "https://github.com/openai/codex/blob/b1e72963c3b71a9265a551e54beff078384efed9/codex-rs/rollout/src/maintenance.rs",
+      "sha256": "abdbd690732aaee671609fc0540c9e845a15116c0de183b0dd976d560f55c404",
+      "review": "targeted_read"
+    },
+    {
+      "path": "codex-rs/rollout/src/model_context.rs",
+      "url": "https://github.com/openai/codex/blob/b1e72963c3b71a9265a551e54beff078384efed9/codex-rs/rollout/src/model_context.rs",
+      "sha256": "c6f1f38abc9d096e336c3a456844073b634b12e7c8d20597a698a04ecb825a08",
+      "review": "targeted_read"
+    },
+    {
+      "path": "codex-rs/rollout/src/recorder.rs",
+      "url": "https://github.com/openai/codex/blob/b1e72963c3b71a9265a551e54beff078384efed9/codex-rs/rollout/src/recorder.rs",
+      "sha256": "3a12d4f9813ceede9e6f616d4b669ba1b4af4c03d5e89c0f4a1c30704f53933d",
+      "review": "targeted_read"
+    },
+    {
+      "path": "codex-rs/thread-store/README.md",
+      "url": "https://github.com/openai/codex/blob/b1e72963c3b71a9265a551e54beff078384efed9/codex-rs/thread-store/README.md",
+      "sha256": "bdbc16a68082d29a2626ea4ed25eb2103fce82371f4cd6ce63d3ec3f45b6e308",
+      "review": "targeted_read"
+    },
+    {
+      "path": "codex-rs/thread-store/src/live_thread.rs",
+      "url": "https://github.com/openai/codex/blob/b1e72963c3b71a9265a551e54beff078384efed9/codex-rs/thread-store/src/live_thread.rs",
+      "sha256": "2d8bee57c219d263e58bb00c14fe4ccaf1b07759d5427f07ef799093794bb785",
+      "review": "targeted_read"
+    },
+    {
+      "path": "codex-rs/thread-store/src/local/model_context_tests.rs",
+      "url": "https://github.com/openai/codex/blob/b1e72963c3b71a9265a551e54beff078384efed9/codex-rs/thread-store/src/local/model_context_tests.rs",
+      "sha256": "04368472aacd9ecb723e1aac3a647261e98621c437702701e79b6e09aee42057",
+      "review": "targeted_read"
+    },
+    {
+      "path": "codex-rs/thread-store/src/local/model_context.rs",
+      "url": "https://github.com/openai/codex/blob/b1e72963c3b71a9265a551e54beff078384efed9/codex-rs/thread-store/src/local/model_context.rs",
+      "sha256": "abfce56357de9465b2b41459ccf235d563f186b49121d32da6725715feedcafb",
+      "review": "targeted_read"
+    }
+  ]
+}

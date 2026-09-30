@@ -4,9 +4,14 @@
 
 | 脚本 | 用途 | mac/linux | Windows |
 |---|---|---|---|
+| session-memory | 对指定隔离会话副本做离线独立进程内存测量，不写输入、不调用模型；`--output` 必须新建，跨平台私有提交指标不可用时报告 null | `./scripts/session-memory/run.sh --directory PRIVATE_DIR --session-id ID --output NEW_JSON` | `.\scripts\session-memory\run.ps1 --directory PRIVATE_DIR --session-id ID --output NEW_JSON` |
 | execution-environment | 准备、校验及离线 PDF/PowerShell smoke；自带 PowerShell 7、Poppler、PDF Python wheel 基线，工作树外缓存，发行包当前限 Windows x64，其他平台明确报告不支持 | `./scripts/execution-environment/run.sh prepare\|verify\|smoke [--offline]` | `.\scripts\execution-environment\run.ps1 prepare\|verify\|smoke [--offline]` |
 | desktop-application | 原生桌面启动助手构建、测试与 Job 隔离 smoke；smoke 只启动自有夹具，非 Windows 明确不支持 | `./scripts/desktop-application/run.sh build\|test\|smoke` | `.\scripts\desktop-application\run.ps1 build\|test\|smoke` |
 | diagnostics-smoke | 合成长会话最近 10 轮读取／ZIP 体积对照和事故修复留存，无网络、不读客户数据 | `./scripts/diagnostics-smoke/run.sh` | `.\scripts\diagnostics-smoke\run.ps1` |
+
+`session-memory/run.* --directory DATA_DIR --session-id ID --compact` 只验证增量编码维护候选；加 `--apply` 才替换原文件，并保留同目录 `*.backup` 原件。维护取得会话写者和文件维护锁，拒绝损坏历史或不等价结果。中断前未发布则原件仍有效；发布后保留新版文件与原件备份。对真实用户数据操作须单独授权并关闭使用该数据的应用；本需求验证只使用隔离副本，不自动删除备份。不要求旧版本读取维护后的格式。
+
+同一入口的 `--variant compare --baseline-ref COMMIT --repeat 1 --output NEW_JSON` 对精确恢复样本比较指定 Git 版本恢复器与当前执行加载的完整结果哈希；两者共享当前 JSONL 解码器，不是旧安装包全栈验证。不归一化新生成 epoch，非 exact 样本需另行分析。`--python PATH` 可固定子进程解释器；测量模式和维护模式的输出均不含会话正文。
 
 Windows `dev/run.*` 会通过 `desktop-application/run.* ensure` 构建并绑定当前 worktree 的启动助手；其他平台不装配该 Windows 能力。`package/run.* runtime` 将助手及身份清单纳入版本化 payload，frozen doctor 通过构建工作区内的专用短命夹具执行 Explorer 打开与参数、证据往返校验；不启动用户应用。
 

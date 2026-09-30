@@ -6,6 +6,7 @@ import { VoiceTunnelConsentDialog } from "@/components/voice/VoiceTunnelConsentD
 import { hasMicActivity, voiceVolumeLabel } from "@/components/voice/micActivity";
 import { Button, TooltipButton, TooltipProvider } from "@/components/ui";
 import { useVoiceStore } from "@/stores/voice";
+import { retainSessionUsage } from "@/services/sessionUsage";
 import {
   startRuntimeCredentialSync,
   useRuntimeCredentialStore,
@@ -26,6 +27,7 @@ function formatDuration(ms: number): string {
 
 export function VoiceCallApp() {
   const phase = useVoiceStore((s) => s.phase);
+  const sessionId = useVoiceStore((s) => s.sessionId);
   const activity = useVoiceStore((s) => s.activity);
   const callId = useVoiceStore((s) => s.callId);
   const isOwner = useVoiceStore((s) => s.isOwner);
@@ -46,6 +48,11 @@ export function VoiceCallApp() {
   );
 
   useEffect(() => startRuntimeCredentialSync(), []);
+
+  useEffect(
+    () => ["idle", "ended", "error"].includes(phase) ? undefined : retainSessionUsage(sessionId),
+    [phase, sessionId],
+  );
 
   const awaitingConsent = phase === "confirming_tunnel";
   const canDial =

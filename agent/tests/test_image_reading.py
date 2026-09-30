@@ -221,7 +221,7 @@ def test_gc_marks_tool_image_events(tmp_path: Path, monkeypatch: pytest.MonkeyPa
             payload={"images": [ref.to_dict()]},
         )
     )
-    manager = SimpleNamespace(list=lambda **_kwargs: [session], open=lambda _id: session)
+    manager = SimpleNamespace(list=lambda **_kwargs: [session], query=lambda _id: session)
     runtime = SimpleNamespace(attachment_store=assets, persistent_session_manager=manager)
     # Reconciliation uses the same mark set independent of retention grace.
     marked = []

@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "scope": "User clarified latency on every send in the installed chat named long conversation (fixture B). Read-only investigation; no provider calls or code modifications.",
+  "runtime": {
+    "observed_at": "2026-09-29T01:55:40+08:00",
+    "build": "20260927T175435Z-f22fbb6d4df7-33f95989",
+    "source_commit": "f22fbb6d4df7db3f600a7bb5c35d73e05419abf2",
+    "source_binding_limits": "Installed runtime path and trace code identity point to this build; existing evidence verified selected session modules, not every memory module.",
+    "sample": "B",
+    "scheduler_queue_ms": 2,
+    "conversation_prepare_ms": 276,
+    "conversation_bound_elapsed_ms": 279,
+    "memory_retrieve_elapsed_ms": 27768,
+    "memory_retrieve_duration_ms": 18297,
+    "pre_memory_uninstrumented_gap_ms": 9192,
+    "context_build_duration_ms": 207,
+    "transport_request_started_elapsed_ms": 28218,
+    "scope_preparation_ms": 11047,
+    "current_session_query_rebuild_ms": 11030.968,
+    "history_source_ms": 7141,
+    "other_large_session_query_rebuild_ms": 5822.044,
+    "log_anchors": {
+      "bridge": "agent_bridge.log.1:21252-21309",
+      "memory": "memory.log:8395-8399"
+    },
+    "boundary": "request_started is emitted immediately before opening the provider stream; not a server-side receipt timestamp or UI click timestamp."
+  },
+  "candidate_reproduction": {
+    "source": "20260930-verified-source-manifest.json",
+    "python": "3.12.14",
+    "read_only": true,
+    "method": "JsonlSessionStore query with logical session IDs mapped to immutable A/B paths; count _read_records calls; query B,B,A,B,A in one store. No complete runtime, no writes, no LLM.",
+    "default_query_cache_bytes": 67108864,
+    "estimated_bytes": {
+      "A": 45273582,
+      "B": 22635565
+    },
+    "rows": [
+      {
+        "sample": "B",
+        "seconds": 4.0959,
+        "file_scans": 1
+      },
+      {
+        "sample": "B",
+        "seconds": 0.0005,
+        "file_scans": 0
+      },
+      {
+        "sample": "A",
+        "seconds": 4.3015,
+        "file_scans": 1
+      },
+      {
+        "sample": "B",
+        "seconds": 4.3014,
+        "file_scans": 1
+      },
+      {
+        "sample": "A",
+        "seconds": 4.3558,
+        "file_scans": 1
+      }
+    ],
+    "repeats": 1,
+    "limits": "Demonstrates eviction/re-read mechanism, not end-to-end send latency or distribution. Runtime execution-state residency and query-cache residency are separate."
+  },
+  "conclusions": {
+    "confirmed": [
+      "Installed hot run spent 28.218 seconds before transport request_started, with preparation only 0.276 seconds.",
+      "Automatic memory recall accounted for 18.297 seconds; query rebuilds are directly visible in the same window.",
+      "Candidate A/B query projections exceed the 64 MiB aggregate cache limit and evict each other, causing repeat file scans."
+    ],
+    "unconfirmed": [
+      "Exact owners of the additional 9.192 seconds before memory retrieval.",
+      "All local latency attributable solely to query-cache eviction.",
+      "Candidate end-to-end sending improvement."
+    ]
+  }
+}

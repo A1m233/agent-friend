@@ -1,0 +1,19 @@
+{
+  "repository": "https://github.com/langchain-ai/langgraph",
+  "revision": "07b33185eab893be2ed031eedae52f09314bf77c",
+  "accessed_date": "2026-09-30",
+  "files": [
+    {
+      "path": "libs/checkpoint-postgres/langgraph/checkpoint/postgres/base.py",
+      "url": "https://github.com/langchain-ai/langgraph/blob/07b33185eab893be2ed031eedae52f09314bf77c/libs/checkpoint-postgres/langgraph/checkpoint/postgres/base.py",
+      "sha256": "34a76ad89892b7200b91d0574333060f78c3cd7afd3f61111b56fc871c3e9f79",
+      "review": "targeted_read"
+    },
+    {
+      "path": "libs/checkpoint-postgres/langgraph/checkpoint/postgres/__init__.py",
+      "url": "https://github.com/langchain-ai/langgraph/blob/07b33185eab893be2ed031eedae52f09314bf77c/libs/checkpoint-postgres/langgraph/checkpoint/postgres/__init__.py",
+      "sha256": "fb141317b3b865da672b946df0f2e64d33da23a640dd334815604cc06b36fe1f",
+      "review": "targeted_read"
+    }
+  ]
+}

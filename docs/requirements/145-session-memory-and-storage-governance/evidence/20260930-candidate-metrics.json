@@ -1,0 +1,823 @@
+{
+  "schema_version": 1,
+  "baseline": "20260930-phase-metrics.json",
+  "execution_measurement_source": "20260930-measurement-source-manifest.json",
+  "pilot_source": "20260930-pilot-source-manifest.json",
+  "limits": [
+    "Isolated offline modules, not installed product or complete bridge.",
+    "Windows Python 3.12.14; three independent child processes per sample and variant. OS cache and other user applications uncontrolled; no tail percentile inference.",
+    "Final B is slower than the earlier pilot; retain both. Lint/format ran briefly during B; no full tests/builds ran until B completed.",
+    "The measurement manifest precedes listener queue-accounting fix, its regression test, and formatting-only manager changes. These do not alter modules executed by the measurement harness.",
+    "Compatibility comparison pins old rollout.py but shares the current JSONL decoder on unchanged v1 files. No external LLM or tool effects executed."
+  ],
+  "samples": {
+    "A": {
+      "final": {
+        "schema_version": 1,
+        "source_sha256": "f7fb01fe65115c23f38f2786c51236878624b4e0d4a57f90f7f444d0551048f6",
+        "rows": [
+          {
+            "variant": "execution",
+            "python": "3.12.14",
+            "seconds": 9.718546299998707,
+            "imports": {
+              "private_MiB": 164.30078125,
+              "peak_private_MiB": 164.30078125,
+              "working_set_MiB": 184.3203125
+            },
+            "restored": {
+              "private_MiB": 297.51953125,
+              "peak_private_MiB": 301.23828125,
+              "working_set_MiB": 317.8984375
+            },
+            "business_events": 5745,
+            "retained_events": 5853,
+            "current_model_items": 37,
+            "disposition": "exact",
+            "released": {
+              "private_MiB": 181.421875,
+              "peak_private_MiB": 301.23828125,
+              "working_set_MiB": 195.39453125
+            },
+            "repeat": 1
+          },
+          {
+            "variant": "execution",
+            "python": "3.12.14",
+            "seconds": 10.85205909999786,
+            "imports": {
+              "private_MiB": 164.23828125,
+              "peak_private_MiB": 164.23828125,
+              "working_set_MiB": 184.2265625
+            },
+            "restored": {
+              "private_MiB": 290.91796875,
+              "peak_private_MiB": 301.828125,
+              "working_set_MiB": 310.31640625
+            },
+            "business_events": 5745,
+            "retained_events": 5853,
+            "current_model_items": 37,
+            "disposition": "exact",
+            "released": {
+              "private_MiB": 180.640625,
+              "peak_private_MiB": 301.828125,
+              "working_set_MiB": 194.7421875
+            },
+            "repeat": 2
+          },
+          {
+            "variant": "execution",
+            "python": "3.12.14",
+            "seconds": 11.803346100001363,
+            "imports": {
+              "private_MiB": 164.2265625,
+              "peak_private_MiB": 164.2265625,
+              "working_set_MiB": 184.20703125
+            },
+            "restored": {
+              "private_MiB": 297.06640625,
+              "peak_private_MiB": 300.61328125,
+              "working_set_MiB": 317.4375
+            },
+            "business_events": 5745,
+            "retained_events": 5853,
+            "current_model_items": 37,
+            "disposition": "exact",
+            "released": {
+              "private_MiB": 181.2265625,
+              "peak_private_MiB": 300.61328125,
+              "working_set_MiB": 194.734375
+            },
+            "repeat": 3
+          }
+        ],
+        "limits": "Isolated offline source modules; OS cache not controlled; no running app measurement. full uses current replay implementation, not a historical baseline."
+      },
+      "pilot": {
+        "schema_version": 1,
+        "source_sha256": "f7fb01fe65115c23f38f2786c51236878624b4e0d4a57f90f7f444d0551048f6",
+        "rows": [
+          {
+            "variant": "execution",
+            "python": "3.12.14",
+            "seconds": 9.251554299997224,
+            "imports": {
+              "private_MiB": 163.91796875,
+              "peak_private_MiB": 163.91796875,
+              "working_set_MiB": 182.6484375
+            },
+            "restored": {
+              "private_MiB": 297.12109375,
+              "peak_private_MiB": 300.41796875,
+              "working_set_MiB": 315.7109375
+            },
+            "business_events": 5745,
+            "retained_events": 5853,
+            "current_model_items": 37,
+            "disposition": "exact",
+            "released": {
+              "private_MiB": 179.578125,
+              "peak_private_MiB": 300.41796875,
+              "working_set_MiB": 192.37109375
+            },
+            "repeat": 1
+          },
+          {
+            "variant": "execution",
+            "python": "3.12.14",
+            "seconds": 10.749644400006218,
+            "imports": {
+              "private_MiB": 163.97265625,
+              "peak_private_MiB": 163.97265625,
+              "working_set_MiB": 182.3515625
+            },
+            "restored": {
+              "private_MiB": 296.2421875,
+              "peak_private_MiB": 298.5859375,
+              "working_set_MiB": 314.953125
+            },
+            "business_events": 5745,
+            "retained_events": 5853,
+            "current_model_items": 37,
+            "disposition": "exact",
+            "released": {
+              "private_MiB": 177.7734375,
+              "peak_private_MiB": 298.5859375,
+              "working_set_MiB": 191.359375
+            },
+            "repeat": 2
+          },
+          {
+            "variant": "execution",
+            "python": "3.12.14",
+            "seconds": 11.017936699994607,
+            "imports": {
+              "private_MiB": 163.78515625,
+              "peak_private_MiB": 163.78515625,
+              "working_set_MiB": 182.51953125
+            },
+            "restored": {
+              "private_MiB": 296.08984375,
+              "peak_private_MiB": 298.8671875,
+              "working_set_MiB": 315.01171875
+            },
+            "business_events": 5745,
+            "retained_events": 5853,
+            "current_model_items": 37,
+            "disposition": "exact",
+            "released": {
+              "private_MiB": 178.53515625,
+              "peak_private_MiB": 298.8671875,
+              "working_set_MiB": 192.15234375
+            },
+            "repeat": 3
+          }
+        ],
+        "limits": "Isolated offline source modules; OS cache not controlled; no running app measurement. full uses current replay implementation, not a historical baseline."
+      },
+      "summary": {
+        "private_MiB_median": 297.06640625,
+        "private_reduction_percent": 86.01362513359416,
+        "peak_delta_MiB_max": 137.58984375,
+        "seconds": {
+          "min": 9.718546299998707,
+          "median": 10.85205909999786,
+          "max": 11.803346100001363
+        },
+        "latency_change_percent": 15.866528934420888
+      },
+      "maintenance_preview": {
+        "before_bytes": 1112568824,
+        "after_bytes": 345564976,
+        "equivalent": true,
+        "applied": false,
+        "backup": null
+      },
+      "replay_equivalence": {
+        "schema_version": 1,
+        "source_sha256": "f7fb01fe65115c23f38f2786c51236878624b4e0d4a57f90f7f444d0551048f6",
+        "rows": [
+          {
+            "variant": "compare",
+            "baseline_ref": "f22fbb6d4df7db3f600a7bb5c35d73e05419abf2",
+            "baseline_source_sha256": "9e9443a85418690f5a7980e84ae842374d8b471dd141411832a438b40dd5dda3",
+            "baseline_result_sha256": "b14c0cb58d8a95d6ed9e84ff0abcd3cd8b0d5a56f0de2030b94a32a0ecf41665",
+            "candidate_result_sha256": "b14c0cb58d8a95d6ed9e84ff0abcd3cd8b0d5a56f0de2030b94a32a0ecf41665",
+            "equivalent": true,
+            "baseline_disposition": "exact",
+            "candidate_disposition": "exact",
+            "limits": "Exact fixtures only: no normalization of generated epoch identities; current JSONL decoder is shared, baseline replay code is pinned.",
+            "repeat": 1
+          }
+        ],
+        "limits": "Isolated offline source modules; OS cache not controlled; no running app measurement. full uses current replay implementation, not a historical baseline."
+      },
+      "growth": {
+        "source_sha256": "f7fb01fe65115c23f38f2786c51236878624b4e0d4a57f90f7f444d0551048f6",
+        "old_canonical_bytes": 1112567925,
+        "encoded_bytes": 345564976,
+        "by_type_columns": [
+          "old_count",
+          "old_bytes",
+          "new_count",
+          "new_bytes"
+        ],
+        "by_type": {
+          "session_meta": [
+            1,
+            385,
+            1,
+            385
+          ],
+          "skill_catalog_state": [
+            27,
+            39466,
+            27,
+            39466
+          ],
+          "user_message": [
+            104,
+            67303,
+            104,
+            67303
+          ],
+          "assistant_message": [
+            507,
+            12453652,
+            507,
+            12453652
+          ],
+          "tool_call_request": [
+            1369,
+            19218956,
+            1369,
+            19218956
+          ],
+          "tool_call_result": [
+            1369,
+            8624197,
+            1369,
+            8624197
+          ],
+          "model_config_change": [
+            14,
+            5215,
+            14,
+            5215
+          ],
+          "turn_rewrite": [
+            11,
+            8931,
+            11,
+            8931
+          ],
+          "provider_reasoning_state": [
+            820,
+            2553793,
+            820,
+            2553793
+          ],
+          "tool_context_edit": [
+            13,
+            114501,
+            13,
+            114501
+          ],
+          "skill_context": [
+            2,
+            39076,
+            2,
+            39076
+          ],
+          "rollout_segment": [
+            113,
+            44164,
+            113,
+            44164
+          ],
+          "model_transcript_item": [
+            29783,
+            207451676,
+            29783,
+            207451676
+          ],
+          "rollout_commit": [
+            2756,
+            750676028,
+            2756,
+            88455657
+          ],
+          "rollout_value": [
+            0,
+            0,
+            157,
+            4067560
+          ],
+          "run_started": [
+            83,
+            35831,
+            83,
+            35831
+          ],
+          "rollout_request_prepared": [
+            789,
+            110614990,
+            789,
+            1764852
+          ],
+          "assistant_phase": [
+            860,
+            201108,
+            860,
+            201108
+          ],
+          "tool_execution_checkpoint": [
+            562,
+            311468,
+            562,
+            311468
+          ],
+          "run_terminal": [
+            91,
+            44119,
+            91,
+            44119
+          ],
+          "compaction": [
+            9,
+            59124,
+            9,
+            59124
+          ],
+          "run_error": [
+            11,
+            3942,
+            11,
+            3942
+          ]
+        },
+        "interval_count": 2756,
+        "method": "Stream the same fixed v1 events in order through current RolloutEncoder; old bytes canonicalized by Event.to_jsonl (therefore may differ from original whitespace); intervals end at every rollout_commit, not necessarily user turns. Encoded UUID values vary but lengths are fixed. No session contents or identifiers exported; no file replaced.",
+        "cumulative_samples": [
+          {
+            "commit_number": 689,
+            "old_delta_bytes": 390854,
+            "new_delta_bytes": 18846,
+            "old_cumulative_bytes": 196171772,
+            "new_cumulative_bytes": 45608835
+          },
+          {
+            "commit_number": 1378,
+            "old_delta_bytes": 305784,
+            "new_delta_bytes": 62179,
+            "old_cumulative_bytes": 558151675,
+            "new_cumulative_bytes": 228761516
+          },
+          {
+            "commit_number": 2067,
+            "old_delta_bytes": 449559,
+            "new_delta_bytes": 25257,
+            "old_cumulative_bytes": 820870334,
+            "new_cumulative_bytes": 286077594
+          },
+          {
+            "commit_number": 2756,
+            "old_delta_bytes": 347964,
+            "new_delta_bytes": 36065,
+            "old_cumulative_bytes": 1112567435,
+            "new_cumulative_bytes": 345564486
+          }
+        ],
+        "interval_statistics": {
+          "old_delta_bytes": {
+            "min": 179377,
+            "median": 330274.5,
+            "max": 13438859
+          },
+          "new_delta_bytes": {
+            "min": 2483,
+            "median": 47469.0,
+            "max": 13214952
+          }
+        }
+      }
+    },
+    "B": {
+      "final": {
+        "schema_version": 1,
+        "source_sha256": "0acb966347a306e138c3d00fc1ba52bfbf157ed817e73f10664521778cef6dd1",
+        "rows": [
+          {
+            "variant": "execution",
+            "python": "3.12.14",
+            "seconds": 12.836739200000011,
+            "imports": {
+              "private_MiB": 164.4921875,
+              "peak_private_MiB": 164.4921875,
+              "working_set_MiB": 184.23046875
+            },
+            "restored": {
+              "private_MiB": 278.1171875,
+              "peak_private_MiB": 282.30078125,
+              "working_set_MiB": 298.73828125
+            },
+            "business_events": 6337,
+            "retained_events": 6435,
+            "current_model_items": 39,
+            "disposition": "exact",
+            "released": {
+              "private_MiB": 171.99609375,
+              "peak_private_MiB": 282.30078125,
+              "working_set_MiB": 192.859375
+            },
+            "repeat": 1
+          },
+          {
+            "variant": "execution",
+            "python": "3.12.14",
+            "seconds": 13.169801900003222,
+            "imports": {
+              "private_MiB": 163.9375,
+              "peak_private_MiB": 163.9375,
+              "working_set_MiB": 184.0859375
+            },
+            "restored": {
+              "private_MiB": 277.609375,
+              "peak_private_MiB": 283.4921875,
+              "working_set_MiB": 298.37890625
+            },
+            "business_events": 6337,
+            "retained_events": 6435,
+            "current_model_items": 39,
+            "disposition": "exact",
+            "released": {
+              "private_MiB": 182.97265625,
+              "peak_private_MiB": 283.4921875,
+              "working_set_MiB": 196.58203125
+            },
+            "repeat": 2
+          },
+          {
+            "variant": "execution",
+            "python": "3.12.14",
+            "seconds": 14.447848800002248,
+            "imports": {
+              "private_MiB": 164.125,
+              "peak_private_MiB": 164.125,
+              "working_set_MiB": 183.98828125
+            },
+            "restored": {
+              "private_MiB": 277.91015625,
+              "peak_private_MiB": 283.41796875,
+              "working_set_MiB": 298.54296875
+            },
+            "business_events": 6337,
+            "retained_events": 6435,
+            "current_model_items": 39,
+            "disposition": "exact",
+            "released": {
+              "private_MiB": 172.0078125,
+              "peak_private_MiB": 283.41796875,
+              "working_set_MiB": 192.97265625
+            },
+            "repeat": 3
+          }
+        ],
+        "limits": "Isolated offline source modules; OS cache not controlled; no running app measurement. full uses current replay implementation, not a historical baseline."
+      },
+      "pilot": {
+        "schema_version": 1,
+        "source_sha256": "0acb966347a306e138c3d00fc1ba52bfbf157ed817e73f10664521778cef6dd1",
+        "rows": [
+          {
+            "variant": "execution",
+            "python": "3.12.14",
+            "seconds": 11.145231800001056,
+            "imports": {
+              "private_MiB": 163.921875,
+              "peak_private_MiB": 163.921875,
+              "working_set_MiB": 182.515625
+            },
+            "restored": {
+              "private_MiB": 272.91015625,
+              "peak_private_MiB": 279.51953125,
+              "working_set_MiB": 292.2109375
+            },
+            "business_events": 6337,
+            "retained_events": 6435,
+            "current_model_items": 39,
+            "disposition": "exact",
+            "released": {
+              "private_MiB": 180.79296875,
+              "peak_private_MiB": 279.51953125,
+              "working_set_MiB": 191.9609375
+            },
+            "repeat": 1
+          },
+          {
+            "variant": "execution",
+            "python": "3.12.14",
+            "seconds": 10.9351788999993,
+            "imports": {
+              "private_MiB": 164.296875,
+              "peak_private_MiB": 164.296875,
+              "working_set_MiB": 182.85546875
+            },
+            "restored": {
+              "private_MiB": 275.8046875,
+              "peak_private_MiB": 280.40234375,
+              "working_set_MiB": 295.2265625
+            },
+            "business_events": 6337,
+            "retained_events": 6435,
+            "current_model_items": 39,
+            "disposition": "exact",
+            "released": {
+              "private_MiB": 177.078125,
+              "peak_private_MiB": 280.40234375,
+              "working_set_MiB": 192.0625
+            },
+            "repeat": 2
+          },
+          {
+            "variant": "execution",
+            "python": "3.12.14",
+            "seconds": 11.043329499996617,
+            "imports": {
+              "private_MiB": 163.95703125,
+              "peak_private_MiB": 163.95703125,
+              "working_set_MiB": 182.57421875
+            },
+            "restored": {
+              "private_MiB": 276.19140625,
+              "peak_private_MiB": 280.078125,
+              "working_set_MiB": 295.59375
+            },
+            "business_events": 6337,
+            "retained_events": 6435,
+            "current_model_items": 39,
+            "disposition": "exact",
+            "released": {
+              "private_MiB": 179.453125,
+              "peak_private_MiB": 280.078125,
+              "working_set_MiB": 192.8828125
+            },
+            "repeat": 3
+          }
+        ],
+        "limits": "Isolated offline source modules; OS cache not controlled; no running app measurement. full uses current replay implementation, not a historical baseline."
+      },
+      "summary": {
+        "private_MiB_median": 277.91015625,
+        "private_reduction_percent": 86.51589231302947,
+        "peak_delta_MiB_max": 119.5546875,
+        "seconds": {
+          "min": 12.836739200000011,
+          "median": 13.169801900003222,
+          "max": 14.447848800002248
+        },
+        "latency_change_percent": 36.61620228219109
+      },
+      "maintenance_preview": {
+        "before_bytes": 933172807,
+        "after_bytes": 270936641,
+        "equivalent": true,
+        "applied": false,
+        "backup": null
+      },
+      "replay_equivalence": {
+        "schema_version": 1,
+        "source_sha256": "0acb966347a306e138c3d00fc1ba52bfbf157ed817e73f10664521778cef6dd1",
+        "rows": [
+          {
+            "variant": "compare",
+            "baseline_ref": "f22fbb6d4df7db3f600a7bb5c35d73e05419abf2",
+            "baseline_source_sha256": "9e9443a85418690f5a7980e84ae842374d8b471dd141411832a438b40dd5dda3",
+            "baseline_result_sha256": "56745218581708cc0307d49758607d0e5f19397527b171c3a180d62bd69802f7",
+            "candidate_result_sha256": "56745218581708cc0307d49758607d0e5f19397527b171c3a180d62bd69802f7",
+            "equivalent": true,
+            "baseline_disposition": "exact",
+            "candidate_disposition": "exact",
+            "limits": "Exact fixtures only: no normalization of generated epoch identities; current JSONL decoder is shared, baseline replay code is pinned.",
+            "repeat": 1
+          }
+        ],
+        "limits": "Isolated offline source modules; OS cache not controlled; no running app measurement. full uses current replay implementation, not a historical baseline."
+      },
+      "growth": {
+        "source_sha256": "0acb966347a306e138c3d00fc1ba52bfbf157ed817e73f10664521778cef6dd1",
+        "old_canonical_bytes": 933172244,
+        "encoded_bytes": 270936641,
+        "by_type_columns": [
+          "old_count",
+          "old_bytes",
+          "new_count",
+          "new_bytes"
+        ],
+        "by_type": {
+          "session_meta": [
+            1,
+            370,
+            1,
+            370
+          ],
+          "user_message": [
+            535,
+            184324,
+            535,
+            184324
+          ],
+          "assistant_message": [
+            1122,
+            5888437,
+            1122,
+            5888437
+          ],
+          "channel_change": [
+            7,
+            1176,
+            7,
+            1176
+          ],
+          "tool_call_request": [
+            1247,
+            4728208,
+            1247,
+            4728208
+          ],
+          "tool_call_result": [
+            1247,
+            6880461,
+            1247,
+            6880461
+          ],
+          "compaction": [
+            114,
+            771916,
+            114,
+            771916
+          ],
+          "turn_rewrite": [
+            29,
+            15002,
+            29,
+            15002
+          ],
+          "run_error": [
+            14,
+            4851,
+            14,
+            4851
+          ],
+          "todo_reminder": [
+            25,
+            21651,
+            25,
+            21651
+          ],
+          "system_trigger": [
+            26,
+            27016,
+            26,
+            27016
+          ],
+          "model_context": [
+            66,
+            69469,
+            66,
+            69469
+          ],
+          "model_change": [
+            6,
+            1242,
+            6,
+            1242
+          ],
+          "skill_catalog_state": [
+            41,
+            89370,
+            41,
+            89370
+          ],
+          "tool_context_edit": [
+            17,
+            32718,
+            17,
+            32718
+          ],
+          "model_config_change": [
+            37,
+            11915,
+            37,
+            11915
+          ],
+          "provider_reasoning_state": [
+            707,
+            1826891,
+            707,
+            1826891
+          ],
+          "tool_execution_checkpoint": [
+            387,
+            213111,
+            387,
+            213111
+          ],
+          "run_terminal": [
+            110,
+            50120,
+            110,
+            50120
+          ],
+          "rollout_segment": [
+            89,
+            34770,
+            89,
+            34770
+          ],
+          "model_transcript_item": [
+            46589,
+            172012262,
+            46589,
+            172012262
+          ],
+          "rollout_commit": [
+            2190,
+            660166438,
+            2190,
+            74044420
+          ],
+          "rollout_value": [
+            0,
+            0,
+            48,
+            1709993
+          ],
+          "rollout_request_prepared": [
+            676,
+            79964134,
+            676,
+            2140556
+          ],
+          "run_started": [
+            74,
+            30901,
+            74,
+            30901
+          ],
+          "assistant_phase": [
+            623,
+            145491,
+            623,
+            145491
+          ]
+        },
+        "interval_count": 2190,
+        "method": "Stream the same fixed v1 events in order through current RolloutEncoder; old bytes canonicalized by Event.to_jsonl (therefore may differ from original whitespace); intervals end at every rollout_commit, not necessarily user turns. Encoded UUID values vary but lengths are fixed. No session contents or identifiers exported; no file replaced.",
+        "cumulative_samples": [
+          {
+            "commit_number": 548,
+            "old_delta_bytes": 372014,
+            "new_delta_bytes": 20140,
+            "old_cumulative_bytes": 194949366,
+            "new_cumulative_bytes": 51186410
+          },
+          {
+            "commit_number": 1095,
+            "old_delta_bytes": 316275,
+            "new_delta_bytes": 50244,
+            "old_cumulative_bytes": 515186299,
+            "new_cumulative_bytes": 213843072
+          },
+          {
+            "commit_number": 1642,
+            "old_delta_bytes": 325179,
+            "new_delta_bytes": 30863,
+            "old_cumulative_bytes": 710571770,
+            "new_cumulative_bytes": 236887503
+          },
+          {
+            "commit_number": 2190,
+            "old_delta_bytes": 363954,
+            "new_delta_bytes": 36091,
+            "old_cumulative_bytes": 933171335,
+            "new_cumulative_bytes": 270935732
+          }
+        ],
+        "interval_statistics": {
+          "old_delta_bytes": {
+            "min": 102782,
+            "median": 331979.0,
+            "max": 11449924
+          },
+          "new_delta_bytes": {
+            "min": 2446,
+            "median": 32710.5,
+            "max": 11450753
+          }
+        }
+      }
+    }
+  }
+}

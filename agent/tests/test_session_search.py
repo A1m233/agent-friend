@@ -85,6 +85,20 @@ def _create_session(store: _CountingStore, session_id: str, title: str) -> Sessi
     return session
 
 
+def test_search_byte_budget_does_not_omit_results(tmp_path: Path) -> None:
+    service, store, _ = _make_service(tmp_path)
+    service._max_cache_bytes = 1
+    for index in range(3):
+        session = _create_session(store, f"s-{index}", "needle")
+        store.append_event(
+            session.session_id, _event("user_message", f"u-{index}", index, {"content": "needle"})
+        )
+    result = service.search("needle", message_limit=1, title_limit=1)
+    assert result.message_total == result.title_total == 3
+    assert len(result.message_results) == len(result.title_results) == 1
+    assert not service._cache
+
+
 def test_search_projects_only_user_visible_history_and_attachment_names(tmp_path: Path) -> None:
     service, store, _metadata = _make_service(tmp_path)
     session = _create_session(store, "s-visible", "Visible title")

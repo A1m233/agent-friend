@@ -18,7 +18,7 @@ def reconcile_attachments(runtime: BridgeRuntime) -> dict[str, int] | None:
     try:
         summaries = [*manager.list(archived=False), *manager.list(archived=True)]
         for summary in summaries:
-            session = manager.open(summary.session_id)
+            session = manager.query(summary.session_id)
             for event in session.events:
                 attachments = [
                     *(event.payload.get("attachments") or []),

@@ -1,0 +1,8 @@
+{
+  "private_root": "%LOCALAPPDATA%/agent-friend-research/145/20260930-memory-baseline",
+  "files": {
+    "delivery-source-overlay-final.zip": "f0d59003a9e0b2ea92c2c5338bc14c799296510c57cc754e3f1d821f8f1c76b1",
+    "growth-comparison.json": "653746bb82f4823799de53a6b66d0339c19d1729b1814770ab584f3e0df21020"
+  },
+  "limits": "Private source overlay ZIP excludes user sessions. Full growth report contains numeric per-commit counts only. Original A/B data remain private and immutable; hashes anchored in baseline manifest."
+}
