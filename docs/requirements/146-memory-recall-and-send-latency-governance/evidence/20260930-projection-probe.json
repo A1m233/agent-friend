@@ -1,0 +1,69 @@
+{
+  "production_commit": "ab9a04ce2971c78b3a45a3d12045d693b8638003",
+  "probe_sha256": "d9676666b6a9a433f7794ade7b48705453c974b5aa342e6bab0f5f9352deabb7",
+  "rows": [
+    {
+      "sample": "B",
+      "query_seconds": 5.238042500001029,
+      "raw_file_bytes": 933172807,
+      "business_events": 6435,
+      "active_events": 6337,
+      "estimated_query_bytes": 22635565,
+      "conversation_events": 1599,
+      "conversation_utf8_bytes": 503953,
+      "boundary_probe": [
+        {
+          "message_projection_seconds": 0.04506769999716198,
+          "checkpoint_resolution_seconds": 0.0030697000038344413,
+          "messages": 3283,
+          "checkpoint_status": "valid"
+        },
+        {
+          "message_projection_seconds": 0.046711700000741985,
+          "checkpoint_resolution_seconds": 0.005898800001887139,
+          "messages": 3283,
+          "checkpoint_status": "valid"
+        },
+        {
+          "message_projection_seconds": 0.03807460000098217,
+          "checkpoint_resolution_seconds": 0.003539099998306483,
+          "messages": 3283,
+          "checkpoint_status": "valid"
+        }
+      ],
+      "source_stat_unchanged": true
+    },
+    {
+      "sample": "A",
+      "query_seconds": 4.9782185000003665,
+      "raw_file_bytes": 1112568824,
+      "business_events": 5853,
+      "active_events": 5745,
+      "estimated_query_bytes": 45273582,
+      "conversation_events": 585,
+      "conversation_utf8_bytes": 208698,
+      "boundary_probe": [
+        {
+          "message_projection_seconds": 0.03296289999707369,
+          "checkpoint_resolution_seconds": 0.003400499997951556,
+          "messages": 2428,
+          "checkpoint_status": "valid"
+        },
+        {
+          "message_projection_seconds": 0.027137400000356138,
+          "checkpoint_resolution_seconds": 0.0032015999968280084,
+          "messages": 2428,
+          "checkpoint_status": "valid"
+        },
+        {
+          "message_projection_seconds": 0.027985300002910662,
+          "checkpoint_resolution_seconds": 0.004519800000707619,
+          "messages": 2428,
+          "checkpoint_status": "valid"
+        }
+      ],
+      "source_stat_unchanged": true
+    }
+  ],
+  "kind": "isolated read-only probe, not complete send baseline"
+}
