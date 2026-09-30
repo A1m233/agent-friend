@@ -17,4 +17,13 @@ class SessionLoadDiagnostics:
     unhandled_tail_corruption: bool = False
 
 
+@dataclass
+class SessionReadState:
+    """Metadata published as a streaming read reaches its validated end."""
+
+    source_version: SourceVersion | None = None
+    diagnostics: SessionLoadDiagnostics = SessionLoadDiagnostics()
+    event_count: int = 0
+
+
 __all__ = ["SessionLoadDiagnostics"]

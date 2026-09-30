@@ -22,6 +22,7 @@ from agent.personas import BUILTIN_DEFAULT_PERSONA_ID
 from agent.runtime.models import RunOutcome, RunSnapshot
 from agent.sessions import Session, SessionPersistError
 from agent.sessions.metadata import SessionMetadataStore
+from agent.sessions.query import load_business_session
 from agent.sessions.store import SessionStore
 from agent.todos import ReminderOccurrence, TodoStore
 
@@ -367,7 +368,7 @@ class NotificationService:
         if snapshot.presentation == "none":
             return
         try:
-            session = self.sessions.load(snapshot.session_id)
+            session = load_business_session(self.sessions, snapshot.session_id)
         except Exception:
             return  # Stateless/private editor runs have no persistent destination.
         if snapshot.outcome is RunOutcome.COMPLETED:
@@ -434,7 +435,7 @@ class NotificationService:
         if self._stopping.is_set():
             return
         try:
-            session = self.sessions.load(str(payload.get("session_id") or ""))
+            session = load_business_session(self.sessions, str(payload.get("session_id") or ""))
         except Exception:
             return
         self.accept(
@@ -450,7 +451,7 @@ class NotificationService:
     def on_todo(self, occurrence: ReminderOccurrence) -> str:
         if occurrence.persistence_session_id is None:
             raise ValueError("reminder persistence target is not frozen")
-        session = self.sessions.load(occurrence.persistence_session_id)
+        session = load_business_session(self.sessions, occurrence.persistence_session_id)
         fact = NotificationFact(
             event_key=f"todo:{occurrence.id}",
             kind="todo_due",

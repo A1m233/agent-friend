@@ -1,0 +1,56 @@
+{
+  "source": "20260930-verified-source-manifest.json",
+  "backend": {
+    "command": "PYTHONPATH=scripts/test scripts/check/run.ps1 --stage backend -p no_external_http",
+    "status": "passed",
+    "exit_code": 0,
+    "tests_passed": 3715,
+    "tests_skipped": 5,
+    "seconds": 338.9,
+    "includes": [
+      "ruff check",
+      "ruff format --check",
+      "typecheck",
+      "full pytest"
+    ],
+    "warnings": "8 pytest warnings; third-party bilibili cleanup emitted ignored closed-loop error at exit; gate returned 0."
+  },
+  "frontend": {
+    "command": "scripts/check/run.ps1 --stage frontend",
+    "status": "passed",
+    "tests_passed": 1340,
+    "test_files": 159,
+    "seconds": 143.2,
+    "includes": [
+      "lint and guards",
+      "typecheck",
+      "full tests",
+      "production build"
+    ],
+    "warnings": "Existing CSS highlight/chunk-size warnings. Outer Python log echo failed with GBK encoding after the check command succeeded; the retained log contains the successful terminal."
+  },
+  "rust": {
+    "command": "scripts/check/run.ps1 --stage rust",
+    "status": "passed",
+    "seconds": 256.5,
+    "includes": [
+      "cargo fmt",
+      "Tauri Core tests",
+      "release check"
+    ],
+    "evidence": "Earlier successful tool output in this task; Rust source/inputs unchanged since then. No installer build."
+  },
+  "private_artifacts": {
+    "check-final-backend.log": "2ac2e62ab5f681ea06d1798d0c7e66d0e1d0b70af1fb5cb6c3acea58a367bd3f",
+    "check-final-backend-recheck.log": "16a14caaf9bd210758a84803099fa67da3393e5a0427f1e66eddf549846e9583",
+    "check-final-backend-pass.log": "f69af36f10f9bbb9ca11dd95e80dc3fea509a3b1a1491001d91666f3744383ed",
+    "check-final-frontend.log": "38d052e8e4ef2026e20aab6a36ee77d970e19ff89df812e558edf6da968b6af9",
+    "delivery-source-overlay-verified.zip": "8368dc791cad6af2b8bce5f12582eae1125354c06f1210f22d03e3f93cb2f88e"
+  },
+  "limits": [
+    "All checks ran on Windows.",
+    "No external LLM calls; no installed-app memory measurement or desktop visual acceptance.",
+    "mac/linux lock/publication tests and user acceptance remain unverified.",
+    "AC-07 cold restore latency safeguard is not accepted; see candidate metrics."
+  ]
+}

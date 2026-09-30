@@ -9,9 +9,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from llm_providers import (
@@ -34,6 +35,9 @@ from .events import (
     _serialize_ts,
 )
 from .store_types import SessionLoadDiagnostics, SourceVersion
+
+if TYPE_CHECKING:
+    from .rollout import RolloutRestoreResult
 
 Channel = Literal["voice", "text"]
 """会话与用户的交流模态。
@@ -160,6 +164,12 @@ class Session:
     load_diagnostics: SessionLoadDiagnostics = field(default_factory=SessionLoadDiagnostics)
     # Transient read identity, never exported or persisted. append invalidates it.
     loaded_source_version: SourceVersion | None = field(default=None, repr=False, compare=False)
+    # Execution projections keep business facts in events; raw journal access is
+    # explicit and on demand. Ordinary load() continues to expose full history.
+    journal_reader: Callable[[], Iterator[Event]] | None = field(
+        default=None, repr=False, compare=False
+    )
+    restored_rollout: RolloutRestoreResult | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def new(
@@ -961,6 +971,16 @@ class Session:
                 )
             final_events.append(event)
         return final_events, True
+
+    def has_unresolved_tool_transactions(self) -> bool:
+        """Use the same stable-ID/legacy pairing rules as model projection."""
+        events = self.active_events
+        requests = {event.uuid for event in events if event.type == "tool_call_request"}
+        if not requests:
+            return False
+        normalized, _ = self._normalize_tool_transactions(events)
+        resolved = {event.uuid for event in normalized if event.type == "tool_call_request"}
+        return bool(requests - resolved)
 
     def latest_compaction(self) -> Event | None:
         """最近一次上下文摘要折叠点（009 M3）；无则 ``None``。

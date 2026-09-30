@@ -82,7 +82,7 @@ class FakeSessions:
             SimpleNamespace(session_id="SESSION-B", title="Beta", updated_at=now),
         ]
 
-    def open(self, session_id: str) -> Any:
+    def query(self, session_id: str) -> Any:
         return self.sessions[session_id]
 
     def list(self, *, archived: bool = False) -> list[Any]:

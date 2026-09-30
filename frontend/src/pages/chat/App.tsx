@@ -29,6 +29,7 @@ import { HistorySidebar } from "./components/HistorySidebar";
 import { GlobalConversationSearchProvider } from "./components/GlobalConversationSearch";
 import { useModelCatalogStore } from "@/lib/model-config";
 import { startDesktopPresenceReporter } from "@/lib/desktop-presence";
+import { retainSessionUsage } from "@/services/sessionUsage";
 import {
   startWorkspaceNavigationSync,
   useWorkspaceNavigationStore,
@@ -154,6 +155,11 @@ export function ChatApp() {
   useEffect(() => {
     void publishActiveChatSession(currentSessionId);
   }, [currentSessionId]);
+
+  useEffect(
+    () => status === "online" ? retainSessionUsage(currentSessionId) : undefined,
+    [currentSessionId, status],
+  );
 
   useEffect(
     () => startDesktopPresenceReporter(

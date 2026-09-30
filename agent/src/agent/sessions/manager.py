@@ -48,7 +48,8 @@ from .model_context import SessionModelContext
 from .model_history import SessionModelHistory
 from .query import CancelCheck, SessionQuerySnapshot, check_cancel, load_session, query_session
 from .recovery import ToolTransactionReconciler
-from .rollout import SessionRolloutRecorder, restore_rollout
+from .residency import retained_bytes
+from .rollout import SessionRolloutRecorder, finish_rollout_restore, restore_rollout
 from .session import Session
 from .store import (
     SessionStore,
@@ -201,6 +202,54 @@ class SessionManager:
         for state in states:
             state.writer_lease.release()
 
+    def resident_states(self) -> dict[str, object]:
+        return dict(self._runtime_states)
+
+    def has_unresolved_tool_transactions(self, session_id: str) -> bool:
+        state = self._runtime_states.get(session_id)
+        return (
+            state is not None and state.rollout_recorder.session.has_unresolved_tool_transactions()
+        )
+
+    @staticmethod
+    def resident_revision(state: object) -> object:
+        if not isinstance(state, _SessionRuntimeState):
+            raise TypeError("not a session runtime")
+        return (state.rollout_recorder.commit_id, len(state.rollout_recorder.session.events))
+
+    @staticmethod
+    def resident_size(state: object) -> int:
+        if not isinstance(state, _SessionRuntimeState):
+            raise TypeError("not a session runtime")
+        recorder = state.rollout_recorder
+        return retained_bytes(
+            (
+                recorder.session,
+                state.model_history,
+                state.model_context,
+                state.cache_epoch,
+                recorder._committed_serialized,
+                recorder._pending,
+                recorder._pending_witness,
+                recorder._pending_cache_diagnostics,
+                recorder.restored,
+                vars(recorder._encoder),
+                getattr(state.context_manager, "__dict__", {}),
+                getattr(state.prompt_cache_trace_tracker, "__dict__", {}),
+            )
+        )
+
+    def release_idle_runtime(self, session_id: str, expected: object) -> bool:
+        """Caller owns the run/turn mutation reservation and current-use guard."""
+        state = self._runtime_states.get(session_id)
+        if state is None or state is not expected:
+            return False
+        state.writer_lease.release()
+        if self._runtime_states.get(session_id) is not state:
+            return False
+        del self._runtime_states[session_id]
+        return True
+
     # ----- 会话 CRUD -----
 
     def current_revision(self, session_id: str) -> int:
@@ -336,6 +385,9 @@ class SessionManager:
             if callable(validate):
                 validate()
             return state.rollout_recorder.session
+        loader = getattr(self._store, "load_execution", None)
+        if callable(loader):
+            return cast(Session, loader(session_id, cancel_check=cancel_check))
         return self.open(session_id, cancel_check=cancel_check)
 
     def update_model_config(
@@ -432,7 +484,7 @@ class SessionManager:
             raise ValueError("title 不能为空")
         if len(normalized) > 80:
             raise ValueError("title 不能超过 80 个字符")
-        self._store.load(session_id)
+        self.query(session_id)
         if self._metadata_store is not None:
             self._metadata_store.set_display_title(session_id, normalized)
         if self._session_change_broker is not None:
@@ -443,7 +495,7 @@ class SessionManager:
 
     def archive(self, session_id: str) -> SessionSummary:
         """归档会话。"""
-        self._store.load(session_id)
+        self.query(session_id)
         if self._metadata_store is not None:
             self._metadata_store.set_archived_at(session_id, datetime.now(UTC))
         if self._session_change_broker is not None:
@@ -454,7 +506,7 @@ class SessionManager:
 
     def unarchive(self, session_id: str) -> SessionSummary:
         """取消归档会话。"""
-        self._store.load(session_id)
+        self.query(session_id)
         if self._metadata_store is not None:
             self._metadata_store.set_archived_at(session_id, None)
         if self._session_change_broker is not None:
@@ -519,15 +571,15 @@ class SessionManager:
         return deleted
 
     def latest(self) -> Session | None:
-        """最近活跃会话（完整加载）；无会话则 ``None``。
+        """最近活跃会话的执行投影；无会话则 ``None``。
 
         Note:
-            会读全文件——CLI 的 ``--resume`` 默认值用，调用频率低，可以接受。
+            CLI 的 ``--resume`` 默认值用，流式验证历史并恢复当前模型状态。
             列表展示场景请用 :meth:`list`（O(1) per 文件）。
         """
         for summary in self._store.list():
             if summary.origin_kind != "scheduled_task":
-                return self._store.load(summary.session_id)
+                return self.open_for_execution(summary.session_id)
         return None
 
     def _summary(self, session_id: str) -> SessionSummary:
@@ -717,7 +769,7 @@ class SessionManager:
         if callable(can_reuse) and not can_reuse(session):
             # Opening may precede the writer lease. Revalidate every cold source,
             # including conversations with no tool transactions to reconcile.
-            session = load_session(self._store, session.session_id, cancel_check=cancel_check)
+            session = self.open_for_execution(session.session_id, cancel_check=cancel_check)
         if self._transaction_reconciler is not None and any(
             event.type == "tool_call_request" for event in session.events
         ):
@@ -725,13 +777,24 @@ class SessionManager:
                 session.session_id, cancel_check=cancel_check, loaded_session=session
             ).session
         check_cancel(cancel_check)
-        restored = restore_rollout(session, cancel_check=cancel_check)
+        restored = session.restored_rollout
+        session.restored_rollout = None
+        if restored is None:
+            restored = restore_rollout(session, cancel_check=cancel_check)
+        elif restored.disposition not in {
+            "incompatible_rollout_schema",
+            "corrupt_committed_history",
+        }:
+            restored = finish_rollout_restore(session, restored.commit, cancel_check=cancel_check)
         check_cancel(cancel_check)
         if restored.runtime_blocked:
             raise SessionCorruptError(
                 f"会话 {session.session_id} 的 rollout 无有效提交点，"
                 f"无法建立可写 runtime: {restored.reason}"
             )
+        bind_projection = getattr(self._store, "bind_execution_projection", None)
+        if callable(bind_projection):
+            bind_projection(session)
         trace_tracker = PromptCacheTraceTracker()
         if restored.commit is not None and restored.commit.cache_diagnostics is not None:
             cache_diagnostics = restored.commit.cache_diagnostics

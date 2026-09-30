@@ -1,0 +1,446 @@
+[
+  {
+    "label": "A",
+    "variant": "query",
+    "seconds": 4.621,
+    "python": "3.12.14",
+    "stages": [
+      {
+        "phase": "imports",
+        "private_MiB": 165.94,
+        "ws_MiB": 185.07,
+        "peak_private_MiB": 165.94,
+        "peak_ws_MiB": 185.07
+      },
+      {
+        "phase": "queried",
+        "private_MiB": 286.61,
+        "ws_MiB": 305.05,
+        "peak_private_MiB": 289.13,
+        "peak_ws_MiB": 307.54
+      },
+      {
+        "phase": "released",
+        "private_MiB": 186.4,
+        "ws_MiB": 200.29,
+        "peak_private_MiB": 289.13,
+        "peak_ws_MiB": 307.54
+      }
+    ],
+    "events": 5853,
+    "cache_estimated_bytes": 45273582,
+    "repeat": 1
+  },
+  {
+    "label": "A",
+    "variant": "load_restore",
+    "seconds": 9.745,
+    "python": "3.12.14",
+    "stages": [
+      {
+        "phase": "imports",
+        "private_MiB": 166.38,
+        "ws_MiB": 185.38,
+        "peak_private_MiB": 166.38,
+        "peak_ws_MiB": 185.38
+      },
+      {
+        "phase": "loaded",
+        "private_MiB": 2117.42,
+        "ws_MiB": 2131.81,
+        "peak_private_MiB": 2118.43,
+        "peak_ws_MiB": 2132.44
+      },
+      {
+        "phase": "restored",
+        "private_MiB": 2130.24,
+        "ws_MiB": 2143.87,
+        "peak_private_MiB": 2134.24,
+        "peak_ws_MiB": 2147.87
+      },
+      {
+        "phase": "released",
+        "private_MiB": 180.31,
+        "ws_MiB": 197.37,
+        "peak_private_MiB": 2134.24,
+        "peak_ws_MiB": 2147.87
+      }
+    ],
+    "events": 39294,
+    "current_model_items": 37,
+    "disposition": "exact",
+    "load_seconds": 6.225,
+    "restore_seconds": 3.0,
+    "repeat": 1
+  },
+  {
+    "label": "A",
+    "variant": "query",
+    "seconds": 4.435,
+    "python": "3.12.14",
+    "stages": [
+      {
+        "phase": "imports",
+        "private_MiB": 166.02,
+        "ws_MiB": 185.17,
+        "peak_private_MiB": 166.02,
+        "peak_ws_MiB": 185.17
+      },
+      {
+        "phase": "queried",
+        "private_MiB": 287.17,
+        "ws_MiB": 305.49,
+        "peak_private_MiB": 289.16,
+        "peak_ws_MiB": 307.54
+      },
+      {
+        "phase": "released",
+        "private_MiB": 178.8,
+        "ws_MiB": 197.57,
+        "peak_private_MiB": 289.16,
+        "peak_ws_MiB": 307.54
+      }
+    ],
+    "events": 5853,
+    "cache_estimated_bytes": 45273582,
+    "repeat": 2
+  },
+  {
+    "label": "A",
+    "variant": "load_restore",
+    "seconds": 9.366,
+    "python": "3.12.14",
+    "stages": [
+      {
+        "phase": "imports",
+        "private_MiB": 165.88,
+        "ws_MiB": 185.02,
+        "peak_private_MiB": 165.88,
+        "peak_ws_MiB": 185.02
+      },
+      {
+        "phase": "loaded",
+        "private_MiB": 2109.52,
+        "ws_MiB": 2124.41,
+        "peak_private_MiB": 2110.63,
+        "peak_ws_MiB": 2125.29
+      },
+      {
+        "phase": "restored",
+        "private_MiB": 2123.97,
+        "ws_MiB": 2137.94,
+        "peak_private_MiB": 2127.97,
+        "peak_ws_MiB": 2141.94
+      },
+      {
+        "phase": "released",
+        "private_MiB": 180.22,
+        "ws_MiB": 197.35,
+        "peak_private_MiB": 2127.97,
+        "peak_ws_MiB": 2141.94
+      }
+    ],
+    "events": 39294,
+    "current_model_items": 37,
+    "disposition": "exact",
+    "load_seconds": 5.998,
+    "restore_seconds": 2.886,
+    "repeat": 2
+  },
+  {
+    "label": "A",
+    "variant": "query",
+    "seconds": 4.361,
+    "python": "3.12.14",
+    "stages": [
+      {
+        "phase": "imports",
+        "private_MiB": 165.9,
+        "ws_MiB": 185.03,
+        "peak_private_MiB": 165.9,
+        "peak_ws_MiB": 185.03
+      },
+      {
+        "phase": "queried",
+        "private_MiB": 286.55,
+        "ws_MiB": 304.96,
+        "peak_private_MiB": 289.02,
+        "peak_ws_MiB": 307.38
+      },
+      {
+        "phase": "released",
+        "private_MiB": 185.11,
+        "ws_MiB": 200.54,
+        "peak_private_MiB": 289.02,
+        "peak_ws_MiB": 307.38
+      }
+    ],
+    "events": 5853,
+    "cache_estimated_bytes": 45273582,
+    "repeat": 3
+  },
+  {
+    "label": "A",
+    "variant": "load_restore",
+    "seconds": 9.306,
+    "python": "3.12.14",
+    "stages": [
+      {
+        "phase": "imports",
+        "private_MiB": 166.04,
+        "ws_MiB": 185.16,
+        "peak_private_MiB": 166.04,
+        "peak_ws_MiB": 185.16
+      },
+      {
+        "phase": "loaded",
+        "private_MiB": 2115.9,
+        "ws_MiB": 2130.59,
+        "peak_private_MiB": 2116.98,
+        "peak_ws_MiB": 2131.54
+      },
+      {
+        "phase": "restored",
+        "private_MiB": 2123.57,
+        "ws_MiB": 2137.51,
+        "peak_private_MiB": 2127.58,
+        "peak_ws_MiB": 2141.51
+      },
+      {
+        "phase": "released",
+        "private_MiB": 181.96,
+        "ws_MiB": 198.46,
+        "peak_private_MiB": 2127.58,
+        "peak_ws_MiB": 2141.51
+      }
+    ],
+    "events": 39294,
+    "current_model_items": 37,
+    "disposition": "exact",
+    "load_seconds": 5.82,
+    "restore_seconds": 2.994,
+    "repeat": 3
+  },
+  {
+    "label": "B",
+    "variant": "query",
+    "seconds": 4.098,
+    "python": "3.12.14",
+    "stages": [
+      {
+        "phase": "imports",
+        "private_MiB": 165.93,
+        "ws_MiB": 185.16,
+        "peak_private_MiB": 165.93,
+        "peak_ws_MiB": 185.16
+      },
+      {
+        "phase": "queried",
+        "private_MiB": 256.26,
+        "ws_MiB": 275.59,
+        "peak_private_MiB": 261.1,
+        "peak_ws_MiB": 279.3
+      },
+      {
+        "phase": "released",
+        "private_MiB": 185.96,
+        "ws_MiB": 202.79,
+        "peak_private_MiB": 261.1,
+        "peak_ws_MiB": 279.3
+      }
+    ],
+    "events": 6435,
+    "cache_estimated_bytes": 22635565,
+    "repeat": 1
+  },
+  {
+    "label": "B",
+    "variant": "load_restore",
+    "seconds": 9.927,
+    "python": "3.12.14",
+    "stages": [
+      {
+        "phase": "imports",
+        "private_MiB": 166.34,
+        "ws_MiB": 185.46,
+        "peak_private_MiB": 166.34,
+        "peak_ws_MiB": 185.46
+      },
+      {
+        "phase": "loaded",
+        "private_MiB": 2049.2,
+        "ws_MiB": 2063.7,
+        "peak_private_MiB": 2049.2,
+        "peak_ws_MiB": 2063.7
+      },
+      {
+        "phase": "restored",
+        "private_MiB": 2060.18,
+        "ws_MiB": 2074.47,
+        "peak_private_MiB": 2070.03,
+        "peak_ws_MiB": 2084.31
+      },
+      {
+        "phase": "released",
+        "private_MiB": 178.21,
+        "ws_MiB": 196.06,
+        "peak_private_MiB": 2070.03,
+        "peak_ws_MiB": 2084.31
+      }
+    ],
+    "events": 55979,
+    "current_model_items": 39,
+    "disposition": "exact",
+    "load_seconds": 5.979,
+    "restore_seconds": 3.286,
+    "repeat": 1
+  },
+  {
+    "label": "B",
+    "variant": "query",
+    "seconds": 4.172,
+    "python": "3.12.14",
+    "stages": [
+      {
+        "phase": "imports",
+        "private_MiB": 166.34,
+        "ws_MiB": 185.45,
+        "peak_private_MiB": 166.34,
+        "peak_ws_MiB": 185.45
+      },
+      {
+        "phase": "queried",
+        "private_MiB": 257.23,
+        "ws_MiB": 276.48,
+        "peak_private_MiB": 261.35,
+        "peak_ws_MiB": 279.82
+      },
+      {
+        "phase": "released",
+        "private_MiB": 185.85,
+        "ws_MiB": 202.76,
+        "peak_private_MiB": 261.35,
+        "peak_ws_MiB": 279.82
+      }
+    ],
+    "events": 6435,
+    "cache_estimated_bytes": 22635565,
+    "repeat": 2
+  },
+  {
+    "label": "B",
+    "variant": "load_restore",
+    "seconds": 9.64,
+    "python": "3.12.14",
+    "stages": [
+      {
+        "phase": "imports",
+        "private_MiB": 165.87,
+        "ws_MiB": 184.98,
+        "peak_private_MiB": 165.87,
+        "peak_ws_MiB": 184.98
+      },
+      {
+        "phase": "loaded",
+        "private_MiB": 2050.12,
+        "ws_MiB": 2064.67,
+        "peak_private_MiB": 2050.12,
+        "peak_ws_MiB": 2064.67
+      },
+      {
+        "phase": "restored",
+        "private_MiB": 2061.06,
+        "ws_MiB": 2074.87,
+        "peak_private_MiB": 2070.91,
+        "peak_ws_MiB": 2084.71
+      },
+      {
+        "phase": "released",
+        "private_MiB": 177.33,
+        "ws_MiB": 195.3,
+        "peak_private_MiB": 2070.91,
+        "peak_ws_MiB": 2084.71
+      }
+    ],
+    "events": 55979,
+    "current_model_items": 39,
+    "disposition": "exact",
+    "load_seconds": 5.791,
+    "restore_seconds": 3.242,
+    "repeat": 2
+  },
+  {
+    "label": "B",
+    "variant": "query",
+    "seconds": 4.204,
+    "python": "3.12.14",
+    "stages": [
+      {
+        "phase": "imports",
+        "private_MiB": 166.71,
+        "ws_MiB": 185.84,
+        "peak_private_MiB": 166.71,
+        "peak_ws_MiB": 185.84
+      },
+      {
+        "phase": "queried",
+        "private_MiB": 257.48,
+        "ws_MiB": 276.75,
+        "peak_private_MiB": 261.23,
+        "peak_ws_MiB": 279.84
+      },
+      {
+        "phase": "released",
+        "private_MiB": 186.97,
+        "ws_MiB": 203.65,
+        "peak_private_MiB": 261.23,
+        "peak_ws_MiB": 279.84
+      }
+    ],
+    "events": 6435,
+    "cache_estimated_bytes": 22635565,
+    "repeat": 3
+  },
+  {
+    "label": "B",
+    "variant": "load_restore",
+    "seconds": 9.579,
+    "python": "3.12.14",
+    "stages": [
+      {
+        "phase": "imports",
+        "private_MiB": 165.84,
+        "ws_MiB": 185.04,
+        "peak_private_MiB": 165.84,
+        "peak_ws_MiB": 185.04
+      },
+      {
+        "phase": "loaded",
+        "private_MiB": 2049.52,
+        "ws_MiB": 2064.11,
+        "peak_private_MiB": 2049.52,
+        "peak_ws_MiB": 2064.11
+      },
+      {
+        "phase": "restored",
+        "private_MiB": 2061.02,
+        "ws_MiB": 2075.34,
+        "peak_private_MiB": 2070.87,
+        "peak_ws_MiB": 2085.18
+      },
+      {
+        "phase": "released",
+        "private_MiB": 180.5,
+        "ws_MiB": 196.56,
+        "peak_private_MiB": 2070.87,
+        "peak_ws_MiB": 2085.18
+      }
+    ],
+    "events": 55979,
+    "current_model_items": 39,
+    "disposition": "exact",
+    "load_seconds": 5.744,
+    "restore_seconds": 3.21,
+    "repeat": 3
+  }
+]

@@ -60,6 +60,7 @@ from .routes.social_auth import register_routes as register_social_auth_routes
 from .routes.todos import register_routes as register_todo_routes
 from .runtime_config import resolve_bridge_runtime_config
 from .runtime_credentials import register_runtime_credential_routes
+from .session_residency import maintain as maintain_session_residency
 from .settings import BridgeSettings
 
 TAURI_PRODUCTION_ORIGINS = [
@@ -223,9 +224,15 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
             runtime.scheduled_run_tracker.start()
         if runtime.schedule_coordinator is not None:
             runtime.schedule_coordinator.start()
+        residency_stopping = asyncio.Event()
+        residency_task = asyncio.create_task(
+            maintain_session_residency(runtime, residency_stopping)
+        )
         try:
             yield
         finally:
+            residency_stopping.set()
+            await residency_task
             if runtime.notification_service is not None:
                 runtime.notification_service.quiesce()
             if reconciliation_task is not None:

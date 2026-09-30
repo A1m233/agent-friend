@@ -13,7 +13,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from .events import Event
-from .query import CancelCheck, check_cancel, load_session
+from .query import CancelCheck, check_cancel, load_business_session, load_session
 from .session import Session
 from .store import SessionStore
 from .tool_execution_evidence import (
@@ -71,6 +71,19 @@ class ReconciliationReport:
     appended_run_terminals: int = 0
 
 
+@dataclass(frozen=True)
+class ReconciliationSummary:
+    """Startup task result: never retain a Session or exception traceback."""
+
+    session_id: str
+    interrupted_tool_calls: int = 0
+    recovered_tool_calls: int = 0
+    reattachable_tool_calls: int = 0
+    unknown_tool_calls: int = 0
+    appended_run_terminals: int = 0
+    failed: bool = False
+
+
 class ToolTransactionReconciler:
     """Close only transactions that have decisive loss or recovered results."""
 
@@ -112,19 +125,33 @@ class ToolTransactionReconciler:
         finally:
             lock.release()
 
-    def reconcile_known_sessions(self) -> tuple[ReconciliationReport, ...]:
+    def reconcile_known_sessions(self) -> tuple[ReconciliationSummary, ...]:
         """Best-effort startup scan sharing the same per-session idempotency guard."""
 
-        reports: list[ReconciliationReport] = []
+        reports: list[ReconciliationSummary] = []
         for summary in self._store.list():
             try:
-                reports.append(self.reconcile_session(summary.session_id))
+                reports.append(self._reconcile_summary(summary.session_id))
             except Exception:
+                reports.append(ReconciliationSummary(summary.session_id, failed=True))
                 logger.exception(
                     "tool transaction background reconciliation failed session_id=%s",
                     summary.session_id,
                 )
         return tuple(reports)
+
+    def _reconcile_summary(self, session_id: str) -> ReconciliationSummary:
+        # Scope the full result to this call, including the last scanned session.
+        session = load_business_session(self._store, session_id)
+        report = self.reconcile_session(session_id, loaded_session=session)
+        return ReconciliationSummary(
+            session_id=session_id,
+            interrupted_tool_calls=report.interrupted_tool_calls,
+            recovered_tool_calls=report.recovered_tool_calls,
+            reattachable_tool_calls=report.reattachable_tool_calls,
+            unknown_tool_calls=report.unknown_tool_calls,
+            appended_run_terminals=report.appended_run_terminals,
+        )
 
     def _session_lock(self, session_id: str) -> Lock:
         with self._locks_guard:

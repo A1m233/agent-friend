@@ -305,7 +305,7 @@ def _select_initial_state(
     matched = _match_session_prefix(mgr, args.resume)
     if matched is None:
         sys.exit(1)
-    session = mgr.open(matched.session_id)
+    session = mgr.open_for_execution(matched.session_id)
     return session, pending_info.id, pending_info.name, session.current_model
 
 
@@ -625,7 +625,7 @@ def _cmd_open(ctx: _CliContext, prefix: str) -> None:
         stdout.print("[dim]当前已经在这个会话中。[/dim]")
         return
     try:
-        new_session = ctx.mgr.open(matched.session_id)
+        new_session = ctx.mgr.open_for_execution(matched.session_id)
     except SessionCorruptError as e:
         stderr.print(rf"[red]\[会话文件损坏] {e}[/red]")
         return

@@ -1,0 +1,21 @@
+{
+  "python": "3.12.14",
+  "scope": "Production reconcile_known_sessions and business loader with side-effectful reconcile_session replaced by a report-only stub. Completed Task and summary tuple deliberately retained. A/B frozen inputs; not full bridge startup or runtime reconciliation validation. Timing omitted while test suite runs.",
+  "measurement": {
+    "imports": {
+      "private_MiB": 164.30859375,
+      "peak_private_MiB": 164.30859375,
+      "working_set_MiB": 184.66015625
+    },
+    "completed_task_retained": {
+      "private_MiB": 174.29296875,
+      "peak_private_MiB": 290.26171875,
+      "working_set_MiB": 192.28515625
+    },
+    "summary_count": 2,
+    "failures": 0,
+    "weakrefs_alive": 0,
+    "task_done": true,
+    "task_result_is_reports": true
+  }
+}

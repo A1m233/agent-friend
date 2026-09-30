@@ -11,9 +11,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from agent.sessions.query import SessionQuerySnapshot
 from llm_providers.model_identity import is_custom_model_reference
 
-from agent import Session, SessionManager, SessionNotFoundError, SessionSummary
+from agent import SessionManager, SessionNotFoundError, SessionSummary
 from llm_providers import public_model_catalog
 
 from ...errors import map_exception
@@ -388,7 +389,7 @@ class IMControlService:
         catalog = self._catalog()
         try:
             async with self._coordinator.try_mutation(key):
-                session = self._sessions.open(session_id)
+                session = self._sessions.query(session_id)
                 self._state.set_binding(key, session_id)
         except IMBindingBusyError:
             await self._send_text(provider, key, "请等待当前回复完成后再切换会话。")
@@ -536,12 +537,12 @@ class IMControlService:
             ),
         )
 
-    def _bound_session(self, key: IMBindingKey) -> Session | None:
+    def _bound_session(self, key: IMBindingKey) -> SessionQuerySnapshot | None:
         binding = self._state.get_binding(key)
         if binding is None:
             return None
         try:
-            return self._sessions.open(binding.session_id)
+            return self._sessions.query(binding.session_id)
         except SessionNotFoundError:
             return None
 

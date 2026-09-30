@@ -2,7 +2,7 @@
 
 :class:`AgentRuntime` 每次 dispatch 时把 :class:`ConversationEvent` 喂给
 :class:`ListenerRegistry`，注册表按 turn 边界（看到 :class:`TurnDone`）打包成
-:class:`PushEnvelope`，通过 ``asyncio.run_coroutine_threadsafe`` 跨 thread 推送
+:class:`PushEnvelope`，通过有界待投递回调跨 thread 推送
 给每个订阅者的 asyncio 队列。
 
 bridge 的 ``/push/subscribe`` 端点对接订阅者；dev CLI 通过该端点订阅。
@@ -17,6 +17,7 @@ import copy
 import json
 import logging
 import threading
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 from uuid import uuid4
@@ -138,9 +139,40 @@ class Subscriber:
         sub_id: str | None = None,
     ) -> None:
         self.id = sub_id or str(uuid4())
-        self.queue: asyncio.Queue[PushEnvelope] = asyncio.Queue(maxsize=queue_maxsize)
+        self.queue: asyncio.Queue[PushEnvelope] = _EnvelopeQueue(maxsize=queue_maxsize)
         self.loop = loop
         self.accept_kinds = accept_kinds
+        self.disconnected = threading.Event()
+        self.delivery_lock = threading.Lock()
+        self.pending_count = 0
+        self.pending_bytes = 0
+
+
+_SUBSCRIBER_MAX_BYTES = 8 * 1024**2
+
+
+def _envelope_size(env: PushEnvelope) -> int:
+    return len(json.dumps(asdict(env), ensure_ascii=False, default=str).encode("utf-8"))
+
+
+class _EnvelopeQueue(asyncio.Queue[PushEnvelope]):
+    def __init__(self, *, maxsize: int) -> None:
+        super().__init__(maxsize=maxsize)
+        self._bytes = 0
+        self._sizes: deque[int] = deque()
+
+    def put_nowait(self, item: PushEnvelope) -> None:
+        size = _envelope_size(item)
+        if self._bytes + size > _SUBSCRIBER_MAX_BYTES:
+            raise asyncio.QueueFull
+        super().put_nowait(item)
+        self._sizes.append(size)
+        self._bytes += size
+
+    def _get(self) -> PushEnvelope:
+        item = super()._get()
+        self._bytes -= self._sizes.popleft()
+        return item
 
 
 class ListenerRegistry:
@@ -148,7 +180,7 @@ class ListenerRegistry:
 
     线程安全：``register`` / ``unregister`` / ``fan_out_event`` 用同一把 lock
     保护 ``_subs`` / ``_turn_buffers`` 一致性。fan_out 把 envelope 通过
-    :func:`asyncio.run_coroutine_threadsafe` 推到订阅者所属 loop——队列满或
+    有界 callback 推到订阅者所属 loop——队列满或
     loop closed 时 log warning 后丢弃，**绝不阻塞 dispatch thread**。
     """
 
@@ -165,11 +197,12 @@ class ListenerRegistry:
         self._seq: dict[str, int] = {}
         # (sub_id, session_id, run_id) → 累积 events；新 Runtime 在 terminal 时 flush。
         self._turn_buffers: dict[tuple[str, str, str | None], list[dict[str, Any]]] = {}
+        self._turn_buffer_bytes: dict[tuple[str, str, str | None], int] = {}
         self._runtime_instance_id = runtime_instance_id
         self._journal_max_events = journal_max_events
         self._journal_max_bytes = journal_max_bytes
         self._run_journals: dict[str, _RunJournal] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._managed_ambient = False
 
     def manage_ambient_notifications(self) -> None:
@@ -249,12 +282,15 @@ class ListenerRegistry:
 
     def unregister(self, sub_id: str) -> None:
         with self._lock:
-            self._subs.pop(sub_id, None)
+            sub = self._subs.pop(sub_id, None)
+            if sub is not None:
+                sub.disconnected.set()
             self._seq.pop(sub_id, None)
             # 清理该订阅者的所有 in-progress turn 累积
             for key in list(self._turn_buffers):
                 if key[0] == sub_id:
                     del self._turn_buffers[key]
+                    self._turn_buffer_bytes.pop(key, None)
 
     def subscriber_count(self) -> int:
         with self._lock:
@@ -288,6 +324,9 @@ class ListenerRegistry:
             return
 
         serialized = _serialize_conversation_event(cev)
+        serialized_bytes = len(
+            json.dumps(serialized, ensure_ascii=False, default=str).encode("utf-8")
+        )
         is_turn_done = isinstance(cev, TurnDone)
 
         with self._lock:
@@ -333,7 +372,20 @@ class ListenerRegistry:
                     )
                 if kind not in sub.accept_kinds:
                     continue
+                if sub.disconnected.is_set():
+                    continue
                 key = (sub.id, agent_event.session_id, run_id)
+                total = sum(
+                    size for entry, size in self._turn_buffer_bytes.items() if entry[0] == sub.id
+                )
+                if total + serialized_bytes > _SUBSCRIBER_MAX_BYTES:
+                    # No partial turn is advertised as complete. The transport
+                    # closes, and existing reconnect/snapshot recovery applies.
+                    self.unregister(sub.id)
+                    continue
+                self._turn_buffer_bytes[key] = (
+                    self._turn_buffer_bytes.get(key, 0) + serialized_bytes
+                )
                 buf = self._turn_buffers.setdefault(key, [])
                 buf.append(serialized)
                 if is_turn_done and run_id is None:
@@ -352,6 +404,7 @@ class ListenerRegistry:
                         runtime_instance_id=self._runtime_instance_id,
                     )
                     del self._turn_buffers[key]
+                    self._turn_buffer_bytes.pop(key, None)
                     self._safe_push(sub, envelope)
 
     def finish_run(
@@ -373,6 +426,7 @@ class ListenerRegistry:
                     continue
                 key = (sub.id, agent_event.session_id, run_id)
                 events = self._turn_buffers.pop(key, [])
+                self._turn_buffer_bytes.pop(key, None)
                 if (
                     self._managed_ambient
                     and isinstance(agent_event, SystemTriggerEvent)
@@ -583,19 +637,46 @@ class ListenerRegistry:
     def _safe_push(self, sub: Subscriber, env: PushEnvelope) -> None:
         """跨 thread 做 put_nowait；overflow 断开慢订阅者。"""
 
+        size = _envelope_size(env)
+        with sub.delivery_lock:
+            if sub.disconnected.is_set():
+                return
+            overflow = (
+                sub.pending_count >= sub.queue.maxsize
+                or sub.pending_bytes + size > _SUBSCRIBER_MAX_BYTES
+            )
+            if not overflow:
+                sub.pending_count += 1
+                sub.pending_bytes += size
+        if overflow:
+            self.unregister(sub.id)
+            return
+
+        def delivered() -> None:
+            with sub.delivery_lock:
+                sub.pending_count -= 1
+                sub.pending_bytes -= size
+
         def _put_nowait() -> None:
             try:
-                sub.queue.put_nowait(env)
+                if not sub.disconnected.is_set():
+                    sub.queue.put_nowait(env)
             except asyncio.QueueFull:
                 logger.warning("subscriber %s queue overflow，断开订阅", sub.id)
                 self.unregister(sub.id)
+            finally:
+                delivered()
 
         try:
             sub.loop.call_soon_threadsafe(_put_nowait)
         except RuntimeError:
+            delivered()
+            self.unregister(sub.id)
             # loop closed 或其他 loop 状态异常
             logger.warning(
                 "push envelope to subscriber %s 失败 (loop closed?)", sub.id, exc_info=True
             )
         except Exception:
+            delivered()
+            self.unregister(sub.id)
             logger.warning("push envelope to subscriber %s 失败", sub.id, exc_info=True)

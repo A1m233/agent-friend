@@ -60,6 +60,7 @@ from agent.scheduled_tasks import (
 )
 from agent.scheduling import ScheduleCoordinator
 from agent.sessions import ToolExecutionEvidenceStore, ToolTransactionReconciler
+from agent.sessions.residency import SessionResidency
 from agent.time_provider import SystemTimeProvider, TimeProvider
 from agent.todos import ReminderDriver, TodoService, TodoStore
 from agent.tools import ToolRegistry
@@ -86,7 +87,6 @@ from agent import (
     SessionChangeBroker,
     SessionManager,
     SessionMetadataStore,
-    SessionNotFoundError,
     SessionRevisionStore,
     SessionSearchService,
     SessionStore,
@@ -229,6 +229,7 @@ class BridgeRuntime:
     connection_runtime: ConnectionRuntime | None = None
     memory: Memory | None = None
     transaction_reconciler: ToolTransactionReconciler | None = None
+    session_residency: SessionResidency = field(default_factory=SessionResidency)
     recall_buffer: RecallBuffer | None = None
     skill_service: SkillCatalogService | None = None
     first_party_skill_updater: FirstPartySkillUpdateService | None = None
@@ -586,11 +587,7 @@ def build_runtime(
     )
 
     def session_exists(session_id: str) -> bool:
-        try:
-            persistent_store.load(session_id)
-            return True
-        except SessionNotFoundError:
-            return False
+        return persistent_store.exists(session_id)
 
     def session_workspace_root(session_id: str) -> Path | None:
         try:

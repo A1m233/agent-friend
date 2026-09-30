@@ -45,6 +45,7 @@ EventType = Literal[
     "model_transcript_item",
     "rollout_request_prepared",
     "rollout_commit",
+    "rollout_value",
 ]
 
 ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
@@ -78,6 +79,7 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "model_transcript_item",
         "rollout_request_prepared",
         "rollout_commit",
+        "rollout_value",
     }
 )
 
@@ -87,6 +89,7 @@ ROLLOUT_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "model_transcript_item",
         "rollout_request_prepared",
         "rollout_commit",
+        "rollout_value",
     }
 )
 """Internal persistence events excluded from product/UI active projections."""

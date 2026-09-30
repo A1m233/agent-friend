@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from threading import RLock
@@ -13,6 +13,7 @@ from .catalog import SessionCatalog, SessionDescriptor
 from .errors import SessionNotFoundError
 from .events import Event
 from .query import SourceVersion, query_session
+from .residency import retained_bytes
 from .store import SessionStore
 
 SearchRole = Literal["user", "assistant"]
@@ -104,6 +105,7 @@ class _CachedSearchDocument:
     updated_at: datetime
     messages: tuple[_SearchMessage, ...]
     source_version: SourceVersion | None = None
+    estimated_bytes: int = 0
 
 
 class SessionSearchService:
@@ -114,12 +116,15 @@ class SessionSearchService:
         store: SessionStore,
         catalog: SessionCatalog,
         revisions: SessionRevisionSnapshot | None = None,
+        *,
+        max_cache_bytes: int = 64 * 1024**2,
     ) -> None:
         self._store = store
         self._catalog = catalog
         self._revisions = revisions
         self._cache: dict[str, _CachedSearchDocument] = {}
         self._lock = RLock()
+        self._max_cache_bytes = max_cache_bytes
 
     def search(
         self,
@@ -139,21 +144,42 @@ class SessionSearchService:
             raise ValueError("title_limit 必须在 1 到 10 之间")
 
         pattern = re.compile(re.escape(normalized_query), re.IGNORECASE)
-        descriptors, documents = self._refresh_documents()
-        title_results = self._match_titles(descriptors, pattern)
-        message_results = self._match_messages(descriptors, documents, pattern)
+        title_results: list[SessionTitleSearchResult] = []
+        message_results: list[SessionMessageSearchResult] = []
+        title_total = message_total = 0
+        # Consume one document at a time. Evicting the cache is ineffective if a
+        # per-request documents dict still retains every searched conversation.
+        for descriptor, document in self._refresh_documents():
+            titles = self._match_titles((descriptor,), pattern)
+            matches = self._match_messages(
+                (descriptor,), {descriptor.session_id: document}, pattern
+            )
+            title_total += len(titles)
+            message_total += len(matches)
+            title_results.extend(titles)
+            title_results.sort(key=lambda item: (-item.updated_at.timestamp(), item.session_id))
+            del title_results[title_limit:]
+            message_results.extend(matches[:message_limit])
+            message_results.sort(
+                key=lambda item: (
+                    -item.occurred_at.timestamp(),
+                    item.session_id,
+                    item.anchor_event_uuid,
+                )
+            )
+            del message_results[message_limit:]
 
         return SessionSearchResponse(
             query=normalized_query,
-            title_total=len(title_results),
-            message_total=len(message_results),
+            title_total=title_total,
+            message_total=message_total,
             title_results=tuple(title_results[:title_limit]),
             message_results=tuple(message_results[:message_limit]),
         )
 
     def _refresh_documents(
         self,
-    ) -> tuple[tuple[SessionDescriptor, ...], dict[str, _CachedSearchDocument]]:
+    ) -> Iterator[tuple[SessionDescriptor, _CachedSearchDocument]]:
         descriptors = self._catalog.list_all()
         session_ids = tuple(item.session_id for item in descriptors)
         revisions = (
@@ -167,8 +193,6 @@ class SessionSearchService:
                 if cached_id not in live_ids:
                     self._cache.pop(cached_id, None)
 
-        available_descriptors: list[SessionDescriptor] = []
-        documents: dict[str, _CachedSearchDocument] = {}
         for descriptor in descriptors:
             revision = revisions.get(descriptor.session_id, 0)
             with self._lock:
@@ -196,23 +220,26 @@ class SessionSearchService:
                     with self._lock:
                         self._cache.pop(descriptor.session_id, None)
                     continue
+                messages = _project_search_messages(list(snapshot.active_events))
                 cached = _CachedSearchDocument(
                     revision=revision,
                     updated_at=descriptor.updated_at,
-                    messages=_project_search_messages(list(snapshot.active_events)),
+                    messages=messages,
                     source_version=snapshot.source_version,
+                    estimated_bytes=retained_bytes(messages) + 512,
                 )
                 with self._lock:
                     if self._cache.get(descriptor.session_id) is previous_cached:
                         self._cache[descriptor.session_id] = cached
                     # Text projections are derived and cheaply evicted; the store
                     # remains the sole owner of source freshness and file reads.
-                    while len(self._cache) > 64:
+                    while (
+                        len(self._cache) > 64
+                        or sum(item.estimated_bytes for item in self._cache.values())
+                        > self._max_cache_bytes
+                    ):
                         self._cache.pop(next(iter(self._cache)))
-            available_descriptors.append(descriptor)
-            documents[descriptor.session_id] = cached
-
-        return tuple(available_descriptors), documents
+            yield descriptor, cached
 
     @staticmethod
     def _match_titles(

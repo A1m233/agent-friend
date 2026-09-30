@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 from ..messages import Message
 from .events import Event
+from .execution_loading import restore_prefix
 from .model_history import SessionModelHistory, model_relevant_event_uuids
 from .rollout import restore_rollout
 from .session import Session
@@ -17,8 +18,11 @@ def recover_surviving_prefix(session: Session) -> SessionModelHistory | None:
     """
     current = model_relevant_event_uuids(session)
     cutoff: int | None = None
+    commit_uuid = ""
     prefix_size = 0
-    for index, event in enumerate(session.events):
+    for index, event in enumerate(
+        session.journal_reader() if session.journal_reader else session.events
+    ):
         if event.type != "rollout_commit":
             continue
         identities = event.payload.get("active_event_uuids")
@@ -28,6 +32,7 @@ def recover_surviving_prefix(session: Session) -> SessionModelHistory | None:
             and tuple(identities) == current[: len(identities)]
         ):
             cutoff = index
+            commit_uuid = event.uuid
             prefix_size = len(identities)
     if cutoff is None:
         return None
@@ -45,7 +50,11 @@ def recover_surviving_prefix(session: Session) -> SessionModelHistory | None:
     }
     if any(e.uuid in suffix_ids and e.type not in safe_types for e in session.active_events):
         return None
-    restored = restore_rollout(Session.from_events(session.events[: cutoff + 1]))
+    restored = (
+        restore_prefix(session, commit_uuid)
+        if session.journal_reader is not None
+        else restore_rollout(Session.from_events(session.events[: cutoff + 1]))
+    )
     if restored.runtime_blocked or restored.commit is None:
         return None
     # This must take the verified unchanged/append branch, not recurse into recovery.
@@ -75,11 +84,17 @@ def history_before_rewrite(
     allowed = model_relevant_event_uuids(prefix)
     marker_ids = {event.uuid for event in session.events if event.type == "turn_rewrite"}
     cutoff: int | None = None
-    for index, event in enumerate(session.events):
+    commit_uuid = ""
+    reached_target = False
+    for index, event in enumerate(
+        session.journal_reader() if session.journal_reader else session.events
+    ):
         if cancel_check is not None:
             cancel_check()
         if event.uuid == target_user_uuid:
-            break
+            reached_target = True
+        if reached_target:
+            continue
         if event.type != "rollout_commit":
             continue
         identities = event.payload.get("active_event_uuids")
@@ -90,10 +105,15 @@ def history_before_rewrite(
         relevant = tuple(item for item in identities if item not in marker_ids)
         if relevant == allowed[: len(relevant)]:
             cutoff = index
+            commit_uuid = event.uuid
     if cutoff is None:
         return prefix.llm_messages
-    restored = restore_rollout(
-        Session.from_events(session.events[: cutoff + 1]), cancel_check=cancel_check
+    restored = (
+        restore_prefix(session, commit_uuid, cancel_check=cancel_check)
+        if session.journal_reader is not None
+        else restore_rollout(
+            Session.from_events(session.events[: cutoff + 1]), cancel_check=cancel_check
+        )
     )
     if restored.runtime_blocked:
         return prefix.llm_messages
