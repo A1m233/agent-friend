@@ -38,6 +38,16 @@
 
 ## M1 最终候选与成本（2026-10-01）
 
+### E-022 合入门禁与用户验收
+
+2026-10-01，针对实现提交 `68aabd75a238ea99c86eb5cc9f61f09a56182447` 补跑 `scripts/check/run.ps1 --stage rust`，退出码 0，235.0 s；fmt、297 passed / 1 ignored 与 release check 通过。日志位于本机私有研究目录 `146/20261001-recall-candidate/rust-merge-check.log`，SHA-256 为 `6f75547496f28ca772d38ee246092668a8d64ba9c5ac54e012dc68ca1b8d16cb`。后端沿用最终 3747 passed / 5 skipped 及修订 fixture 后 28 项定向验证；前端与 M0 提交 `13cb2fe93902701752199d5f955321c18a3a8472` 比较无变更，沿用 1342 项及 lint/typecheck/build 证据。
+
+用户已在了解真实“长会话”固定副本结果及剩余限制后，明确确认合入主干并推送。AC-01 按其允许的“明确剩余证据缺口”收口；旧安装版约 9.2 秒仍未归因，未做真实 UI 至厂商收包 E2E，不把源码验收写成安装版已生效。
+
+Guide 已发布 immutable [r70](https://github.com/A1m233/agent-friend-guide/releases/tag/agent-friend-guide-r70)，来源提交 `6e62b04d817b5fe02f5fb4f8c137a7391d611750`，审阅产品锚点为上述实现提交；兼容范围 `>=0.3.0,<0.4.0`，新行为说明均注明适用版本。package SHA-256 为 `de3712d0ac55b6f05dc42673aa0c59c38c2a27d9041ffe6fe97a0503b2586c25`，snapshot SHA-256 为 `22d4a0e105ba8ef097e0ac0764774a8b3f3827e21d5a3debd8ce16e184bf68eb`。validator、verify、Guide 33 项测试（1 skipped）通过，origin 精确提交及 release immutable/digest 已核对；未同步 builtin 或构建安装包。
+
+以下保留 M1 测量阶段的原始状态与边界；当时尚未执行的 Rust gate 及用户验收由本条后续证据补齐。
+
 | 场景 | 基线发送至 fake 请求 | 候选发送至 fake 请求 | 行为证据 |
 | --- | --- | --- | --- |
 | 首次构建（热序列首轮 B） | 14.220 s | 13.531 s | 两条原始文件仍读取约 2.05 GB，建立派生库；不是已完成构建后的热发送 |
