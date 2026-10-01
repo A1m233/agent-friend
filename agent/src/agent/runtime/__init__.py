@@ -34,7 +34,7 @@ from memory import Memory
 
 from ..conversation import Conversation
 from ..conversation_events import TurnDone
-from ..latency import RunLatencyContext, log_run_latency, monotonic_ms
+from ..latency import RunLatencyContext, log_run_latency, monotonic_ms, observe_run_phase
 from ..memory_feed import project_post_turn_observation
 from ..sessions.changes import reset_session_mutation_context, set_session_mutation_context
 from ..sessions.continuation import continuation_target
@@ -570,15 +570,16 @@ class AgentRuntime:
         handle: RunHandle,
     ) -> RunExecutionResult | None:
         """Execute one run while the caller holds the persistent session guard."""
+        run_latency = RunLatencyContext(
+            run_id=request.run_id,
+            session_id=request.session_id,
+            started_ms=request.latency_started_ms,
+        )
         handle.token.raise_if_cancelled()
         prepared_conv = None
         if request.conversation_preparer is not None:
             prepare_started_ms = monotonic_ms()
-            prepare_latency = RunLatencyContext(
-                run_id=request.run_id,
-                session_id=request.session_id,
-                started_ms=request.latency_started_ms,
-            )
+            prepare_latency = run_latency
             log_run_latency(logger, prepare_latency, "conversation_prepare_start")
             origin = request.metadata.get("protocol")
             prepare_mutation_token = set_session_mutation_context(
@@ -599,9 +600,10 @@ class AgentRuntime:
                 )
         handle.token.raise_if_cancelled()
         try:
-            decision = self._hooks.run_pre_turn(
-                request.event, cancel_check=handle.token.raise_if_cancelled
-            )
+            with observe_run_phase(logger, run_latency, "pre_turn_hooks"):
+                decision = self._hooks.run_pre_turn(
+                    request.event, cancel_check=handle.token.raise_if_cancelled
+                )
         except BaseException as exc:
             if prepared_conv is not None:
                 self._hooks.run_post_turn(
@@ -655,11 +657,6 @@ class AgentRuntime:
         except BaseException:
             reset_session_mutation_context(mutation_token)
             raise
-        run_latency = RunLatencyContext(
-            run_id=request.run_id,
-            session_id=request.session_id,
-            started_ms=request.latency_started_ms,
-        )
         conv.set_run_latency_context(run_latency)
         conv.set_runtime_identity(
             request.runtime_instance_id,
@@ -726,16 +723,17 @@ class AgentRuntime:
         try:
             handle.token.raise_if_cancelled()
             if started_at is not None:
-                conv.append_run_started_event(
-                    run_id=request.run_id,
-                    started_at=started_at,
-                    source_run_id=request.metadata.get("source_run_id"),
-                    root_run_id=request.metadata.get("root_run_id"),
-                    owner_runtime_instance_id=request.runtime_instance_id,
-                    source_kind=getattr(request.event, "source_kind", None),
-                    presentation=getattr(request.event, "presentation", "conversation"),
-                    output_visibility=getattr(request.event, "output_visibility", "user"),
-                )
+                with observe_run_phase(logger, run_latency, "run_start_persistence"):
+                    conv.append_run_started_event(
+                        run_id=request.run_id,
+                        started_at=started_at,
+                        source_run_id=request.metadata.get("source_run_id"),
+                        root_run_id=request.metadata.get("root_run_id"),
+                        owner_runtime_instance_id=request.runtime_instance_id,
+                        source_kind=getattr(request.event, "source_kind", None),
+                        presentation=getattr(request.event, "presentation", "conversation"),
+                        output_visibility=getattr(request.event, "output_visibility", "user"),
+                    )
             if request.conversation_runner is not None:
                 events_iter = request.conversation_runner(conv, request, handle.token)
             elif isinstance(request.event, UserEvent):

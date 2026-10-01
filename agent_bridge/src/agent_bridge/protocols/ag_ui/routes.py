@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from contextlib import suppress
 
 from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
+from agent.latency import RunLatencyContext, log_run_latency, monotonic_ms
 from agent.runtime import ConsumerAbandonPolicy, InteractiveBusyPolicy, UserEvent
 from agent.runtime.models import RunRequest
 from agent.system_prompt import DESKTOP_CHAT_SURFACE
@@ -52,10 +54,18 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
 
     @router.post("/ag-ui/run")
     async def ag_ui_run(payload: RunAgentInput, request: Request) -> StreamingResponse:
+        received_ms = monotonic_ms()
         try:
             decoded = decode_run_agent_input(payload)
         except DecodeError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+
+        with suppress(Exception):
+            log_run_latency(
+                logger,
+                RunLatencyContext(decoded.run_id, decoded.thread_id, received_ms),
+                "route_decoded",
+            )
 
         boot = PersistentBootstrap(
             thread_id=decoded.thread_id,
@@ -155,6 +165,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     user_input=decoded.new_user_input,
                 ),
                 run_id=decoded.run_id,
+                latency_started_ms=received_ms,
                 channel="text",
                 surface=DESKTOP_CHAT_SURFACE,
                 conversation_preparer=_prepare,

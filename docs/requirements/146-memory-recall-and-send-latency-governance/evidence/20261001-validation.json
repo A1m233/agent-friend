@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-01",
+  "head_before_commit": "b3e25d2ed3bd07bf272d8f13abe5caabe2f98882",
+  "source_overlay_sha256": {
+    "agent/src/agent/conversation.py": "393ebc204a68ecd713f1b822f1dae3ddad16d158850591e0ffeca6ef1471c378",
+    "agent/src/agent/latency.py": "33c654118caf082c631becbaa2413fe622b47382c94e61db3c640556c5d66d05",
+    "agent/src/agent/runtime/__init__.py": "cf31b300a1ae6b562b84bacb5287fc4bef396ea8eb65c492fb22f8d7712f8c9d",
+    "agent/tests/test_run_latency.py": "8141d3ae514dccb913274a0147f8096a6d513804085a5820bfa0f9fa9d46ed96",
+    "agent_bridge/src/agent_bridge/protocols/ag_ui/routes.py": "eead13549b0adc781a07426e22ddb53e0214c8d40dbc428c0fa136bf13252fa0",
+    "frontend/src/services/sendLatency.test.ts": "63358c6a5cf7a3d6e84d79be4a6b23b3c7d44d6f7747d598dbe9aedfe949e21c",
+    "frontend/src/services/sendLatency.ts": "3236e61f59dc84e567dd85c100715a6fc6d70b99da8853ab226be9c5cd4850c2",
+    "frontend/src/services/stream.ts": "0830b04bd2938f2f28c7387eaaf32414b1fa8f03991d195192385498e3c167d6",
+    "memory/src/memory/search/service.py": "341caf057220b3545254f2fe2574cf00c056d61bd3803af966e75ff6affc8b92",
+    "scripts/README.md": "8c8361b6a7deb19143121813c4fc15226241869fdf52ea51b6315b12bef812ea",
+    "scripts/session-latency/offline_probe.py": "c98316202d2d0024d0c42083e32c4e9f5ae89d3c586bf018245ea17887fcba65",
+    "scripts/session-latency/run.ps1": "aa7237c929f5f4f8d323fc66aadd0ea2caab6a3d3c6f6642bc5f2edf7b767a34",
+    "scripts/session-latency/run.py": "cd6813b43a46a2042775b78b3795faadc671c7bc1edf662c49ad5ab99ff1efda",
+    "scripts/session-latency/run.sh": "3640bc2ca21d498466ea3ec3ce857a20b6e57b34dcf8bd9d24f2e255b14133b0"
+  },
+  "checks": [
+    {
+      "command": "scripts/check/run.ps1 --stage backend",
+      "exit_code": 0,
+      "passed": 3719,
+      "skipped": 5,
+      "elapsed_seconds": 376.6,
+      "log": "check-backend-04.log"
+    },
+    {
+      "command": "scripts/check/run.ps1 --stage frontend",
+      "exit_code": 0,
+      "passed": 1342,
+      "elapsed_seconds": 161.5,
+      "log": "check-frontend.log"
+    },
+    {
+      "command": "scripts/test/run.ps1 agent/tests/test_run_latency.py -q",
+      "exit_code": 0,
+      "passed": 4,
+      "elapsed_seconds": 8.99,
+      "log": "check-harness-last.log"
+    },
+    {
+      "command": "scripts/lint/run.ps1",
+      "exit_code": 0,
+      "log": "check-lint-final.log"
+    },
+    {
+      "command": "scripts/typecheck/run.ps1",
+      "exit_code": 0,
+      "source_files": 766,
+      "log": "check-type-final.log"
+    }
+  ],
+  "log_sha256": {
+    "check-backend-02.log": "d64f95a0f593e5436b005280cdbf63a88f0db08afb7cf1d4c33a6c1587946e76",
+    "check-backend-03.log": "cce9effbeff0ea93d678a98f3281e47a9dae7936b8d4dc4c0ecd9734e9937185",
+    "check-backend-04.log": "91b0a273cc061e129b57a09fdda0d74db4905dd79f631535aeed290c25f0dea9",
+    "check-backend.log": "456e2923e5fb0bf1c2dee0910f79a1054f587c801f943f5cdfab400c70c1a673",
+    "check-frontend.log": "b6b0af223dc0eef7d04e2cffb8df304535a03368734b18b2901d9981a7f969e2",
+    "check-harness-cleanup.log": "4c802ab164150702cce07e4fed4e6a2ce3ee6a26821f2aa8c63b7bdd4094a96b",
+    "check-harness-final.log": "8c1ae4fdd4dbfa7416a81fde8da4428642d7a9601eb808ea919c9a4ff50d33cc",
+    "check-harness-last.log": "25c0c980cec20ca293053374c97eebf969fccc1cb34ec7bf1c484298445ce88a",
+    "check-lint-final.log": "f472dec193e0a3790cad88525e0426a44ac5d85de4b614b8d48d3dcd83babefa",
+    "check-type-final.log": "45b43febc6c670b199437b9f4bd9c8d8339288fb66a7e5d1be3e1c2b10d3219e",
+    "hot-alternating-02.log": "46df8ca3cc07022bf64870a3f90bfd681d8626186ac2d790c1aee129ccf5139d",
+    "reload-01.log": "125ff813d9b09d8c8707d59cc521523debab7cf4a3d81260c4237efcbd1e03b7",
+    "synthetic-cleanup-final.log": "c164c8add5857013ffb4d36ca873006c9e48e8b88b5f2899dfa182b3e0cee3f1",
+    "synthetic-final.log": "ed4c52f4895f18eba74433c1091ed11c51ecf4b465a1126a019120262ebd8ba9"
+  },
+  "log_location": "%LOCALAPPDATA%/agent-friend-research/146/20261001-send-baseline",
+  "failed_attempts": {
+    "check-backend.log": "wrapper formatting",
+    "check-backend-02.log": "LogRecord custom field type declaration",
+    "check-backend-03.log": "constant getattr without default lint; fixed before final gate"
+  },
+  "business_ast_parity": [
+    "Conversation._stream_user_turn",
+    "Conversation._build_openai_messages_first_turn_stream",
+    "Conversation._iter_model_stream"
+  ],
+  "parity_method": "Remove observe_run_phase scopes from current AST and compare to HEAD; all three bodies identical.",
+  "limits": [
+    "No real LLM calls, installed-app E2E, UI visual verification or original session writes.",
+    "Rust not rerun: no Rust inputs changed; no main merge in this stage.",
+    "Full backend before final harness-only event-loop cleanup, followed by final targeted tests, lint, typecheck and CLI smoke.",
+    "Existing third-party asynchronous log/atexit warnings in full backend; exit code zero.",
+    "Final harness cleanup differs from measured large-fixture harness outside measure/copy_fixture; exact baseline harness retained privately."
+  ]
+}

@@ -1,5 +1,7 @@
 # scripts/
 
+`session-latency/run.* offline --fixture A=/explicit/session.jsonl --sequence 'A,A' --output /private/new-report.json` 在临时副本上运行真实 SessionManager/Conversation 和历史召回，用 fake provider 完成轮次；阻断网络、不读取用户配置、不改原始会话。多样本可重复 `--fixture B=...` 并使用 `--sequence 'B,B,A,B,A,B'`（PowerShell 中必须保留引号）；`--reload-each` 每轮重建 runtime/store，不表示 OS 冷缓存。报告将首次加载与发送至 fake 请求边界分开，保留阶段、查询和文件观测；没有真实结构化记忆库、Skill、附件、桌面 IPC 或供应商 SDK，不能当作安装版完整 E2E。输出文件必须不存在。Windows：`./scripts/session-latency/run.ps1 offline ...`；mac/linux：`./scripts/session-latency/run.sh offline ...`。
+
 `package/run.* runtime` 的 frozen doctor 还验证会话附件的持久发现、哈希校验、工作副本读取及只读输入清理；不访问网络或调用模型。
 
 | 脚本 | 用途 | mac/linux | Windows |

@@ -149,6 +149,7 @@ from .latency import (
     log_run_latency,
     log_voice_latency,
     monotonic_ms,
+    observe_run_phase,
 )
 from .message_references import (
     QuotedTextReference,
@@ -859,8 +860,10 @@ class Conversation:
         resume_task: bool = False,
         recovery_mode: Literal["automatic", "compact_then_resume"] = "automatic",
     ) -> Iterator[ConversationEvent]:
-        self._session_model_history.reconcile(self._session)
-        self._repair_incomplete_model_tool_transactions()
+        with observe_run_phase(logger, self._run_latency_context, "history_reconcile"):
+            self._session_model_history.reconcile(self._session)
+        with observe_run_phase(logger, self._run_latency_context, "tool_transaction_repair"):
+            self._repair_incomplete_model_tool_transactions()
         turn_attachments = list(attachments or [])
         requested_references = parse_quoted_text_references(references or [])
         previous_prompt_channel = self._prompt_channel_override
@@ -879,8 +882,9 @@ class Conversation:
         self._interaction_destination_id_override = interaction_destination_id
         self._run_id_override = run_id
         self._turn_context_override = _compose_turn_context(turn_context, turn_attachments)
-        self._turn_prompt_builder = self._snapshot_prompt_builder()
-        self._run_model_snapshot = self._capture_run_model_snapshot()
+        with observe_run_phase(logger, self._run_latency_context, "model_snapshot"):
+            self._turn_prompt_builder = self._snapshot_prompt_builder()
+            self._run_model_snapshot = self._capture_run_model_snapshot()
         try:
             persona_name = self._session.current_persona_name
             persona_id = self._session.current_persona_id
@@ -903,63 +907,70 @@ class Conversation:
                 if rewrite_plan is not None
                 else self._session.active_events
             )
-            turn_references = self._validate_references_for_session(
-                requested_references,
-                events=selection_history,
-            )
+            with observe_run_phase(logger, self._run_latency_context, "reference_validation"):
+                turn_references = self._validate_references_for_session(
+                    requested_references,
+                    events=selection_history,
+                )
             # Freeze the pre-turn model view before committing the durable user event.  The
             # first request still receives ``new_user_input`` separately, so reading live
             # session history after the append would send the same query twice.
-            prefix_history = (
-                history_before_rewrite(
-                    self._session,
-                    rewrite_plan.target_user_uuid,
-                    rewrite_plan.prefix_events,
-                    cancel_check=cancel_check,
-                )
-                if rewrite_plan is not None
-                else self._session_model_history.snapshot()
-            )
-            prefix_prior_summary = self._derive_prior_summary_from_events(
-                selection_history, prefix_history
-            )
-            prefix_recall_boundary = (
-                self._derive_business_recall_boundary(selection_history)
-                if self._memory is not None
-                else None
-            )
-            if skill_turn_snapshot is not None:
-                effective_skill_selections = self._normalize_selections(skill_selections)
-                activated_ids = tuple(item.record.id for item in skill_turn_snapshot.activations)
-                selected_ids = tuple(item.id for item in effective_skill_selections)
-                if skill_turn_snapshot.activation_issues or activated_ids != selected_ids:
-                    raise ValueError(
-                        "skill_turn_snapshot_conflict: frozen Skill snapshot 与选择不一致。"
+            with observe_run_phase(logger, self._run_latency_context, "history_snapshot"):
+                prefix_history = (
+                    history_before_rewrite(
+                        self._session,
+                        rewrite_plan.target_user_uuid,
+                        rewrite_plan.prefix_events,
+                        cancel_check=cancel_check,
                     )
-            else:
-                effective_skill_selections = self._resolve_turn_skill_selections(
-                    user_input,
-                    skill_selections,
-                    history_events=selection_history,
+                    if rewrite_plan is not None
+                    else self._session_model_history.snapshot()
                 )
-            if existing_user_event is not None:
-                existing_attachments = existing_user_event.payload.get("attachments", [])
-                requested_attachments = [item.to_dict() for item in turn_attachments]
-                existing_references = existing_user_event.payload.get("references", [])
-                requested_reference_dicts = quoted_text_references_to_dicts(turn_references)
-                if (
-                    existing_user_event.payload.get("content", "") != user_input
-                    or existing_attachments != requested_attachments
-                    or existing_references != requested_reference_dicts
-                ):
-                    raise ValueError("user_event_id_conflict: 相同消息标识不能对应不同内容。")
-                if (
-                    self._persisted_skill_selections(existing_user_event)
-                    != effective_skill_selections
-                ):
-                    raise ValueError(
-                        "user_event_id_conflict: 相同消息标识不能对应不同 Skill 选择。"
+            with observe_run_phase(logger, self._run_latency_context, "prior_summary"):
+                prefix_prior_summary = self._derive_prior_summary_from_events(
+                    selection_history, prefix_history
+                )
+            with observe_run_phase(logger, self._run_latency_context, "recall_boundary"):
+                prefix_recall_boundary = (
+                    self._derive_business_recall_boundary(selection_history)
+                    if self._memory is not None
+                    else None
+                )
+            with observe_run_phase(logger, self._run_latency_context, "skill_selection"):
+                if skill_turn_snapshot is not None:
+                    effective_skill_selections = self._normalize_selections(skill_selections)
+                    activated_ids = tuple(
+                        item.record.id for item in skill_turn_snapshot.activations
                     )
+                    selected_ids = tuple(item.id for item in effective_skill_selections)
+                    if skill_turn_snapshot.activation_issues or activated_ids != selected_ids:
+                        raise ValueError(
+                            "skill_turn_snapshot_conflict: frozen Skill snapshot 与选择不一致。"
+                        )
+                else:
+                    effective_skill_selections = self._resolve_turn_skill_selections(
+                        user_input,
+                        skill_selections,
+                        history_events=selection_history,
+                    )
+                if existing_user_event is not None:
+                    existing_attachments = existing_user_event.payload.get("attachments", [])
+                    requested_attachments = [item.to_dict() for item in turn_attachments]
+                    existing_references = existing_user_event.payload.get("references", [])
+                    requested_reference_dicts = quoted_text_references_to_dicts(turn_references)
+                    if (
+                        existing_user_event.payload.get("content", "") != user_input
+                        or existing_attachments != requested_attachments
+                        or existing_references != requested_reference_dicts
+                    ):
+                        raise ValueError("user_event_id_conflict: 相同消息标识不能对应不同内容。")
+                    if (
+                        self._persisted_skill_selections(existing_user_event)
+                        != effective_skill_selections
+                    ):
+                        raise ValueError(
+                            "user_event_id_conflict: 相同消息标识不能对应不同 Skill 选择。"
+                        )
             user_event_appended = existing_user_event is not None
             completed_replay_text: str | None = None
             completed_replay_events: list[Event] = []
@@ -984,21 +995,23 @@ class Conversation:
                         completed_parts.append(str(event.payload.get("content", "")))
                 if completed_parts and not replay_incomplete and not resume_task:
                     completed_replay_text = "".join(completed_parts)
-            self._active_skill_selections = effective_skill_selections
-            self._active_skill_turn_snapshot = (
-                skill_turn_snapshot
-                if skill_turn_snapshot is not None
-                else self._skill_service.begin_turn(
-                    self._active_skill_selections,
-                    model_window=self._active_llm_client().context_window,
-                    semantic_activation_available=self._skill_read_available(),
+            with observe_run_phase(logger, self._run_latency_context, "skill_activation"):
+                self._active_skill_selections = effective_skill_selections
+                self._active_skill_turn_snapshot = (
+                    skill_turn_snapshot
+                    if skill_turn_snapshot is not None
+                    else self._skill_service.begin_turn(
+                        self._active_skill_selections,
+                        model_window=self._active_llm_client().context_window,
+                        semantic_activation_available=self._skill_read_available(),
+                    )
+                    if existing_user_event is None and self._skill_service is not None
+                    else None
                 )
-                if existing_user_event is None and self._skill_service is not None
-                else None
-            )
-            first_turn_catalog_message = self._skill_catalog_message()
+                first_turn_catalog_message = self._skill_catalog_message()
             loop_frame = _ToolLoopFrame(current_text_buf=[])
-            tool_run_context = self._make_tool_run_context(user_input, events=selection_history)
+            with observe_run_phase(logger, self._run_latency_context, "tool_evidence"):
+                tool_run_context = self._make_tool_run_context(user_input, events=selection_history)
             previous_tool_run_context = self._active_tool_run_context
             self._active_tool_run_context = tool_run_context
             tool_run_state = ToolRunState(self._tool_run_policy)
@@ -1033,26 +1046,28 @@ class Conversation:
         try:
             # Once execution accepts the turn, the query is durable before cancellation,
             # memory/context assembly, or provider-specific attachment rendering can fail.
-            if not user_event_appended:
-                if self._input_accepted_callback is not None:
-                    self._check_cancel(cancel_check)
-                if rewrite_plan is not None:
-                    self._invalidate_rewrite_memory(rewrite_plan.inactive_event_uuids)
-                    self._append_turn_rewrite_event(rewrite_plan, replacement_text=user_input)
-                self._append_skill_catalog_state_event()
-                appended_user_id = self._append_user_event(
-                    user_input,
-                    attachments=turn_attachments,
-                    references=turn_references,
-                    event_id=user_event_id,
-                )
-                user_event_appended = True
-                if self._input_accepted_callback is not None:
+            with observe_run_phase(logger, self._run_latency_context, "input_persistence"):
+                if not user_event_appended:
+                    if self._input_accepted_callback is not None:
+                        self._check_cancel(cancel_check)
+                    if rewrite_plan is not None:
+                        self._invalidate_rewrite_memory(rewrite_plan.inactive_event_uuids)
+                        self._append_turn_rewrite_event(rewrite_plan, replacement_text=user_input)
+                    self._append_skill_catalog_state_event()
+                    appended_user_id = self._append_user_event(
+                        user_input,
+                        attachments=turn_attachments,
+                        references=turn_references,
+                        event_id=user_event_id,
+                    )
+                    user_event_appended = True
+                    if self._input_accepted_callback is not None:
+                        self._input_accepted_callback()
+                    self._append_skill_context_events(appended_user_id)
+                    with observe_run_phase(logger, self._run_latency_context, "accepted_rollout"):
+                        self._commit_accepted_user_input(prefix_history, appended_user_id)
+                elif self._input_accepted_callback is not None:
                     self._input_accepted_callback()
-                self._append_skill_context_events(appended_user_id)
-                self._commit_accepted_user_input(prefix_history, appended_user_id)
-            elif self._input_accepted_callback is not None:
-                self._input_accepted_callback()
             self._check_cancel(cancel_check)
             if completed_replay_text is not None:
                 if completed_replay_text:
@@ -2677,16 +2692,17 @@ class Conversation:
             cancellation_arguments: _CancellationArguments = {}
             if cancel_check is not None:
                 cancellation_arguments["cancel_check"] = cancel_check
-            ctx = self._memory.retrieve(
-                render_retrieval_query(user_input, references or []),
-                persona_id=self._session.current_persona_id or "",
-                session_id=self._session.session_id,
-                automatic_recall_scope=CurrentSessionRecallScope(
-                    current_session_id=self._session.session_id,
-                    recall_through_event_uuid=recall_boundary,
-                ),
-                **cancellation_arguments,
-            )
+            with observe_run_phase(logger, self._run_latency_context, "memory_retrieve"):
+                ctx = self._memory.retrieve(
+                    render_retrieval_query(user_input, references or []),
+                    persona_id=self._session.current_persona_id or "",
+                    session_id=self._session.session_id,
+                    automatic_recall_scope=CurrentSessionRecallScope(
+                        current_session_id=self._session.session_id,
+                        recall_through_event_uuid=recall_boundary,
+                    ),
+                    **cancellation_arguments,
+                )
             self._check_cancel(cancel_check)
             log_voice_latency(
                 logger,
@@ -3827,74 +3843,78 @@ class Conversation:
             request_accepted = False
             self._check_cancel(cancel_check)
             try:
-                estimate = self._estimate_rendered_input(
-                    current_messages,
-                    tools,
-                    request_overrides,
-                    fallback_floor=(
-                        int(self._last_context_notes.get("token_estimate") or 0)
-                        if any(
-                            m.attachments or m.images for m in self._last_built_model_messages or []
-                        )
-                        else 0
-                    ),
-                )
-                self._last_context_notes.update(estimate.notes())
-                self._pending_request_measurement = None
-                threshold = self._last_context_notes.get("trigger_threshold")
-                if (
-                    self._last_context_notes.get("context_strategy") in {"summarizing", "fifo"}
-                    and isinstance(threshold, int)
-                    and estimate.tokens > threshold
-                ):
-                    raise LLMContextWindowError(
-                        "final_request_budget_exceeded"
-                        if estimate.input_cost_known
-                        else "input_cost_unknown"
-                    )
-                self._pending_request_measurement = RequestMeasurement.capture(
-                    current_messages,
-                    self._usage_scope(tools, request_overrides),
-                    compatibility_scope=self._usage_scope(
-                        tools, request_overrides, compatibility_only=True
-                    ),
-                    tools=tools,
-                )
-                if request_observer is not None:
-                    request_observer(current_messages, request_attempt, request_overrides)
-                if self._active_tool_run_state is not None:
-                    self._active_tool_run_state.model_calls += 1
-                client = self._active_llm_client()
-                trace_context = (
-                    trace_context_builder(request_attempt)
-                    if trace_context_builder is not None
-                    else ModelCallTraceContext(
-                        operation="conversation",
-                        surface=(
-                            str(self._prompt_surface_override)
-                            if self._prompt_surface_override is not None
-                            else None
-                        ),
-                        run_id=(
-                            self._run_id_override
-                            or (
-                                self._run_latency_context.run_id
-                                if self._run_latency_context is not None
-                                else None
+                with observe_run_phase(logger, self._run_latency_context, "provider_preparation"):
+                    estimate = self._estimate_rendered_input(
+                        current_messages,
+                        tools,
+                        request_overrides,
+                        fallback_floor=(
+                            int(self._last_context_notes.get("token_estimate") or 0)
+                            if any(
+                                m.attachments or m.images
+                                for m in self._last_built_model_messages or []
                             )
+                            else 0
                         ),
-                        session_id=self._session.session_id,
-                        call_kind=trace_call_kind,
-                        recovery_attempt=request_attempt,
                     )
-                )
-                previous_request_witness = (
-                    comparison_witness_builder() if comparison_witness_builder is not None else None
-                )
-                continuation_disposition = self._model_history_disposition()
-                self._stage_pending_rollout_request()
-                self._check_cancel(cancel_check)
-                self._validate_pending_compaction_source()
+                    self._last_context_notes.update(estimate.notes())
+                    self._pending_request_measurement = None
+                    threshold = self._last_context_notes.get("trigger_threshold")
+                    if (
+                        self._last_context_notes.get("context_strategy") in {"summarizing", "fifo"}
+                        and isinstance(threshold, int)
+                        and estimate.tokens > threshold
+                    ):
+                        raise LLMContextWindowError(
+                            "final_request_budget_exceeded"
+                            if estimate.input_cost_known
+                            else "input_cost_unknown"
+                        )
+                    self._pending_request_measurement = RequestMeasurement.capture(
+                        current_messages,
+                        self._usage_scope(tools, request_overrides),
+                        compatibility_scope=self._usage_scope(
+                            tools, request_overrides, compatibility_only=True
+                        ),
+                        tools=tools,
+                    )
+                    if request_observer is not None:
+                        request_observer(current_messages, request_attempt, request_overrides)
+                    if self._active_tool_run_state is not None:
+                        self._active_tool_run_state.model_calls += 1
+                    client = self._active_llm_client()
+                    trace_context = (
+                        trace_context_builder(request_attempt)
+                        if trace_context_builder is not None
+                        else ModelCallTraceContext(
+                            operation="conversation",
+                            surface=(
+                                str(self._prompt_surface_override)
+                                if self._prompt_surface_override is not None
+                                else None
+                            ),
+                            run_id=(
+                                self._run_id_override
+                                or (
+                                    self._run_latency_context.run_id
+                                    if self._run_latency_context is not None
+                                    else None
+                                )
+                            ),
+                            session_id=self._session.session_id,
+                            call_kind=trace_call_kind,
+                            recovery_attempt=request_attempt,
+                        )
+                    )
+                    previous_request_witness = (
+                        comparison_witness_builder()
+                        if comparison_witness_builder is not None
+                        else None
+                    )
+                    continuation_disposition = self._model_history_disposition()
+                    self._stage_pending_rollout_request()
+                    self._check_cancel(cancel_check)
+                    self._validate_pending_compaction_source()
                 stream = client.stream(
                     ModelRequest(
                         messages=current_messages,
