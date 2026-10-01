@@ -95,11 +95,13 @@ function ToolActivityItem({
   open,
   onOpenChange,
   isPrimaryActivity,
+  bounded = false,
 }: {
   block: ToolBlock;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   isPrimaryActivity?: boolean;
+  bounded?: boolean;
 }) {
   const presentation = toolPresentation(block);
   return (
@@ -108,7 +110,7 @@ function ToolActivityItem({
       onOpenChange={onOpenChange}
       summary={presentation.summary}
       category={presentation.category}
-      contentClassName="ml-5 pt-1 pb-1"
+      contentClassName={cn("ml-5 pt-1 pb-1", bounded && "max-h-tool-activity overflow-y-auto overscroll-y-contain")}
     >
       <ToolCard block={block} embedded isPrimaryActivity={isPrimaryActivity} />
     </ToolDisclosureRow>
@@ -148,6 +150,7 @@ export function ToolActivity({
       >
         <ToolActivityItem
           block={block}
+          bounded
           isPrimaryActivity={activityManaged ? primaryToolCallId === block.toolCallId : undefined}
           open={open}
           onOpenChange={(nextOpen) => {
@@ -173,7 +176,7 @@ export function ToolActivity({
         }}
         summary={toolActivitySummary(blocks, liveSummary)}
         category={toolPresentation(blocks[0]).category}
-        contentClassName="ml-2 mt-1 space-y-0.5 border-l border-border pl-2"
+        contentClassName="ml-2 mt-1 max-h-tool-activity space-y-0.5 overflow-y-auto overscroll-y-contain border-l border-border pl-2"
       >
         {blocks.map((block) => (
           <ToolActivityItem

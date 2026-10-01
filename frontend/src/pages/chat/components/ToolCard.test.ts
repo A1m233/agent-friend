@@ -36,7 +36,7 @@ describe("ToolCard", () => {
     globalThis.ResizeObserver = originalResizeObserver;
   });
 
-  it("renders parameters and results as independently bounded scroll areas", async () => {
+  it.each([false, true])("bounds standalone details but lets embedded details use the parent scroll area (embedded=%s)", async (embedded) => {
     const block: ToolBlock = {
       kind: "tool",
       toolCallId: "search",
@@ -46,7 +46,8 @@ describe("ToolCard", () => {
       status: "done",
     };
 
-    await act(async () => root.render(createElement(ToolCard, { block, embedded: true })));
+    await act(async () => root.render(createElement(ToolCard, { block, embedded })));
+    if (!embedded) await act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
 
     const parameters = container.querySelector('section[aria-label="参数"]');
     const result = container.querySelector('section[aria-label="结果"]');
@@ -59,7 +60,7 @@ describe("ToolCard", () => {
     );
 
     const scrollAreas = [...container.querySelectorAll('[data-slot="scroll-area"]')];
-    expect(scrollAreas).toHaveLength(2);
+    expect(scrollAreas).toHaveLength(embedded ? 0 : 2);
     for (const scrollArea of scrollAreas) {
       expect(scrollArea.classList.contains("max-h-52")).toBe(true);
       const viewport = scrollArea.querySelector('[data-slot="scroll-area-viewport"]');

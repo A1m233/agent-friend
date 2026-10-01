@@ -196,7 +196,8 @@ describe("ConversationModelSelector", () => {
     });
     expect(exactText("模型")).toBeTruthy();
     expect(exactText("DeepSeek V4 Flash Vision")).toBeTruthy();
-    expect(toast.success).toHaveBeenCalledWith(
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(container.querySelector('[aria-live="polite"]')?.textContent).toBe(
       "下一条回复将使用 DeepSeek V4 Flash Vision · 关闭",
     );
     expect(document.body.textContent).not.toContain("已应用，下一条回复使用当前配置");
@@ -215,6 +216,11 @@ describe("ConversationModelSelector", () => {
     });
     expect(exactText("推理强度")).toBeTruthy();
     expect(exactText("最高")).toBeTruthy();
+
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(container.querySelector('[aria-live="polite"]')?.textContent).toBe(
+      "下一条回复将使用 DeepSeek V4 Flash · 最高",
+    );
 
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));

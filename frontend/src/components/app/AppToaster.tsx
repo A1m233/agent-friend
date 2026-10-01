@@ -1,5 +1,5 @@
 import { Toaster } from "@/components/ui";
 
 export function AppToaster() {
-  return <Toaster closeButton />;
+  return <Toaster closeButton position="top-center" />;
 }

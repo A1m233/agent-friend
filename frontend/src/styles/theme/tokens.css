@@ -4,8 +4,9 @@
 :root {
   /* 字体栈 */
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 
-  /* 字号（值 = Tailwind v4 默认，保证视觉零变化） */
+  /* 字号与默认行高成对维护；正文的 leading-* 仍可按阅读场景覆盖。 */
   --font-size-xs: 0.75rem;     /* 12px */
   --font-size-sm: 0.875rem;    /* 14px */
   --font-size-base: 1rem;      /* 16px */
@@ -35,7 +36,16 @@
   --font-chat-markdown-table-cell: var(--font-weight-normal) var(--font-size-sm) / 1.6 var(--font-sans);
 
   /* 行高 */
+  --line-height-xs: calc(1 / 0.75);
+  --line-height-sm: calc(1.25 / 0.875);
+  --line-height-base: 1.5;
+  --line-height-lg: calc(1.75 / 1.125);
+  --line-height-xl: calc(1.75 / 1.25);
   --line-height-snug: 1.375;
+
+  /* 页面默认正文与快捷键提示；代码继续使用独立的等宽字体。 */
+  --font-body: var(--font-weight-normal) var(--font-size-base) / var(--line-height-base) var(--font-sans);
+  --font-keyboard: var(--font-weight-normal) var(--font-size-xs) / var(--line-height-xs) var(--font-sans);
 
   /* 字间距 */
   --letter-spacing-wide: 0.025em;
@@ -60,6 +70,9 @@
 
   /* 对话轮级摘要分隔线 */
   --size-chat-run-divider: 0.5px;
+
+  /* 工具步骤展开区随窗口收缩，长结果在组内滚动。 */
+  --size-chat-tool-activity-max-height: min(50dvh, 30rem);
 
   /* 对话滚动活动提示 */
   --stroke-width-chat-scroll-activity: var(--icon-stroke-width-strong);

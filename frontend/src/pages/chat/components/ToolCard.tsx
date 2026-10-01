@@ -64,28 +64,29 @@ function ToolDetailSection({
   title,
   content,
   metadata,
+  scrollable,
 }: {
   title: string;
   content: string;
   metadata?: string;
+  scrollable: boolean;
 }) {
+  const body = <pre className="overflow-x-auto whitespace-pre-wrap break-words p-2 text-xs text-fg">{content}</pre>;
   return (
     <section aria-label={title} className="space-y-1">
       <div className="font-medium text-muted">{title}</div>
       {metadata ? <div className="break-all text-muted">{metadata}</div> : null}
-      <ScrollArea
+      {scrollable ? <ScrollArea
         className="max-h-52 rounded bg-bg/60"
         viewportClassName="max-h-52 overscroll-auto"
       >
-        <pre className="overflow-x-auto whitespace-pre-wrap break-words p-2 text-xs text-fg">
-          {content}
-        </pre>
-      </ScrollArea>
+        {body}
+      </ScrollArea> : <div className="rounded bg-bg/60">{body}</div>}
     </section>
   );
 }
 
-function ToolDetails({ block, args }: { block: ToolBlock; args: string }) {
+function ToolDetails({ block, args, scrollable = true }: { block: ToolBlock; args: string; scrollable?: boolean }) {
   const filesystemResult = ["filesystem_read_text", "filesystem_read_text_tail"].includes(
     block.name,
   ) && block.result
@@ -96,10 +97,11 @@ function ToolDetails({ block, args }: { block: ToolBlock; args: string }) {
 
   return (
     <div className="mt-2 space-y-2">
-      {args ? <ToolDetailSection title="参数" content={args} /> : null}
+      {args ? <ToolDetailSection title="参数" content={args} scrollable={scrollable} /> : null}
       {block.result ? (
         <ToolDetailSection
           title="结果"
+          scrollable={scrollable}
           content={result}
           metadata={filesystemResult?.metadata}
         />
@@ -632,7 +634,7 @@ export function ToolCard({
         <span className={cn("ml-auto", meta.text)}>{meta.label}</span>
       </div>
       {hasDetails && embedded && (
-        <ToolDetails block={block} args={args} />
+        <ToolDetails block={block} args={args} scrollable={false} />
       )}
       {hasDetails && !embedded && (
         <Collapsible
