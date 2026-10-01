@@ -19,7 +19,18 @@ class AlternatingLLM:
         self.calls += 1
         statement = "用户喜欢猫" if self.calls % 2 else "用户喜欢小猫"
         return ModelResponse(
-            text=f'{{"episodic_entries":[],"semantic_ops":[{{"op":"add","statement":"{statement}"}}]}}'
+            text=json.dumps(
+                {
+                    "core_updates": [],
+                    "episodic_entries": [],
+                    "semantic_changes": [
+                        {
+                            "retirements": [],
+                            "new_facts": [{"statement": statement, "reason": "test"}],
+                        }
+                    ],
+                }
+            )
         )
 
 

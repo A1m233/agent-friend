@@ -60,7 +60,10 @@ def test_facade_observe_and_retrieve_emit_info() -> None:
     store = SqliteMemoryStore(":memory:")
     mem = Memory(
         store,
-        Extractor(_FakeLLM('{"episodic_summary": null, "semantic_ops": []}'), prompt="x"),  # type: ignore[arg-type]
+        Extractor(
+            _FakeLLM('{"semantic_changes": [], "core_updates": [], "episodic_entries": []}'),  # type: ignore[arg-type]
+            prompt="x",
+        ),
         Reconciler(store),
         retrieval=KeywordRetrieval(store),
     )

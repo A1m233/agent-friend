@@ -24,7 +24,7 @@ __all__ = [
     "serialize_ts",
 ]
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 """记忆库 schema 版本。
 
 - v1：semantic/episodic 表，FTS5 `tokenize='trigram'` 直接索引原文列
@@ -34,7 +34,9 @@ SCHEMA_VERSION = 7
 - v3（048 M48.2）：semantic 增加 memory_class / fact_key / supersedes_id。
 - v4（048 M48.3）：增加 embedding generation / manifest 派生索引元数据。
 - v5（084）：增加独立、版本化 Core Profile 与 extraction commit。
-- v7（136）：增加可恢复的待抽取素材，冷却时间保存在 schema_meta。\n- v6（086）：增加普通 Semantic 多对多 change/member 谱系与抽取输出契约版本。
+- v6（086）：增加普通 Semantic 多对多 change/member 谱系与抽取输出契约版本。
+- v7（136）：增加可恢复的待抽取素材，冷却时间保存在 schema_meta。
+- v8（147）：待抽取素材增加 blocked 状态、错误码与隔离时间。
 """
 
 MemoryClass = Literal["core", "priority", "normal"]
@@ -133,7 +135,10 @@ DDL_STATEMENTS: tuple[str, ...] = (
         session_id TEXT NOT NULL,
         payload TEXT NOT NULL,
         source_refs TEXT NOT NULL,
-        reason TEXT NOT NULL
+        reason TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'pending',
+        error_code TEXT,
+        blocked_at TEXT
     )
     """,
     """

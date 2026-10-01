@@ -62,6 +62,7 @@ class Reconciler:
         _validate_output(output, extraction_context)
 
         now = datetime.now(UTC)
+        observed_at = _observed_at(fragment, now)
         source_refs = [utterance.source_ref for utterance in fragment.utterances]
         first_ref = source_refs[0] if source_refs else None
         last_ref = source_refs[-1] if source_refs else None
@@ -111,6 +112,23 @@ class Reconciler:
                             "stale_semantic_ref",
                             f"stale Semantic ref: {retirement.target_ref}",
                         )
+                    if tx.semantic_starts_after(semantic_precheck_target.id, observed_at):
+                        raise ExtractionApplyError(
+                            "observation_time_conflict", "observation predates Semantic target"
+                        )
+
+            # Check the whole batch before writing, including historical removals.
+            for update in output.core_updates:
+                spec = CORE_FIELD_SPECS[update.field]
+                if tx.core_has_later_boundary(
+                    owner_user_id=fragment.owner_user_id,
+                    persona_id="" if spec.scope_kind == "user" else fragment.persona_id,
+                    field_key=update.field,
+                    observed_at=observed_at,
+                ):
+                    raise ExtractionApplyError(
+                        "observation_time_conflict", "observation predates Core field state"
+                    )
 
             for update in output.core_updates:
                 spec = CORE_FIELD_SPECS[update.field]
@@ -125,7 +143,7 @@ class Reconciler:
                     )
                 if update.op == "remove":
                     assert target is not None
-                    if not tx.end_core(target.id, now):
+                    if not tx.end_core(target.id, observed_at, written_at=now):
                         raise ExtractionApplyError("stale_core_ref", update.target_ref or "")
                     removed_core.append(update.field)
                     continue
@@ -140,7 +158,7 @@ class Reconciler:
                     field_key=update.field,
                     value=value,
                     normalized_value=normalize_core_value(value),
-                    valid_from=now,
+                    valid_from=observed_at,
                     valid_until=None,
                     supersedes_id=target.id if target is not None else None,
                     provenance=tuple(provenance),
@@ -148,7 +166,7 @@ class Reconciler:
                     updated_at=now,
                 )
                 if target is not None:
-                    if not tx.end_core(target.id, now):
+                    if not tx.end_core(target.id, observed_at, written_at=now):
                         raise ExtractionApplyError("stale_core_ref", update.target_ref or "")
                     replaced_core.append(update.field)
                 else:
@@ -175,7 +193,7 @@ class Reconciler:
                 )
                 for retirement in change.retirements:
                     semantic_target = extraction_context.semantic_ref_map[retirement.target_ref]
-                    if not tx.end_semantic(semantic_target.id, now):
+                    if not tx.end_semantic(semantic_target.id, observed_at, written_at=now):
                         raise ExtractionApplyError(
                             "stale_semantic_ref",
                             f"stale Semantic ref: {retirement.target_ref}",
@@ -204,7 +222,7 @@ class Reconciler:
                             pinned=False,
                             source="extracted",
                             speaker_origin=fact.speaker_origin,
-                            valid_from=now,
+                            valid_from=observed_at,
                             provenance=list(provenance),
                             owner_user_id=fragment.owner_user_id,
                             memory_class="normal",
@@ -324,7 +342,7 @@ def _validate_output(output: ExtractionOutput, context: ExtractionContext) -> No
 def _episodic_rows(
     output: ExtractionOutput, fragment: ConversationFragment, now: datetime
 ) -> list[EpisodicRow]:
-    occurred_at = fragment.utterances[-1].ts if fragment.utterances else now
+    occurred_at = _observed_at(fragment, now)
     source_ref = _fragment_source_ref(fragment)
     return [
         EpisodicRow(
@@ -339,6 +357,16 @@ def _episodic_rows(
         )
         for entry in output.episodic_entries
     ]
+
+
+def _observed_at(fragment: ConversationFragment, fallback: datetime) -> datetime:
+    return max(
+        (
+            u.ts.replace(tzinfo=UTC) if u.ts.tzinfo is None else u.ts.astimezone(UTC)
+            for u in fragment.utterances
+        ),
+        default=fallback,
+    )
 
 
 def _observation_id(

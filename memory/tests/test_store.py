@@ -379,7 +379,7 @@ def test_v1_to_v5_lazy_migration() -> None:
             meta = store._conn.execute(
                 "SELECT value FROM schema_meta WHERE key='schema_version'"
             ).fetchone()
-            assert meta["value"] == "7"
+            assert meta["value"] == "8"
 
             # 验证新列加好
             cols = {

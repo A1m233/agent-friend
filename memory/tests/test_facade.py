@@ -55,7 +55,7 @@ def _memory(reply: str) -> Memory:
 
 
 def test_observe_then_retrieve_recalls_fact() -> None:
-    reply = '{"episodic_summary": null, "semantic_ops": [{"op": "add", "statement": "用户养了一只叫Tom的猫"}]}'
+    reply = '{"semantic_changes": [{"retirements": [], "new_facts": [{"statement": "用户养了一只叫Tom的猫", "reason": "test fixture"}]}], "core_updates": [], "episodic_entries": []}'
     mem = _memory(reply)
     mem.observe(_fragment("我养了一只猫叫Tom"))
     mem.flush()
@@ -74,7 +74,7 @@ def test_pinned_dropped_when_query_unrelated_with_default_gate() -> None:
     需显式 ``Memory(..., pinned_relevance_gate=False)``（切片 baseline 用），
     见 ``test_pinned_gate.py``。
     """
-    reply = '{"episodic_summary": null, "semantic_ops": [{"op": "add", "statement": "用户叫小明", "pinned": true}]}'
+    reply = '{"semantic_changes": [{"retirements": [], "new_facts": [{"statement": "用户叫小明", "reason": "test fixture"}]}], "core_updates": [], "episodic_entries": []}'
     mem = _memory(reply)
     mem.observe(_fragment("我叫小明"))
     mem.flush()
@@ -87,7 +87,7 @@ def test_pinned_dropped_when_query_unrelated_with_default_gate() -> None:
 
 
 def test_retrieve_empty_when_nothing_relevant() -> None:
-    reply = '{"episodic_summary": null, "semantic_ops": []}'
+    reply = '{"semantic_changes": [], "core_updates": [], "episodic_entries": []}'
     mem = _memory(reply)
     mem.observe(_fragment("随便聊聊"))
     mem.flush()
@@ -98,13 +98,13 @@ def test_retrieve_empty_when_nothing_relevant() -> None:
 
 
 def test_close_is_idempotent() -> None:
-    mem = _memory('{"episodic_summary": null, "semantic_ops": []}')
+    mem = _memory('{"semantic_changes": [], "core_updates": [], "episodic_entries": []}')
     mem.close()
     mem.close()
 
 
 def test_warmup_does_not_write_memory_items() -> None:
-    mem = _memory('{"episodic_summary": null, "semantic_ops": []}')
+    mem = _memory('{"semantic_changes": [], "core_updates": [], "episodic_entries": []}')
     mem.warmup()
 
     ctx = mem.retrieve("语音通话", persona_id="p1")
@@ -114,7 +114,7 @@ def test_warmup_does_not_write_memory_items() -> None:
 
 def test_on_retrieved_callback_receives_trace() -> None:
     """026: retrieve 完成后 on_retrieved 收到完整 RecallTrace，source 默认 natural。"""
-    reply = '{"episodic_summary": null, "semantic_ops": [{"op": "add", "statement": "用户养了一只叫Tom的猫"}]}'
+    reply = '{"semantic_changes": [{"retirements": [], "new_facts": [{"statement": "用户养了一只叫Tom的猫", "reason": "test fixture"}]}], "core_updates": [], "episodic_entries": []}'
     mem = _memory(reply)
     mem.observe(_fragment("我养了一只猫叫Tom"))
     mem.flush()
@@ -140,7 +140,7 @@ def test_on_retrieved_callback_receives_trace() -> None:
 
 def test_retrieve_source_kwarg_passed_to_trace() -> None:
     """026: retrieve 的 source kwarg 透传到 trace.source。"""
-    mem = _memory('{"episodic_summary": null, "semantic_ops": []}')
+    mem = _memory('{"semantic_changes": [], "core_updates": [], "episodic_entries": []}')
     traces: list[RecallTrace] = []
     mem._on_retrieved = traces.append
 
@@ -150,7 +150,7 @@ def test_retrieve_source_kwarg_passed_to_trace() -> None:
 
 
 def test_natural_retrieve_gets_full_core_while_probe_excludes_it() -> None:
-    mem = _memory('{"core_updates":[],"semantic_ops":[],"episodic_entries":[]}')
+    mem = _memory('{"core_updates": [], "episodic_entries": [], "semantic_changes": []}')
     now = datetime.now(UTC)
     mem.store.add_core_profile_entry(
         CoreProfileEntry(
@@ -182,7 +182,7 @@ def test_natural_retrieve_gets_full_core_while_probe_excludes_it() -> None:
 
 def test_on_retrieved_exception_does_not_break_retrieve() -> None:
     """026: on_retrieved 抛异常不应让 retrieve 失败。"""
-    reply = '{"episodic_summary": null, "semantic_ops": [{"op": "add", "statement": "用户养了一只叫Tom的猫"}]}'
+    reply = '{"semantic_changes": [{"retirements": [], "new_facts": [{"statement": "用户养了一只叫Tom的猫", "reason": "test fixture"}]}], "core_updates": [], "episodic_entries": []}'
     mem = _memory(reply)
     mem.observe(_fragment("我养了一只猫叫Tom"))
     mem.flush()

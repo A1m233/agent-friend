@@ -71,7 +71,9 @@ def run_paired_extraction_probe(
 
     captured: dict[str, list[ExtractionAttempt]] = {name: [] for name in names}
     extractors = {
-        name: Extractor(llm_client, prompt=prompt, on_attempt=captured[name].append)
+        name: Extractor(
+            llm_client, prompt=prompt, on_attempt=captured[name].append, allow_legacy_output=True
+        )
         for name, prompt in variants.items()
     }
     for fragment_index, (sample_id, fragment) in enumerate(selected):

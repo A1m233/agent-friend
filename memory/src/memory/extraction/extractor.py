@@ -22,6 +22,7 @@ from llm_providers import (
     ModelCallControl,
     ModelCallTraceContext,
     ModelRequest,
+    ModelTimeoutPolicy,
     OperationRequestLineageTracker,
 )
 
@@ -36,6 +37,15 @@ from .result import (
     SemanticFactDraft,
     SemanticOp,
     SemanticRetirement,
+)
+
+# A complete memory JSON response may take longer than an ordinary completion.
+# Keep the other non-streaming defaults and retry controls unchanged.
+_MEMORY_TIMEOUT_POLICY = ModelTimeoutPolicy(
+    write_seconds=90,
+    response_seconds=600,
+    idle_seconds=90,
+    source="memory_extraction",
 )
 
 if TYPE_CHECKING:
@@ -85,9 +95,11 @@ class Extractor:
         reconciliation_prompt: str | None = None,
         on_attempt: Callable[[ExtractionAttempt], None] | None = None,
         normalize_metadata: bool = True,
+        allow_legacy_output: bool = False,
     ) -> None:
         self._llm = llm_client
         self._allow_retries = True
+        self._allow_legacy_output = allow_legacy_output
         self._prompt = prompt if prompt is not None else _PROMPT_PATH.read_text(encoding="utf-8")
         self._reconciliation_prompt = (
             reconciliation_prompt
@@ -167,6 +179,7 @@ class Extractor:
                     messages=messages,
                     control=ModelCallControl(
                         allow_retries=self._allow_retries,
+                        timeout_policy=_MEMORY_TIMEOUT_POLICY,
                         previous_request_witness=lineage.previous_witness,
                         trace_context=ModelCallTraceContext(
                             operation="memory_extraction",
@@ -196,7 +209,7 @@ class Extractor:
                 retry_after_seconds=getattr(exc, "retry_after_seconds", None),
             )
 
-        output, status = _parse_output_with_status(raw)
+        output, status = _parse_output_with_status(raw, allow_legacy=self._allow_legacy_output)
         self._report_attempt(
             fragment,
             extraction_context,
@@ -266,6 +279,7 @@ class Extractor:
                     messages=messages,
                     control=ModelCallControl(
                         allow_retries=self._allow_retries,
+                        timeout_policy=_MEMORY_TIMEOUT_POLICY,
                         previous_request_witness=lineage.previous_witness,
                         trace_context=ModelCallTraceContext(
                             operation="memory_reconciliation",
@@ -585,18 +599,14 @@ def _semantic_change_validation_error(
     return None
 
 
-def _parse_output(raw: str) -> ExtractionOutput:
-    """把 LLM 文本解析成 :class:`ExtractionOutput`，尽量鲁棒。
-
-    兼容新旧 prompt 输出（pass-1）：
-
-    - 新字段 ``episodic_entries: list[str]``（推荐）
-    - 旧字段 ``episodic_summary: str | None``——单元素 list 处理（向下兼容）
-    """
-    return _parse_output_with_status(raw)[0]
+def _parse_output(raw: str, *, allow_legacy: bool = False) -> ExtractionOutput:
+    """Parse the current contract; historical replay must explicitly allow legacy output."""
+    return _parse_output_with_status(raw, allow_legacy=allow_legacy)[0]
 
 
-def _parse_output_with_status(raw: str) -> tuple[ExtractionOutput, ExtractionAttemptStatus]:
+def _parse_output_with_status(
+    raw: str, *, allow_legacy: bool = False
+) -> tuple[ExtractionOutput, ExtractionAttemptStatus]:
     text = _strip_code_fence(raw).strip()
     if not text:
         return ExtractionOutput(), "empty_response"
@@ -606,7 +616,7 @@ def _parse_output_with_status(raw: str) -> tuple[ExtractionOutput, ExtractionAtt
         logger.warning("记忆抽取返回非法 JSON，跳过：%s", text[:200])
         return ExtractionOutput(), "invalid_json"
     if not isinstance(obj, dict):
-        return ExtractionOutput(), "invalid_shape"
+        return ExtractionOutput(validation_error="expected_object"), "invalid_shape"
 
     has_changes = "semantic_changes" in obj
     has_ops = "semantic_ops" in obj
@@ -615,6 +625,26 @@ def _parse_output_with_status(raw: str) -> tuple[ExtractionOutput, ExtractionAtt
             validation_error="ambiguous_semantic_contract",
             output_contract_version=2,
         ), "invalid_shape"
+
+    legacy = allow_legacy and has_ops and not has_changes
+    required = (
+        {"semantic_ops"} if legacy else {"core_updates", "semantic_changes", "episodic_entries"}
+    )
+    if not required.issubset(obj) or (has_ops and not legacy):
+        return ExtractionOutput(validation_error="missing_or_unsupported_contract"), "invalid_shape"
+    if legacy and "episodic_entries" not in obj and "episodic_summary" not in obj:
+        return ExtractionOutput(validation_error="missing_episodic_contract"), "invalid_shape"
+    if "episodic_entries" in obj:
+        entries_raw = obj["episodic_entries"]
+        if not isinstance(entries_raw, list) or any(
+            not isinstance(entry, str) or not entry.strip() for entry in entries_raw
+        ):
+            return ExtractionOutput(validation_error="invalid_episodic_entries"), "invalid_shape"
+    if "episodic_summary" in obj and (
+        not legacy
+        or (obj["episodic_summary"] is not None and not isinstance(obj["episodic_summary"], str))
+    ):
+        return ExtractionOutput(validation_error="invalid_episodic_summary"), "invalid_shape"
 
     output_contract_version = 2 if has_changes or not has_ops else 1
     strict_reasons = has_changes or "core_updates" in obj
@@ -710,9 +740,17 @@ def _parse_core_update(item: object, *, require_reason: bool) -> CoreUpdate | No
     ):
         return None
     value = item.get("value")
+    if op in ("add", "replace") and (not isinstance(value, str) or not value.strip()):
+        return None
+    if op == "remove" and value is not None:
+        return None
     if not isinstance(value, str) or not value.strip():
         value = None
     target_ref = item.get("target_ref")
+    if op in ("replace", "remove") and (not isinstance(target_ref, str) or not target_ref.strip()):
+        return None
+    if op == "add" and target_ref is not None:
+        return None
     if not isinstance(target_ref, str) or not target_ref.strip():
         target_ref = None
     reason = item.get("reason")
@@ -798,7 +836,11 @@ def _parse_change(item: object) -> SemanticChange | None:
         ):
             return None
         importance = raw_fact.get("importance", 0.5)
-        if not isinstance(importance, int | float):
+        if (
+            isinstance(importance, bool)
+            or not isinstance(importance, int | float)
+            or not math.isfinite(importance)
+        ):
             return None
         speaker_origin = raw_fact.get("speaker_origin", "user")
         if speaker_origin not in ("user", "agent"):

@@ -102,17 +102,23 @@ def build_core_profile(
         and entry.valid_until is None
         and entry.owner_user_id == owner_user_id
         and (
-            entry.scope_kind == "user"
+            entry.scope_kind != "persona"
             or (entry.scope_kind == "persona" and entry.persona_id == persona_id)
         )
     ]
-    active.sort(key=_entry_sort_key)
     seen_single: set[CoreFieldKey] = set()
     seen_many: set[tuple[CoreFieldKey, str]] = set()
     for entry in active:
         spec = CORE_FIELD_SPECS.get(entry.field_key)
         if spec is None or spec.scope_kind != entry.scope_kind:
             raise CoreProfileError(f"invalid core entry schema: {entry.id}")
+        for value_time in (entry.valid_from, entry.created_at, entry.updated_at):
+            if not isinstance(value_time, datetime) or value_time.tzinfo is None:
+                raise CoreProfileError(f"invalid core timestamp: {entry.id}")
+        if not isinstance(entry.provenance, tuple) or any(
+            not isinstance(ref, str) for ref in entry.provenance
+        ):
+            raise CoreProfileError(f"invalid core provenance: {entry.id}")
         value = validate_core_value(entry.field_key, entry.value)
         if entry.normalized_value != normalize_core_value(value):
             raise CoreProfileError(f"invalid normalized core value: {entry.id}")
@@ -129,6 +135,7 @@ def build_core_profile(
             if key in seen_many:
                 raise CoreProfileError(f"duplicate active value for {entry.field_key}")
             seen_many.add(key)
+    active.sort(key=_entry_sort_key)
     profile = CoreProfile(owner_user_id, persona_id, tuple(active))
     if len(json.dumps(profile.as_dict(), ensure_ascii=False)) > _MAX_PROFILE_JSON_CHARS:
         raise CoreProfileError("core profile exceeds safety ceiling")

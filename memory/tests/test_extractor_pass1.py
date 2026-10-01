@@ -154,7 +154,11 @@ def test_zhangxiaohong_block_retains_majority_anchors() -> None:
     的可观测口径——pre-pass-1 baseline 在这段几乎为 0（见
     ``test_legacy_baseline_misses_almost_all_anchors``），pass-1 必须改善到 ≥ 半数。
     """
-    extractor = Extractor(_CassetteLLM(_ZHANGXIAOHONG_REPLY_V1), prompt="x")  # type: ignore[arg-type]
+    extractor = Extractor(
+        _CassetteLLM(_ZHANGXIAOHONG_REPLY_V1),  # type: ignore[arg-type]
+        prompt="x",
+        allow_legacy_output=True,
+    )
     out = extractor.extract(_fragment_from_turns(_ZHANGXIAOHONG_TURNS), [])
 
     # 确保解析走通了（episodic_entries 非空、semantic_ops 非空）
@@ -172,7 +176,11 @@ def test_zhangxiaohong_block_retains_majority_anchors() -> None:
 
 def test_zhangxiaohong_block_keeps_sibling_identity_as_ordinary_semantic() -> None:
     """Sibling identity is outside the fixed Core schema and stays Semantic."""
-    extractor = Extractor(_CassetteLLM(_ZHANGXIAOHONG_REPLY_V1), prompt="x")  # type: ignore[arg-type]
+    extractor = Extractor(
+        _CassetteLLM(_ZHANGXIAOHONG_REPLY_V1),  # type: ignore[arg-type]
+        prompt="x",
+        allow_legacy_output=True,
+    )
     out = extractor.extract(_fragment_from_turns(_ZHANGXIAOHONG_TURNS), [])
     assert any("张小明" in op.statement for op in out.semantic_ops)
 
@@ -186,7 +194,11 @@ def test_legacy_baseline_misses_almost_all_anchors() -> None:
     这条不是为了"防止退化"——是为了**document** issue 003 的根因数据；
     若有人改 _LEGACY_ZHANGXIAOHONG_REPLY 让它"看起来过得去"，这条会挂、强制 review。
     """
-    extractor = Extractor(_CassetteLLM(_LEGACY_ZHANGXIAOHONG_REPLY), prompt="x")  # type: ignore[arg-type]
+    extractor = Extractor(
+        _CassetteLLM(_LEGACY_ZHANGXIAOHONG_REPLY),  # type: ignore[arg-type]
+        prompt="x",
+        allow_legacy_output=True,
+    )
     out = extractor.extract(_fragment_from_turns(_ZHANGXIAOHONG_TURNS), [])
 
     all_text = _output_text([out.episodic_entries, [op.statement for op in out.semantic_ops]])

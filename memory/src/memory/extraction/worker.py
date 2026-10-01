@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from .extractor import Extractor
 
 from .context import ExtractionContextBuilder
-from .deferred import decode, encode, observation_id
+from .deferred import DeferredObservationError, decode, encode, observation_id
 from .reconciler import ExtractionApplyError, Reconciler
 from .result import ExtractionResult
 
@@ -63,6 +63,7 @@ class AsyncExtractionWorker:
         self._processing = threading.RLock()
         self._degraded = False
         self._retry_after = 0.0
+        self._blocked_code: str | None = None
 
     def submit(self, fragment: ConversationFragment) -> None:
         """Persist material; only fresh non-failed activity can permit a bounded drain."""
@@ -152,7 +153,28 @@ class AsyncExtractionWorker:
                 break
             self._degraded = False
             self._retry_after = 0.0
-            if not self._process(decode(payload), recovery=recovery):
+            self._blocked_code = None
+            try:
+                fragment = decode(payload)
+                if observation_id(fragment) != identity:
+                    raise DeferredObservationError("observation identity mismatch")
+            except DeferredObservationError:
+                self._store.block_pending_extraction(identity, "invalid_deferred_observation")
+                logger.warning(
+                    "memory_observation action=blocked reason=invalid_deferred_observation"
+                )
+                continue
+            succeeded = self._process(fragment, recovery=recovery)
+            if self._blocked_code is not None:
+                self._store.block_pending_extraction(identity, self._blocked_code)
+                if self._degraded:
+                    self._store.defer_extractions(
+                        self._clock() + max(self._cooldown_seconds, self._retry_after),
+                        "coordination_failed",
+                    )
+                    break
+                continue
+            if not succeeded:
                 self._store.defer_extractions(
                     self._clock() + max(self._cooldown_seconds, self._retry_after),
                     "extraction_failed",
@@ -202,6 +224,8 @@ class AsyncExtractionWorker:
         try:
             result = self._reconciler.apply(output, fragment, context)
         except ExtractionApplyError as exc:
+            if exc.code == "observation_time_conflict":
+                self._blocked_code = exc.code
             logger.warning("extraction batch rejected code=%s detail=%s", exc.code, exc)
             result = ExtractionResult(
                 session_id=fragment.session_id,
