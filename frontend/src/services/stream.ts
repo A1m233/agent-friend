@@ -15,6 +15,7 @@ import type { AttachmentDraft } from "./attachments";
 import type { ModelRuntimeConfig } from "@/lib/model-config";
 import type { SessionApprovalMode } from "./api/sessions";
 import type { ChatTextReference, ContextRecoveryMode } from "@/types/chat";
+import { startSendPhase } from "./sendLatency";
 
 export interface RunStreamInput {
   /** AG-UI thread_id；bridge 直接当 session_id（缺则建，见 006 session_bridge）。 */
@@ -185,17 +186,36 @@ export async function* runAgentStreamAtPath(
   input: SpecializedRunStreamInput,
   opts: RunStreamOptions = {},
 ): AsyncGenerator<BaseEvent> {
-  await ensureLocalServiceReady("bridge");
+  let finish = startSendPhase(input.runId, "service_ready");
+  let body: string;
+  try {
+    await ensureLocalServiceReady("bridge");
+    finish("ok");
+    finish = startSendPhase(input.runId, "request_encode");
+    body = JSON.stringify(buildRunAgentInput(input));
+    finish("ok");
+  } catch (error) {
+    finish("error");
+    throw error;
+  }
   const base = opts.baseUrl ?? BRIDGE_BASE_URL;
-  const res = await fetch(`${base}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-    },
-    body: JSON.stringify(buildRunAgentInput(input)),
-    signal: opts.signal,
-  });
+  finish = startSendPhase(input.runId, "http_response");
+  let res: Response;
+  try {
+    res = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body,
+      signal: opts.signal,
+    });
+    finish("ok");
+  } catch (error) {
+    finish("error");
+    throw error;
+  }
 
   yield* readEventStream(requireEventStreamResponse(res, "ag-ui run"));
 }

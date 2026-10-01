@@ -107,6 +107,10 @@ class MemorySearchService:
             request.mode,
             (time.monotonic() - started) * 1000,
             len(self._sources),
+            extra={
+                "memory_search_phase": "scope",
+                "memory_duration_ms": (time.monotonic() - started) * 1000,
+            },
         )
 
         for source in self._ordered_sources():
@@ -196,6 +200,10 @@ class MemorySearchService:
                     "search source finished name=%s duration_ms=%.2f",
                     source.name,
                     (time.monotonic() - source_started) * 1000,
+                    extra={
+                        "memory_search_phase": source.name,
+                        "memory_duration_ms": (time.monotonic() - source_started) * 1000,
+                    },
                 )
 
         check_cancel(cancel_check)

@@ -33,6 +33,7 @@ _MAX_LIMIT = 50
 _MIN_LIMIT = 1
 _CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
 _CURRENT_TURN_START_INDEX_ARG = "__agent_friend_current_turn_start_index"
+_CURRENT_TURN_START_EVENT_UUID_ARG = "__agent_friend_current_turn_start_event_uuid"
 _CURRENT_PERSONA_ID_ARG = "__agent_friend_current_persona_id"
 _RUNTIME_NOW_ARG = "__agent_friend_runtime_now"
 
@@ -256,6 +257,11 @@ class ConversationHistoryTool:
             mode="explicit",
             session_id=current_turn_boundary[0] if current_turn_boundary else None,
             current_turn_start_index=(current_turn_boundary[1] if current_turn_boundary else None),
+            current_turn_start_event_uuid=(
+                _opt_str(args, _CURRENT_TURN_START_EVENT_UUID_ARG)
+                if current_turn_boundary
+                else None
+            ),
             top_k=limit,
             said_by=normalized_said_by,
             explicit_time_range=explicit_time_range,

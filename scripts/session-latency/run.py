@@ -10,6 +10,11 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "offline":
+        return subprocess.call(
+            [sys.executable, str(Path(__file__).with_name("offline_probe.py")), *sys.argv[2:]],
+            cwd=ROOT,
+        )
     if len(sys.argv) > 1 and sys.argv[1] == "prepare":
         return subprocess.call(
             [sys.executable, str(Path(__file__).with_name("prepare_probe.py")), *sys.argv[2:]],

@@ -1871,6 +1871,9 @@ def test_recall_tool_receives_hidden_current_turn_context(tmp_path: Path) -> Non
     assert invocation_args["limit"] == 10
     assert invocation_args["__agent_friend_current_session_id"] == conv.session.session_id
     assert invocation_args["__agent_friend_current_turn_start_index"] == 1
+    assert invocation_args["__agent_friend_current_turn_start_event_uuid"] == (
+        next(event.uuid for event in conv.session.events if event.type == "user_message")
+    )
     assert invocation_args["__agent_friend_current_persona_id"] == conv.session.current_persona_id
     assert "__agent_friend_original_user_input" not in invocation_args
     assert "__agent_friend_runtime_now" in invocation_args

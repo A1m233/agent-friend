@@ -1,0 +1,1796 @@
+{
+  "schema_version": 1,
+  "kind": "offline_send_baseline",
+  "python": "3.12.6",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "configuration": {
+    "context_strategy": "naive",
+    "fake_context_window": 2000000,
+    "query_cache_bytes": 67108864,
+    "workers": 1,
+    "structured_memory": false,
+    "active_skills": false,
+    "tools": false,
+    "logging": "INFO, with file/query observation DEBUG only"
+  },
+  "production_head": "62a4ee259cd727990e5d93106a2ffedb1f502b14",
+  "sequence": [
+    "B",
+    "B"
+  ],
+  "reload_each": true,
+  "harness_sha256": "9ad434317443fbb205c30359ed96188deb2846a0f36027b6e77b9e11d3cfcee5",
+  "limits": [
+    "fake provider: first request is not upstream receipt",
+    "real history source and scope; no structured memory database or extraction",
+    "default builtin persona, NaiveContextManager and no active Skill service/tools/attachments",
+    "no UI, HTTP/IPC, real provider adapter, or OS cold-cache measurement",
+    "execution preload reported separately; sends mutate disposable copies"
+  ],
+  "fixtures": {
+    "A": {
+      "bytes": 1112568824,
+      "sha256": "f7fb01fe65115c23f38f2786c51236878624b4e0d4a57f90f7f444d0551048f6"
+    },
+    "B": {
+      "bytes": 933172807,
+      "sha256": "0acb966347a306e138c3d00fc1ba52bfbf157ed817e73f10664521778cef6dd1"
+    }
+  },
+  "runs": [
+    {
+      "run_id": "offline-1",
+      "sample": "B",
+      "load_ms": 12887.524600000233,
+      "provider_calls": 1,
+      "recall_evidence_count": 4,
+      "recall_failure_count": 0,
+      "first_fake_request_ms": 14057,
+      "request_json_ms": 0.7964999999785505,
+      "request_json_bytes": 239863,
+      "outcome": "completed",
+      "error_type": null,
+      "process_memory": {
+        "private_MiB": 398.0859375,
+        "peak_private_MiB": 404.48046875,
+        "working_set_MiB": 420.76171875
+      },
+      "recall_projection": {
+        "database_count": 2,
+        "database_bytes": 2437120
+      }
+    },
+    {
+      "run_id": "offline-2",
+      "sample": "B",
+      "load_ms": 13989.847199999986,
+      "provider_calls": 1,
+      "recall_evidence_count": 4,
+      "recall_failure_count": 0,
+      "first_fake_request_ms": 2065,
+      "request_json_ms": 0.8190000003196474,
+      "request_json_bytes": 245121,
+      "outcome": "completed",
+      "error_type": null,
+      "process_memory": {
+        "private_MiB": 451.484375,
+        "peak_private_MiB": 460.82421875,
+        "working_set_MiB": 471.76953125
+      },
+      "recall_projection": {
+        "database_count": 2,
+        "database_bytes": 2437120
+      }
+    }
+  ],
+  "observations": [
+    {
+      "session_file_operation": "load",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 8.19,
+      "hold_ms": 0.144,
+      "parse_ms": 12747.533,
+      "byte_count": 933172807,
+      "outcome": "success",
+      "phases": {
+        "stream_read_parse": {
+          "wall_ms": 12747.513,
+          "thread_cpu_ms": 12328.125
+        }
+      },
+      "caller": "agent.sessions.execution_loading.load_execution_session",
+      "event": "session_file",
+      "run_id": "load-1"
+    },
+    {
+      "event": "scheduler_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1,
+      "queue_ms": 1,
+      "pre_submit_ms": 0
+    },
+    {
+      "event": "conversation_prepare_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1
+    },
+    {
+      "event": "conversation_prepare_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1,
+      "duration_ms": 0
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1,
+      "phase": "pre_turn_hooks",
+      "phase_id": 1,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1,
+      "phase": "pre_turn_hooks",
+      "phase_id": 1,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1,
+      "duration_ms": 0.037,
+      "thread_cpu_ms": 0.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "conversation_bound",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1,
+      "phase": "run_start_persistence",
+      "phase_id": 2,
+      "parent_phase_id": null
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 0.939,
+      "hold_ms": 524.706,
+      "parse_ms": null,
+      "byte_count": 375,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.076,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.067,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 524.206,
+          "thread_cpu_ms": 31.25
+        },
+        "version": {
+          "wall_ms": 0.052,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation.append_run_started_event",
+      "event": "session_file",
+      "run_id": "offline-1",
+      "enclosing_phase_id": 2
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 530,
+      "phase": "run_start_persistence",
+      "phase_id": 2,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1,
+      "duration_ms": 529.188,
+      "thread_cpu_ms": 31.25,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 530,
+      "phase": "history_reconcile",
+      "phase_id": 3,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 537,
+      "phase": "history_reconcile",
+      "phase_id": 3,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 530,
+      "duration_ms": 6.262,
+      "thread_cpu_ms": 15.625,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 537,
+      "phase": "tool_transaction_repair",
+      "phase_id": 4,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1656,
+      "phase": "tool_transaction_repair",
+      "phase_id": 4,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 537,
+      "duration_ms": 1119.032,
+      "thread_cpu_ms": 1109.375,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1656,
+      "phase": "model_snapshot",
+      "phase_id": 5,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1667,
+      "phase": "model_snapshot",
+      "phase_id": 5,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1656,
+      "duration_ms": 11.299,
+      "thread_cpu_ms": 0.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1686,
+      "phase": "reference_validation",
+      "phase_id": 6,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1689,
+      "phase": "reference_validation",
+      "phase_id": 6,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1686,
+      "duration_ms": 3.048,
+      "thread_cpu_ms": 0.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1690,
+      "phase": "history_snapshot",
+      "phase_id": 7,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1690,
+      "phase": "history_snapshot",
+      "phase_id": 7,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1690,
+      "duration_ms": 0.767,
+      "thread_cpu_ms": 0.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1690,
+      "phase": "prior_summary",
+      "phase_id": 8,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1697,
+      "phase": "prior_summary",
+      "phase_id": 8,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1690,
+      "duration_ms": 6.489,
+      "thread_cpu_ms": 0.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1697,
+      "phase": "recall_boundary",
+      "phase_id": 9,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1928,
+      "phase": "recall_boundary",
+      "phase_id": 9,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1697,
+      "duration_ms": 231.311,
+      "thread_cpu_ms": 218.75,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1929,
+      "phase": "skill_selection",
+      "phase_id": 10,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1929,
+      "phase": "skill_selection",
+      "phase_id": 10,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1929,
+      "duration_ms": 0.043,
+      "thread_cpu_ms": 0.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1929,
+      "phase": "skill_activation",
+      "phase_id": 11,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1929,
+      "phase": "skill_activation",
+      "phase_id": 11,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1929,
+      "duration_ms": 0.022,
+      "thread_cpu_ms": 0.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1929,
+      "phase": "tool_evidence",
+      "phase_id": 12,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1975,
+      "phase": "tool_evidence",
+      "phase_id": 12,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1929,
+      "duration_ms": 46.503,
+      "thread_cpu_ms": 46.875,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1975,
+      "phase": "input_persistence",
+      "phase_id": 13,
+      "parent_phase_id": null
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 6.762,
+      "hold_ms": 3.051,
+      "parse_ms": null,
+      "byte_count": 312,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.083,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.078,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 2.546,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.053,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._append_user_event",
+      "event": "session_file",
+      "run_id": "offline-1",
+      "enclosing_phase_id": 13
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 1995,
+      "phase": "accepted_rollout",
+      "phase_id": 14,
+      "parent_phase_id": 13
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 7.871,
+      "hold_ms": 18.066,
+      "parse_ms": null,
+      "byte_count": 331126,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.072,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.379,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 17.195,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.052,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._commit_accepted_user_input",
+      "event": "session_file",
+      "run_id": "offline-1",
+      "enclosing_phase_id": 14
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 2115,
+      "phase": "accepted_rollout",
+      "phase_id": 14,
+      "parent_phase_id": 13,
+      "started_elapsed_ms": 1995,
+      "duration_ms": 120.024,
+      "thread_cpu_ms": 109.375,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 2115,
+      "phase": "input_persistence",
+      "phase_id": 13,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1975,
+      "duration_ms": 139.737,
+      "thread_cpu_ms": 125.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 2115,
+      "phase": "memory_retrieve",
+      "phase_id": 15,
+      "parent_phase_id": null
+    },
+    {
+      "session_file_operation": "load",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 6.221,
+      "hold_ms": 0.104,
+      "parse_ms": 5389.932,
+      "byte_count": 933504620,
+      "outcome": "success",
+      "phases": {
+        "stream_read_parse": {
+          "wall_ms": 5389.906,
+          "thread_cpu_ms": 5265.625
+        }
+      },
+      "caller": "agent.memory_search.session_source_order.active_conversation_event_uuids_cancellable",
+      "event": "session_file",
+      "run_id": "offline-1",
+      "enclosing_phase_id": 15
+    },
+    {
+      "session_key": "373cfec055aad2ff",
+      "cache_action": "rebuilt",
+      "projection_kind": "recall",
+      "cache_miss_reason": null,
+      "query_wait_ms": 0.015,
+      "query_total_ms": 5463.378,
+      "outcome": "success",
+      "event": "session_query",
+      "run_id": "offline-1",
+      "enclosing_phase_id": 15
+    },
+    {
+      "event": "memory_source",
+      "phase": "scope",
+      "duration_ms": 5938.000000000102,
+      "run_id": "offline-1",
+      "enclosing_phase_id": 15
+    },
+    {
+      "session_key": "373cfec055aad2ff",
+      "cache_action": "hit",
+      "projection_kind": "recall",
+      "cache_miss_reason": null,
+      "query_wait_ms": 0.0,
+      "query_total_ms": 16.019,
+      "outcome": "success",
+      "event": "session_query",
+      "run_id": "offline-1",
+      "enclosing_phase_id": 15
+    },
+    {
+      "session_file_operation": "load",
+      "session_key": "bb74ebf01628b8cd",
+      "wait_ms": 0.175,
+      "hold_ms": 0.157,
+      "parse_ms": 5770.498,
+      "byte_count": 1112568824,
+      "outcome": "success",
+      "phases": {
+        "stream_read_parse": {
+          "wall_ms": 5770.475,
+          "thread_cpu_ms": 5625.0
+        }
+      },
+      "caller": "agent.memory_search.session_history_source._rank",
+      "event": "session_file",
+      "run_id": "offline-1",
+      "enclosing_phase_id": 15
+    },
+    {
+      "session_key": "bb74ebf01628b8cd",
+      "cache_action": "rebuilt",
+      "projection_kind": "recall",
+      "cache_miss_reason": null,
+      "query_wait_ms": 0.016,
+      "query_total_ms": 5823.488,
+      "outcome": "success",
+      "event": "session_query",
+      "run_id": "offline-1",
+      "enclosing_phase_id": 15
+    },
+    {
+      "event": "memory_source",
+      "phase": "session_history",
+      "duration_ms": 5875.0,
+      "run_id": "offline-1",
+      "enclosing_phase_id": 15
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 13936,
+      "phase": "memory_retrieve",
+      "phase_id": 15,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 2115,
+      "duration_ms": 11820.757,
+      "thread_cpu_ms": 11468.75,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "memory_retrieve_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 13936,
+      "duration_ms": 11821
+    },
+    {
+      "event": "context_build_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 13967,
+      "duration_ms": 31
+    },
+    {
+      "event": "llm_stream_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 13975,
+      "call_index": 1
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 13975,
+      "phase": "provider_preparation",
+      "phase_id": 16,
+      "parent_phase_id": null
+    },
+    {
+      "event": "llm_request_start",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 13995,
+      "call_index": 1,
+      "enclosing_phase_id": 16
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 0.715,
+      "hold_ms": 1.829,
+      "parse_ms": null,
+      "byte_count": 391,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.063,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.073,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 1.416,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.041,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._stage_pending_rollout_request",
+      "event": "session_file",
+      "run_id": "offline-1",
+      "enclosing_phase_id": 16
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 6.598,
+      "hold_ms": 5.527,
+      "parse_ms": null,
+      "byte_count": 278035,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.064,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.699,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 4.338,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.051,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._stage_pending_rollout_request",
+      "event": "session_file",
+      "run_id": "offline-1",
+      "enclosing_phase_id": 16
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 14038,
+      "phase": "provider_preparation",
+      "phase_id": 16,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 13975,
+      "duration_ms": 62.934,
+      "thread_cpu_ms": 31.25,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 7.36,
+      "hold_ms": 2.704,
+      "parse_ms": null,
+      "byte_count": 202,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.059,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.08,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 2.241,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.052,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._publish_assistant_phase",
+      "event": "session_file",
+      "run_id": "offline-1"
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 7.118,
+      "hold_ms": 18.215,
+      "parse_ms": null,
+      "byte_count": 3293,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.059,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.157,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 17.589,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.068,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._commit_pending_model_request_state",
+      "event": "session_file",
+      "run_id": "offline-1"
+    },
+    {
+      "event": "llm_first_event",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 14120,
+      "call_index": 1
+    },
+    {
+      "event": "llm_first_text_delta",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 14120,
+      "call_index": 1
+    },
+    {
+      "event": "run_first_text_delta",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 14120,
+      "call_index": 1
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 6.807,
+      "hold_ms": 1.471,
+      "parse_ms": null,
+      "byte_count": 208,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.046,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.056,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 1.098,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.038,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._publish_assistant_phase",
+      "event": "session_file",
+      "run_id": "offline-1"
+    },
+    {
+      "event": "llm_stream_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 14139,
+      "duration_ms": 164,
+      "call_index": 1
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 7.965,
+      "hold_ms": 1.705,
+      "parse_ms": null,
+      "byte_count": 3150,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.038,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.109,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 1.28,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.039,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._append_assistant_item_event",
+      "event": "session_file",
+      "run_id": "offline-1"
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 8.235,
+      "hold_ms": 17.229,
+      "parse_ms": null,
+      "byte_count": 4327,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.069,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.184,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 16.641,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.05,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._run_tool_loop_body",
+      "event": "session_file",
+      "run_id": "offline-1"
+    },
+    {
+      "event": "conversation_done",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 14213,
+      "error_type": null
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 7.071,
+      "hold_ms": 1.748,
+      "parse_ms": null,
+      "byte_count": 436,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.078,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.089,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 1.351,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.033,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation.append_run_terminal_event",
+      "event": "session_file",
+      "run_id": "offline-1"
+    },
+    {
+      "event": "run_terminal",
+      "run_id": "offline-1",
+      "run_elapsed_ms": 14232
+    },
+    {
+      "session_file_operation": "load",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 6.114,
+      "hold_ms": 0.096,
+      "parse_ms": 13860.222,
+      "byte_count": 933794662,
+      "outcome": "success",
+      "phases": {
+        "stream_read_parse": {
+          "wall_ms": 13860.204,
+          "thread_cpu_ms": 13390.625
+        }
+      },
+      "caller": "agent.sessions.execution_loading.load_execution_session",
+      "event": "session_file",
+      "run_id": "load-2"
+    },
+    {
+      "event": "scheduler_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1,
+      "queue_ms": 1,
+      "pre_submit_ms": 0
+    },
+    {
+      "event": "conversation_prepare_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1
+    },
+    {
+      "event": "conversation_prepare_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1,
+      "duration_ms": 0
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1,
+      "phase": "pre_turn_hooks",
+      "phase_id": 1,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1,
+      "phase": "pre_turn_hooks",
+      "phase_id": 1,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1,
+      "duration_ms": 0.029,
+      "thread_cpu_ms": 0.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "conversation_bound",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1,
+      "phase": "run_start_persistence",
+      "phase_id": 2,
+      "parent_phase_id": null
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 0.669,
+      "hold_ms": 41.651,
+      "parse_ms": null,
+      "byte_count": 375,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.052,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.079,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 41.173,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.065,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation.append_run_started_event",
+      "event": "session_file",
+      "run_id": "offline-2",
+      "enclosing_phase_id": 2
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 57,
+      "phase": "run_start_persistence",
+      "phase_id": 2,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1,
+      "duration_ms": 55.669,
+      "thread_cpu_ms": 0.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 57,
+      "phase": "history_reconcile",
+      "phase_id": 3,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 66,
+      "phase": "history_reconcile",
+      "phase_id": 3,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 57,
+      "duration_ms": 9.465,
+      "thread_cpu_ms": 0.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 66,
+      "phase": "tool_transaction_repair",
+      "phase_id": 4,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1351,
+      "phase": "tool_transaction_repair",
+      "phase_id": 4,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 66,
+      "duration_ms": 1284.477,
+      "thread_cpu_ms": 1281.25,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1351,
+      "phase": "model_snapshot",
+      "phase_id": 5,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1356,
+      "phase": "model_snapshot",
+      "phase_id": 5,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1351,
+      "duration_ms": 4.546,
+      "thread_cpu_ms": 15.625,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1365,
+      "phase": "reference_validation",
+      "phase_id": 6,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1368,
+      "phase": "reference_validation",
+      "phase_id": 6,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1365,
+      "duration_ms": 3.087,
+      "thread_cpu_ms": 15.625,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1369,
+      "phase": "history_snapshot",
+      "phase_id": 7,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1370,
+      "phase": "history_snapshot",
+      "phase_id": 7,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1369,
+      "duration_ms": 0.952,
+      "thread_cpu_ms": 0.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1370,
+      "phase": "prior_summary",
+      "phase_id": 8,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1376,
+      "phase": "prior_summary",
+      "phase_id": 8,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1370,
+      "duration_ms": 5.987,
+      "thread_cpu_ms": 0.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1376,
+      "phase": "recall_boundary",
+      "phase_id": 9,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1662,
+      "phase": "recall_boundary",
+      "phase_id": 9,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1376,
+      "duration_ms": 286.555,
+      "thread_cpu_ms": 281.25,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1663,
+      "phase": "skill_selection",
+      "phase_id": 10,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1663,
+      "phase": "skill_selection",
+      "phase_id": 10,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1663,
+      "duration_ms": 0.037,
+      "thread_cpu_ms": 0.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1663,
+      "phase": "skill_activation",
+      "phase_id": 11,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1663,
+      "phase": "skill_activation",
+      "phase_id": 11,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1663,
+      "duration_ms": 0.025,
+      "thread_cpu_ms": 0.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1663,
+      "phase": "tool_evidence",
+      "phase_id": 12,
+      "parent_phase_id": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1703,
+      "phase": "tool_evidence",
+      "phase_id": 12,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1663,
+      "duration_ms": 40.217,
+      "thread_cpu_ms": 31.25,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1703,
+      "phase": "input_persistence",
+      "phase_id": 13,
+      "parent_phase_id": null
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 7.596,
+      "hold_ms": 8.237,
+      "parse_ms": null,
+      "byte_count": 312,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.058,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.078,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 7.758,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.045,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._append_user_event",
+      "event": "session_file",
+      "run_id": "offline-2",
+      "enclosing_phase_id": 13
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1742,
+      "phase": "accepted_rollout",
+      "phase_id": 14,
+      "parent_phase_id": 13
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 6.521,
+      "hold_ms": 6.42,
+      "parse_ms": null,
+      "byte_count": 236233,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.067,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.311,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 5.637,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.041,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._commit_accepted_user_input",
+      "event": "session_file",
+      "run_id": "offline-2",
+      "enclosing_phase_id": 14
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1856,
+      "phase": "accepted_rollout",
+      "phase_id": 14,
+      "parent_phase_id": 13,
+      "started_elapsed_ms": 1742,
+      "duration_ms": 113.241,
+      "thread_cpu_ms": 125.0,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1856,
+      "phase": "input_persistence",
+      "phase_id": 13,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1703,
+      "duration_ms": 152.824,
+      "thread_cpu_ms": 156.25,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1856,
+      "phase": "memory_retrieve",
+      "phase_id": 15,
+      "parent_phase_id": null
+    },
+    {
+      "session_key": "373cfec055aad2ff",
+      "cache_action": "hit",
+      "projection_kind": "recall",
+      "cache_miss_reason": null,
+      "query_wait_ms": 0.0,
+      "query_total_ms": 15.746,
+      "outcome": "success",
+      "event": "session_query",
+      "run_id": "offline-2",
+      "enclosing_phase_id": 15
+    },
+    {
+      "event": "memory_source",
+      "phase": "scope",
+      "duration_ms": 16.000000000076398,
+      "run_id": "offline-2",
+      "enclosing_phase_id": 15
+    },
+    {
+      "session_key": "373cfec055aad2ff",
+      "cache_action": "hit",
+      "projection_kind": "recall",
+      "cache_miss_reason": null,
+      "query_wait_ms": 0.0,
+      "query_total_ms": 15.237,
+      "outcome": "success",
+      "event": "session_query",
+      "run_id": "offline-2",
+      "enclosing_phase_id": 15
+    },
+    {
+      "session_key": "bb74ebf01628b8cd",
+      "cache_action": "hit",
+      "projection_kind": "recall",
+      "cache_miss_reason": null,
+      "query_wait_ms": 0.0,
+      "query_total_ms": 10.694,
+      "outcome": "success",
+      "event": "session_query",
+      "run_id": "offline-2",
+      "enclosing_phase_id": 15
+    },
+    {
+      "event": "memory_source",
+      "phase": "session_history",
+      "duration_ms": 61.99999999989814,
+      "run_id": "offline-2",
+      "enclosing_phase_id": 15
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1942,
+      "phase": "memory_retrieve",
+      "phase_id": 15,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1856,
+      "duration_ms": 86.228,
+      "thread_cpu_ms": 78.125,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "event": "memory_retrieve_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1942,
+      "duration_ms": 86
+    },
+    {
+      "event": "context_build_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1969,
+      "duration_ms": 27
+    },
+    {
+      "event": "llm_stream_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1978,
+      "call_index": 1
+    },
+    {
+      "event": "prepare_phase_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1978,
+      "phase": "provider_preparation",
+      "phase_id": 16,
+      "parent_phase_id": null
+    },
+    {
+      "event": "llm_request_start",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 1997,
+      "call_index": 1,
+      "enclosing_phase_id": 16
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 0.64,
+      "hold_ms": 1.611,
+      "parse_ms": null,
+      "byte_count": 391,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.05,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.083,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 1.251,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.032,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._stage_pending_rollout_request",
+      "event": "session_file",
+      "run_id": "offline-2",
+      "enclosing_phase_id": 16
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 6.513,
+      "hold_ms": 12.379,
+      "parse_ms": null,
+      "byte_count": 254654,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.079,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.635,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 11.156,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.04,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._stage_pending_rollout_request",
+      "event": "session_file",
+      "run_id": "offline-2",
+      "enclosing_phase_id": 16
+    },
+    {
+      "event": "prepare_phase_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 2048,
+      "phase": "provider_preparation",
+      "phase_id": 16,
+      "parent_phase_id": null,
+      "started_elapsed_ms": 1978,
+      "duration_ms": 69.688,
+      "thread_cpu_ms": 31.25,
+      "status": "ok",
+      "error_type": null
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 6.68,
+      "hold_ms": 1.34,
+      "parse_ms": null,
+      "byte_count": 202,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.06,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.088,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 0.964,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.031,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._publish_assistant_phase",
+      "event": "session_file",
+      "run_id": "offline-2"
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 6.392,
+      "hold_ms": 86.714,
+      "parse_ms": null,
+      "byte_count": 3413,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.058,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.125,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 86.196,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.051,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._commit_pending_model_request_state",
+      "event": "session_file",
+      "run_id": "offline-2"
+    },
+    {
+      "event": "llm_first_event",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 2673,
+      "call_index": 1
+    },
+    {
+      "event": "llm_first_text_delta",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 2673,
+      "call_index": 1
+    },
+    {
+      "event": "run_first_text_delta",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 2673,
+      "call_index": 1
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 8.552,
+      "hold_ms": 145.372,
+      "parse_ms": null,
+      "byte_count": 208,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.059,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.076,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 144.901,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.048,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._publish_assistant_phase",
+      "event": "session_file",
+      "run_id": "offline-2"
+    },
+    {
+      "event": "llm_stream_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 3002,
+      "duration_ms": 1024,
+      "call_index": 1
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 6.659,
+      "hold_ms": 1.377,
+      "parse_ms": null,
+      "byte_count": 3525,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.059,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.128,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 0.929,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.037,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._append_assistant_item_event",
+      "event": "session_file",
+      "run_id": "offline-2"
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 6.303,
+      "hold_ms": 34.977,
+      "parse_ms": null,
+      "byte_count": 4703,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.086,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.12,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 34.401,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.049,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation._run_tool_loop_body",
+      "event": "session_file",
+      "run_id": "offline-2"
+    },
+    {
+      "event": "conversation_done",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 3091,
+      "error_type": null
+    },
+    {
+      "session_file_operation": "append",
+      "session_key": "373cfec055aad2ff",
+      "wait_ms": 7.928,
+      "hold_ms": 1.418,
+      "parse_ms": null,
+      "byte_count": 436,
+      "outcome": "success",
+      "phases": {
+        "boundary": {
+          "wall_ms": 0.055,
+          "thread_cpu_ms": 0.0
+        },
+        "write_flush": {
+          "wall_ms": 0.055,
+          "thread_cpu_ms": 0.0
+        },
+        "fsync": {
+          "wall_ms": 1.042,
+          "thread_cpu_ms": 0.0
+        },
+        "version": {
+          "wall_ms": 0.038,
+          "thread_cpu_ms": 0.0
+        }
+      },
+      "caller": "agent.conversation.append_run_terminal_event",
+      "event": "session_file",
+      "run_id": "offline-2"
+    },
+    {
+      "event": "run_terminal",
+      "run_id": "offline-2",
+      "run_elapsed_ms": 3114
+    }
+  ],
+  "observations_truncated": false,
+  "tracked_overlay_sha256": {
+    "agent/src/agent/conversation.py": "a44e70882215714b3f19b7cba7cc9d7cfed5b1c8c11fd064cf5213a6f4b43776",
+    "agent/src/agent/memory_search/session_history_source.py": "653e03d12d30e9db18fa4960fac050f4577acaafdd16d97a6b3566d610abdf72",
+    "agent/src/agent/memory_search/session_source_order.py": "cc83162ca802e069365bb7cc16d1dd0b0571627787420e5720d78f7fc580ef17",
+    "agent/src/agent/sessions/query_observation.py": "6fd0be3244079a088397f0f695603ea5386cac735de8ba8e2bba1074f20bc67a",
+    "agent/src/agent/sessions/store.py": "fa83595f15f7fb7ccb9a1e55d3bb36ca3883cdf5efa5008f373120a6df859c5d",
+    "agent/src/agent/tools/builtin/conversation_history/tool.py": "f77cbb7cbca5c6ccbc752fdbd4efd064f227b669f2e1bf6952771ba98099e8d9",
+    "agent/tests/test_tool_calling_integration.py": "aebc6c35b3df5b4ed17e403eb0ff2391c8e486bbd65a751c3b3d483720f02ef1",
+    "docs/requirements/146-memory-recall-and-send-latency-governance/design.md": "365b3883489bc3b3ed8137319070fa28fd2fa7f436b9c80a06e2f2a72d0ac497",
+    "docs/requirements/146-memory-recall-and-send-latency-governance/evidence-index.md": "79d5d5e1ca1d1f0b5a854d072b54944fdcc987d40aace10fea29c457972e7c64",
+    "docs/requirements/146-memory-recall-and-send-latency-governance/progress.md": "26d39c972ebd1c94248d3f28f7ee8aa684b0d914c440dc3004c1635b9eea7fc9",
+    "memory/src/memory/search/contracts.py": "99a59148fcd4a19aa05b56b8e288066dc298f15ff5b330c190ce97f59b10bf28",
+    "scripts/README.md": "914d459fbf02eb2c3d4fb02055ef78cf2c848462e0348bf23b83f3a336ff366e",
+    "scripts/session-latency/offline_probe.py": "9ad434317443fbb205c30359ed96188deb2846a0f36027b6e77b9e11d3cfcee5",
+    "scripts/session-latency/run.ps1": "ff1c2a051c3168edbefd41c2ae2b5a6b8afede5be438e7d7e807a940ffc55c2a",
+    "scripts/session-latency/run.sh": "c3d7688e92b193d453b687c975828f951bbaff147f3c2288672c5d4d0064052a"
+  },
+  "untracked_overlay_sha256": {
+    "agent/src/agent/sessions/recall/__init__.py": "038e03ad69e4e446ec589e791915d34e2a0f06b0ea9693cbdf3843d43d8c0417",
+    "agent/src/agent/sessions/recall/index.py": "0e0876e650c44fd23447446ad7cbccf1b495ace04563d86a4cc55908822afd74",
+    "agent/src/agent/sessions/recall/snapshot.py": "9a86613acd582192d20406b5e0140c55644967de28596386e891c64f30feadef",
+    "agent/tests/test_session_recall.py": "fdd2740536c6123a166d520389b364281253eade52a306773cb97e02dfa19821"
+  }
+}

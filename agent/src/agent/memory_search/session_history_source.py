@@ -16,8 +16,9 @@ from memory.search import (
 )
 from memory.search.execution import CancelCheck, PreparedSearch, check_cancel
 
-from ..sessions import list_session_activity, query_session
+from ..sessions import list_session_activity
 from ..sessions.events import Event
+from ..sessions.recall import query_session_recall
 from ..sessions.store import SessionStore
 
 _EXCERPT_CHARS = 240
@@ -118,12 +119,14 @@ class SessionHistorySource:
         ranked: list[_RankedCandidate] = []
         for summary in summaries:
             check_cancel(cancel_check)
-            session = query_session(self._store, summary.session_id, cancel_check=cancel_check)
+            session = query_session_recall(
+                self._store, summary.session_id, cancel_check=cancel_check
+            )
             excluded_uuids = _current_turn_uuids(
                 session.events, summary.session_id, request, session.raw_event_indices
             )
             active_conversation: list[Event] = []
-            for event in session.active_events:
+            for event in session.events:
                 check_cancel(cancel_check)
                 if (
                     event.uuid not in excluded_uuids
@@ -217,13 +220,18 @@ def _current_turn_uuids(
     request: SearchRequest,
     raw_event_indices: Mapping[str, int],
 ) -> set[str]:
-    if request.session_id != session_id or request.current_turn_start_index is None:
+    if request.session_id != session_id:
         return set()
-    return {
-        event.uuid
-        for event in raw_events
-        if raw_event_indices[event.uuid] >= request.current_turn_start_index
-    }
+    boundary = request.current_turn_start_index
+    if request.current_turn_start_event_uuid is not None:
+        boundary = raw_event_indices.get(request.current_turn_start_event_uuid)
+        if boundary is None:
+            # A replaced/deleted source cannot establish this turn's boundary.
+            # Never widen current-session recall by falling back to an unrelated index.
+            return {event.uuid for event in raw_events}
+    if boundary is None:
+        return set()
+    return {event.uuid for event in raw_events if raw_event_indices[event.uuid] >= boundary}
 
 
 def _recall_content(event: Event) -> str | None:
