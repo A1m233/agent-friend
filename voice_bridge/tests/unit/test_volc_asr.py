@@ -46,9 +46,13 @@ def make_options() -> AsrStartOptions:
     )
 
 
-def make_server_response(text: str, *, is_last: bool = False) -> bytes:
+def make_server_response(
+    text: str, *, is_last: bool = False, utterances: list[dict[str, Any]] | None = None
+) -> bytes:
     payload = gzip.compress(
-        json.dumps({"result": {"text": text}}, ensure_ascii=False).encode("utf-8")
+        json.dumps({"result": {"text": text, "utterances": utterances}}, ensure_ascii=False).encode(
+            "utf-8"
+        )
     )
     flags = 0b0011 if is_last else 0b0001
     header = bytes([0x11, 0x90 | flags, 0x11, 0x00])
@@ -157,6 +161,30 @@ async def test_provider_session_streams_partial_and_final() -> None:
         AsrTranscriptEvent(type="final", text="你好"),
     ]
     assert fake_ws.closed
+
+
+@pytest.mark.asyncio
+async def test_provider_preserves_timing_updates_even_when_text_is_unchanged() -> None:
+    fake_ws = FakeVolcWebSocket()
+
+    async def fake_connect(uri: str, **kwargs: Any) -> FakeVolcWebSocket:
+        return fake_ws
+
+    provider = VolcAsrProvider(
+        VoiceBridgeSettings(volc_speech_app_id="app", volc_speech_access_token="token"),
+        connect_factory=fake_connect,
+    )
+    session = await provider.start(make_options())
+    utterances = [{"text": "你好", "start_time": 0, "end_time": 800}]
+    await fake_ws.to_receive.put(make_server_response("你好"))
+    await fake_ws.to_receive.put(make_server_response("你好", utterances=utterances))
+    await fake_ws.to_receive.put(make_server_response("你好", is_last=True, utterances=utterances))
+    events = [event async for event in session.events()]
+    assert len(events) == 3
+    assert not events[0].spans
+    assert events[1].spans[0].end_ms == 800
+    assert events[2].type == "final"
+    assert events[2].spans == events[1].spans
 
 
 @pytest.mark.asyncio

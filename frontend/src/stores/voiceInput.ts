@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { VoiceDraftSession } from "@/services/voiceInput/draftSession";
 
 import {
   connectVoiceInput,
@@ -27,6 +28,7 @@ import type {
 import { canStartVoiceInput, isVoiceInputLive } from "./voiceInputStateMachine";
 
 interface VoiceInputState extends VoiceInputSnapshot {
+  draftSession: VoiceDraftSession | null;
   prewarm: (reason?: string) => Promise<void>;
   start: (targetWorkspaceKey: string) => Promise<void>;
   stop: (reason?: "manual" | "send") => Promise<void>;
@@ -356,6 +358,7 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
         targetWorkspaceKey,
         text: event.text,
         seq: transcriptSeq,
+        spans: event.spans,
       };
       set({ latestTranscript, lastEventAt: nowMs() });
       return;
@@ -378,6 +381,7 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
 
   return {
     ...initialSnapshot(),
+    draftSession: null,
 
     async prewarm(reason = "composer_active") {
       if (isVoiceInputLive(get().phase)) return;
@@ -636,6 +640,7 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
 
     async cancel() {
       const state = get();
+      state.draftSession?.close();
       if (!isVoiceInputLive(state.phase)) return;
       logVoiceInputLatency("frontend_cancel", {
         traceId: state.traceId,

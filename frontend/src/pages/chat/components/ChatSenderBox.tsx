@@ -10,6 +10,7 @@ import { ChatSender } from "@tdesign-react/chat";
 import { cn } from "@/utils/cn";
 import { readStringEventValue } from "@/utils/webComponentEvents";
 import { extractClipboardFiles } from "./attachmentInput";
+import { findSenderTextarea, type ChatSenderEditorState } from "./chatSenderEditor";
 
 type ChatSenderProps = ComponentProps<typeof ChatSender>;
 
@@ -21,6 +22,8 @@ interface ChatSenderBoxProps extends ChatSenderProps {
   onNativePasteFiles?: (files: File[]) => void;
   shouldIgnoreNativeValueChange?: () => boolean;
   sendBlocked?: boolean;
+  onNativeEditorChange?: (state: ChatSenderEditorState) => void;
+  voiceSelection?: { text: string; caret: number } | null;
 }
 
 export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
@@ -32,30 +35,60 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
       onNativePasteFiles,
       shouldIgnoreNativeValueChange,
       sendBlocked = false,
+      onNativeEditorChange,
+      voiceSelection,
       children,
       ...props
     },
     forwardedRef,
   ) => {
     const senderRef = useRef<HTMLElement | null>(null);
+    const composingRef = useRef(false);
+    const restoringSelectionRef = useRef(false);
 
     // TDesign's React wrapper binds events through ref.current, so ChatSender must receive an object ref.
     useImperativeHandle(forwardedRef, () => senderRef.current!, []);
+
+    useEffect(() => {
+      if (!voiceSelection || !senderRef.current) return;
+      let active = true;
+      restoringSelectionRef.current = true;
+      // The React wrapper forwards value to its Web Component after React's
+      // layout phase. Restore after that update, without stealing focus.
+      queueMicrotask(() => {
+        if (!active) return;
+        const textarea = senderRef.current ? findSenderTextarea(senderRef.current) : null;
+        if (textarea?.value === voiceSelection.text && !composingRef.current) {
+          textarea.setSelectionRange(voiceSelection.caret, voiceSelection.caret);
+        }
+        restoringSelectionRef.current = false;
+      });
+      return () => { active = false; restoringSelectionRef.current = false; };
+    }, [voiceSelection, props.value]);
 
     useEffect(() => {
       const el = senderRef.current;
       if (!el) return;
       // TDesign chat-sender 的内部 keydown 未完整处理 IME composition。
       // 在 host 上用 capture listener 截住 composition Enter，让 IME 自己确认候选词。
-      let composing = false;
-      const onCompStart = () => {
-        composing = true;
+      const reportEditor = (event: Event) => {
+        if (restoringSelectionRef.current || shouldIgnoreNativeValueChange?.()) return;
+        const textarea = event.composedPath().find((target) => target instanceof HTMLTextAreaElement);
+        if (!(textarea instanceof HTMLTextAreaElement)) return;
+        onNativeEditorChange?.({
+          text: textarea.value, caret: textarea.selectionEnd, composing: composingRef.current,
+        });
       };
-      const onCompEnd = () => {
-        composing = false;
+      const onCompStart = (event: Event) => {
+        composingRef.current = true;
+        reportEditor(event);
+      };
+      const onCompEnd = (event: Event) => {
+        composingRef.current = false;
+        reportEditor(event);
       };
       const onKey = (e: KeyboardEvent) => {
-        const inIme = composing || e.isComposing || e.keyCode === 229 || e.key === "Process";
+        const inIme = composingRef.current || e.isComposing || e.keyCode === 229 || e.key === "Process";
         if ((e.key === "Enter" || e.key === "Process") && inIme) {
           e.stopPropagation();
           e.stopImmediatePropagation();
@@ -85,6 +118,7 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
 
       el.addEventListener("compositionstart", onCompStart, true);
       el.addEventListener("compositionend", onCompEnd, true);
+      for (const name of ["input", "select", "keyup", "mouseup"]) el.addEventListener(name, reportEditor, true);
       el.addEventListener("keydown", onKey, true);
       el.addEventListener("paste", onPaste, true);
       el.addEventListener("change", onNativeChange);
@@ -92,12 +126,13 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
       return () => {
         el.removeEventListener("compositionstart", onCompStart, true);
         el.removeEventListener("compositionend", onCompEnd, true);
+        for (const name of ["input", "select", "keyup", "mouseup"]) el.removeEventListener(name, reportEditor, true);
         el.removeEventListener("keydown", onKey, true);
         el.removeEventListener("paste", onPaste, true);
         el.removeEventListener("change", onNativeChange);
         el.removeEventListener("input", onNativeChange);
       };
-    }, [onNativePasteFiles, onNativeValueChange, shouldIgnoreNativeValueChange, props.loading, sendBlocked]);
+    }, [onNativeEditorChange, onNativePasteFiles, onNativeValueChange, shouldIgnoreNativeValueChange, props.loading, sendBlocked]);
 
     return (
       <div

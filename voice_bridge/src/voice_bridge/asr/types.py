@@ -24,11 +24,21 @@ class AsrStartOptions:
 
 
 @dataclass(frozen=True)
+class AsrTranscriptSpan:
+    """A timed piece of the formatted transcript; pieces concatenate to text."""
+
+    text: str
+    start_ms: int
+    end_ms: int
+
+
+@dataclass(frozen=True)
 class AsrTranscriptEvent:
     """Provider transcript event surfaced to the frontend."""
 
     type: Literal["partial", "final"]
     text: str
+    spans: tuple[AsrTranscriptSpan, ...] = ()
 
 
 @dataclass(frozen=True)

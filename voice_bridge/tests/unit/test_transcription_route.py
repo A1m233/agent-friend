@@ -19,6 +19,7 @@ from voice_bridge.asr import (
     AsrTranscriptEvent,
     DisabledAsrProvider,
 )
+from voice_bridge.asr.types import AsrTranscriptSpan
 from voice_bridge.assembly import VoiceBridgeRuntime
 from voice_bridge.calls import CallRegistry, VoiceCallEventHub
 from voice_bridge.clients import AgentBridgeClient
@@ -36,7 +37,11 @@ class FakeAsrSession:
     async def send_audio(self, chunk: bytes) -> None:
         self.audio_chunks.append(chunk)
         if len(self.audio_chunks) == 1:
-            await self._events.put(AsrTranscriptEvent(type="partial", text="你好"))
+            await self._events.put(
+                AsrTranscriptEvent(
+                    type="partial", text="你好", spans=(AsrTranscriptSpan("你好", 0, 900),)
+                )
+            )
 
     async def finish(self) -> None:
         self.finished = True
@@ -154,12 +159,14 @@ def test_transcription_stream_sends_partial_final_and_stopped(
             "type": "partial",
             "traceId": "trace-1",
             "text": "你好",
+            "spans": [{"text": "你好", "startMs": 0, "endMs": 900}],
         }
         ws.send_json({"type": "stop"})
         assert ws.receive_json() == {
             "type": "final",
             "traceId": "trace-1",
             "text": "你好世界",
+            "spans": [],
         }
         assert ws.receive_json() == {
             "type": "stopped",
@@ -308,6 +315,7 @@ def test_transcription_stream_queues_audio_before_provider_ready(
             "type": "partial",
             "traceId": "trace-early",
             "text": "你好",
+            "spans": [{"text": "你好", "startMs": 0, "endMs": 900}],
         }
         ws.send_json({"type": "stop"})
         assert ws.receive_json()["type"] == "final"
