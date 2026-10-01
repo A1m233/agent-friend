@@ -49,7 +49,7 @@ def _case() -> EvalCase:
 
 
 def test_ingest_then_retrieve_recalls(tmp_path: Path) -> None:
-    reply = '{"episodic_summary": null, "semantic_ops": [{"op": "add", "statement": "用户养了一只叫Tom的猫"}]}'
+    reply = '{"semantic_changes": [{"retirements": [], "new_facts": [{"statement": "用户养了一只叫Tom的猫", "reason": "test fixture"}]}], "core_updates": [], "episodic_entries": []}'
     memory = build_memory(tmp_path / "m.db", FakeLLM(reply))  # type: ignore[arg-type]
     try:
         ingest_case(memory, _case())
@@ -61,7 +61,7 @@ def test_ingest_then_retrieve_recalls(tmp_path: Path) -> None:
 
 
 def test_retrieve_empty_when_no_match(tmp_path: Path) -> None:
-    reply = '{"episodic_summary": null, "semantic_ops": []}'
+    reply = '{"semantic_changes": [], "core_updates": [], "episodic_entries": []}'
     memory = build_memory(tmp_path / "m.db", FakeLLM(reply))  # type: ignore[arg-type]
     try:
         ingest_case(memory, _case())

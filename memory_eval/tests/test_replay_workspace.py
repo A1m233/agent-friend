@@ -25,15 +25,16 @@ class FakeLLM:
         self.calls += 1
         return ModelResponse(
             text=(
-                '{"episodic_entries": [], "semantic_ops": '
-                '[{"op": "add", "statement": "用户养了一只叫Tom的猫"}]}'
+                '{"episodic_entries": [], "semantic_changes": [{"retirements": [], "new_facts": [{"statement": "用户养了一只叫Tom的猫", "reason": "test fixture"}]}], "core_updates": []}'
             )
         )
 
 
 class EmptyLLM:
     def generate(self, request: ModelRequest) -> ModelResponse:
-        return ModelResponse(text='{"episodic_entries": [], "semantic_ops": []}')
+        return ModelResponse(
+            text='{"episodic_entries": [], "semantic_changes": [], "core_updates": []}'
+        )
 
 
 class FakeProvider:

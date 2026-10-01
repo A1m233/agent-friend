@@ -33,6 +33,7 @@ from ..core_profile import (
     CoreFieldKey,
     CoreProfile,
     CoreProfileEntry,
+    CoreProfileError,
     CoreScopeKind,
     build_core_profile,
     normalize_core_value,
@@ -90,11 +91,37 @@ class ExtractionTransaction:
         validate_core_value(row.field_key, row.value)
         _insert_core_profile_entry(self._conn, row)
 
+    def core_has_later_boundary(
+        self, *, owner_user_id: str, persona_id: str, field_key: str, observed_at: datetime
+    ) -> bool:
+        rows = self._conn.execute(
+            "SELECT * FROM core_profile_entry WHERE owner_user_id=? AND persona_id=? "
+            "AND field_key=? AND deleted_at IS NULL",
+            (owner_user_id, persona_id, field_key),
+        ).fetchall()
+        for raw in rows:
+            row = _to_core_profile_entry(raw)
+            if row.valid_from > observed_at or (
+                row.valid_until is not None and row.valid_until > observed_at
+            ):
+                return True
+        return False
+
+    def semantic_starts_after(self, semantic_id: str, observed_at: datetime) -> bool:
+        row = self._conn.execute(
+            "SELECT valid_from, created_at FROM semantic WHERE id=?", (semantic_id,)
+        ).fetchone()
+        started = parse_ts(row["valid_from"] or row["created_at"])
+        assert started is not None
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        return started > observed_at
+
     def validate_core_profile(self, *, owner_user_id: str, persona_id: str) -> None:
         rows = self._conn.execute(
             """SELECT * FROM core_profile_entry
                WHERE owner_user_id = ?
-                 AND (scope_kind = 'user' OR (scope_kind = 'persona' AND persona_id = ?))
+                 AND (scope_kind != 'persona' OR persona_id = ?)
                  AND valid_until IS NULL AND deleted_at IS NULL""",
             (owner_user_id, persona_id),
         ).fetchall()
@@ -104,11 +131,11 @@ class ExtractionTransaction:
             persona_id=persona_id,
         )
 
-    def end_core(self, entry_id: str, ended_at: datetime) -> bool:
+    def end_core(self, entry_id: str, ended_at: datetime, *, written_at: datetime) -> bool:
         cur = self._conn.execute(
             """UPDATE core_profile_entry SET valid_until = ?, updated_at = ?
                WHERE id = ? AND valid_until IS NULL AND deleted_at IS NULL""",
-            (serialize_ts(ended_at), serialize_ts(ended_at), entry_id),
+            (serialize_ts(ended_at), serialize_ts(written_at), entry_id),
         )
         return cur.rowcount == 1
 
@@ -147,11 +174,11 @@ class ExtractionTransaction:
             (cur.lastrowid, tokens),
         )
 
-    def end_semantic(self, semantic_id: str, ended_at: datetime) -> bool:
+    def end_semantic(self, semantic_id: str, ended_at: datetime, *, written_at: datetime) -> bool:
         cur = self._conn.execute(
             """UPDATE semantic SET valid_until = ?, updated_at = ?
                WHERE id = ? AND valid_until IS NULL AND deleted_at IS NULL""",
-            (serialize_ts(ended_at), serialize_ts(ended_at), semantic_id),
+            (serialize_ts(ended_at), serialize_ts(written_at), semantic_id),
         )
         return cur.rowcount == 1
 
@@ -298,7 +325,7 @@ class SqliteMemoryStore:
             )
             rows = self._conn.execute(
                 "SELECT observation_id, payload, reason FROM extraction_pending "
-                "WHERE (? IS NULL OR sequence <= ?) ORDER BY sequence LIMIT ?",
+                "WHERE state = 'pending' AND (? IS NULL OR sequence <= ?) ORDER BY sequence LIMIT ?",
                 (through, through, limit),
             ).fetchall()
             return [(row[0], row[1], row[2]) for row in rows]
@@ -307,6 +334,15 @@ class SqliteMemoryStore:
         with self._lock, self._conn:
             self._conn.execute(
                 "DELETE FROM extraction_pending WHERE observation_id = ?", (observation_id,)
+            )
+
+    def block_pending_extraction(self, observation_id: str, error_code: str) -> None:
+        """Preserve an item-local failure for explicit repair, without scheduling it."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE extraction_pending SET state='blocked', error_code=?, blocked_at=? "
+                "WHERE observation_id=?",
+                (error_code, serialize_ts(datetime.now(UTC)), observation_id),
             )
 
     def extraction_cooldown(self) -> float:
@@ -322,7 +358,9 @@ class SqliteMemoryStore:
                 "INSERT OR REPLACE INTO schema_meta(key,value) VALUES ('extraction_not_before', ?)",
                 (str(not_before),),
             )
-            self._conn.execute("UPDATE extraction_pending SET reason = ?", (reason,))
+            self._conn.execute(
+                "UPDATE extraction_pending SET reason = ? WHERE state = 'pending'", (reason,)
+            )
 
     def invalidate_pending_extractions(
         self, session_id: str, event_uuids: set[str] | None = None
@@ -399,7 +437,7 @@ class SqliteMemoryStore:
                 rows = self._conn.execute(
                     """SELECT * FROM core_profile_entry
                        WHERE owner_user_id = ?
-                         AND (scope_kind = 'user' OR (scope_kind = 'persona' AND persona_id = ?))
+                         AND (scope_kind != 'persona' OR persona_id = ?)
                          AND valid_until IS NULL AND deleted_at IS NULL""",
                     (row.owner_user_id, row.persona_id),
                 ).fetchall()
@@ -435,7 +473,7 @@ class SqliteMemoryStore:
                 rows = self._conn.execute(
                     """SELECT * FROM core_profile_entry
                        WHERE owner_user_id = ?
-                         AND (scope_kind = 'user' OR (scope_kind = 'persona' AND persona_id = ?))
+                         AND (scope_kind != 'persona' OR persona_id = ?)
                          AND valid_until IS NULL AND deleted_at IS NULL""",
                     (row.owner_user_id, row.persona_id),
                 ).fetchall()
@@ -685,7 +723,7 @@ class SqliteMemoryStore:
                 semantic_rows = self._conn.execute(
                     """
                     SELECT id, provenance FROM semantic
-                    WHERE deleted_at IS NULL AND valid_until IS NULL
+                    WHERE deleted_at IS NULL
                     """
                 ).fetchall()
                 semantic_ids: list[str] = []
@@ -717,7 +755,7 @@ class SqliteMemoryStore:
 
                 core_rows = self._conn.execute(
                     """SELECT id, provenance FROM core_profile_entry
-                       WHERE deleted_at IS NULL AND valid_until IS NULL"""
+                       WHERE deleted_at IS NULL"""
                 ).fetchall()
                 core_ids: list[str] = []
                 for row in core_rows:
@@ -768,11 +806,7 @@ class SqliteMemoryStore:
     ) -> list[CoreProfileEntry]:
         """List user-global and current-persona Core Profile rows."""
         active = "" if include_history else " AND valid_until IS NULL AND deleted_at IS NULL"
-        scope = (
-            " AND (scope_kind = 'user' OR (scope_kind = 'persona' AND persona_id = ?))"
-            if persona_id is not None
-            else ""
-        )
+        scope = " AND (scope_kind != 'persona' OR persona_id = ?)" if persona_id is not None else ""
         params: tuple[object, ...] = (
             (owner_user_id, persona_id) if persona_id is not None else (owner_user_id,)
         )
@@ -1359,14 +1393,39 @@ def _to_episodic(r: sqlite3.Row) -> EpisodicRow:
 
 
 def _to_core_profile_entry(r: sqlite3.Row) -> CoreProfileEntry:
-    value = json.loads(r["value_json"])
+    # Only malformed persisted data is normalized; database errors remain visible.
+    try:
+        value = json.loads(r["value_json"])
+        provenance = json.loads(r["provenance"])
+    except (ValueError, TypeError) as exc:
+        raise CoreProfileError(f"invalid core JSON: {r['id']}") from exc
     if not isinstance(value, str):
-        raise ValueError(f"core profile value must be a string: {r['id']}")
-    valid_from = parse_ts(r["valid_from"])
-    created_at = parse_ts(r["created_at"])
-    updated_at = parse_ts(r["updated_at"])
-    if valid_from is None or created_at is None or updated_at is None:
-        raise ValueError(f"core profile timestamps are required: {r['id']}")
+        raise CoreProfileError(f"core profile value must be a string: {r['id']}")
+    if not isinstance(provenance, list) or any(not isinstance(ref, str) for ref in provenance):
+        raise CoreProfileError(f"invalid core provenance: {r['id']}")
+
+    def timestamp(column: str, *, required: bool = False) -> datetime | None:
+        raw = r[column]
+        if raw is None and not required:
+            return None
+        if not isinstance(raw, str):
+            raise CoreProfileError(f"invalid core timestamp: {r['id']} / {column}")
+        try:
+            parsed = parse_ts(raw)
+        except ValueError:
+            # Do not echo the persisted value through the chained exception log.
+            raise CoreProfileError(f"invalid core timestamp: {r['id']} / {column}") from None
+        if parsed is None or parsed.tzinfo is None:
+            raise CoreProfileError(f"invalid core timestamp: {r['id']} / {column}")
+        return parsed.astimezone(UTC)
+
+    valid_from = timestamp("valid_from", required=True)
+    created_at = timestamp("created_at", required=True)
+    updated_at = timestamp("updated_at", required=True)
+    valid_until = timestamp("valid_until")
+    assert valid_from is not None and created_at is not None and updated_at is not None
+    if valid_until is not None and valid_until < valid_from:
+        raise CoreProfileError(f"invalid core time interval: {r['id']}")
     return CoreProfileEntry(
         id=str(r["id"]),
         owner_user_id=str(r["owner_user_id"]),
@@ -1376,12 +1435,12 @@ def _to_core_profile_entry(r: sqlite3.Row) -> CoreProfileEntry:
         value=value,
         normalized_value=str(r["normalized_value"]),
         valid_from=valid_from,
-        valid_until=parse_ts(r["valid_until"]),
+        valid_until=valid_until,
         supersedes_id=r["supersedes_id"],
-        provenance=tuple(json.loads(r["provenance"])),
+        provenance=tuple(provenance),
         created_at=created_at,
         updated_at=updated_at,
-        deleted_at=parse_ts(r["deleted_at"]),
+        deleted_at=timestamp("deleted_at"),
     )
 
 
@@ -1532,7 +1591,16 @@ def _premigrate_schema(conn: sqlite3.Connection) -> bool:
             "ALTER TABLE extraction_commit ADD COLUMN output_contract_version "
             "INTEGER NOT NULL DEFAULT 1"
         )
-    _migrate_legacy_pinned(conn)
+    if current < 7:
+        _migrate_legacy_pinned(conn)
+    if _table_exists(conn, "extraction_pending"):
+        for column, declaration in (
+            ("state", "TEXT NOT NULL DEFAULT 'pending'"),
+            ("error_code", "TEXT"),
+            ("blocked_at", "TEXT"),
+        ):
+            if _column_missing(conn, "extraction_pending", column):
+                conn.execute(f"ALTER TABLE extraction_pending ADD COLUMN {column} {declaration}")
     return need_token_backfill
 
 

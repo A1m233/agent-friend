@@ -67,6 +67,7 @@ def build_factorial_corpora(
             prompt=prompt,
             on_attempt=captured[name].append,
             normalize_metadata=name != "E0",
+            allow_legacy_output=True,  # Historical E0/E1 contracts are explicit replay inputs.
         )
         for name, prompt in variants.items()
     }

@@ -86,7 +86,7 @@ class WitnessFakeLLM:
             transform_identity="test:v1",
         )
         return ModelResponse(
-            text='{"core_updates":[],"semantic_ops":[],"episodic_entries":[]}',
+            text='{"core_updates": [], "episodic_entries": [], "semantic_changes": []}',
             usage=LLMUsage(prompt_tokens=100),
             diagnostics=LLMResponseDiagnostics(
                 request_witness=witness,
@@ -166,6 +166,34 @@ _BASE_OUTPUT = (
     '"speaker_origin":"agent","reason":"目标片段给出了正确方向"}]}],'
     '"episodic_entries":["AI承认此前理解错误并说明正确指南"]}'
 )
+
+
+@pytest.mark.parametrize("allow_retries", [True, False])
+def test_memory_response_wait_is_ten_minutes_without_changing_other_calls(
+    allow_retries: bool,
+) -> None:
+    from llm_providers.timeouts import resolve_timeout_policy
+
+    llm = ScriptedFakeLLM([_BASE_OUTPUT, '{"semantic_changes":[]}'])
+    output = Extractor(llm).extract(
+        _fragment_with_semantic_context(), [], allow_retries=allow_retries
+    )
+    assert output.failure_code is None
+    assert len(llm.requests) == 2
+    default = resolve_timeout_policy({}, {}, streaming=False)
+    for request in llm.requests:
+        policy = resolve_timeout_policy(
+            {}, request.settings, streaming=False, explicit=request.control.timeout_policy
+        )
+        assert policy.response_seconds == 600
+        assert policy.connect_seconds == default.connect_seconds == 15
+        assert policy.write_seconds == default.write_seconds == 90
+        assert policy.idle_seconds == default.idle_seconds == 90
+        assert request.control.allow_retries is allow_retries
+        assert request.control.deadline_monotonic is None
+        assert "timeout" not in request.settings
+    assert resolve_timeout_policy({}, {}, streaming=False).response_seconds == 90
+    assert resolve_timeout_policy({}, {}, streaming=True).response_seconds == 300
 
 
 def test_semantic_reconciliation_only_replaces_semantic_changes() -> None:
@@ -399,11 +427,7 @@ def test_core_relationship_prompt_uses_semantic_boundary_examples() -> None:
 
 def test_extractor_parses_core_first_and_exact_semantic_reference() -> None:
     output = _parse_output(
-        '{"core_updates":[{"op":"add","field":"user.preferred_name","value":"小陈",'
-        '"reason":"用户明确指定称呼，属于核心称呼字段"}],'
-        '"semantic_ops":[{"op":"supersede","target_ref":"M001",'
-        '"statement":"用户目前在字节跳动工作","reason":"雇主不属于Core字段"}],'
-        '"episodic_entries":["用户希望被称为小陈"]}'
+        '{"core_updates": [{"op": "add", "field": "user.preferred_name", "value": "小陈", "reason": "用户明确指定称呼，属于核心称呼字段"}], "episodic_entries": ["用户希望被称为小陈"], "semantic_changes": [{"retirements": [{"target_ref": "M001", "reason": "雇主不属于Core字段"}], "new_facts": [{"statement": "用户目前在字节跳动工作", "reason": "雇主不属于Core字段"}]}]}'
     )
     assert output.core_updates == [
         CoreUpdate(
@@ -413,14 +437,13 @@ def test_extractor_parses_core_first_and_exact_semantic_reference() -> None:
             reason="用户明确指定称呼，属于核心称呼字段",
         )
     ]
-    assert output.semantic_ops[0].target_ref == "M001"
+    assert output.semantic_changes[0].retirements[0].target_ref == "M001"
     assert output.episodic_entries == ["用户希望被称为小陈"]
 
 
 def test_current_extraction_schema_rejects_operations_without_reasons() -> None:
     output = _parse_output(
-        '{"core_updates":[{"op":"add","field":"relationship.kind",'
-        '"value":"创作伙伴"}],"semantic_ops":[],"episodic_entries":[]}'
+        '{"core_updates": [{"op": "add", "field": "relationship.kind", "value": "创作伙伴"}], "episodic_entries": [], "semantic_changes": []}'
     )
     assert output.validation_error == "invalid_operation_shape_or_reason"
     store = SqliteMemoryStore(":memory:")
@@ -437,7 +460,7 @@ def test_extractor_renders_full_core_and_reference_addressable_semantic() -> Non
     store = SqliteMemoryStore(":memory:")
     store.add_semantic(_semantic("old-job", "用户目前在腾讯工作"))
     context = ExtractionContextBuilder(store).build(_fragment())
-    llm = FakeLLM('{"core_updates":[],"semantic_ops":[],"episodic_entries":[]}')
+    llm = FakeLLM('{"core_updates": [], "episodic_entries": [], "semantic_changes": []}')
     Extractor(llm, prompt="prompt").extract(_fragment(), context)  # type: ignore[arg-type]
     rendered = str(llm.messages[1]["content"])
     assert "[M001] 用户目前在腾讯工作" in rendered
@@ -717,9 +740,7 @@ def test_single_core_field_requires_replace_and_matching_c_ref() -> None:
 def test_worker_reports_rejected_batch_without_writing() -> None:
     store = SqliteMemoryStore(":memory:")
     llm = FakeLLM(
-        '{"core_updates":[],"semantic_ops":[{"op":"supersede",'
-        '"target_ref":"M404","statement":"无目标的新事实",'
-        '"reason":"普通长期事实"}],"episodic_entries":[]}'
+        '{"core_updates": [], "episodic_entries": [], "semantic_changes": [{"retirements": [{"target_ref": "M404", "reason": "普通长期事实"}], "new_facts": [{"statement": "无目标的新事实", "reason": "普通长期事实"}]}]}'
     )
     results: list[ExtractionResult] = []
     worker = AsyncExtractionWorker(
@@ -740,8 +761,7 @@ def test_worker_reports_rejected_batch_without_writing() -> None:
 def test_worker_rejects_missing_reason_without_committing_episode() -> None:
     store = SqliteMemoryStore(":memory:")
     llm = FakeLLM(
-        '{"core_updates":[{"op":"add","field":"relationship.kind",'
-        '"value":"创作伙伴"}],"semantic_ops":[],"episodic_entries":["用户定义了关系"]}'
+        '{"core_updates": [{"op": "add", "field": "relationship.kind", "value": "创作伙伴"}], "episodic_entries": ["用户定义了关系"], "semantic_changes": []}'
     )
     results: list[ExtractionResult] = []
     worker = AsyncExtractionWorker(

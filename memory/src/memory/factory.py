@@ -114,7 +114,12 @@ def build_memory(
     prompt = extractor_prompt
     if prompt is None and not extraction_keep_specifics:
         prompt = _LEGACY_EXTRACT_PROMPT.read_text(encoding="utf-8")
-    extractor = Extractor(llm_client, prompt=prompt, on_attempt=on_extraction_attempt)
+    extractor = Extractor(
+        llm_client,
+        prompt=prompt,
+        on_attempt=on_extraction_attempt,
+        allow_legacy_output=extractor_prompt is None and not extraction_keep_specifics,
+    )
 
     reconciler = Reconciler(store)
     retrieval = KeywordRetrieval(store)
