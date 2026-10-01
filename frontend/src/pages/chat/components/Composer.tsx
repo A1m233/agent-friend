@@ -27,7 +27,8 @@ import type { DraftAttachmentState } from "@/stores/drafts";
 import type { ChatTextReference } from "@/types/chat";
 import { useVoiceInputStore } from "@/stores/voiceInput";
 import { isVoiceInputLive } from "@/stores/voiceInputStateMachine";
-import { joinVoiceDraft, transcriptDeltaAfterConsumed } from "@/services/voiceInput/draft";
+import { VoiceDraftSession } from "@/services/voiceInput/draftSession";
+import { findSenderTextarea } from "./chatSenderEditor";
 import { cn } from "@/utils/cn";
 import { readStringEventValue } from "@/utils/webComponentEvents";
 import { CHAT_CONTENT_CONTAINER_CLASS } from "../layout";
@@ -36,6 +37,7 @@ import {
   type AttachmentImagePreview,
 } from "./AttachmentImageViewer";
 import { ChatSenderBox } from "./ChatSenderBox";
+import { useVoiceDraft } from "./useVoiceDraft";
 import { VoiceInputAction } from "./VoiceInputAction";
 import { ConversationModelSelector } from "./ConversationModelSelector";
 import { SessionApprovalModeControl } from "./SessionApprovalModeControl";
@@ -93,13 +95,6 @@ export interface ComposerHandle {
 const EMPTY_DRAFT_ATTACHMENTS: DraftAttachmentState[] = [];
 const EMPTY_DRAFT_REFERENCES: ChatTextReference[] = [];
 
-interface VoiceDraftSegment {
-  workspaceKey: string;
-  traceId: string;
-  baseText: string;
-  consumedTranscript: string;
-}
-
 function effectiveMediaType(file: File): string {
   if (file.type) return file.type;
   return file.name.toLowerCase().endsWith(".txt") ? "text/plain" : "application/octet-stream";
@@ -130,7 +125,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const voiceInputError = useVoiceInputStore((s) => s.error);
   const voiceInputErrorCode = useVoiceInputStore((s) => s.errorCode);
   const voiceInputLastEventAt = useVoiceInputStore((s) => s.lastEventAt);
-  const latestVoiceTranscript = useVoiceInputStore((s) => s.latestTranscript);
   const acknowledgeVoiceTranscript = useVoiceInputStore((s) => s.acknowledgeTranscript);
   const prewarmVoiceInput = useVoiceInputStore((s) => s.prewarm);
   const startVoiceInput = useVoiceInputStore((s) => s.start);
@@ -151,7 +145,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const draftReferences = useDraftStore(
     (state) => state.workspaces[workspaceKey]?.references ?? EMPTY_DRAFT_REFERENCES,
   );
-  const setWorkspaceText = useDraftStore((state) => state.setText);
   const addDraftAttachment = useDraftStore((state) => state.addAttachment);
   const updateDraftAttachment = useDraftStore((state) => state.updateAttachment);
   const removeDraftAttachment = useDraftStore((state) => state.removeAttachment);
@@ -169,9 +162,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentImagePreview | null>(null);
   const draftTextRef = useRef("");
   const submittedValueEchoRef = useRef<{ workspaceKey: string; value: string } | null>(null);
-  const voiceSegmentRef = useRef<VoiceDraftSegment | null>(null);
-  const applyingVoiceDraftRef = useRef(false);
-  const sentVoiceTraceIdsRef = useRef(new Set<string>());
   const lastVoiceErrorToastKeyRef = useRef<string | null>(null);
   const voiceErrorToastReadyRef = useRef(false);
   const voiceInputLive = isVoiceInputLive(voiceInputPhase);
@@ -410,52 +400,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     return key === draftKey(conversation.currentSessionId);
   }, []);
 
-  const applyDraftText = useCallback((next: string, source: "user" | "voice" | "send") => {
-    if (!isWorkspaceWritable(workspaceKey)) return;
-    const submittedEcho = submittedValueEchoRef.current;
-    if (
-      source === "user"
-      && submittedEcho?.workspaceKey === workspaceKey
-      && submittedEcho.value === next
-    ) {
-      return;
-    }
-    draftTextRef.current = next;
-    if (source === "user") {
-      const voiceState = useVoiceInputStore.getState();
-      if (voiceState.traceId && isVoiceInputLive(voiceState.phase)) {
-        const currentSegment = voiceSegmentRef.current;
-        if (!currentSegment || currentSegment.workspaceKey === workspaceKey) {
-          const consumedTranscript =
-            voiceState.latestTranscript?.traceId === voiceState.traceId
-              ? voiceState.latestTranscript.text
-              : currentSegment?.traceId === voiceState.traceId
-                ? currentSegment.consumedTranscript
-                : "";
-          voiceSegmentRef.current = {
-            workspaceKey,
-            traceId: voiceState.traceId,
-            baseText: next,
-            consumedTranscript,
-          };
-        }
-      } else if (voiceSegmentRef.current?.workspaceKey === workspaceKey) {
-        voiceSegmentRef.current = null;
-      }
-    }
-    if (source === "voice") {
-      applyingVoiceDraftRef.current = true;
-    }
-    setWorkspaceText(workspaceKey, next);
-  }, [isWorkspaceWritable, setWorkspaceText, workspaceKey]);
-
   useEffect(() => {
     draftTextRef.current = draftText;
-  }, [draftText]);
-
-  useEffect(() => {
-    if (!applyingVoiceDraftRef.current) return;
-    applyingVoiceDraftRef.current = false;
   }, [draftText]);
 
   useEffect(() => {
@@ -475,13 +421,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
     return () => window.clearInterval(intervalId);
   }, [prewarmVoiceInput, voiceInputDisabled, voiceInputLive]);
-
-  useEffect(() => {
-    const segment = voiceSegmentRef.current;
-    if (!voiceInputLive || !segment || segment.workspaceKey === workspaceKey) return;
-    voiceSegmentRef.current = null;
-    void stopVoiceInput("manual");
-  }, [stopVoiceInput, voiceInputLive, workspaceKey]);
 
   useEffect(() => {
     const el = rootRef.current;
@@ -509,52 +448,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     };
   }, [onHeightChange]);
 
-  useEffect(() => {
-    if (!latestVoiceTranscript) return;
-    if (sentVoiceTraceIdsRef.current.has(latestVoiceTranscript.traceId)) {
-      acknowledgeVoiceTranscript(latestVoiceTranscript.seq);
-      return;
-    }
-    let segment = voiceSegmentRef.current;
-    if (!segment || (segment.traceId && segment.traceId !== latestVoiceTranscript.traceId)) {
-      segment = {
-        workspaceKey: latestVoiceTranscript.targetWorkspaceKey,
-        traceId: latestVoiceTranscript.traceId,
-        baseText:
-          useDraftStore.getState().workspaces[latestVoiceTranscript.targetWorkspaceKey]?.text ?? "",
-        consumedTranscript: "",
-      };
-      voiceSegmentRef.current = segment;
-    } else if (!segment.traceId) {
-      segment = { ...segment, traceId: latestVoiceTranscript.traceId };
-      voiceSegmentRef.current = segment;
-    }
-    const transcript = transcriptDeltaAfterConsumed(
-      latestVoiceTranscript.text,
-      segment.consumedTranscript,
-    );
-    const next = joinVoiceDraft(segment.baseText, transcript);
-    const targetText = useDraftStore.getState().workspaces[segment.workspaceKey]?.text ?? "";
-    if (next !== targetText && isWorkspaceWritable(segment.workspaceKey)) {
-      setWorkspaceText(segment.workspaceKey, next);
-      if (segment.workspaceKey === workspaceKey) draftTextRef.current = next;
-    }
-    if (latestVoiceTranscript.kind === "final") {
-      voiceSegmentRef.current = {
-        workspaceKey: segment.workspaceKey,
-        traceId: latestVoiceTranscript.traceId,
-        baseText: next,
-        consumedTranscript: latestVoiceTranscript.text,
-      };
-    }
-    acknowledgeVoiceTranscript(latestVoiceTranscript.seq);
-  }, [
-    acknowledgeVoiceTranscript,
-    isWorkspaceWritable,
-    latestVoiceTranscript,
-    setWorkspaceText,
-    workspaceKey,
-  ]);
+  const shouldIgnoreVoiceEdit = useCallback((text: string) => {
+    const echo = submittedValueEchoRef.current;
+    return echo?.workspaceKey === workspaceKey && echo.value === text;
+  }, [workspaceKey]);
+  const { voiceSelection, handleEditorChange, handleTextChange } = useVoiceDraft(
+    workspaceKey, isWorkspaceWritable, draftTextRef, shouldIgnoreVoiceEdit,
+  );
 
   useEffect(() => {
     if (!voiceErrorToastReadyRef.current) {
@@ -598,7 +498,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
     void (async () => {
       const voiceState = useVoiceInputStore.getState();
-      const voiceTargetsSubmission = voiceSegmentRef.current?.workspaceKey === workspaceKey;
+      const voiceTargetsSubmission = useVoiceInputStore.getState().draftSession?.workspaceKey === workspaceKey;
+      if (voiceTargetsSubmission) voiceState.draftSession?.close();
       if (isVoiceInputLive(voiceState.phase) && voiceTargetsSubmission) {
         await stopVoiceInput("send");
       }
@@ -653,13 +554,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       });
 
       if (voiceState.traceId && voiceTargetsSubmission) {
-        sentVoiceTraceIdsRef.current.add(voiceState.traceId);
         const pendingTranscript = useVoiceInputStore.getState().latestTranscript;
         if (pendingTranscript?.traceId === voiceState.traceId) {
           acknowledgeVoiceTranscript(pendingTranscript.seq);
         }
       }
-      if (voiceTargetsSubmission) voiceSegmentRef.current = null;
+      if (voiceTargetsSubmission) useVoiceInputStore.getState().draftSession?.close();
       draftTextRef.current = "";
       // The conversation store settles the submission from durable acceptance or
       // explicit rejection. A disconnected completion alone cannot decide this.
@@ -672,19 +572,17 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       void stopVoiceInput("manual");
       return;
     }
-    voiceSegmentRef.current = {
-      workspaceKey,
-      traceId: "",
-      baseText: draftTextRef.current,
-      consumedTranscript: "",
-    };
+    const textarea = senderRef.current ? findSenderTextarea(senderRef.current) : null;
+    useVoiceInputStore.setState({
+      draftSession: new VoiceDraftSession(workspaceKey, draftTextRef.current, textarea?.selectionEnd ?? draftTextRef.current.length),
+    });
     void startVoiceInput(workspaceKey);
   };
 
   const handleCancelEditing = () => {
-    if (voiceSegmentRef.current?.workspaceKey === workspaceKey && voiceInputLive) {
+    if (useVoiceInputStore.getState().draftSession?.workspaceKey === workspaceKey && voiceInputLive) {
       void stopVoiceInput("manual");
-      voiceSegmentRef.current = null;
+      useVoiceInputStore.getState().draftSession?.close();
     }
     cancelEditing();
   };
@@ -755,13 +653,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                       ? "修改后重新发送"
                       : "说点什么…（Enter 发送）"
               }
-              shouldIgnoreNativeValueChange={() => applyingVoiceDraftRef.current}
-              onNativeValueChange={(value) => applyDraftText(value, "user")}
+              onNativeValueChange={handleTextChange}
+              onNativeEditorChange={handleEditorChange}
+              voiceSelection={voiceSelection}
               onNativePasteFiles={(files) => void addFiles(files)}
               onChange={(e) => {
                 const value = readStringEventValue(e);
-                if (value === null || applyingVoiceDraftRef.current) return;
-                applyDraftText(value, "user");
+                if (value === null) return;
+                handleTextChange(value);
               }}
               onSend={(e) => submit(e.detail.value)}
               onStop={() => {

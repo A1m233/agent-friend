@@ -358,6 +358,10 @@ def register_transcription_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> 
                                     "type": "partial",
                                     "traceId": trace_id,
                                     "text": event.text,
+                                    "spans": [
+                                        {"text": s.text, "startMs": s.start_ms, "endMs": s.end_ms}
+                                        for s in event.spans
+                                    ],
                                 }
                             )
                         elif event.type == "final":
@@ -373,6 +377,10 @@ def register_transcription_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> 
                                     "type": "final",
                                     "traceId": trace_id,
                                     "text": event.text,
+                                    "spans": [
+                                        {"text": s.text, "startMs": s.start_ms, "endMs": s.end_ms}
+                                        for s in event.spans
+                                    ],
                                 }
                             )
                 except AsrProviderError as e:

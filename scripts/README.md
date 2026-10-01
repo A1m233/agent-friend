@@ -8,6 +8,7 @@
 
 | 脚本 | 用途 | mac/linux | Windows |
 |---|---|---|---|
+| voice-input-desktop | 向已核对身份的真实 Tauri 聊天 WebView 注入模拟转写，验证改字、光标与合成 IME 事件；恢复内存草稿、不发消息、不调用 ASR。先经 desktop-visual 启动并打开聊天窗口；需 CDP，当前主要用于 Windows/WebView2 | `./scripts/voice-input-desktop/run.sh NEW_OUTPUT_DIR [CDP_URL]` | `.\scripts\voice-input-desktop\run.ps1 NEW_OUTPUT_DIR [CDP_URL]` |
 | session-memory | 对指定隔离会话副本做离线独立进程内存测量，不写输入、不调用模型；`--output` 必须新建，跨平台私有提交指标不可用时报告 null | `./scripts/session-memory/run.sh --directory PRIVATE_DIR --session-id ID --output NEW_JSON` | `.\scripts\session-memory\run.ps1 --directory PRIVATE_DIR --session-id ID --output NEW_JSON` |
 | execution-environment | 准备、校验及离线 PDF/PowerShell smoke；自带 PowerShell 7、Poppler、PDF Python wheel 基线，工作树外缓存，发行包当前限 Windows x64，其他平台明确报告不支持 | `./scripts/execution-environment/run.sh prepare\|verify\|smoke [--offline]` | `.\scripts\execution-environment\run.ps1 prepare\|verify\|smoke [--offline]` |
 | desktop-application | 原生桌面启动助手构建、测试与 Job 隔离 smoke；smoke 只启动自有夹具，非 Windows 明确不支持 | `./scripts/desktop-application/run.sh build\|test\|smoke` | `.\scripts\desktop-application\run.ps1 build\|test\|smoke` |

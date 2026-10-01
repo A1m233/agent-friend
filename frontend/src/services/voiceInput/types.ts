@@ -14,8 +14,8 @@ export interface VoiceInputAudioOptions {
 
 export type ServerVoiceInputEvent =
   | { type: "ready"; traceId: string }
-  | { type: "partial"; traceId: string; text: string; stableText?: string }
-  | { type: "final"; traceId: string; text: string }
+  | { type: "partial"; traceId: string; text: string; stableText?: string; spans?: VoiceTranscriptSpan[] }
+  | { type: "final"; traceId: string; text: string; spans?: VoiceTranscriptSpan[] }
   | {
       type: "stopped";
       traceId: string;
@@ -23,12 +23,19 @@ export type ServerVoiceInputEvent =
     }
   | { type: "error"; traceId: string; code: string; message: string };
 
+export interface VoiceTranscriptSpan {
+  text: string;
+  startMs: number;
+  endMs: number;
+}
+
 export interface VoiceInputTranscript {
   kind: "partial" | "final";
   traceId: string;
   targetWorkspaceKey: string;
   text: string;
   seq: number;
+  spans?: VoiceTranscriptSpan[];
 }
 
 export interface VoiceInputSnapshot {

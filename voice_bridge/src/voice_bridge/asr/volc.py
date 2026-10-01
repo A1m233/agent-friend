@@ -23,6 +23,7 @@ from websockets.asyncio.client import connect
 
 from ..latency import log_latency, monotonic_ms
 from ..settings import VoiceBridgeSettings
+from .transcript_spans import extract_transcript_spans
 from .types import (
     AsrPrewarmOptions,
     AsrPrewarmResult,
@@ -323,7 +324,7 @@ class VolcAsrSession:
         self._websocket = websocket
         self._options = options
         self._pending_audio: bytes | None = None
-        self._last_text = ""
+        self._last_event: AsrTranscriptEvent | None = None
         self._closed = False
 
     async def start(self) -> None:
@@ -367,12 +368,20 @@ class VolcAsrSession:
                         break
                     continue
                 if parsed.is_last:
-                    event = AsrTranscriptEvent(type="final", text=text)
+                    event = AsrTranscriptEvent(
+                        type="final",
+                        text=text,
+                        spans=extract_transcript_spans(parsed.payload, text),
+                    )
                 else:
-                    event = AsrTranscriptEvent(type="partial", text=text)
-                if event.type == "partial" and text == self._last_text:
+                    event = AsrTranscriptEvent(
+                        type="partial",
+                        text=text,
+                        spans=extract_transcript_spans(parsed.payload, text),
+                    )
+                if event == self._last_event:
                     continue
-                self._last_text = text
+                self._last_event = event
                 yield event
                 if parsed.is_last:
                     break

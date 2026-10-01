@@ -7,12 +7,3 @@ export function joinVoiceDraft(baseText: string, transcript: string): string {
   }
   return `${baseText}${transcript}`;
 }
-
-export function transcriptDeltaAfterConsumed(
-  transcript: string,
-  consumedTranscript: string,
-): string {
-  if (!consumedTranscript) return transcript;
-  if (transcript.length <= consumedTranscript.length) return "";
-  return transcript.slice(consumedTranscript.length);
-}

@@ -270,12 +270,14 @@ describe("voice input store", () => {
     await useVoiceInputStore.getState().start("session-a");
     const traceId = useVoiceInputStore.getState().traceId ?? "trace-1";
 
-    emitServerEvent({ type: "partial", traceId, text: "第一段" });
+    const spans = [{ text: "第一段", startMs: 0, endMs: 1000 }];
+    emitServerEvent({ type: "partial", traceId, text: "第一段", spans });
     const partial = useVoiceInputStore.getState().latestTranscript;
     expect(partial).toMatchObject({
       traceId,
       targetWorkspaceKey: "session-a",
       text: "第一段",
+      spans,
     });
 
     emitServerEvent({ type: "final", traceId, text: "第一段完成" });
