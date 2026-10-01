@@ -6,6 +6,10 @@
  * 在 styles/index.css 之后加载，TDesign 自己的 :root 默认值也不会盖掉这里。
  */
 #root {
+  /* 公开字体变量可继承到 Shadow DOM；与页面、控件共用同一字体源。 */
+  --td-font-family: var(--font-sans);
+  --td-font-family-medium: var(--font-sans);
+
   /*
    * TDesign 把字重封进完整 font shorthand；在稳定公开变量上接入项目字重梯度，
    * 让普通正文、强调文字和标题与 Tailwind / shadcn 使用同一套权重。

@@ -47,7 +47,7 @@ export function GlobalConversationSearchProvider({ children }: { children: React
     () => ({
       animations: { enterMs: 120, exitMs: 90 },
       disableScrollbarManagement: true,
-      toggleShortcut: "$mod+f",
+      toggleShortcut: "$mod+Shift+f",
     }),
     [],
   );

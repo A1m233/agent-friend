@@ -3,6 +3,7 @@
 @import "./theme/light.css";
 @import "./theme/dark.css";
 @import "./vendor/tdesign-chat.css";
+@import "./vendor/sonner.css";
 
 /*
  * 本项目换肤走 html[theme]（见 theme/*.css），不使用 Tailwind 的 .dark 策略。
@@ -45,13 +46,19 @@
 
   /* 字体 */
   --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
 
   /* 字号 */
   --text-xs: var(--font-size-xs);
+  --text-xs--line-height: var(--line-height-xs);
   --text-sm: var(--font-size-sm);
+  --text-sm--line-height: var(--line-height-sm);
   --text-base: var(--font-size-base);
+  --text-base--line-height: var(--line-height-base);
   --text-lg: var(--font-size-lg);
+  --text-lg--line-height: var(--line-height-lg);
   --text-xl: var(--font-size-xl);
+  --text-xl--line-height: var(--line-height-xl);
   --text-notification: var(--font-size-notification);
 
   /* 字重 */
@@ -62,6 +69,8 @@
 
   /* 行高（Tailwind token 命名是 --leading-{档}） */
   --leading-snug: var(--line-height-snug);
+
+  --spacing-tool-activity: var(--size-chat-tool-activity-max-height);
 
   /* 字间距（Tailwind token 命名是 --tracking-{档}） */
   --tracking-wide: var(--letter-spacing-wide);
@@ -96,8 +105,14 @@ body {
   /* 普通窗口默认不透明；pet/bubble 这类异形窗口通过 HTML 标记显式 opt-in 透明。 */
   background: var(--bg);
   color: var(--fg);
-  font-family: var(--font-sans);
-  font-weight: var(--font-weight-normal);
+  font: var(--font-body);
+}
+
+@layer base {
+  /* 快捷键是界面标签，避免浏览器默认的等宽字体与相邻文字基线分裂。 */
+  kbd {
+    font: var(--font-keyboard);
+  }
 }
 
 b,

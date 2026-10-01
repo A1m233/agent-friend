@@ -256,8 +256,8 @@ export function HistorySidebar({
   const workspaceTarget = useWorkspaceNavigationStore((state) => state.target);
   const navigateWorkspace = useWorkspaceNavigationStore((state) => state.navigate);
   const searchShortcutLabel = /Mac|iPod|iPhone|iPad/.test(navigator.platform)
-    ? "⌘ F"
-    : "Ctrl F";
+    ? "⌘+Shift+F"
+    : "Ctrl+Shift+F";
 
   const handleOpenSession = useCallback(
     (sessionId: string) => {
@@ -461,7 +461,7 @@ export function HistorySidebar({
               onClick={() => searchPalette.toggle()}
             >
               <Search />
-              <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+              <span className="flex min-w-0 flex-1 items-center justify-between gap-1">
                 <span className="truncate">搜索全部对话</span>
                 <kbd className="shrink-0 rounded border border-border bg-surface px-1.5 py-0.5 text-xs text-muted">
                   {searchShortcutLabel}

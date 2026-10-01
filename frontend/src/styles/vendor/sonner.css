@@ -1,0 +1,22 @@
+/* Sonner 自带字体声明，不会自动继承 body；集中接入项目排版 token。 */
+[data-sonner-toaster].toaster {
+  font-family: var(--font-sans);
+}
+
+[data-sonner-toaster].toaster [data-sonner-toast][data-styled="true"] {
+  font-size: var(--font-size-notification);
+}
+
+[data-sonner-toaster].toaster [data-sonner-toast] [data-title] {
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-base);
+}
+
+[data-sonner-toaster].toaster [data-sonner-toast] [data-description] {
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-base);
+}
+
+[data-sonner-toaster].toaster [data-sonner-toast] [data-button] {
+  font-weight: var(--font-weight-medium);
+}

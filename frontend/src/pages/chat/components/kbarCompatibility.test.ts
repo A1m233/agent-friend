@@ -14,7 +14,7 @@ import {
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SearchResultsList } from "./GlobalConversationSearch";
+import { GlobalConversationSearchProvider, SearchResultsList } from "./GlobalConversationSearch";
 
 const waitForDom = async (assertion: () => void): Promise<void> => {
   let lastError: unknown;
@@ -75,7 +75,7 @@ function CompatibilityHarness({ actions }: { actions: Action[] }) {
       options: {
         animations: { enterMs: 0, exitMs: 0 },
         disableDocumentLock: true,
-        toggleShortcut: "$mod+f",
+        toggleShortcut: "$mod+Shift+f",
       },
     },
     createElement(RegisteredResults, { actions }),
@@ -164,7 +164,8 @@ describe("kbar React 19 compatibility", () => {
       cancelable: true,
       code: "KeyF",
       ctrlKey: true,
-      key: "f",
+      shiftKey: true,
+      key: "F",
     });
     await act(async () => window.dispatchEvent(shortcutEvent));
 
@@ -200,6 +201,29 @@ describe("kbar React 19 compatibility", () => {
     });
   });
 
+  it("reserves Ctrl+F and opens global search only with Ctrl+Shift+F", async () => {
+    await act(async () => root.render(createElement(GlobalConversationSearchProvider, {
+      children: createElement("div", null, "Conversation"),
+    })));
+    const localSearch = new KeyboardEvent("keydown", {
+      bubbles: true, cancelable: true, code: "KeyF", key: "f", ctrlKey: true,
+    });
+    await act(async () => window.dispatchEvent(localSearch));
+    expect(localSearch.defaultPrevented).toBe(false);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+
+    const globalSearch = new KeyboardEvent("keydown", {
+      bubbles: true, cancelable: true, code: "KeyF", key: "F", ctrlKey: true, shiftKey: true,
+    });
+    await act(async () => window.dispatchEvent(globalSearch));
+    await waitForDom(() => {
+      expect(globalSearch.defaultPrevented).toBe(true);
+      const input = document.querySelector('input[aria-label="搜索全部对话"]');
+      expect(input).not.toBeNull();
+      expect(document.activeElement).toBe(input);
+    });
+  });
+
   it("renders every result in normal flow with listbox semantics", async () => {
     const actions: Action[] = [
       { id: "result-1", name: "First result" },
@@ -213,7 +237,8 @@ describe("kbar React 19 compatibility", () => {
         cancelable: true,
         code: "KeyF",
         ctrlKey: true,
-        key: "f",
+        shiftKey: true,
+        key: "F",
       }));
     });
 

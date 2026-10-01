@@ -103,7 +103,6 @@ export function ConversationModelSelector({
         reasoningPreset: result.reasoningPreset,
       })}`;
       setAnnouncement(message);
-      toast.success(message);
       return;
     }
     const credentialGroup = credentialGroupForModel(config.model);
