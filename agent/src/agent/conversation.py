@@ -267,6 +267,7 @@ _RECOVER_TOOL_RESULT_TOOL_NAME = "recover_tool_result"
 _CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
 _CURRENT_URL_AUTHORIZATIONS_ARG = "__agent_friend_url_authorizations"
 _CURRENT_TURN_START_INDEX_ARG = "__agent_friend_current_turn_start_index"
+_CURRENT_TURN_START_EVENT_UUID_ARG = "__agent_friend_current_turn_start_event_uuid"
 _CURRENT_PERSONA_ID_ARG = "__agent_friend_current_persona_id"
 _RUNTIME_NOW_ARG = "__agent_friend_runtime_now"
 _SESSION_CONTROL_EVENT_TYPES = frozenset(
@@ -5245,6 +5246,10 @@ class Conversation:
                     _CURRENT_PERSONA_ID_ARG: self._session.current_persona_id or "",
                 }
             )
+            if 0 <= current_turn_start_idx < len(self._session.events):
+                invocation_args[_CURRENT_TURN_START_EVENT_UUID_ARG] = self._session.events[
+                    current_turn_start_idx
+                ].uuid
             if action_time is not None:
                 invocation_args[_RUNTIME_NOW_ARG] = action_time[0].isoformat()
         if (

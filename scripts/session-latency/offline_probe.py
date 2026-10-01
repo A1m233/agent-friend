@@ -115,6 +115,7 @@ class Measurements(logging.Handler):
             keys = (
                 "session_key",
                 "cache_action",
+                "projection_kind",
                 "cache_miss_reason",
                 "query_wait_ms",
                 "query_total_ms",
@@ -290,6 +291,11 @@ def measure(
                 type(terminal.error).__name__ if terminal.error is not None else None
             )
             current["process_memory"] = memory_metrics()
+            projection_files = tuple((directory / "sessions" / ".recall").glob("*.sqlite3"))
+            current["recall_projection"] = {
+                "database_count": len(projection_files),
+                "database_bytes": sum(path.stat().st_size for path in projection_files),
+            }
             current.pop("started_ms")
             runs.append(current)
             if current["outcome"] != "completed" or current["provider_calls"] != 1:
@@ -400,6 +406,14 @@ def main() -> int:
     report["tracked_overlay_sha256"] = {
         name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
         for name in changed
+        if (ROOT / name).is_file()
+    }
+    untracked = subprocess.check_output(
+        ["git", "ls-files", "--others", "--exclude-standard"], cwd=ROOT, text=True
+    ).splitlines()
+    report["untracked_overlay_sha256"] = {
+        name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
+        for name in untracked
         if (ROOT / name).is_file()
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

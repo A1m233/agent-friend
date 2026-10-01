@@ -1,0 +1,402 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-01",
+  "kind": "final_behavioral_recall_candidate_comparison",
+  "runs": [
+    {
+      "scenario": "hot-alternating-02",
+      "run": "offline-1",
+      "sample": "B",
+      "baseline": {
+        "before_fake_request_ms": 14220,
+        "execution_load_ms": 14085.003,
+        "raw_load_count": 2,
+        "raw_load_bytes": 2046073444,
+        "query_rebuilds": 2,
+        "query_actions": [
+          "business:rebuilt",
+          "business:hit",
+          "business:rebuilt"
+        ],
+        "memory_retrieve_ms": 12094.475,
+        "tool_transaction_repair_ms": 1384.505,
+        "private_MiB": 521.10546875,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": null
+      },
+      "candidate": {
+        "before_fake_request_ms": 13531,
+        "execution_load_ms": 13205.03,
+        "raw_load_count": 2,
+        "raw_load_bytes": 2046073444,
+        "query_rebuilds": 2,
+        "query_actions": [
+          "recall:rebuilt",
+          "recall:hit",
+          "recall:rebuilt"
+        ],
+        "memory_retrieve_ms": 11010.315,
+        "tool_transaction_repair_ms": 1205.814,
+        "private_MiB": 398.7421875,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": 2437120
+      }
+    },
+    {
+      "scenario": "hot-alternating-02",
+      "run": "offline-2",
+      "sample": "B",
+      "baseline": {
+        "before_fake_request_ms": 13793,
+        "execution_load_ms": 27.615,
+        "raw_load_count": 2,
+        "raw_load_bytes": 2046366531,
+        "query_rebuilds": 2,
+        "query_actions": [
+          "business:rebuilt",
+          "business:hit",
+          "business:rebuilt"
+        ],
+        "memory_retrieve_ms": 12114.225,
+        "tool_transaction_repair_ms": 1234.018,
+        "private_MiB": 526.69140625,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": null
+      },
+      "candidate": {
+        "before_fake_request_ms": 1522,
+        "execution_load_ms": 35.499,
+        "raw_load_count": 0,
+        "raw_load_bytes": 0,
+        "query_rebuilds": 0,
+        "query_actions": [
+          "recall:hit",
+          "recall:hit",
+          "recall:hit"
+        ],
+        "memory_retrieve_ms": 70.687,
+        "tool_transaction_repair_ms": 1063.184,
+        "private_MiB": 398.7421875,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": 2437120
+      }
+    },
+    {
+      "scenario": "hot-alternating-02",
+      "run": "offline-3",
+      "sample": "A",
+      "baseline": {
+        "before_fake_request_ms": 6737,
+        "execution_load_ms": 13085.606,
+        "raw_load_count": 1,
+        "raw_load_bytes": 934065216,
+        "query_rebuilds": 1,
+        "query_actions": [
+          "business:hit",
+          "business:hit",
+          "business:rebuilt"
+        ],
+        "memory_retrieve_ms": 5715.721,
+        "tool_transaction_repair_ms": 611.878,
+        "private_MiB": 612.546875,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": null
+      },
+      "candidate": {
+        "before_fake_request_ms": 1249,
+        "execution_load_ms": 11400.616,
+        "raw_load_count": 0,
+        "raw_load_bytes": 0,
+        "query_rebuilds": 0,
+        "query_actions": [
+          "recall:hit",
+          "recall:hit",
+          "recall:hit"
+        ],
+        "memory_retrieve_ms": 75.338,
+        "tool_transaction_repair_ms": 572.533,
+        "private_MiB": 474.39453125,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": 2437120
+      }
+    },
+    {
+      "scenario": "hot-alternating-02",
+      "run": "offline-4",
+      "sample": "B",
+      "baseline": {
+        "before_fake_request_ms": 8104,
+        "execution_load_ms": 42.383,
+        "raw_load_count": 1,
+        "raw_load_bytes": 1113137176,
+        "query_rebuilds": 1,
+        "query_actions": [
+          "business:hit",
+          "business:hit",
+          "business:rebuilt"
+        ],
+        "memory_retrieve_ms": 6348.663,
+        "tool_transaction_repair_ms": 1318.504,
+        "private_MiB": 619.2265625,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": null
+      },
+      "candidate": {
+        "before_fake_request_ms": 2023,
+        "execution_load_ms": 26.838,
+        "raw_load_count": 0,
+        "raw_load_bytes": 0,
+        "query_rebuilds": 0,
+        "query_actions": [
+          "recall:hit",
+          "recall:hit",
+          "recall:hit"
+        ],
+        "memory_retrieve_ms": 78.138,
+        "tool_transaction_repair_ms": 1197.355,
+        "private_MiB": 474.41015625,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": 2437120
+      }
+    },
+    {
+      "scenario": "hot-alternating-02",
+      "run": "offline-5",
+      "sample": "A",
+      "baseline": {
+        "before_fake_request_ms": 6927,
+        "execution_load_ms": 36.863,
+        "raw_load_count": 1,
+        "raw_load_bytes": 934342574,
+        "query_rebuilds": 1,
+        "query_actions": [
+          "business:hit",
+          "business:hit",
+          "business:rebuilt"
+        ],
+        "memory_retrieve_ms": 5911.878,
+        "tool_transaction_repair_ms": 650.858,
+        "private_MiB": 618.390625,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": null
+      },
+      "candidate": {
+        "before_fake_request_ms": 884,
+        "execution_load_ms": 30.961,
+        "raw_load_count": 0,
+        "raw_load_bytes": 0,
+        "query_rebuilds": 0,
+        "query_actions": [
+          "recall:hit",
+          "recall:hit",
+          "recall:hit"
+        ],
+        "memory_retrieve_ms": 71.825,
+        "tool_transaction_repair_ms": 449.884,
+        "private_MiB": 474.41015625,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": 2437120
+      }
+    },
+    {
+      "scenario": "hot-alternating-02",
+      "run": "offline-6",
+      "sample": "B",
+      "baseline": {
+        "before_fake_request_ms": 7221,
+        "execution_load_ms": 37.849,
+        "raw_load_count": 1,
+        "raw_load_bytes": 1113367825,
+        "query_rebuilds": 1,
+        "query_actions": [
+          "business:hit",
+          "business:hit",
+          "business:rebuilt"
+        ],
+        "memory_retrieve_ms": 5928.927,
+        "tool_transaction_repair_ms": 897.65,
+        "private_MiB": 624.1328125,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": null
+      },
+      "candidate": {
+        "before_fake_request_ms": 1648,
+        "execution_load_ms": 26.93,
+        "raw_load_count": 0,
+        "raw_load_bytes": 0,
+        "query_rebuilds": 0,
+        "query_actions": [
+          "recall:hit",
+          "recall:hit",
+          "recall:hit"
+        ],
+        "memory_retrieve_ms": 83.587,
+        "tool_transaction_repair_ms": 957.726,
+        "private_MiB": 474.4140625,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": 2437120
+      }
+    },
+    {
+      "scenario": "reload-02",
+      "run": "offline-1",
+      "sample": "B",
+      "baseline": {
+        "before_fake_request_ms": 13161,
+        "execution_load_ms": 12972.197,
+        "raw_load_count": 2,
+        "raw_load_bytes": 2046073444,
+        "query_rebuilds": 2,
+        "query_actions": [
+          "business:rebuilt",
+          "business:hit",
+          "business:rebuilt"
+        ],
+        "memory_retrieve_ms": 11659.165,
+        "tool_transaction_repair_ms": 986.182,
+        "private_MiB": 521.90234375,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": null
+      },
+      "candidate": {
+        "before_fake_request_ms": 12571,
+        "execution_load_ms": 12825.996,
+        "raw_load_count": 2,
+        "raw_load_bytes": 2046073444,
+        "query_rebuilds": 2,
+        "query_actions": [
+          "recall:rebuilt",
+          "recall:hit",
+          "recall:rebuilt"
+        ],
+        "memory_retrieve_ms": 10888.879,
+        "tool_transaction_repair_ms": 1129.486,
+        "private_MiB": 394.6953125,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": 2437120
+      }
+    },
+    {
+      "scenario": "reload-02",
+      "run": "offline-2",
+      "sample": "B",
+      "baseline": {
+        "before_fake_request_ms": 13587,
+        "execution_load_ms": 13655.913,
+        "raw_load_count": 2,
+        "raw_load_bytes": 2046600408,
+        "query_rebuilds": 2,
+        "query_actions": [
+          "business:rebuilt",
+          "business:hit",
+          "business:rebuilt"
+        ],
+        "memory_retrieve_ms": 11912.138,
+        "tool_transaction_repair_ms": 1279.518,
+        "private_MiB": 547.0234375,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": null
+      },
+      "candidate": {
+        "before_fake_request_ms": 2722,
+        "execution_load_ms": 13165.71,
+        "raw_load_count": 0,
+        "raw_load_bytes": 0,
+        "query_rebuilds": 0,
+        "query_actions": [
+          "recall:hit",
+          "recall:hit",
+          "recall:hit"
+        ],
+        "memory_retrieve_ms": 89.589,
+        "tool_transaction_repair_ms": 1374.639,
+        "private_MiB": 450.41796875,
+        "provider_calls": 1,
+        "recall_failure_count": 0,
+        "recall_evidence_count": 4,
+        "derived_database_bytes": 2437120
+      }
+    }
+  ],
+  "limits": [
+    "Fixed A/B disposable copies; fake provider and isolated history recall, not installed-app E2E.",
+    "Times are descriptive observations; no fixed latency or percentile acceptance threshold.",
+    "First construction still scans raw JSONL; execution preload is reported separately.",
+    "No structured memory DB, active Skills/tools, attachments, real provider SDK, UI or OS cold-cache control.",
+    "Harness adds projection kind, post-terminal derived file sizes and untracked source hashes; send inputs and timing boundaries are unchanged.",
+    "No simultaneous backend test load during either candidate measurement."
+  ],
+  "artifacts": {
+    "20261001-candidate-hot-alternating-02.json": {
+      "sha256": "ae869d4cbdf8991767706f9bc0bcd6af76969d58f42cc7e44aad593dadac71f4",
+      "production_head": "62a4ee259cd727990e5d93106a2ffedb1f502b14",
+      "harness_sha256": "9ad434317443fbb205c30359ed96188deb2846a0f36027b6e77b9e11d3cfcee5",
+      "runtime_overlay_sha256": {
+        "agent/src/agent/conversation.py": "a44e70882215714b3f19b7cba7cc9d7cfed5b1c8c11fd064cf5213a6f4b43776",
+        "agent/src/agent/memory_search/session_history_source.py": "653e03d12d30e9db18fa4960fac050f4577acaafdd16d97a6b3566d610abdf72",
+        "agent/src/agent/memory_search/session_source_order.py": "cc83162ca802e069365bb7cc16d1dd0b0571627787420e5720d78f7fc580ef17",
+        "agent/src/agent/sessions/query_observation.py": "6fd0be3244079a088397f0f695603ea5386cac735de8ba8e2bba1074f20bc67a",
+        "agent/src/agent/sessions/store.py": "cba2e8f6dae6f72f63b8580b8cf3ae8d62d3c705d8efdfd15ef78670e49d0421",
+        "agent/src/agent/tools/builtin/conversation_history/tool.py": "f77cbb7cbca5c6ccbc752fdbd4efd064f227b669f2e1bf6952771ba98099e8d9",
+        "memory/src/memory/search/contracts.py": "99a59148fcd4a19aa05b56b8e288066dc298f15ff5b330c190ce97f59b10bf28",
+        "scripts/session-latency/offline_probe.py": "9ad434317443fbb205c30359ed96188deb2846a0f36027b6e77b9e11d3cfcee5",
+        "scripts/session-latency/run.ps1": "ff1c2a051c3168edbefd41c2ae2b5a6b8afede5be438e7d7e807a940ffc55c2a",
+        "scripts/session-latency/run.sh": "c3d7688e92b193d453b687c975828f951bbaff147f3c2288672c5d4d0064052a",
+        "agent/src/agent/sessions/recall/__init__.py": "038e03ad69e4e446ec589e791915d34e2a0f06b0ea9693cbdf3843d43d8c0417",
+        "agent/src/agent/sessions/recall/index.py": "0e0876e650c44fd23447446ad7cbccf1b495ace04563d86a4cc55908822afd74",
+        "agent/src/agent/sessions/recall/snapshot.py": "9a86613acd582192d20406b5e0140c55644967de28596386e891c64f30feadef"
+      }
+    },
+    "20261001-candidate-reload-02.json": {
+      "sha256": "cce2fc408500ad19f30568e18b6686763b6efb974d88eb595c9fec296464921f",
+      "production_head": "62a4ee259cd727990e5d93106a2ffedb1f502b14",
+      "harness_sha256": "9ad434317443fbb205c30359ed96188deb2846a0f36027b6e77b9e11d3cfcee5",
+      "runtime_overlay_sha256": {
+        "agent/src/agent/conversation.py": "a44e70882215714b3f19b7cba7cc9d7cfed5b1c8c11fd064cf5213a6f4b43776",
+        "agent/src/agent/memory_search/session_history_source.py": "653e03d12d30e9db18fa4960fac050f4577acaafdd16d97a6b3566d610abdf72",
+        "agent/src/agent/memory_search/session_source_order.py": "cc83162ca802e069365bb7cc16d1dd0b0571627787420e5720d78f7fc580ef17",
+        "agent/src/agent/sessions/query_observation.py": "6fd0be3244079a088397f0f695603ea5386cac735de8ba8e2bba1074f20bc67a",
+        "agent/src/agent/sessions/store.py": "cba2e8f6dae6f72f63b8580b8cf3ae8d62d3c705d8efdfd15ef78670e49d0421",
+        "agent/src/agent/tools/builtin/conversation_history/tool.py": "f77cbb7cbca5c6ccbc752fdbd4efd064f227b669f2e1bf6952771ba98099e8d9",
+        "memory/src/memory/search/contracts.py": "99a59148fcd4a19aa05b56b8e288066dc298f15ff5b330c190ce97f59b10bf28",
+        "scripts/session-latency/offline_probe.py": "9ad434317443fbb205c30359ed96188deb2846a0f36027b6e77b9e11d3cfcee5",
+        "scripts/session-latency/run.ps1": "ff1c2a051c3168edbefd41c2ae2b5a6b8afede5be438e7d7e807a940ffc55c2a",
+        "scripts/session-latency/run.sh": "c3d7688e92b193d453b687c975828f951bbaff147f3c2288672c5d4d0064052a",
+        "agent/src/agent/sessions/recall/__init__.py": "038e03ad69e4e446ec589e791915d34e2a0f06b0ea9693cbdf3843d43d8c0417",
+        "agent/src/agent/sessions/recall/index.py": "0e0876e650c44fd23447446ad7cbccf1b495ace04563d86a4cc55908822afd74",
+        "agent/src/agent/sessions/recall/snapshot.py": "9a86613acd582192d20406b5e0140c55644967de28596386e891c64f30feadef"
+      }
+    }
+  },
+  "supersedes": "20261001-candidate-summary.json (pre-cancellation-fix runtime, retained)"
+}

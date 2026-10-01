@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-01",
+  "source_head": "62a4ee259cd727990e5d93106a2ffedb1f502b14",
+  "code_overlay_sha256": {
+    "agent/src/agent/conversation.py": "a44e70882215714b3f19b7cba7cc9d7cfed5b1c8c11fd064cf5213a6f4b43776",
+    "agent/src/agent/memory_search/session_history_source.py": "653e03d12d30e9db18fa4960fac050f4577acaafdd16d97a6b3566d610abdf72",
+    "agent/src/agent/memory_search/session_source_order.py": "cc83162ca802e069365bb7cc16d1dd0b0571627787420e5720d78f7fc580ef17",
+    "agent/src/agent/sessions/query_observation.py": "6fd0be3244079a088397f0f695603ea5386cac735de8ba8e2bba1074f20bc67a",
+    "agent/src/agent/sessions/recall/__init__.py": "038e03ad69e4e446ec589e791915d34e2a0f06b0ea9693cbdf3843d43d8c0417",
+    "agent/src/agent/sessions/recall/index.py": "0e0876e650c44fd23447446ad7cbccf1b495ace04563d86a4cc55908822afd74",
+    "agent/src/agent/sessions/recall/snapshot.py": "9a86613acd582192d20406b5e0140c55644967de28596386e891c64f30feadef",
+    "agent/src/agent/sessions/store.py": "cba2e8f6dae6f72f63b8580b8cf3ae8d62d3c705d8efdfd15ef78670e49d0421",
+    "agent/src/agent/tools/builtin/conversation_history/tool.py": "f77cbb7cbca5c6ccbc752fdbd4efd064f227b669f2e1bf6952771ba98099e8d9",
+    "agent/tests/test_session_recall.py": "f773c020d4560f6673cb5ef8c9349dc39a25105a522c2d6769f24001d6c292fa",
+    "agent/tests/test_tool_calling_integration.py": "aebc6c35b3df5b4ed17e403eb0ff2391c8e486bbd65a751c3b3d483720f02ef1",
+    "memory/src/memory/search/contracts.py": "99a59148fcd4a19aa05b56b8e288066dc298f15ff5b330c190ce97f59b10bf28",
+    "scripts/session-latency/offline_probe.py": "9ad434317443fbb205c30359ed96188deb2846a0f36027b6e77b9e11d3cfcee5",
+    "scripts/session-latency/run.ps1": "ff1c2a051c3168edbefd41c2ae2b5a6b8afede5be438e7d7e807a940ffc55c2a",
+    "scripts/session-latency/run.sh": "c3d7688e92b193d453b687c975828f951bbaff147f3c2288672c5d4d0064052a"
+  },
+  "runtime_identity_matches_final_measurements": true,
+  "checks": [
+    {
+      "command": "./scripts/check/run.ps1 --stage backend",
+      "log": "backend-final.log",
+      "exit_code": 0,
+      "passed": 3747,
+      "skipped": 5,
+      "seconds": 361.2
+    },
+    {
+      "command": "./scripts/check/run.ps1 --stage backend agent/tests/test_session_recall.py -q",
+      "log": "fixture-check.log",
+      "exit_code": 0,
+      "passed": 28,
+      "seconds": 35.2
+    },
+    {
+      "command": "./scripts/check/run.ps1 --stage backend agent/tests/test_session_recall.py agent/tests/test_tool_calling_integration.py agent/tests/test_session_history_source.py agent/tests/test_conversation_history_tool.py agent/tests/test_run_latency.py -q",
+      "log": "cancel-fix-check-02.log",
+      "exit_code": 0,
+      "passed": 135
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "measurements": [
+    "20261001-candidate-hot-alternating-02.json",
+    "20261001-candidate-reload-02.json"
+  ],
+  "private_log_root": "%LOCALAPPDATA%/agent-friend-research/146/20261001-recall-candidate",
+  "log_sha256": {
+    "backend-check.log": "7a29bd5340c4ca5d74be1766293c6f7d5edf361a3706cd7c79bd58d6d879b554",
+    "backend-check-02.log": "e40e3373daee676a2d83a72097c0184a2c390fd5f3ea8a00f90ba4e299cabfc4",
+    "cancel-fix-check.log": "63c578b1f9014dd8a7cdd57237744c63706a3fb7dc625bb54717cf91cb36e29f",
+    "cancel-fix-check-02.log": "62848a813800209b8074464f11ecbd3558a185050a692ecd5147f3203ee107fe",
+    "fixture-check.log": "fb9794a2fb9c747acefae1149f69933451d9c6aa75ae41b33cd4342ac0bfdd6d",
+    "backend-final.log": "7f440e42fe59b71c8df99dfcd8d13358cf76c9446e251e5fd13dfbe016aba40e",
+    "hot-alternating-02.log": "d93ebfedf26a3cfeef62271d72a77eb1bc37fe2a2d66cb21eb623a48c49f598d",
+    "reload-02.log": "056ad0f1b05a2e5c73865691fb5b62b8c31cf4a2ffce1cfa1d4e4e9144afa54a"
+  },
+  "notes": [
+    "Full final backend suite uses final production code. Test fixture timestamps were subsequently fixed with explicit nonempty assertions; final scoped lint/typecheck/28 tests passed.",
+    "Pre-fix backend-check-02 passed 3746 tests; final result supersedes it. backend-check and cancel-fix-check failed formatting, fixed before successful reruns.",
+    "One-shot InterruptedError regression failed before the cancellation provenance fix; final regression passes.",
+    "Existing third-party async logging/atexit warnings remain; check exit code is zero.",
+    "No M1 frontend or Rust changes. Reuse M0 frontend validation; Rust gate not executed for this requirement.",
+    "No real LLM, installed-app/desktop verification, package build, or main merge. Only disposable fixtures were mutated.",
+    "Candidate reports contain allowlisted counts/times/source hashes, no original conversation bodies."
+  ]
+}

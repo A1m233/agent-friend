@@ -19,6 +19,7 @@ _SLOW_QUERY_SECONDS = 0.1
 @dataclass
 class SessionQueryObservation:
     session_id: str
+    projection_kind: Literal["business", "recall"] = "business"
     action: Literal["lookup", "waiting", "hit", "coalesced", "rebuilt", "invalidated"] = "lookup"
     miss_reason: Literal["absent", "source_changed", "maintenance_failed", "missing"] | None = None
     wait_seconds: float = 0.0
@@ -49,19 +50,25 @@ class SessionQueryObservation:
             "cache_publish_reason": self.publish_reason,
             "outcome": self.outcome,
             "error_type": self.error_type,
+            "projection_kind": self.projection_kind,
         }
         logger.log(
             level,
             "session_query session_key=%s pid=%s thread=%s action=%s miss_reason=%s "
-            "wait_ms=%s total_ms=%s published=%s publish_reason=%s outcome=%s error_type=%s",
+            "wait_ms=%s total_ms=%s published=%s publish_reason=%s outcome=%s error_type=%s "
+            "projection=%s",
             *fields.values(),
             extra=fields,
         )
 
 
 @contextmanager
-def observe_session_query(session_id: str) -> Iterator[SessionQueryObservation]:
-    observation = SessionQueryObservation(session_id)
+def observe_session_query(
+    session_id: str,
+    *,
+    projection_kind: Literal["business", "recall"] = "business",
+) -> Iterator[SessionQueryObservation]:
+    observation = SessionQueryObservation(session_id, projection_kind=projection_kind)
     try:
         yield observation
     except BaseException as exc:

@@ -6,6 +6,8 @@
 
 2026-10-01：用户已确认方案方向并授权 M0 观测与离线基线；计时代码和离线入口已实现，产品性能策略未改。新增 E-009～E-012 记录真实发送路径的离线测量。未调用外部模型、操作已运行的 AF 或改写原始会话。
 
+同日后续：用户确认 M1 具体方案并授权实现。轻量 SQLite 召回投影、增量维护及 UUID 当前轮边界已接入；最终离线候选见 E-020，确定性边界见 E-021。首轮候选 E-018 保留，取消故障 E-019 已修复。原始基线及旧安装版证据保持独立。
+
 已确认查询缓存存在长会话互相淘汰及重复解析原始日志的路径；本轮样本支持召回所需内容远小于通用业务快照。不能据此宣布完整发送已优化，或认为全部等待都来自同一处。原始日志中召回前约 9.2 秒仍未归因。
 
 ## 证据账本
@@ -24,6 +26,29 @@
 | E-010 | 工具事务恢复是另一项可见准备成本 | reproduction-supported；同一报告 `tool_transaction_repair` 611.878–1384.505 ms，真正的 `history_reconcile` 5.896–10.741 ms；`Conversation._repair_incomplete_model_tool_transactions` 会对历史 interrupted run 再调用 `_append_turn_aborted_history_fact` | confirmed / active：阶段耗时已证；究竟哪些历史重处理可以安全复用，仍需细化证明，不能直接跳过恢复 |
 | E-011 | 冷恢复和逐次发送是分开的成本 | reproduction-supported；[运行态重建](evidence/20261001-reload-01.json) 两轮：加载 12.972/13.656 s，加载之后发送至 fake 请求仍需 13.161/13.587 s | confirmed / active；仅重建 runtime/store，不清 OS cache；第二轮副本已经包含前一轮正常写入 |
 | E-012 | 新计时基本覆盖当前离线请求前路径 | reproduction-supported；[摘要](evidence/20261001-baseline-summary.json)：热发送未分配时间 32.326–42.702 ms，重建场景 26.961/30.657 ms；[小样本 CLI](evidence/20261001-synthetic-cleanup-final.json) 连续两轮成功 | confirmed / active；按顶层 phase 加 context_build 的非重叠口径，accepted_rollout 已包含在 input_persistence；不能外推旧安装版 9.192 s 已归因 |
+| E-013 | 原始写入与派生维护已有明确失败边界 | code-supported；`62a4ee259cd727990e5d93106a2ffedb1f502b14` 的 `JsonlSessionStore._append_events` 在 fsync 后释放文件锁，再调用 `_advance_read_caches`；派生维护异常丢弃缓存并记录，不使持久化成功变失败 | confirmed / active；新投影必须沿用该边界，不能把跨 JSONL/SQLite 的两次写入视为一个原子事务 |
+| E-014 | 编辑与归档属于不同的有效性边界 | code-supported；同一 revision 的 `Session.active_events` 对所有 `turn_rewrite.inactive_event_uuids` 求并集；`SessionManager.archive` 只改管理 metadata，`JsonlSessionStore.list_activity` 不按归档过滤 | confirmed / active；保持现状意味着编辑后的失效内容不可召回，而不能顺手把归档改成“不可检索”；删除仍以原始文件存在性为准 |
+| E-015 | 重建不能阻止原始追加前进，且查询可返回固定版本快照 | code-supported；同一 revision 的 `iter_events` 固定 descriptor/长度后在读锁外解析，`_query_snapshot` 拒绝把过期构建发布为当前缓存；`test_builders_are_per_session_and_append_can_progress_during_parse` 等既有测试固定并发边界 | confirmed / active；这些是既有契约，本轮未重跑；派生索引不能用长期全局写锁覆盖完整 JSONL 扫描 |
+| E-016 | SQLite 事务可保证其内部数据与来源版本一起提交 | external-source；2026-10-01 查阅 [SQLite Atomic Commit](https://www.sqlite.org/atomiccommit.html) §1、§3、§4：单事务变化全部提交或回滚，支持故障恢复 | confirmed / active；仅支持同一数据库事务边界，不覆盖外部 JSONL，也不能把事务成功当作源文件仍未变化的证明 |
+| E-017 | 当前轮边界接入需要覆盖精简执行态与原始位置的对应关系 | code-supported；同一 revision 的 `Conversation` 从 `len(self._session.events)` 形成工具当前轮边界，`load_execution_session` 不驻留 rollout 事件；`SessionHistorySource._current_turn_uuids` 使用 query 的原始事件位置比较 | unconfirmed / active；存在位置口径不一致风险，尚未完成真实调用回放；不能直接宣称已发生召回错误，也不能让轻量投影重新编号后跳过该验证 |
+| E-018 | 轻量持久投影可消除重复热发送的原始文件读取 | reproduction-supported；[首轮候选对比](evidence/20261001-candidate-summary.json)、[六轮发送](evidence/20261001-candidate-hot-alternating-01.json)、[两轮 runtime 重建](evidence/20261001-candidate-reload-01.json)：投影建立后的六次发送均为零原始 load、零重建，查询命中；对应阶段召回约 67–86 ms | confirmed / retained；`62a4ee2 + M1 overlay`，每份报告绑定源码/脚本哈希；后续取消故障修复尚未包含，不能冒充最终候选。首次构建仍完整扫描，首次 reload 样本发送 14.057 s 高于旧样本 13.161 s，冷成本没有消除 |
+| E-019 | 取消回调异常不能被派生存储降级吞掉 | deterministic reproduction；`test_one_shot_io_shaped_cancellation_is_not_treated_as_storage_failure` 首次失败：一次性 `InterruptedError` 被当作存储故障处理后继续查询；query_recall 增加取消异常来源跟踪，向上传播原异常 | confirmed / active；这是候选实现中的边界错误，非旧安装版根因；修复后需回归并重测最终候选，保留首轮有效热路径观察 |
+| E-020 | 最终候选在热发送及重建 runtime 后均复用持久投影 | reproduction-supported；[最终对比](evidence/20261001-candidate-final-summary.json)、[六轮发送](evidence/20261001-candidate-hot-alternating-02.json)、[两轮 runtime 重建](evidence/20261001-candidate-reload-02.json)：首建之后共六次发送，raw load/rebuild 均为 0，每次三次 recall query 均命中；source failure 均为 0，每轮 fake 调用一次 | confirmed / active；supersedes E-018 的最终候选身份，不否定其观察。运行身份为 `62a4ee2 + final runtime overlay`，报告保存源码和 harness SHA；与基线 fixture、序列及配置逐项一致，测量时未并发执行后端检查 |
+| E-021 | 派生维护与召回语义具有确定性回归覆盖 | deterministic tests；`agent/tests/test_session_recall.py` 28 项通过，覆盖与业务投影的非空候选等价、短词/casefold、persona/时间、重写/删除/归档、外部变化、模式/表/行/文件损坏、持久化失败、取消原异常、并发写入、独立进程复用和 UUID 边界；工具集成测试固定隐藏参数不进入持久化工具参数 | confirmed / active；E-019 修复已验证。E-017 的位置风险由带 rollout 的用例固定并改用 UUID；不据此宣称旧安装版已发生同一错误。fake 证明机制，不证明真实模型行为；Windows 本机验证，未做 mac/linux 执行 |
+
+## M1 最终候选与成本（2026-10-01）
+
+| 场景 | 基线发送至 fake 请求 | 候选发送至 fake 请求 | 行为证据 |
+| --- | --- | --- | --- |
+| 首次构建（热序列首轮 B） | 14.220 s | 13.531 s | 两条原始文件仍读取约 2.05 GB，建立派生库；不是已完成构建后的热发送 |
+| 构建后的五轮 B/A 交替与重复 | 6.737–13.793 s | 0.884–2.023 s | 原始 load 0 次、投影重建 0 次；召回 70.687–83.587 ms |
+| runtime/store 重建后的第二轮 B | 13.587 s | 2.722 s | 原始 load 0 次；召回 89.589 ms；执行态加载仍单列为 13.166 s |
+
+两条固定会话派生库合计 2437120 bytes（约 2.32 MiB）；后续五轮总大小未增加。候选热序列进程 private memory 约 399–474 MiB，加载 A 后约 474 MiB；这是整个隔离 Python 进程，不是全产品占用，也不是闲置会话预算。工具事务恢复仍占约 0.45–1.37 s，本轮未修改其策略。
+
+数值只描述这些样本，不设中位数/p95 门槛，也不据此承诺安装版发送秒数。首次构建和原始执行态冷恢复仍有成本；无真实结构化库、Skills、附件、UI 或厂商 SDK，旧安装版约 9.2 秒间隔仍保留缺口。候选测量脚本新增的派生文件计数发生在轮次结束后，源码摘要采集发生在测量结束后；发送输入、计时边界和配置与 M0 保持一致。
+
+最终后端检查 3747 passed / 5 skipped，lint/format/mypy 通过；固定 fixture 日期并要求非空候选后的定向 28 项通过，防止测试随日期变化失去覆盖。详见 [M1 验证清单](evidence/20261001-candidate-validation.json)。前端在 M0 后无变化，沿用此前验证；未执行本需求 Rust gate、真实安装版 E2E 或用户验收。
 
 ## M0 基线与验证（2026-10-01）
 
@@ -61,6 +86,7 @@
 - E-005/E-006 要求比较 scope decisions、evidence identity、来源、顺序、过滤和取消结果；仅比较最终文本或 Top-K 数量不足。
 - E-007/E-008 作为设计参考；不能从参考来源反推本项目应直接引入 FTS、BM25 或改变召回质量策略。
 - 热发送、进程冷启动、索引首次构建及源文件替换须分别测量。用户已确认不设置固定数值门槛；以避免重复完整扫描、正确复用/更新及失效恢复作为行为目标，数值用于评估回退与取舍，不以隔离查询的约 5 秒直接充当完整发送基线。
+- E-013～E-016 补齐性能方案的持久化、归档和并发约束；E-017 要求接入前明确当前轮边界的位置口径。下一项有区分力的验证是带 rollout 事件、精简执行态和显式历史工具的确定性回放，而不是继续追加耗时样本。
 
 ## Artifact 与复查
 
@@ -74,3 +100,6 @@
 - 2026-09-30：需求已确认并建立远端 146 分支；本索引仅记录当前证据，design 尚未创建，产品实现尚未开始。
 - 2026-10-01：M0 方案及观测实现完成，新增发送基线与验证索引；后续性能方案、量化目标和实施仍待确认。既有 E-001 旧安装版未归因间隔保持 unconfirmed。
 - 2026-10-01（基线讨论后）：用户否决固定中位数 ≤2 秒、p95 ≤3 秒的提案，确认按行为作为目标，避免为数值达标破坏架构平衡。需求 AC-03 和方案推进依据已同步；数值证据保留，后续性能细化及实现仍未完成。
+- 2026-10-01（性能方案细化）：补充 E-013～E-017；已向用户提交轻量召回投影、原始持久化优先和版本失效恢复的具体方案，尚待本轮方案及实现确认。工具事务恢复先保留既有行为，不以其耗时继续扩大本轮改动。
+- 2026-10-01（M1 实现）：用户确认落盘并实现；已接入轻量投影和宿主 UUID 边界。首轮测量报告追加归档；候选故障注入发现取消与 I/O 异常分类重叠，修复后进行复验。未调用真实模型或改变既有 AF 运行态。
+- 2026-10-01（M1 复验）：E-019 取消回归通过；追加 E-020 最终候选复测及 E-021 边界验证。早期完整检查的格式失败和修复前候选记录均保留，不将其混入最终结果。

@@ -98,6 +98,7 @@ class SearchRequest:
     target_session_ids: tuple[str, ...] = ()
     retrieval_goal: RetrievalGoal = "search"
     automatic_recall_scope: CurrentSessionRecallScope | None = None
+    current_turn_start_event_uuid: str | None = None
 
     def __post_init__(self) -> None:
         if self.top_k is not None and self.top_k <= 0:

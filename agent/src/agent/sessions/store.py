@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import io
 import os
+import sqlite3
 import stat
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator
@@ -57,6 +58,8 @@ from .query_observation import (
     observe_query_maintenance_failure,
     observe_session_query,
 )
+from .recall import RecallBuilder, SessionRecallSnapshot, query_session_recall
+from .recall.index import RecallIndex
 from .rollout_encoding import RolloutDecoder
 from .session import Session
 from .store_types import SessionLoadDiagnostics, SessionReadState
@@ -277,6 +280,7 @@ class JsonlSessionStore:
         self._query_cache = SessionQueryCache(
             max_entries=query_cache_entries, max_bytes=query_cache_bytes
         )
+        self._recall_index = RecallIndex(self._base_dir)
         self._summary_cache: OrderedDict[Path, tuple[SourceVersion, SessionSummary]] = OrderedDict()
         self._activity_cache: OrderedDict[Path, tuple[SourceVersion, SessionActivity]] = (
             OrderedDict()
@@ -447,6 +451,18 @@ class JsonlSessionStore:
                 self._summary_cache.pop(path, None)
                 self._activity_cache.pop(path, None)
             observe_query_maintenance_failure(session_id, exc)
+        if clean_boundary:
+            try:
+                self._recall_index.advance(
+                    session_id,
+                    before,
+                    after,
+                    events,
+                    is_current=lambda: self._source_version(path) == after,
+                )
+            except Exception as exc:
+                # The old persisted version remains distinguishable from `after`.
+                observe_query_maintenance_failure(session_id, exc)
 
     def _advance_read_caches(
         self,
@@ -790,6 +806,80 @@ class JsonlSessionStore:
         with observe_session_query(session_id) as observation:
             return self._query_snapshot(session_id, cancel_check, observation)
 
+    def query_recall(
+        self,
+        session_id: str,
+        *,
+        cancel_check: CancelCheck = None,
+    ) -> SessionRecallSnapshot:
+        with observe_session_query(session_id, projection_kind="recall") as observation:
+            check_cancel(cancel_check)
+            path = self._existing_path(session_id)
+            if path is None:
+                raise SessionNotFoundError(f"会话不存在: {session_id}")
+            cancellation_errors: list[BaseException] = []
+
+            def projection_cancel() -> None:
+                try:
+                    check_cancel(cancel_check)
+                except BaseException as exc:
+                    cancellation_errors.append(exc)
+                    raise
+
+            def read() -> SessionRecallSnapshot | None:
+                try:
+                    return self._recall_index.read(
+                        session_id,
+                        self._source_version(path),
+                        projection_cancel,
+                    )
+                except (sqlite3.Error, OSError, LockException) as exc:
+                    if cancellation_errors:
+                        raise cancellation_errors[0] from None
+                    check_cancel(cancel_check)
+                    observe_query_maintenance_failure(session_id, exc)
+                    return None
+
+            cached = read()
+            if cached is not None:
+                observation.action = "hit"
+                return cached
+            with self._query_cache.building(session_id, cancel_check, observation=observation):
+                cached = read()
+                if cached is not None:
+                    observation.action = "coalesced"
+                    return cached
+                observation.action = "rebuilt"
+                builder = RecallBuilder()
+                state = SessionReadState()
+                for position, event in enumerate(
+                    self.iter_events(session_id, state, cancel_check=cancel_check)
+                ):
+                    builder.add(position, event)
+                snapshot = builder.snapshot(
+                    count=state.event_count,
+                    version=state.source_version,
+                    diagnostics=state.diagnostics,
+                )
+                check_cancel(cancel_check)
+                try:
+                    observation.published = self._recall_index.publish(
+                        snapshot,
+                        builder.inactive,
+                        is_current=lambda: self._source_version(path) == state.source_version,
+                        cancel_check=projection_cancel,
+                    )
+                    observation.publish_reason = (
+                        "stored" if observation.published else "source_changed"
+                    )
+                except (sqlite3.Error, OSError, LockException) as exc:
+                    if cancellation_errors:
+                        raise cancellation_errors[0] from None
+                    check_cancel(cancel_check)
+                    observation.published = False
+                    observe_query_maintenance_failure(session_id, exc)
+                return snapshot
+
     def diagnostic_export(self, session_id: str, *, turn_limit: int | None) -> dict[str, object]:
         from .diagnostic_export import export_prefix
 
@@ -919,6 +1009,10 @@ class JsonlSessionStore:
                 self._activity_cache.pop(path, None)
         except OSError as e:
             raise SessionPersistError(f"删除会话文件失败: {path}: {e}") from e
+        try:
+            self._recall_index.delete(session_id)
+        except Exception as exc:
+            observe_query_maintenance_failure(session_id, exc)
 
     def latest(self) -> SessionSummary | None:
         summaries = self.list()
@@ -1289,6 +1383,14 @@ class NotifyingSessionStore:
 
     def query(self, session_id: str, *, cancel_check: CancelCheck = None) -> SessionQuerySnapshot:
         return query_session(self._inner, session_id, cancel_check=cancel_check)
+
+    def query_recall(
+        self,
+        session_id: str,
+        *,
+        cancel_check: CancelCheck = None,
+    ) -> SessionRecallSnapshot:
+        return query_session_recall(self._inner, session_id, cancel_check=cancel_check)
 
     def diagnostic_export(self, session_id: str, *, turn_limit: int | None) -> dict[str, object]:
         method = getattr(self._inner, "diagnostic_export", None)
