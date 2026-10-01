@@ -2,9 +2,9 @@
 
 ## 状态
 
-IN_PROGRESS
+COMPLETED
 
-2026-10-01：用户已验收五项修复并确认记忆响应等待改为 10 分钟，授权合入、推送与本机打包。超时增补与最终后端门禁已完成，进入提交、合入和打包交付。
+2026-10-01：用户已验收五项修复并确认记忆响应等待改为 10 分钟，授权合入、推送与本机打包。全部 AC、合入、远端推送与本机测试包构建已完成。
 
 ## 任务
 
@@ -43,8 +43,8 @@ IN_PROGRESS
 
 ## 交付限制
 
-- 用户验收已完成；提交、合入与打包按下方交付续跑记录推进。
-- 未调用真实 LLM、未操作个人记忆库、未重启安装态、未打安装包；未做桌面视觉验收，本次没有 UI 变更。
+- 用户验收与本次交付已完成；源码、指南和制品绑定见下方记录。
+- 未调用真实 LLM、未操作个人记忆库、未重启或覆盖安装态；已构建 local-test 安装包，未做桌面视觉验收，本次没有 UI 变更。
 - PDF 内容接入、历史 Core 补齐和历史有效期修复不在本期范围内。blocked 材料需另行明确处理，不自动恢复或删除。
 
 ## 2026-10-01 交付续跑
@@ -53,12 +53,22 @@ IN_PROGRESS
 
 - [x] 两阶段显式响应等待 600 秒，保持默认连接/写入/空闲与原重试控制。
 - [x] AC-11 与最终后端门禁。
-- [ ] Guide 复核、必要发布与 package-baseline 解析。
-- [ ] 提交、合入 main、推送。
-- [ ] standard local-test 完整构建与制品核验。
+- [x] Guide 复核、必要发布与 package-baseline 解析。
+- [x] 提交、合入 main、推送。
+- [x] standard local-test 完整构建与制品核验。
 
 初始打包预检：项目/本机最新正式版本均为 0.3.0，正式同版本目录已存在，trusted-beta 目标过期。本次按本机测试用途选择 local-test。代码 floor=standard、packageRequired=false；用户明确要求产包，因此执行完整构建。修改前 packageInputSha256=2909f029697c041a5389392df0481eb47fca1e85c28883994103c3f19ee1614f，构建前以 runner 重算的最终输入为准。
 
 - 超时增补专项：`scripts/test/run.ps1 memory/tests/test_extraction.py llm_providers/tests/test_timeout_policy.py -q --tb=short`，52 passed；无真实模型调用。Guide 预览确认需补充记忆等待与持续未更新的排查说明，基线 `99b7643ae83411052760274658a8b1db9dbe5300` 为当前目标祖先；公开兼容范围沿用 0.3.0 至 0.4.0（不含），新行为使用版本限定表述。
 
 - 最终源码全量 `scripts/check/run.ps1 --stage backend`：3796 passed / 5 skipped / 8 warnings，lint、mypy 通过，退出码 0。与前端和 Rust 已通过的代码输入无新增差异；依赖层既有清理警告仍保留。
+
+## 交付结果
+
+- 产品修复提交 `3e3dbeccae2daad30c3c724ceac3b15fd6d1f249`；merge commit `87bb34d2d779cc03ca8d26b4e0d286fd5329f925` 已推送 origin/main，feature 分支同步推送。合入树与修复提交完全一致。
+- Guide 已完成 validator 与 verify，发布 [r72](https://github.com/A1m233/agent-friend-guide/releases/tag/agent-friend-guide-r72)，commit `a44d491c708b8c7e947f0ddcc1f7c23afb2a0642`；API 确认为 immutable，兼容范围 `[0.3.0, 0.4.0)`。后续仅补充本交付记录，无新增用户知识变化，不重复发布。
+- 安装包：`agent-friend_0.3.0_windows_x64-local-test-NOT-FOR-DISTRIBUTION-setup.exe`，391628868 bytes；版本 0.3.0，Windows x64，ordinary/local-test，publishable=false，sensitive=false。属于同版本本机测试包，不是正式升级或分发制品。
+- build ID：`20261001T144253Z-87bb34d2d779-8259578d`；基于上述 main merge commit，standard 完整构建返回 0。冻结 doctor 全部通过，包括 memory 模块、模型资源和 512 维本地查询；没有真实 LLM 请求，也没有执行安装。
+- installer SHA-256：`afd5662b58ffb848e3bf6457c955ab8e14506a9e2a52d9135f8c41296c905f7b`，实算与 sidecar、release.json 一致。
+- 最终 packageInputSha256：`547fc3d49c67e1aa8bd94b896ba4ad98ab3868beef0737239021b35cd82b05fd`；Guide snapshot `6c4d208bb8e7c5f36fbbbbce05d307d5d92844c286de908615c3156284cdb63d`。清单 source.dirty=true 来自受治理的临时 Guide baseline，lifecycle=transient；构建返回后工作区已恢复 clean，build workspace 由 runner 自动回收。
+- 本记录属于构建完成后的文档收尾，未改变该安装包对应的运行时代码；不为文档提交重新打包。

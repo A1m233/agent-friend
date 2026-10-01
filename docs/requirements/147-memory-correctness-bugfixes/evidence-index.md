@@ -170,3 +170,9 @@ AF 本地消费者核对：
 - 用户已确认既有修复边界并授权合入、推送与本机打包；仍不包含历史资料补齐或自动安装。
 
 - E-011 最终全量后端门禁覆盖全部最终源码：3796 passed / 5 skipped / 8 warnings，lint 与 mypy（773 files）通过。frontend、Rust 代码未变化，沿用 E-010 的通过证据。
+
+## E-012 · 交付与制品核验
+
+- 完整交付绑定、Guide r72、安装包 build ID、SHA-256 及范围见 [交付结果](progress.md#交付结果)。
+- 最终源码后端 3796 passed / 5 skipped；前端 1352 tests 与 Rust gate 沿用相同代码输入的通过记录。
+- standard 完整打包成功，冻结 doctor 全部通过；安装器实算 SHA-256 与两份清单匹配，临时 Guide overlay 恢复后工作区 clean。没有执行真实安装或线上模型行为验收。
