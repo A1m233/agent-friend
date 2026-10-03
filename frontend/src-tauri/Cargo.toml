@@ -50,6 +50,7 @@ tar = "0.4"
 tauri-plugin-dialog = "2"
 fs4 = { version = "0.13", default-features = false, features = ["sync"] }
 rfd = "0.16"
+rodio = { version = "=0.20.1", default-features = false, features = ["mp3", "wav"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"

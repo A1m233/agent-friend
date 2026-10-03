@@ -8,13 +8,20 @@ use std::{
     collections::HashSet,
     sync::{Arc, Mutex},
 };
-use tauri::WebviewWindow;
+use tauri::{AppHandle, Manager, WebviewWindow};
+
+pub(crate) mod assets;
+mod commands;
+mod player;
+pub use commands::*;
 
 use crate::settings::{NotificationSoundSource, Settings};
 
 #[derive(Default)]
 pub struct NotificationSoundState {
     consumed: Mutex<HashSet<String>>,
+    operations: Mutex<()>,
+    player: player::Player,
 }
 
 impl NotificationSoundState {
@@ -45,14 +52,15 @@ impl NotificationSoundState {
         {
             return Ok(());
         }
-        let source = match settings.notification_sound {
+        let source = match &settings.notification_sound {
             NotificationSoundSource::Default {} => "default",
+            NotificationSoundSource::Custom { .. } => "custom",
         };
         let outcome = if !settings.notification_sound_enabled {
             "disabled"
         } else if !window_visible {
             "hidden"
-        } else if play(settings.notification_sound) {
+        } else if play(settings.notification_sound.clone()) {
             "played"
         } else {
             "unavailable"
@@ -63,50 +71,63 @@ impl NotificationSoundState {
 }
 
 #[tauri::command]
-pub fn play_notification_sound(
+pub async fn play_notification_sound(
+    app: AppHandle,
     window: WebviewWindow,
-    state: tauri::State<'_, NotificationSoundState>,
     settings: tauri::State<'_, Arc<Mutex<Settings>>>,
     notification_id: String,
 ) -> Result<(), String> {
     let current = settings
         .lock()
-        .map_err(|error| format!("settings state poisoned: {error}"))?;
-    state.play_once(
-        window.label(),
-        window.is_visible().map_err(|error| error.to_string())?,
-        &notification_id,
-        &current,
-        play_source,
-    )
+        .map_err(|error| format!("settings state poisoned: {error}"))?
+        .clone();
+    let label = window.label().to_string();
+    let visible = window.is_visible().map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<NotificationSoundState>();
+        state.play_once(&label, visible, &notification_id, &current, |source| {
+            state.player.play(source, None).is_ok()
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[cfg(target_os = "windows")]
-fn play_source(source: NotificationSoundSource) -> bool {
+fn play_default() -> bool {
     use windows::{
         core::w,
         Win32::Media::Audio::{PlaySoundW, SND_ALIAS, SND_ASYNC, SND_NODEFAULT, SND_SYSTEM},
     };
-    match source {
-        NotificationSoundSource::Default {} => unsafe {
-            // A registry event alias respects the current Windows sound scheme.
-            // SYSTEM selects system-sounds volume; NODEFAULT leaves missing/muted
-            // events silent. The static UTF-16 alias outlives asynchronous playback.
-            PlaySoundW(
-                w!("Notification.Default"),
-                None,
-                SND_ALIAS | SND_ASYNC | SND_SYSTEM | SND_NODEFAULT,
-            )
-            .as_bool()
-        },
+    unsafe {
+        // A registry event alias respects the current Windows sound scheme.
+        // SYSTEM selects system-sounds volume; NODEFAULT leaves missing/muted
+        // events silent. The static UTF-16 alias outlives asynchronous playback.
+        PlaySoundW(
+            w!("Notification.Default"),
+            None,
+            SND_ALIAS | SND_ASYNC | SND_SYSTEM | SND_NODEFAULT,
+        )
+        .as_bool()
     }
 }
 
 #[cfg(not(target_os = "windows"))]
-fn play_source(_source: NotificationSoundSource) -> bool {
+fn play_default() -> bool {
     // Other platform sound adapters can be added without changing notifications.
-    true
+    false
 }
+
+#[cfg(target_os = "windows")]
+fn stop_default() {
+    use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC};
+    unsafe {
+        let _ = PlaySoundW(None, None, SND_ASYNC);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn stop_default() {}
 
 #[cfg(test)]
 mod tests {

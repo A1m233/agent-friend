@@ -9,7 +9,15 @@ export type ThemeMode = "light" | "dark";
 export type BackgroundOnlinePolicy = "followSystem" | "pluggedIn" | "always";
 export type ReminderNotificationMode = "smart" | "all";
 export type NotificationCompletionMode = "never" | "whenNotViewing" | "always";
-export type NotificationSound = { kind: "default" };
+export type NotificationSound = { kind: "default" } | { kind: "custom"; assetId: string; name: string };
+
+export function isNotificationSound(value: unknown): value is NotificationSound {
+  if (!value || typeof value !== "object") return false;
+  const sound = value as Record<string, unknown>;
+  return sound.kind === "default" || (sound.kind === "custom"
+    && typeof sound.assetId === "string" && /^[a-f0-9]{64}\.(mp3|wav)$/.test(sound.assetId)
+    && typeof sound.name === "string" && sound.name.length > 0);
+}
 export type DeepseekModel =
   | "deepseek/deepseek-v4-flash"
   | "deepseek/deepseek-v4-pro";
@@ -149,7 +157,7 @@ function normalizeSettingsSnapshot(
     if (typeof settings[key] !== "boolean")
       settings[key] = DEFAULT_SETTINGS[key];
   }
-  if (settings.notificationSound?.kind !== "default")
+  if (!isNotificationSound(settings.notificationSound))
     settings.notificationSound = { kind: "default" };
   if (!payload?.memoryModel && deepseekMemoryModel) {
     settings.memoryModel = {
@@ -221,7 +229,7 @@ export async function setSetting<K extends keyof Settings>(
  */
 export function useSetting<K extends keyof Settings>(
   key: K,
-): [Settings[K], (next: Settings[K]) => Promise<void>] {
+): [Settings[K], (next: Settings[K]) => Promise<void>, (confirmed: Settings[K]) => void] {
   const [value, setValueState] = useState<Settings[K]>(
     () => getSettingsSnapshot()[key],
   );
@@ -268,5 +276,12 @@ export function useSetting<K extends keyof Settings>(
     [key, value],
   );
 
-  return [value, setValue];
+  // Domain commands (e.g. importing an asset) persist settings themselves.
+  // Accept their authoritative result locally even if native event delivery fails.
+  const acceptConfirmed = useCallback((confirmed: Settings[K]) => {
+    applySettingCache(key, confirmed);
+    setValueState(confirmed);
+  }, [key]);
+
+  return [value, setValue, acceptConfirmed];
 }

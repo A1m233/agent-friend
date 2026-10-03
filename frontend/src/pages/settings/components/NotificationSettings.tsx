@@ -1,6 +1,7 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from "@/components/ui";
 import { useSetting, type NotificationCompletionMode } from "@/lib/settings";
 import { SettingsRow } from "./SettingsRow";
+import { NotificationSoundSettings } from "./NotificationSoundSettings";
 
 export function NotificationSettings() {
   const [completion, setCompletion] = useSetting("notificationCompletionMode");
@@ -28,7 +29,7 @@ export function NotificationSettings() {
     <SettingsRow label="气泡提示音">
       <Switch checked={sound} onCheckedChange={(value) => void setSound(value)} aria-label="气泡提示音" />
     </SettingsRow>
-    <SettingsRow label="提示音"><span className="text-sm text-muted">默认</span></SettingsRow>
+    <NotificationSoundSettings />
     <p className="text-xs leading-relaxed text-muted">
       新气泡显示时播放提示音。关闭声音后，气泡仍会正常显示。
     </p>

@@ -16,6 +16,7 @@ pub enum AssetGroup {
     RuntimeCredentials,
     ImCredentials,
     UserAvatarModels,
+    NotificationSounds,
     CliHistory,
 }
 

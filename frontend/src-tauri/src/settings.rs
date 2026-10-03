@@ -81,11 +81,16 @@ pub enum NotificationCompletionMode {
 }
 
 /// Sound selection is independent from its enabled flag and notification policy.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum NotificationSoundSource {
     // A struct variant makes Serde reject unknown payload fields as well as unknown kinds.
     Default {},
+    Custom {
+        #[serde(rename = "assetId")]
+        asset_id: String,
+        name: String,
+    },
 }
 
 impl Default for NotificationSoundSource {
@@ -747,6 +752,9 @@ pub fn set_setting(
     state: tauri::State<'_, Arc<Mutex<Settings>>>,
     payload: SetPayload,
 ) -> Result<(), String> {
+    if payload.key == "notificationSound" {
+        return Err("请通过提示音导入或恢复默认操作更换音源".into());
+    }
     let mut s = state
         .lock()
         .map_err(|e| format!("settings state poisoned: {e}"))?;
@@ -902,9 +910,74 @@ pub fn set_setting(
     Ok(())
 }
 
+fn commit_notification_sound(
+    current: &mut Settings,
+    source: NotificationSoundSource,
+    persist: impl FnOnce(&Settings) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut next = current.clone();
+    next.notification_sound = source;
+    persist(&next)?;
+    *current = next;
+    Ok(())
+}
+
+pub(crate) fn save_notification_sound(
+    app: &AppHandle,
+    state: &Arc<Mutex<Settings>>,
+    source: NotificationSoundSource,
+) -> Result<(), String> {
+    let mut current = state.lock().map_err(|_| "设置不可用")?;
+    let previous = serde_json::to_value(&*current).map_err(|e| e.to_string())?;
+    let store = app
+        .store(paths::SETTINGS_STORE_PATH)
+        .map_err(|e| e.to_string())?;
+    commit_notification_sound(&mut current, source.clone(), |next| {
+        store.set(
+            "settings",
+            serde_json::to_value(next).map_err(|e| e.to_string())?,
+        );
+        if let Err(error) = store.save() {
+            store.set("settings", previous);
+            return Err(format!("无法保存提示音设置：{error}"));
+        }
+        Ok(())
+    })?;
+    // Persistence is authoritative; event failure must not pretend the import failed.
+    if let Err(error) = app.emit(
+        EVENT_CHANGED,
+        serde_json::json!({"key":"notificationSound", "value":source}),
+    ) {
+        log::warn!("notification sound settings event failed: {error}");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_sound_save_preserves_all_current_settings() {
+        let mut current = Settings::default();
+        let previous = current.clone();
+        let sound = NotificationSoundSource::Custom {
+            asset_id: format!("{}.wav", "a".repeat(64)),
+            name: "提醒.wav".into(),
+        };
+        assert!(commit_notification_sound(
+            &mut current,
+            sound.clone(),
+            |_| Err("disk full".into())
+        )
+        .is_err());
+        assert_eq!(current, previous);
+        commit_notification_sound(&mut current, sound.clone(), |_| Ok(())).unwrap();
+        assert_eq!(current.notification_sound, sound);
+        let restored: Settings =
+            serde_json::from_value(serde_json::to_value(&current).unwrap()).unwrap();
+        assert_eq!(restored, current);
+    }
 
     #[test]
     fn model_selection_preserves_custom_effort_and_legacy_default() {

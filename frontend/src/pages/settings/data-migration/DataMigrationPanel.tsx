@@ -264,7 +264,7 @@ export function DataMigrationPanel() {
       <ConfirmDialog
         open={pendingCommit !== null}
         title={pendingCommit?.title ?? "确认恢复"}
-        description="当前设备的会话、记忆、人格、设置、凭据和用户模型将被整体替换。系统会先创建并验证新的回滚备份。"
+        description="当前设备的会话、记忆、人格、设置、提示音、凭据和用户模型将被整体替换。系统会先创建并验证新的回滚备份。"
         confirmLabel="确认整体替换"
         variant="destructive"
         confirmDelaySeconds={5}
@@ -344,6 +344,7 @@ function assetResultLabel(group: string) {
       persona: "人格",
       settings: "设置",
       userModels: "用户模型",
+      notificationSounds: "自定义提示音",
       apiCredentials: "API 密钥",
       imCredentials: "QQ 绑定",
     }[group] ?? group

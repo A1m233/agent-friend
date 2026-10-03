@@ -110,6 +110,8 @@ Python通知代码调整后可显式执行 `restart-bridge`，复用前端的 `r
 
 > 桌面端额外需要 **Node 22+ / pnpm（`corepack enable pnpm`）/ Rust（[rustup.rs](https://rustup.rs)）**；`setup` 会检测并提示，但不替你装系统级工具。只想跑后端 CLI 可忽略这三项。
 
+> 自定义提示音使用 Rodio/CPAL。Linux 桌面构建还需 ALSA 开发文件（Debian/Ubuntu：`libasound2-dev`；Fedora：`alsa-lib-devel`）及 `pkg-config`；由开发者按发行版安装，项目脚本不会自动安装系统依赖。Windows 使用 WASAPI、macOS 使用 CoreAudio。
+
 ## 脚本清单
 
 | 脚本 | 用途 | mac/linux | windows |
