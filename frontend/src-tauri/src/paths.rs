@@ -14,6 +14,7 @@ pub const UI_STATE_STORE_PATH: &str = "ui-state.json";
 pub const PERMISSION_STATE_FILE: &str = "permission-state.json";
 pub const RUNTIME_CREDENTIAL_STATE_FILE: &str = "runtime-credential-state.json";
 pub const AVATAR_MODELS_DIR: &str = "avatar-models";
+pub const NOTIFICATION_SOUNDS_DIR: &str = "notification-sounds";
 pub const AVATAR_MODEL_CATALOG_FILE: &str = "catalog.json";
 pub const PERSONA_EDITABLE_DIR: &str = "personas/default";
 pub const PERSONA_EDITABLE_FILE: &str = "persona.md";
@@ -91,6 +92,10 @@ pub fn user_data_dir() -> PathBuf {
 /// Avatar 模型资源根目录：`<user_data_dir>/avatar-models`。
 pub fn avatar_model_assets_dir() -> PathBuf {
     user_data_dir().join(AVATAR_MODELS_DIR)
+}
+
+pub fn notification_sounds_dir() -> PathBuf {
+    user_data_dir().join(NOTIFICATION_SOUNDS_DIR)
 }
 
 /// 应用随包内置模型安装后的管理目录：`<avatar_model_assets_dir>/builtin`。

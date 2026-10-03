@@ -32,6 +32,18 @@ struct StagedImport {
     im_credentials: serde_json::Value,
 }
 
+impl MigrationCoordinator {
+    /// Keep a settings-selected file stable while export/backup snapshots it or
+    /// an import replaces the managed asset tree.
+    pub(crate) fn sound_asset_update_guard(
+        &self,
+    ) -> Result<tokio::sync::MutexGuard<'_, ()>, String> {
+        self.operation
+            .try_lock()
+            .map_err(|_| "正在备份或迁移数据，请稍后更换提示音".into())
+    }
+}
+
 impl Default for MigrationCoordinator {
     fn default() -> Self {
         Self {
@@ -808,6 +820,7 @@ fn inventory_snapshot(
         || settings_modified
         || attachment_file_count > 0
         || user_model_file_count > 0
+        || count(AssetGroup::NotificationSounds) > 0
         || managed_credential_count > 0
         || cli_history_present;
     Ok(MigrationInventory {
@@ -919,6 +932,11 @@ fn build_commit_result(
         ),
         ("settings", count(AssetGroup::Settings), "持久设置已恢复"),
         (
+            "notificationSounds",
+            count(AssetGroup::NotificationSounds),
+            "自定义提示音已恢复",
+        ),
+        (
             "userModels",
             count(AssetGroup::UserAvatarModels),
             "用户桌宠模型已恢复",
@@ -987,6 +1005,10 @@ fn validate_manifest_semantics(manifest: &Manifest) -> Result<(), String> {
             }
             AssetGroup::Memory => entry.path.starts_with("assets/memory/"),
             AssetGroup::Persona => entry.path.starts_with("assets/personas/"),
+            AssetGroup::NotificationSounds => entry
+                .path
+                .strip_prefix("assets/notification-sounds/")
+                .is_some_and(crate::notification_sound::assets::valid_id),
             AssetGroup::Settings => entry.path == "state/settings.json",
             AssetGroup::RuntimeCredentials => entry.path == "secrets/runtime.json",
             AssetGroup::ImCredentials => entry.path == "secrets/im.json",
@@ -1037,7 +1059,13 @@ fn parse_app_version(value: &str) -> Result<(u64, u64, u64), String> {
 
 fn swap_managed_assets(staging: &Path, old: &Path) -> Result<(), String> {
     let root = paths::user_data_dir();
-    for name in ["sessions", "attachments", "memory", "personas"] {
+    for name in [
+        "sessions",
+        "attachments",
+        "memory",
+        "personas",
+        paths::NOTIFICATION_SOUNDS_DIR,
+    ] {
         rotate_path(&root.join(name), &staging.join(name), &old.join(name))?;
     }
     rotate_path(
@@ -1122,6 +1150,7 @@ fn rollback_local(
             "attachments",
             "memory",
             "personas",
+            paths::NOTIFICATION_SOUNDS_DIR,
             ".cli_history",
         ] {
             let active = root.join(name);
@@ -1184,6 +1213,41 @@ fn write_journal(path: &Path, phase: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sound_manifest_accepts_old_packages_and_rejects_unmanaged_paths() {
+        use super::super::model::ManifestEntry;
+        let mut manifest = Manifest::new(
+            [
+                ("state/settings.json", AssetGroup::Settings),
+                ("state/ui-continuity.json", AssetGroup::UiContinuity),
+                ("secrets/runtime.json", AssetGroup::RuntimeCredentials),
+                ("secrets/im.json", AssetGroup::ImCredentials),
+            ]
+            .into_iter()
+            .map(|(path, group)| ManifestEntry {
+                path: path.into(),
+                group,
+                size: 0,
+                sha256: String::new(),
+            })
+            .collect(),
+        );
+        assert!(validate_manifest_semantics(&manifest).is_ok());
+        manifest.entries.push(ManifestEntry {
+            path: format!("assets/notification-sounds/{}.wav", "a".repeat(64)),
+            group: AssetGroup::NotificationSounds,
+            size: 0,
+            sha256: String::new(),
+        });
+        assert!(validate_manifest_semantics(&manifest).is_ok());
+        manifest.entries.last_mut().unwrap().path =
+            "assets/notification-sounds/../secrets.wav".into();
+        assert_eq!(
+            validate_manifest_semantics(&manifest),
+            Err("archive_asset_policy_rejected".into())
+        );
+    }
 
     #[test]
     fn future_app_versions_are_rejected_before_commit() {

@@ -61,6 +61,13 @@ fn collect_file_assets_from(root: &Path) -> Result<Vec<ArchiveSource>, String> {
                 || is_temporary(path)
         },
     )?;
+    collect_tree(
+        &root.join(paths::NOTIFICATION_SOUNDS_DIR),
+        "assets/notification-sounds",
+        AssetGroup::NotificationSounds,
+        &mut sources,
+        &|path| is_temporary(path),
+    )?;
     let cli_history = root.join(".cli_history");
     if cli_history.is_file() {
         sources.push(ArchiveSource {
@@ -156,6 +163,25 @@ mod tests {
         assert!(is_temporary(Path::new("metadata.json.lock")));
         assert!(is_temporary(Path::new("write.tmp")));
         assert!(!is_temporary(Path::new("session.jsonl")));
+    }
+
+    #[test]
+    fn notification_sound_assets_join_backup_inventory_but_temporary_files_do_not() {
+        let root =
+            std::env::temp_dir().join(format!("af-migration-sound-{}", rand::random::<u64>()));
+        let sound_dir = root.join(paths::NOTIFICATION_SOUNDS_DIR);
+        fs::create_dir_all(&sound_dir).unwrap();
+        let id = format!("{}.mp3", "a".repeat(64));
+        fs::write(sound_dir.join(&id), b"sound").unwrap();
+        fs::write(sound_dir.join("import.part"), b"incomplete").unwrap();
+        let assets = collect_file_assets_from(&root).unwrap();
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].group, AssetGroup::NotificationSounds);
+        assert_eq!(
+            assets[0].archive_path,
+            format!("assets/notification-sounds/{id}")
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
