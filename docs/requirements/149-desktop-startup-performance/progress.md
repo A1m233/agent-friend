@@ -70,3 +70,7 @@ candidate 4：20261004T113552Z-fedb4fc637da-f01e57f1。installed-07 通过，最
 ### 用户验收与合入准备
 
 用户已确认合入并推送。origin/main 仍为 fedb4fc637da0b6d1fb171dd2e9c06811fb70429，与实现基线一致；无需冲突解决或重建安装包。归档 JSON 保留测量时尚未验收/提交的历史状态，本节记录后续确认，不改写原证据。公开 Guide 按 merge-main-and-push 自动流程补充启动慢时的诊断取证入口和保留边界，完成公开发布后合入。
+
+实现提交：1ebfee9081e316d8bb61e083f0d17254c7687d60。提交前为本需求的证据目录补充字节保留属性，避免 Git 换行转换改变 JSON 哈希；暂存区原始字节与 MANIFEST.sha256 全部一致。此调整不改变运行时代码或安装输入。
+
+Guide 复核基线为 852f558993218e770d2b19118de7e65031927cb9；补充 data-and-privacy / troubleshooting 中启动慢的取证入口、自动本地记录、旧版本与缺失边界。公开提交 fd39753dc2a1d8cec20c63b9d7d560794ba96e41 已推送，Skill validator 和项目 verify 通过；[agent-friend-guide-r75](https://github.com/A1m233/agent-friend-guide/releases/tag/agent-friend-guide-r75) 已发布并验证 immutable=true，兼容范围 0.3.0≤版本<0.4.0。未修改产品 builtin pin，原 candidate 4 的 Guide r74 构建证据继续按原身份保留。
