@@ -7,8 +7,23 @@ import {
 
 describe("local service URLs", () => {
   const webDev = { dev: true, tauri: false, origin: "http://localhost:1420" };
-  const tauriDev = { dev: true, tauri: true, origin: "http://localhost:1420" };
-  const packaged = { dev: false, tauri: true, origin: "http://tauri.localhost" };
+  const endpoints = { profileId: "production", bridge: "http://127.0.0.1:18800", voice: "http://127.0.0.1:18900" };
+  const tauriDev = { dev: true, tauri: true, origin: "http://localhost:1420", endpoints };
+  const packaged = { dev: false, tauri: true, origin: "http://tauri.localhost", endpoints };
+
+  it("uses isolated profile endpoints for HTTP and WebSocket bases", () => {
+    const smoke = { ...packaged, endpoints: { profileId: "installer-smoke", bridge: "http://127.0.0.1:28800", voice: "http://127.0.0.1:28900" } };
+    expect(localServiceHttpBaseUrl("bridge", smoke)).toBe(smoke.endpoints.bridge);
+    expect(localServiceAbsoluteBaseUrl("voice", smoke)).toBe(smoke.endpoints.voice);
+    expect(resolveBridgeUrl("/v1/sessions", localServiceHttpBaseUrl("bridge", smoke))).toBe("http://127.0.0.1:28800/v1/sessions");
+  });
+
+  it("fails closed instead of contacting production when native bootstrap is absent or invalid", () => {
+    expect(() => localServiceHttpBaseUrl("bridge", { ...packaged, endpoints: undefined })).toThrow("configuration");
+    for (const bridge of ["https://example.com", "http://127.0.0.1:0", "http://127.0.0.1:65536", "http://127.0.0.1:18800/path", endpoints.voice]) {
+      expect(() => localServiceAbsoluteBaseUrl("voice", { ...packaged, endpoints: { ...endpoints, bridge } })).toThrow("configuration");
+    }
+  });
 
   it("keeps pure web development calls on the Vite proxy", () => {
     expect(localServiceHttpBaseUrl("bridge", webDev)).toBe("");

@@ -36,6 +36,7 @@ import {
 } from "@/lib/workspace/navigation";
 import { ChatContentSurface } from "./components/ChatContentSurface";
 import { toast } from "sonner";
+import { recordStartupMilestone } from "@/lib/startup-evidence";
 
 const SettingsApp = lazy(() =>
   import("@/pages/settings/App").then((module) => ({ default: module.SettingsApp })),
@@ -55,6 +56,7 @@ const MemoryInspectorApp = lazy(() =>
  * 093 · 统一主窗口：左侧工作区导航 + 右侧平级内容 surface。
  */
 export function ChatApp() {
+  useEffect(() => recordStartupMilestone("root-committed"), []);
   const status = useConnectionStore((s) => s.status);
   const ping = useConnectionStore((s) => s.ping);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
@@ -91,7 +93,9 @@ export function ChatApp() {
 
   useEffect(() => {
     if (status === "online") {
-      void loadModelCatalog().then(resolveNewConversationDraftRuntimeConfig);
+      void loadModelCatalog().then(resolveNewConversationDraftRuntimeConfig).then(() => {
+        if (useModelCatalogStore.getState().catalog) recordStartupMilestone("models-ready");
+      });
     }
   }, [loadModelCatalog, resolveNewConversationDraftRuntimeConfig, status]);
 

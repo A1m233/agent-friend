@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "status": "machine-verified-awaiting-user-acceptance",
+  "candidateBuildId": "20261004T113552Z-fedb4fc637da-f01e57f1",
+  "sourceCommit": "fedb4fc637da0b6d1fb171dd2e9c06811fb70429",
+  "sourceTreeSha256": "c933acef3b39b3e09c4b176a185f39fafae961d2f6e935ab48fab743cccb41f4",
+  "checks": [
+    {
+      "stage": "backend",
+      "command": "scripts/check/run.ps1 --stage backend",
+      "exitCode": 0,
+      "result": {
+        "passed": 3813,
+        "skipped": 5
+      },
+      "logSha256": "4eddbe6371510a478b814d903d4a19a5308842ec7c9be5a8c7a37dc61b3ac3ce"
+    },
+    {
+      "stage": "frontend",
+      "command": "scripts/check/run.ps1 --stage frontend",
+      "exitCode": 0,
+      "result": {
+        "files": 164,
+        "passed": 1367
+      },
+      "logSha256": "3dbc6e4fb9dcebcd9c9a82b8fa2ef38ebba14d0eca3374516f770a1122698dea"
+    },
+    {
+      "stage": "rust",
+      "command": "scripts/check/run.ps1 --stage rust",
+      "exitCode": 0,
+      "result": {
+        "passed": 311,
+        "ignored": 1
+      },
+      "logSha256": "6b193de1d62d0f19842a82eb9a80c4662ce5980d9590b5418d9766bed7e75025"
+    },
+    {
+      "stage": "installer-matrix",
+      "command": "scripts/package/run.ps1 installer-smoke --guide-repo <managed> --guide-commit d8ae318bec94ec3583c9cdecafc86ab2ace71668 --smoke-build-report <candidate-4>",
+      "exitCode": 0,
+      "result": {
+        "passedScenarios": 14
+      },
+      "logSha256": "e96eaed5c55e3993a40424a890a6204e6bdcfbf4ab7c386f3c8508364cbb57fe"
+    },
+    {
+      "stage": "installer-report-binding",
+      "command": "scripts/package/run.ps1 installer-smoke-verify --guide-repo <managed> --guide-commit d8ae318bec94ec3583c9cdecafc86ab2ace71668 --smoke-report <matrix-4> --candidate-build-id 20261004T113552Z-fedb4fc637da-f01e57f1 --candidate-installer <candidate-4>",
+      "exitCode": 0,
+      "result": {},
+      "logSha256": "4d581d19c0b03c8cfa309451fcf02eee6b60a47ad70401c4e7ad8501a796f04f"
+    }
+  ],
+  "lifecycle": {
+    "isolatedPathsRemoved": true,
+    "productionPid": 58512,
+    "productionStartTime": "2026-10-04T16:07:16+08:00",
+    "productionReplaced": false,
+    "committed": false,
+    "merged": false
+  },
+  "limitations": [
+    "Windows actual installation evidence only",
+    "unknown cache, not a performance baseline or historical root-cause attribution",
+    "NetLog final document incomplete after forced cleanup; complete events analyzed only",
+    "manual installer language selector not observed; unchanged by this task",
+    "existing third-party atexit warning remains; final backend exit code is zero"
+  ]
+}

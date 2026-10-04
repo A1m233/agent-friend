@@ -3,7 +3,11 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::{Component, Path, PathBuf},
+    time::Instant,
 };
+
+mod measurement;
+pub use measurement::VerificationMetrics;
 
 pub const ACTIVE_INSTALL_FILE: &str = "active-install.json";
 
@@ -134,14 +138,21 @@ fn sha256_bytes(value: &[u8]) -> String {
     format!("{:x}", Sha256::digest(value))
 }
 
-fn sha256_file(path: &Path) -> Result<String, String> {
-    let bytes = fs::read(path).map_err(|error| {
+fn sha256_file(path: &Path, metrics: &mut VerificationMetrics) -> Result<String, String> {
+    let start = Instant::now();
+    let read = fs::read(path);
+    metrics.read_ms += start.elapsed().as_secs_f64() * 1000.0;
+    let bytes = read.map_err(|error| {
         format!(
             "install_integrity_file_unreadable: {}: {error}",
             path.display()
         )
     })?;
-    Ok(sha256_bytes(&bytes))
+    metrics.bytes_read += bytes.len() as u64;
+    let start = Instant::now();
+    let digest = sha256_bytes(&bytes);
+    metrics.hash_ms += start.elapsed().as_secs_f64() * 1000.0;
+    Ok(digest)
 }
 
 fn safe_relative_path(value: &str) -> Result<PathBuf, String> {
@@ -162,6 +173,44 @@ pub fn verify_candidate_payload(
     payload_relative_path: &str,
     expected_profile_id: &str,
     expected_build_id: &str,
+) -> Result<VerifiedPayload, String> {
+    verify_candidate_payload_with_metrics(
+        install_root,
+        payload_relative_path,
+        expected_profile_id,
+        expected_build_id,
+        &mut VerificationMetrics::default(),
+    )
+}
+
+/// Same validation and short-circuit behavior as the normal entry point.
+/// Metrics survive failures so a partial scan cannot masquerade as a full one.
+pub fn verify_candidate_payload_with_metrics(
+    install_root: &Path,
+    payload_relative_path: &str,
+    expected_profile_id: &str,
+    expected_build_id: &str,
+    metrics: &mut VerificationMetrics,
+) -> Result<VerifiedPayload, String> {
+    *metrics = VerificationMetrics::default();
+    let start = Instant::now();
+    let result = verify_candidate_payload_inner(
+        install_root,
+        payload_relative_path,
+        expected_profile_id,
+        expected_build_id,
+        metrics,
+    );
+    metrics.total_ms = start.elapsed().as_secs_f64() * 1000.0;
+    result
+}
+
+fn verify_candidate_payload_inner(
+    install_root: &Path,
+    payload_relative_path: &str,
+    expected_profile_id: &str,
+    expected_build_id: &str,
+    metrics: &mut VerificationMetrics,
 ) -> Result<VerifiedPayload, String> {
     let install_root = install_root
         .canonicalize()
@@ -202,6 +251,7 @@ pub fn verify_candidate_payload(
     let mut runtime_executable_sha256 = None;
     let mut has_models = false;
     let mut seen = std::collections::HashSet::new();
+    metrics.manifest_files = manifest.files.len();
     for item in &manifest.files {
         let relative = safe_relative_path(&item.path)?;
         let folded = item.path.replace('\\', "/").to_lowercase();
@@ -209,19 +259,26 @@ pub fn verify_candidate_payload(
             return Err(format!("install_integrity_duplicate_path: {}", item.path));
         }
         let path = payload_root.join(relative);
-        let metadata = path.metadata().map_err(|error| {
+        let start = Instant::now();
+        let metadata = path.metadata();
+        metrics.metadata_ms += start.elapsed().as_secs_f64() * 1000.0;
+        let metadata = metadata.map_err(|error| {
             format!(
                 "install_integrity_payload_file_missing: {}: {error}",
                 item.path
             )
         })?;
-        if !metadata.is_file() || metadata.len() != item.size || sha256_file(&path)? != item.sha256
+        metrics.metadata_checked += 1;
+        if !metadata.is_file()
+            || metadata.len() != item.size
+            || sha256_file(&path, metrics)? != item.sha256
         {
             return Err(format!(
                 "install_integrity_payload_hash_mismatch: {}",
                 item.path
             ));
         }
+        metrics.files_verified += 1;
         if item.path == "runtime/python/agent-friend-runtime.exe"
             && item.capability == "runtime-python"
         {
@@ -248,6 +305,13 @@ pub fn verify_candidate_payload(
 pub fn discover_active_payload(
     resource_dir: Option<&Path>,
 ) -> Result<Option<ActivePayload>, String> {
+    discover_active_payload_with_metrics(resource_dir, &mut VerificationMetrics::default())
+}
+
+pub fn discover_active_payload_with_metrics(
+    resource_dir: Option<&Path>,
+    metrics: &mut VerificationMetrics,
+) -> Result<Option<ActivePayload>, String> {
     let Some((identity, identity_sha256)) = embedded_identity()? else {
         return Ok(None);
     };
@@ -255,14 +319,32 @@ pub fn discover_active_payload(
     let install_root = resource_dir.ok_or_else(|| {
         "install_integrity_resource_dir_unavailable: packaged resource root is missing".to_string()
     })?;
-    validate_active_payload(install_root, identity, identity_sha256, &profile).map(Some)
+    validate_active_payload_measured(install_root, identity, identity_sha256, &profile, metrics)
+        .map(Some)
 }
 
+#[cfg(test)]
 fn validate_active_payload(
     install_root: &Path,
     shell_identity: BuildIdentity,
     shell_identity_sha256: String,
     profile: &InstallProfile,
+) -> Result<ActivePayload, String> {
+    validate_active_payload_measured(
+        install_root,
+        shell_identity,
+        shell_identity_sha256,
+        profile,
+        &mut VerificationMetrics::default(),
+    )
+}
+
+fn validate_active_payload_measured(
+    install_root: &Path,
+    shell_identity: BuildIdentity,
+    shell_identity_sha256: String,
+    profile: &InstallProfile,
+    metrics: &mut VerificationMetrics,
 ) -> Result<ActivePayload, String> {
     let receipt_path = install_root.join(ACTIVE_INSTALL_FILE);
     let receipt: ActiveInstallReceipt = serde_json::from_slice(
@@ -291,11 +373,12 @@ fn validate_active_payload(
         return Err("install_integrity_payload_escaped_root".to_string());
     }
 
-    let verified = verify_candidate_payload(
+    let verified = verify_candidate_payload_with_metrics(
         &install_root,
         &receipt.payload_relative_path,
         &profile.profile_id,
         &receipt.build_id,
+        metrics,
     )?;
     if verified.manifest_sha256 != receipt.payload_manifest_sha256 {
         return Err("install_integrity_manifest_hash_mismatch".to_string());
@@ -382,5 +465,127 @@ mod tests {
             safe_relative_path("packages/build-123").unwrap(),
             PathBuf::from("packages/build-123")
         );
+    }
+
+    fn measured_fixture(name: &str) -> PathBuf {
+        let root = temp_root(name);
+        let payload = root.join("packages/build-123");
+        let mut files = Vec::new();
+        for (path, capability, bytes) in [
+            (
+                "runtime/python/agent-friend-runtime.exe",
+                "runtime-python",
+                b"runtime".as_slice(),
+            ),
+            (
+                "runtime/models/model.bin",
+                "runtime-models",
+                b"model".as_slice(),
+            ),
+        ] {
+            let target = payload.join(path);
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(target, bytes).unwrap();
+            files.push(json!({"path": path, "capability": capability, "size": bytes.len(), "sha256": sha256_bytes(bytes)}));
+        }
+        let identity_bytes = serde_json::to_vec(&identity()).unwrap();
+        fs::write(payload.join("build-identity.json"), &identity_bytes).unwrap();
+        fs::write(
+            payload.join("payload-manifest.json"),
+            serde_json::to_vec(&json!({
+                "schemaVersion": 1, "profileId": "production",
+                "buildIdentitySha256": sha256_bytes(&identity_bytes), "files": files,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        root
+    }
+
+    #[test]
+    fn measured_verification_checks_all_bytes_and_retains_partial_failure() {
+        let root = measured_fixture("metrics");
+        let mut metrics = VerificationMetrics::default();
+        let verified = verify_candidate_payload_with_metrics(
+            &root,
+            "packages/build-123",
+            "production",
+            "build-123",
+            &mut metrics,
+        )
+        .unwrap();
+        assert_eq!(metrics.manifest_files, 2);
+        assert_eq!(metrics.files_verified, 2);
+        assert_eq!(metrics.bytes_read, 12);
+        assert!(metrics.total_ms >= metrics.metadata_ms + metrics.read_ms + metrics.hash_ms);
+        let normal =
+            verify_candidate_payload(&root, "packages/build-123", "production", "build-123")
+                .unwrap();
+        assert_eq!(normal.manifest_sha256, verified.manifest_sha256);
+        // Same-length corruption must still be detected: no metadata-only shortcut.
+        fs::write(
+            root.join("packages/build-123/runtime/models/model.bin"),
+            b"other",
+        )
+        .unwrap();
+        let measured_error = verify_candidate_payload_with_metrics(
+            &root,
+            "packages/build-123",
+            "production",
+            "build-123",
+            &mut metrics,
+        )
+        .unwrap_err();
+        let normal_error =
+            verify_candidate_payload(&root, "packages/build-123", "production", "build-123")
+                .unwrap_err();
+        assert_eq!(measured_error, normal_error);
+        assert!(measured_error.starts_with("install_integrity_payload_hash_mismatch"));
+        assert_eq!(metrics.files_verified, 1);
+        assert_eq!(metrics.bytes_read, 12);
+        fs::remove_file(root.join("packages/build-123/runtime/models/model.bin")).unwrap();
+        assert!(verify_candidate_payload_with_metrics(
+            &root,
+            "packages/build-123",
+            "production",
+            "build-123",
+            &mut metrics
+        )
+        .unwrap_err()
+        .starts_with("install_integrity_payload_file_missing"));
+        assert_eq!(metrics.metadata_checked, 1);
+        assert_eq!(metrics.bytes_read, 7);
+        assert_eq!(metrics.files_verified, 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn measured_verification_rejects_unsafe_and_duplicate_entries() {
+        let root = measured_fixture("manifest-rejection");
+        let manifest_path = root.join("packages/build-123/payload-manifest.json");
+        let original: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        let mut duplicate = original.clone();
+        duplicate["files"][1] = duplicate["files"][0].clone();
+        let mut unsafe_path = original;
+        unsafe_path["files"][0]["path"] = json!("../outside");
+        for (manifest, prefix) in [
+            (duplicate, "install_integrity_duplicate_path"),
+            (unsafe_path, "install_integrity_unsafe_path"),
+        ] {
+            fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+            let mut metrics = VerificationMetrics::default();
+            let error = verify_candidate_payload_with_metrics(
+                &root,
+                "packages/build-123",
+                "production",
+                "build-123",
+                &mut metrics,
+            )
+            .unwrap_err();
+            assert!(error.starts_with(prefix));
+            assert!(metrics.files_verified < metrics.manifest_files);
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 }

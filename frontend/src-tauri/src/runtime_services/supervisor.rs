@@ -3,7 +3,7 @@ use super::model::{
     RuntimeServiceSnapshot,
 };
 use super::process::{ProcessJob as PackagedProcessJob, ServiceProcess};
-use crate::{install_contract, paths};
+use crate::{install_contract, paths, runtime_observability::RuntimeObserver};
 use rand::{rngs::OsRng, RngCore};
 use std::{
     collections::HashMap,
@@ -100,6 +100,7 @@ pub struct RuntimeServiceSupervisor {
     client: reqwest::Client,
     process_job: Option<Arc<PackagedProcessJob>>,
     observed_readiness: Mutex<HashMap<RuntimeServiceKind, serde_json::Value>>,
+    observer: Option<Arc<RuntimeObserver>>,
 }
 
 #[derive(Clone, Debug)]
@@ -116,13 +117,17 @@ enum RuntimeLaunchContext {
 }
 
 impl RuntimeServiceSupervisor {
-    pub fn from_environment(resource_dir: Option<PathBuf>) -> Self {
+    pub(crate) fn from_environment(
+        resource_dir: Option<PathBuf>,
+        observer: Arc<RuntimeObserver>,
+    ) -> Self {
+        let phase = observer.phase("runtime-discovery", serde_json::json!({}));
         let repo_root = std::env::var_os("AGENT_FRIEND_REPO_ROOT")
             .map(PathBuf::from)
             .and_then(|path| path.canonicalize().ok());
         let launch_context = match repo_root {
             Some(path) => RuntimeLaunchContext::Source(path),
-            None => match discover_packaged_runtime(resource_dir.as_deref()) {
+            None => match discover_packaged_runtime(resource_dir.as_deref(), Some(&observer)) {
                 Ok(Some(context)) => context,
                 Ok(None) => RuntimeLaunchContext::Unavailable(
                     "runtime_unavailable: packaged build identity is unavailable".to_string(),
@@ -133,7 +138,13 @@ impl RuntimeServiceSupervisor {
                 }
             },
         };
-        Self::new(launch_context)
+        let mut supervisor = Self::new(launch_context);
+        phase.finish(!matches!(
+            supervisor.launch_context,
+            RuntimeLaunchContext::Unavailable(_)
+        ));
+        supervisor.observer = Some(observer);
+        supervisor
     }
 
     fn new(launch_context: RuntimeLaunchContext) -> Self {
@@ -168,6 +179,7 @@ impl RuntimeServiceSupervisor {
             client: reqwest::Client::new(),
             process_job,
             observed_readiness: Mutex::new(HashMap::new()),
+            observer: None,
         }
     }
 
@@ -448,6 +460,11 @@ impl RuntimeServiceSupervisor {
             );
         }
         let generation = slot.begin(RuntimeServicePhase::Starting);
+        let context = serde_json::json!({"service": service.command(), "generation": generation});
+        let start_phase = self
+            .observer
+            .as_ref()
+            .map(|observer| observer.phase("service-start", context.clone()));
         emit(app, &slot.snapshot);
 
         if let RuntimeLaunchContext::Unavailable(error) = &self.launch_context {
@@ -475,7 +492,11 @@ impl RuntimeServiceSupervisor {
         }
 
         let token = generate_token();
-        match spawn_service(
+        let spawn_phase = self
+            .observer
+            .as_ref()
+            .map(|observer| observer.phase("service-spawn", context.clone()));
+        let spawned = spawn_service(
             &self.launch_context,
             service,
             &token,
@@ -483,7 +504,11 @@ impl RuntimeServiceSupervisor {
             self.process_job.as_deref(),
             generation,
             start_reason,
-        ) {
+        );
+        if let Some(phase) = spawn_phase {
+            phase.finish(spawned.is_ok());
+        }
+        match spawned {
             Ok(child) => {
                 slot.child = Some(child);
                 slot.token = Some(token.clone());
@@ -496,6 +521,10 @@ impl RuntimeServiceSupervisor {
         }
         drop(slot);
 
+        let readiness_phase = self
+            .observer
+            .as_ref()
+            .map(|observer| observer.phase("service-readiness", context));
         for _ in 0..READINESS_ATTEMPTS {
             let mut slot = slot_ref.lock().await;
             if slot.snapshot.generation != generation {
@@ -524,6 +553,12 @@ impl RuntimeServiceSupervisor {
                     slot.snapshot.phase = RuntimeServicePhase::Ready;
                     slot.snapshot.error = None;
                     emit(app, &slot.snapshot);
+                    if let Some(phase) = readiness_phase {
+                        phase.finish(true);
+                    }
+                    if let Some(phase) = start_phase {
+                        phase.finish(true);
+                    }
                     return Ok(slot.snapshot.clone());
                 }
                 Err(error) if error.starts_with("runtime_identity_mismatch") => {
@@ -942,8 +977,22 @@ fn validate_readiness_identity(
 
 fn discover_packaged_runtime(
     resource_dir: Option<&Path>,
+    observer: Option<&Arc<RuntimeObserver>>,
 ) -> Result<Option<RuntimeLaunchContext>, String> {
-    let Some(active) = install_contract::discover_active_payload(resource_dir)? else {
+    let phase =
+        observer.map(|observer| observer.phase("payload-verification", serde_json::json!({})));
+    let mut metrics = install_contract::VerificationMetrics::default();
+    let result = install_contract::discover_active_payload_with_metrics(resource_dir, &mut metrics);
+    if let Some(phase) = phase {
+        phase.finish_with_context(
+            result.is_ok(),
+            serde_json::json!({
+                "verification": metrics,
+                "applicable": !matches!(&result, Ok(None)),
+            }),
+        );
+    }
+    let Some(active) = result? else {
         return Ok(None);
     };
     let runtime_root = active.runtime_root;
@@ -1436,7 +1485,7 @@ mod tests {
         std::fs::create_dir_all(&model).unwrap();
         std::fs::write(&launcher, b"test").unwrap();
 
-        let context = discover_packaged_runtime(Some(&resource_dir)).unwrap();
+        let context = discover_packaged_runtime(Some(&resource_dir), None).unwrap();
 
         assert!(context.is_none());
         std::fs::remove_dir_all(resource_dir).unwrap();

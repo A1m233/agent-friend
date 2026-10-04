@@ -11,8 +11,10 @@ import { registerSettingsListener } from "@/lib/settings/listen";
 import { startSessionsChangedSubscriber } from "@/stores";
 import { startVoiceStateSubscriber } from "@/stores/voice";
 import { ChatApp } from "./App";
+import { recordStartupMilestone } from "@/lib/startup-evidence";
 import "./layout.css";
 
+recordStartupMilestone("module-loaded");
 installProductContextMenuPolicy();
 const settingsReady = registerSettingsListener();
 startSessionsChangedSubscriber();
@@ -21,6 +23,7 @@ startVoiceStateSubscriber();
 void initializePermissionSync();
 
 void settingsReady.then(() => {
+  recordStartupMilestone("settings-ready");
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
       <ChatApp />

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-04T08:51:11.2859037+00:00",
+  "scope": "M0 measurement; no end-to-end installed startup or installer matrix",
+  "checks": [
+    {
+      "command": "scripts/check/run.ps1 --stage backend",
+      "status": "passed",
+      "passed": 3809,
+      "skipped": 5,
+      "notes": "Full suite collected 13 startup-profile tests; final report identity change separately covered by 14-test targeted run. Third-party warnings and ignored atexit cleanup warning; exit 0."
+    },
+    {
+      "command": "scripts/check/run.ps1 --stage frontend",
+      "status": "passed",
+      "testFiles": 163,
+      "tests": 1362,
+      "notes": "Includes lint, typecheck, tests and static production build; existing CSS/chunk warnings."
+    },
+    {
+      "command": "scripts/check/run.ps1 --stage rust",
+      "status": "passed",
+      "passed": 309,
+      "ignored": 1,
+      "notes": "Includes helper binary tests and release check; existing dead-code warnings."
+    },
+    {
+      "command": "scripts/test/run.ps1 scripts/startup-profile -q",
+      "status": "passed",
+      "passed": 14
+    },
+    {
+      "command": "scripts/package/run.ps1 installer-contract",
+      "status": "passed",
+      "minimumVerificationLevel": "full-matrix",
+      "matrixExecuted": false
+    }
+  ],
+  "rawRustLogSha256": "835658611c81851bf878acfc978a68923b8bd1ae8e8acabf586c3754120863a1",
+  "localTrackedPatchSha256": "0395bd2c7929fa208edc58df919123fb9bef284adcc651070374288bad64a2de",
+  "notes": [
+    "Helper build source mapping is in verify-baseline-01.json; runner mapping separately records later Python reporter changes.",
+    "Tracked patch is a local supplemental artifact, not a complete snapshot of untracked source files.",
+    "New source files remain in the task worktree and their hashes are bound by measurement reports. No commit created."
+  ]
+}

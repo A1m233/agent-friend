@@ -17,6 +17,26 @@ Bridge unavailability is a collector gap; ordinary command cleanup does not impl
 desktop application was terminated. Inspect selected tool events and actual application
 evidence separately when determining who closed an application.
 
+## Startup timing evidence
+
+`startup-timeline-v1` (schema revision 20) describes startup records in the retained
+`logs/tauri.log.runtime*` journals, not a new export-time measurement. The inspector's
+`startupTimeline` groups whitelisted phases and frontend milestones by their historical
+`processSessionId`. It reads at most 4 MiB / 10,000 records / 64 processes and reports limits.
+The producer retains at most three 1 MiB journals for 30 days; rotation, crash or write failure
+can leave missing starts or finishes. A start without a finish is unfinished, never zero or success.
+An error/incomplete finish retains partial counts. Old bundles without these events remain readable.
+
+`payload-verification` contains aggregate metadata/read/hash times and file/byte counts from
+ordinary startup validation. Diagnostic export's own integrity check is not a startup sample.
+The tauri-initialize span ends at setup entry and contains build plus any event-loop preparation. Nested initialize/build and service phases overlap and must not be summed. Rust elapsed times share
+only one process-local monotonic clock. Frontend `elapsedMs` is native IPC receipt time;
+`pageElapsedMs` is the separate page clock and is never subtracted from the Rust clock.
+`frontend-ready` requires settings, root commit, model initialization, restoration and an
+actual enabled editor. Hidden-window preparation, visibility and a completed real user action
+remain distinct; this marker proves neither successful model generation nor first interaction.
+No message bodies, file paths, credentials or per-file names are collected by these probes.
+
 ## Producer Flow
 
 The settings feedback panel invokes the Tauri `generate_diagnostic_bundle` command with an optional problem description, selected session ids, locale, timezone, and an attachment-originals flag. Rust then:

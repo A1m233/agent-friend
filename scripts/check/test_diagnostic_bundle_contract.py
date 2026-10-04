@@ -34,6 +34,50 @@ def _load_inspector() -> ModuleType:
 INSPECTOR = _load_inspector()
 
 
+def test_startup_timeline_retains_failed_and_interrupted_processes(tmp_path: Path) -> None:
+    bundle = tmp_path / "startup.zip"
+    _build_bundle(bundle, _load_contract())
+    events = []
+    for session, kind, status, elapsed in [
+        ("10-100", "phase-started", "running", 1),
+        ("10-100", "phase-finished", "error", 12),
+        ("11-200", "phase-started", "running", 1),
+    ]:
+        events.append(
+            {
+                "processSessionId": session,
+                "source": "startup",
+                "kind": kind,
+                "details": {
+                    "phaseId": 1,
+                    "phase": "payload-verification",
+                    "status": status,
+                    "elapsedMs": elapsed,
+                    "startElapsedMs": 1,
+                    "durationMs": elapsed - 1,
+                    "context": {"path": "DO_NOT_PRINT"},
+                },
+            }
+        )
+    with zipfile.ZipFile(bundle, "a") as archive:
+        archive.writestr("logs/tauri.log.runtime", "\n".join(json.dumps(event) for event in events))
+    result = INSPECTOR.inspect_bundle(bundle, verify_crc=True)["startupTimeline"]
+    assert result["processes"][0]["failedPhases"] == [1]
+    assert result["processes"][1]["unfinishedPhases"] == [1]
+    assert result["firstInteractionVerified"] is False
+    assert "DO_NOT_PRINT" not in json.dumps(result)
+
+
+def test_startup_timeline_legacy_and_invalid_records(tmp_path: Path) -> None:
+    path = tmp_path / "timeline.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("logs/tauri.log.runtime", "broken\n{}")
+    with zipfile.ZipFile(path) as archive:
+        result = INSPECTOR.summarize_startup_timeline(archive, [])
+    assert result["evidence"] == "not-collected"
+    assert result["gaps"] == ["invalid-json-line"]
+
+
 def test_command_inventory_is_bounded_to_codes_and_counts() -> None:
     value = {
         "status": "repair_required",

@@ -576,14 +576,9 @@ fn navigation_guard<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
         .build()
 }
 
-/// bridge HTTP base URL。
-///
-/// 默认 `http://127.0.0.1:18800`（与 `frontend/vite.config.ts` proxy target、
-/// `scripts/bridge/run.sh` 监听地址一致）。env `AGENT_FRIEND_BRIDGE_URL` 覆盖留口。
-/// 生产打包不在本期范围（参 015 design §4.3 / 010 design）。
+/// Push subscriptions use the same install profile as the supervised bridge.
 fn bridge_base_url() -> String {
-    std::env::var("AGENT_FRIEND_BRIDGE_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:18800".to_string())
+    runtime_services::RuntimeServiceKind::Bridge.base_url()
 }
 
 /// 光标相对桌宠窗内容区的逻辑坐标（CSS px），喂给前端做命中判定。
@@ -1150,6 +1145,7 @@ pub fn run() {
         }),
     );
 
+    let context_phase = runtime_observer.phase("shell-context", serde_json::json!({}));
     let context = tauri::generate_context!();
     let resource_dir =
         tauri::utils::platform::resource_dir(context.package_info(), &tauri::Env::default()).ok();
@@ -1170,6 +1166,7 @@ pub fn run() {
             return;
         }
     };
+    context_phase.finish(true);
     runtime_observer.record(
         "instance-governance",
         "identity-resolved",
@@ -1183,6 +1180,7 @@ pub fn run() {
             "instanceDomain": desktop_identity.instance_domain,
         }),
     );
+    let gate_phase = runtime_observer.phase("instance-gate", serde_json::json!({}));
     let mut startup_instance_gate = match startup_instance_gate::StartupInstanceGate::acquire(
         &desktop_identity.instance_domain,
     ) {
@@ -1199,6 +1197,7 @@ pub fn run() {
             return;
         }
     };
+    gate_phase.finish(true);
     runtime_observer.record(
         "instance-governance",
         "startup-gate-acquired",
@@ -1315,9 +1314,15 @@ pub fn run() {
     let desktop_owner = Arc::new(Mutex::new(None));
 
     // 028 · 启动期同步读盘，拼 js_init_script；所有 webview 加载前注入，保证首帧主题正确。
+    let settings_phase = runtime_observer.phase("settings-load", serde_json::json!({}));
     let bootstrap_settings = settings::load_from_disk_or_default();
-    let init_script = settings::build_init_script(&bootstrap_settings);
+    let init_script = format!(
+        "{}\n{}",
+        runtime_services::endpoints::init_script(),
+        settings::build_init_script(&bootstrap_settings)
+    );
     let settings_state = Arc::new(Mutex::new(bootstrap_settings));
+    settings_phase.finish(true);
     let pet_evidence_identity = pet_input_evidence::integration::runtime_identity(
         desktop_identity.build_identity.as_ref(),
         &context.package_info().version.to_string(),
@@ -1332,8 +1337,12 @@ pub fn run() {
         runtime_observer.process_session_id().to_string(),
         pet_evidence_identity,
     );
-    let runtime_service_supervisor =
-        Arc::new(runtime_services::RuntimeServiceSupervisor::from_environment(resource_dir));
+    let runtime_service_supervisor = Arc::new(
+        runtime_services::RuntimeServiceSupervisor::from_environment(
+            resource_dir,
+            runtime_observer.clone(),
+        ),
+    );
     let runtime_credential_coordinator =
         Arc::new(runtime_credentials::RuntimeCredentialCoordinator::default());
     let migration_coordinator = Arc::new(data_migration::MigrationCoordinator::default());
@@ -1356,7 +1365,11 @@ pub fn run() {
     // Tauri requires the single-instance plugin to be registered first. This keeps a second
     // desktop shell from borrowing the first instance's fixed runtime ports and then becoming
     // ownerless when the original process exits.
-    let builder = tauri::Builder::default();
+    let build_phase = runtime_observer.phase("tauri-build", serde_json::json!({}));
+    // On Windows, setup runs from the event loop after build() has returned.
+    // Include this otherwise invisible window-initialization interval.
+    let initialize_phase = runtime_observer.phase("tauri-initialize", serde_json::json!({}));
+    let builder = tauri::Builder::default().manage(runtime_observer.clone());
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(
         move |app, args, _cwd| {
@@ -1443,6 +1456,7 @@ pub fn run() {
     // 028 · settings command 注册到 app 级 invoke_handler，不走路径 plugin 权限文件。
     #[cfg(debug_assertions)]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        runtime_observability::startup::record_startup_milestone,
         open_chat,
         open_chat_session,
         notification_sound::play_notification_sound,
@@ -1544,6 +1558,7 @@ pub fn run() {
     ]);
     #[cfg(not(debug_assertions))]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        runtime_observability::startup::record_startup_milestone,
         open_chat,
         open_chat_session,
         notification_sound::play_notification_sound,
@@ -1639,7 +1654,7 @@ pub fn run() {
         bubble_window::set_bubble_size,
     ]);
 
-    builder
+    let app_result = builder
         .on_window_event(|window, event| {
             pet_input_evidence::integration::record_window_event(window, event);
             pet_render_evidence::window_event(window, event);
@@ -1710,6 +1725,8 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            initialize_phase.finish(true);
+            let setup_phase = setup_runtime_observer.phase("tauri-setup", serde_json::json!({}));
             // The single-instance endpoint is established before this setup callback. Publish the
             // owner while the short startup gate is still held, then release queued launches.
             if let Some(owner) = owner_to_publish.as_ref() {
@@ -1969,9 +1986,12 @@ pub fn run() {
                 app.handle(),
                 &setup_webview_diagnostics_manager,
             );
+            setup_phase.finish(true);
             Ok(())
         })
-        .build(context)
+        .build(context);
+    build_phase.finish(app_result.is_ok());
+    app_result
         .expect("error while building tauri application")
         .run(move |app_handle, event| {
             if let tauri::RunEvent::ExitRequested { code, .. } = &event {

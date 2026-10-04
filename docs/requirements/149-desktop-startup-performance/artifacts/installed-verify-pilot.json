@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "classification": "one-off-readonly-pilot",
+  "startedAt": "2026-10-04T08:19:57.6595665+00:00",
+  "completedAt": "2026-10-04T08:20:01.4195904+00:00",
+  "helperSha256": "df9adbbb69456eedcbb80a3fa95e21afe3819255372e94b0bf0d78cb5365f898",
+  "helperSourceIdentity": "unbound-installed-binary",
+  "command": "installer-helper verify --install-root <installed-root> --payload-relative-path <active-receipt-path> --profile-id <active-profile> --build-id <active-build>",
+  "buildId": "20261001T144253Z-87bb34d2d779-8259578d",
+  "profileId": "production",
+  "wallElapsedMs": 3738.0873,
+  "processCpuMs": 2156.25,
+  "exitCode": 0,
+  "stdout": {
+    "buildIdentitySha256": "30579c1e59b164b09daac07f04fff7a8f2d9bccdc79a7e4116f390cf4e874ea0",
+    "ok": true,
+    "payloadManifestSha256": "8e9ec599eba6bacf6c91a4aa14a15dce089df9be527e70acf9dbcce3046cd50c"
+  },
+  "stderr": "",
+  "receiptUnchanged": true,
+  "cacheState": "unknown-before-run; payload reads warm filesystem cache",
+  "limitations": [
+    "Whole helper process elapsed time, no internal stage timings",
+    "One sample, no baseline/candidate claim",
+    "Helper binary hash pinned but exact source overlay unavailable",
+    "Does not exercise shell receipt discovery, WebView or backend startup"
+  ]
+}
