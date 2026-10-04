@@ -1,0 +1,595 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "normal": {
+    "ok": true,
+    "processSessionId": "75452-1791115136515",
+    "inputs": [
+      {
+        "sha256": "1db8976a5cd13136b953a77b364324eb4cdb38f45359607be7c0194bb8fac1c1",
+        "bytes": 22340
+      }
+    ],
+    "matchedEvents": 45,
+    "observedRuntimeIdentities": [
+      {
+        "runtimeKind": null,
+        "buildIdentity": {
+          "schemaVersion": 1,
+          "productVersion": "0.3.0",
+          "buildId": "20261004T113552Z-fedb4fc637da-f01e57f1",
+          "sourceCommit": "fedb4fc637da0b6d1fb171dd2e9c06811fb70429",
+          "sourceTreeSha256": "c933acef3b39b3e09c4b176a185f39fafae961d2f6e935ab48fab743cccb41f4",
+          "dirty": true,
+          "buildMode": "local-test",
+          "distribution": "ordinary",
+          "profileId": "installer-smoke"
+        }
+      }
+    ],
+    "runtimeSourceBinding": "from-log-not-runner-checkout",
+    "phases": [
+      {
+        "phaseId": 1,
+        "phase": "shell-context",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 0.8243,
+          "elapsedMs": 0.8258,
+          "durationMs": 0.0015,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 0.8243,
+          "elapsedMs": 1.8801,
+          "durationMs": 1.0558,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 2,
+        "phase": "instance-gate",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 3.326,
+          "elapsedMs": 3.3264,
+          "durationMs": 0.00039999999999999996,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 3.326,
+          "elapsedMs": 3.5968,
+          "durationMs": 0.27080000000000004,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 3,
+        "phase": "settings-load",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 4.3808,
+          "elapsedMs": 4.3809000000000005,
+          "durationMs": 9.999999999999999e-05,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 4.3808,
+          "elapsedMs": 5.228199999999999,
+          "durationMs": 0.8474,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 4,
+        "phase": "runtime-discovery",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 5.8,
+          "elapsedMs": 5.8001,
+          "durationMs": 9.999999999999999e-05,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 5.8,
+          "elapsedMs": 1445.5664,
+          "durationMs": 1439.7664,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 5,
+        "phase": "payload-verification",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 6.2093,
+          "elapsedMs": 6.209499999999999,
+          "durationMs": 0.00019999999999999998,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 6.2093,
+          "elapsedMs": 1444.3348,
+          "durationMs": 1438.1254999999999,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 6,
+        "phase": "tauri-build",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 1462.4845,
+          "elapsedMs": 1462.4849,
+          "durationMs": 0.00039999999999999996,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 1462.4845,
+          "elapsedMs": 1545.9615,
+          "durationMs": 83.47699999999999,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 7,
+        "phase": "tauri-initialize",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 1463.2525,
+          "elapsedMs": 1463.2527,
+          "durationMs": 0.00019999999999999998,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 1463.2525,
+          "elapsedMs": 3056.3166,
+          "durationMs": 1593.0640999999998,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 8,
+        "phase": "tauri-setup",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 3056.937,
+          "elapsedMs": 3056.9373,
+          "durationMs": 0.0003,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 3056.937,
+          "elapsedMs": 6070.4055,
+          "durationMs": 3013.4685,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 9,
+        "phase": "service-start",
+        "context": {
+          "service": "bridge",
+          "generation": 1
+        },
+        "start": {
+          "startElapsedMs": 6031.117700000001,
+          "elapsedMs": 6031.118,
+          "durationMs": 0.0003,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 6031.117700000001,
+          "elapsedMs": 17050.3112,
+          "durationMs": 11019.1935,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 10,
+        "phase": "service-spawn",
+        "context": {
+          "service": "bridge",
+          "generation": 1
+        },
+        "start": {
+          "startElapsedMs": 6183.0695000000005,
+          "elapsedMs": 6183.0698999999995,
+          "durationMs": 0.00039999999999999996,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 6183.0695000000005,
+          "elapsedMs": 6522.4459,
+          "durationMs": 339.37640000000005,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 11,
+        "phase": "service-readiness",
+        "context": {
+          "service": "bridge",
+          "generation": 1
+        },
+        "start": {
+          "startElapsedMs": 6523.0861,
+          "elapsedMs": 6523.0862,
+          "durationMs": 9.999999999999999e-05,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 6523.0861,
+          "elapsedMs": 17049.753200000003,
+          "durationMs": 10526.6671,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 12,
+        "phase": "service-start",
+        "context": {
+          "service": "voice",
+          "generation": 1
+        },
+        "start": {
+          "startElapsedMs": 17050.8442,
+          "elapsedMs": 17050.8443,
+          "durationMs": 9.999999999999999e-05,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 17050.8442,
+          "elapsedMs": 18320.5633,
+          "durationMs": 1269.7191,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 13,
+        "phase": "service-spawn",
+        "context": {
+          "service": "voice",
+          "generation": 1
+        },
+        "start": {
+          "startElapsedMs": 17201.8835,
+          "elapsedMs": 17201.8838,
+          "durationMs": 0.0003,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 17201.8835,
+          "elapsedMs": 17310.1084,
+          "durationMs": 108.2249,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 14,
+        "phase": "service-readiness",
+        "context": {
+          "service": "voice",
+          "generation": 1
+        },
+        "start": {
+          "startElapsedMs": 17310.721,
+          "elapsedMs": 17310.7212,
+          "durationMs": 0.00019999999999999998,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 17310.721,
+          "elapsedMs": 18319.9945,
+          "durationMs": 1009.2734999999999,
+          "status": "ok"
+        }
+      }
+    ],
+    "payloadVerification": [
+      {
+        "phaseId": 5,
+        "status": "ok",
+        "applicable": true,
+        "totalMs": 1437.4681,
+        "metadataMs": 388.7365999999985,
+        "readMs": 673.9202000000008,
+        "hashMs": 303.46000000000134,
+        "manifestFiles": 7445,
+        "metadataChecked": 7445,
+        "filesVerified": 7445,
+        "bytesRead": 1215775235
+      }
+    ],
+    "frontendMilestones": [
+      {
+        "milestone": "module-loaded",
+        "pageId": "73fa6357-6570-4e38-a85e-3feb8721e326",
+        "elapsedMs": 6099.8496,
+        "pageElapsedMs": 275.40000000596046
+      },
+      {
+        "milestone": "settings-ready",
+        "pageId": "73fa6357-6570-4e38-a85e-3feb8721e326",
+        "elapsedMs": 6125.2835000000005,
+        "pageElapsedMs": 3233.0
+      },
+      {
+        "milestone": "root-committed",
+        "pageId": "73fa6357-6570-4e38-a85e-3feb8721e326",
+        "elapsedMs": 6208.6048,
+        "pageElapsedMs": 3294.5999999940395
+      },
+      {
+        "milestone": "restore-ready",
+        "pageId": "73fa6357-6570-4e38-a85e-3feb8721e326",
+        "elapsedMs": 17370.2342,
+        "pageElapsedMs": 14478.80000001192
+      },
+      {
+        "milestone": "models-ready",
+        "pageId": "73fa6357-6570-4e38-a85e-3feb8721e326",
+        "elapsedMs": 17377.9109,
+        "pageElapsedMs": 14488.19999998808
+      },
+      {
+        "milestone": "composer-ready",
+        "pageId": "73fa6357-6570-4e38-a85e-3feb8721e326",
+        "elapsedMs": 17440.3532,
+        "pageElapsedMs": 14550.59999999404
+      },
+      {
+        "milestone": "frontend-ready",
+        "pageId": "73fa6357-6570-4e38-a85e-3feb8721e326",
+        "elapsedMs": 17441.1233,
+        "pageElapsedMs": 14551.19999998808
+      }
+    ],
+    "frontendReadyObserved": true,
+    "wallClockMarkers": [
+      {
+        "kind": "process-started",
+        "recordedAt": "2026-10-04T11:58:56.515Z"
+      },
+      {
+        "kind": "owner-published",
+        "recordedAt": "2026-10-04T11:58:59.574Z"
+      },
+      {
+        "kind": "runtime-attached",
+        "recordedAt": "2026-10-04T11:58:59.614Z"
+      },
+      {
+        "kind": "page-visibility",
+        "recordedAt": "2026-10-04T11:59:02.623Z",
+        "windowLabel": "pet",
+        "visibilityState": "visible"
+      }
+    ],
+    "missingPhases": [],
+    "gaps": [],
+    "phaseCoverageComplete": true,
+    "firstInteractionVerified": false,
+    "limitations": [
+      "nested/overlapping durations must not be summed",
+      "page visibility is not interactive readiness",
+      "wall-clock markers cannot be subtracted from monotonic fields",
+      "time before the first Rust observer is not measured"
+    ]
+  },
+  "interrupted": {
+    "ok": true,
+    "processSessionId": "58948-1791115136361",
+    "inputs": [
+      {
+        "sha256": "1db8976a5cd13136b953a77b364324eb4cdb38f45359607be7c0194bb8fac1c1",
+        "bytes": 22340
+      }
+    ],
+    "matchedEvents": 14,
+    "observedRuntimeIdentities": [
+      {
+        "runtimeKind": null,
+        "buildIdentity": {
+          "schemaVersion": 1,
+          "productVersion": "0.3.0",
+          "buildId": "20261004T113552Z-fedb4fc637da-f01e57f1",
+          "sourceCommit": "fedb4fc637da0b6d1fb171dd2e9c06811fb70429",
+          "sourceTreeSha256": "c933acef3b39b3e09c4b176a185f39fafae961d2f6e935ab48fab743cccb41f4",
+          "dirty": true,
+          "buildMode": "local-test",
+          "distribution": "ordinary",
+          "profileId": "installer-smoke"
+        }
+      }
+    ],
+    "runtimeSourceBinding": "from-log-not-runner-checkout",
+    "phases": [
+      {
+        "phaseId": 1,
+        "phase": "shell-context",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 1.3623999999999998,
+          "elapsedMs": 1.3646,
+          "durationMs": 0.0022,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 1.3623999999999998,
+          "elapsedMs": 2.7396,
+          "durationMs": 1.3772,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 2,
+        "phase": "instance-gate",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 4.0793,
+          "elapsedMs": 4.0796,
+          "durationMs": 0.0003,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 4.0793,
+          "elapsedMs": 4.423500000000001,
+          "durationMs": 0.3442,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 3,
+        "phase": "settings-load",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 5.2505,
+          "elapsedMs": 5.2506,
+          "durationMs": 9.999999999999999e-05,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 5.2505,
+          "elapsedMs": 5.9743,
+          "durationMs": 0.7238,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 4,
+        "phase": "runtime-discovery",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 6.5262,
+          "elapsedMs": 6.5263,
+          "durationMs": 9.999999999999999e-05,
+          "status": "running"
+        }
+      },
+      {
+        "phaseId": 5,
+        "phase": "payload-verification",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 7.0294,
+          "elapsedMs": 7.0295000000000005,
+          "durationMs": 9.999999999999999e-05,
+          "status": "running"
+        }
+      }
+    ],
+    "payloadVerification": [],
+    "frontendMilestones": [],
+    "frontendReadyObserved": false,
+    "wallClockMarkers": [
+      {
+        "kind": "process-started",
+        "recordedAt": "2026-10-04T11:58:56.361Z"
+      }
+    ],
+    "missingPhases": [
+      "tauri-build",
+      "tauri-initialize",
+      "tauri-setup"
+    ],
+    "gaps": [
+      "bridge-identity-readiness-not-observed",
+      "unpaired-phase"
+    ],
+    "phaseCoverageComplete": false,
+    "firstInteractionVerified": false,
+    "limitations": [
+      "nested/overlapping durations must not be summed",
+      "page visibility is not interactive readiness",
+      "wall-clock markers cannot be subtracted from monotonic fields",
+      "time before the first Rust observer is not measured"
+    ]
+  },
+  "interruptedSession": "58948-1791115136361",
+  "bundleSha256": "b15c7e614596a93c43a23517dc3e8c2b0c0d36d6fab314271f616e545eb20aa6",
+  "network": {
+    "recording": "Chromium NetLog enabled before shell launch",
+    "completeDocument": false,
+    "loopbackUrlEventsByPort": {
+      "28800": 97,
+      "28900": 7
+    },
+    "ok": true
+  },
+  "serviceIdentityMatches": true,
+  "desktop": {
+    "surface": "desktop DOM via CDP",
+    "page": "/chat.html",
+    "editorEnabled": true,
+    "inputVerified": true,
+    "routingVerified": true,
+    "endpoints": {
+      "bridge": "http://127.0.0.1:28800",
+      "profileId": "installer-smoke",
+      "voice": "http://127.0.0.1:28900"
+    },
+    "isolatedSessionCount": 0,
+    "bridgeSnapshot": {
+      "service": "bridge",
+      "phase": "ready",
+      "generation": 1,
+      "operationId": "agent_bridge-1",
+      "error": null,
+      "lastError": null
+    },
+    "observedOrigins": [
+      "http://127.0.0.1:28800"
+    ]
+  },
+  "candidateBuildId": "20261004T113552Z-fedb4fc637da-f01e57f1",
+  "receiptIdentitySha256": "b8150e3b93ee55653da7691de6693a1cb210311bb84ad35b6a78d0bdb44de2c8",
+  "assessment": {
+    "status": "passed-observed-scope",
+    "scope": "isolated normal/interrupted startup, real input and diagnostic export",
+    "limitations": [
+      "single sample, unknown OS cache; not a performance baseline",
+      "NetLog tail incomplete after process cleanup; counts cover complete recorded events",
+      "manual chat navigation after first-run permissions"
+    ]
+  }
+}

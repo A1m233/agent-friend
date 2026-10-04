@@ -1,0 +1,745 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "kind": "installed-evidence",
+  "startedAt": "2026-10-04T09:54:45.341746+00:00",
+  "platform": {
+    "system": "Windows",
+    "release": "11",
+    "machine": "AMD64",
+    "python": "3.12.6"
+  },
+  "runnerSource": {
+    "head": "fedb4fc637da0b6d1fb171dd2e9c06811fb70429",
+    "dirty": true,
+    "measurementInputHashes": {
+      "frontend/src-tauri/Cargo.lock": "34ce4ea238c9bf85fc5de977c076fe8e1e3d5ef673abf4b8e7bcd651de499edf",
+      "frontend/src-tauri/Cargo.toml": "2d7e120bb14ebad884a11beb370accb435f774378597ba3554af8ce6fdbad17e",
+      "frontend/src-tauri/build.rs": "36b44d7d46e11be4c43b30a1f5626fce20d891b2546d0cabcc71811a10ac3236",
+      "frontend/src-tauri/src/autostart.rs": "3c3082f2822fad775183abade6eb1b8d0cdf1e7b15fb6c0795826c0e9c27a940",
+      "frontend/src-tauri/src/avatar_models.rs": "4f07f82615a7d33d8671b412537de78f652b2c5bead89c91b33cd9be73868eee",
+      "frontend/src-tauri/src/bin/agent-friend-app-launcher.rs": "4a3ae234e70ac80c63a108b6c47e4e654f1c4ce9d47d92dfc65f84d5ece0a781",
+      "frontend/src-tauri/src/bin/agent-friend-installer-helper.rs": "70486f3dcd91f9f707449d422d1264689424c14364308156c324a3f3d2b34ea4",
+      "frontend/src-tauri/src/bubble_window.rs": "fe6e073172b4c5f4b69d690b30591ad7de8a803924721278b0cf355b663b035f",
+      "frontend/src-tauri/src/data_migration/archive.rs": "aa9ea0024703ccaffda7134633c363c8e5f07c9d40762df52cfac98c72a84e95",
+      "frontend/src-tauri/src/data_migration/backup.rs": "3f921c7710a85e4370969f42517b02e1e1f2de117b1522d3c9791688425f3f96",
+      "frontend/src-tauri/src/data_migration/coordinator.rs": "8b51c038f30cb28a04b73f134dcb2288eda2ab851346723f5bd5886b505fa18f",
+      "frontend/src-tauri/src/data_migration/crypto.rs": "c56c0a4efb72fc2fe39bf283a25a429c9874820e7eee05b95ecf39df2600510a",
+      "frontend/src-tauri/src/data_migration/disk.rs": "a0fcc606d41a43c2622371b2ef71ff63da46516d1e5ba26a03016fd8ac22a643",
+      "frontend/src-tauri/src/data_migration/dpapi.rs": "b0a7397d0bd63ebfaeebc0b856874ab69d8a884fa3b777301c1e6f052156e9c0",
+      "frontend/src-tauri/src/data_migration/inventory.rs": "cb06cbd7ef3fa6c8c81e7c227ed494605ab88605c6912f82e19aecd15c5c240f",
+      "frontend/src-tauri/src/data_migration/mod.rs": "f809c2c7833dbc27e0acc9ba765e720741d01db13583b1e31218b9adb0363e71",
+      "frontend/src-tauri/src/data_migration/model.rs": "1eee08c8aae3246aa1d553853d2f9279023f3383c203f3e9f02461e8e2e8df89",
+      "frontend/src-tauri/src/desktop_applications/mod.rs": "7851606e46acc01a6f9645436db21c9056722ade133f966b91fb603743db9f1a",
+      "frontend/src-tauri/src/desktop_applications/windows.rs": "0d8080f811cf398a6c674baaf3f44b4affe9a6704ded18abd0c0c260f14aeb15",
+      "frontend/src-tauri/src/desktop_instance.rs": "e830950b6d8b4ec109d260b94da1863478c496c002520c2bb19149d585819581",
+      "frontend/src-tauri/src/diagnostics/bundle-contract-v1.json": "5ad1e1c86e7aeeb57eeda8eca27a19a3839a5199d78cb6edd3a19bc911f655bb",
+      "frontend/src-tauri/src/diagnostics/contract.rs": "ae9e85a9e98be43fb971ab245eb8acdc7f87e8d125b32bcf8467f940bfeb9767",
+      "frontend/src-tauri/src/diagnostics/mod.rs": "3cccbc561a97bfb5b9b2955a2ba458e56f6d3ecafeed64d2073ab78c03b85a55",
+      "frontend/src-tauri/src/diagnostics/sandbox_incidents.rs": "e7b205b0611eeb209fd7fe88982089261fd8653039816752ac247a320a53df5e",
+      "frontend/src-tauri/src/diagnostics/staged_log.rs": "231fdc0b258de1181ca8410fc9c12f2147c5e97a152c90d8e28b9400da4d3292",
+      "frontend/src-tauri/src/install_contract.rs": "7c940685599c6b5315c03e60aa78fe46ebaa351b771cf1ebc82923e1812e980d",
+      "frontend/src-tauri/src/install_contract/measurement.rs": "c9e4e8a989a359cab91b0f80137ac8e3dea1994eeb98654fdad89aa6489938af",
+      "frontend/src-tauri/src/lib.rs": "17d892ca4902d5cff0029a39afbaabf3cde0f2482ca2278ad6f2048995306f40",
+      "frontend/src-tauri/src/main.rs": "44f5d4a5bb9320e9c43f0437d386b19fa7bc73830cbc96df8f0d9d6e7851d611",
+      "frontend/src-tauri/src/model_connections.rs": "529a5dd0ba90bec53fbd367ec5ed6c54e38bf522568e6ead6b4590dbabdf120b",
+      "frontend/src-tauri/src/notification_sound/assets.rs": "6904dc0d10c875a0450e8c2529eabc719be077370b1efb29e8388e922ee61353",
+      "frontend/src-tauri/src/notification_sound/commands.rs": "6d77fee492c8bb0fcedf691cdfda8c6d16660a33580d56ba7e1302fada7a4e11",
+      "frontend/src-tauri/src/notification_sound/mod.rs": "e45b53cbd94b82857fa6519aaced50702bc2a28c8537b18ac89ae1286c5b3e4e",
+      "frontend/src-tauri/src/notification_sound/player.rs": "463f8c5ee6c8287eaaebf073585fbc7173863e02b2bb7aab95f3f1499a7f9b56",
+      "frontend/src-tauri/src/owner_capabilities.rs": "4bbad91ab6336cda508fad9b9523f08a1e71b70ce0c939472a4e4f27ad55ff6a",
+      "frontend/src-tauri/src/paths.rs": "e659958f71dc67e16761f925ec965585c2fcabd3583845aec54684c494a8f4b2",
+      "frontend/src-tauri/src/permissions/flow.rs": "519725361dcff428b4d1a8d07fdf2c0d4ed0e99982a4d9284450f3994e2c805c",
+      "frontend/src-tauri/src/permissions/history.rs": "06bf326f951bc0b6e6c6e21dff03e62994fb3f347312132c68547ba99b598041",
+      "frontend/src-tauri/src/permissions/manager.rs": "af94c2b105f394583f3932b623a7f2b7aa3652f07b4a3ed6237c9462d213796f",
+      "frontend/src-tauri/src/permissions/mod.rs": "95b4f1acce071a8109f7e7f3fc9fdbb75aaae141066e0777c732a447b6658dde",
+      "frontend/src-tauri/src/permissions/model.rs": "9a8d84129b08697fd22923af3d229f86938dccfa3e147dfc7375b8e8d70b1180",
+      "frontend/src-tauri/src/permissions/platform/mod.rs": "0df1d39cf5dcf9d45d797f6948ddf41670dc990134bc626e5619115263396584",
+      "frontend/src-tauri/src/permissions/platform/windows.rs": "87d20743262972b11aa1321fe584b3038577423d1ec7323eab7ce773a0452759",
+      "frontend/src-tauri/src/permissions/projection.rs": "f87c1586d2a4c77ea0864d10b597bef2e8e229976cfcdc45bc0b3db392044d06",
+      "frontend/src-tauri/src/permissions/registry.rs": "d4117adbc81088fd0be80c8f4dbbcdc59858580167d4d4475265c17a95d2818d",
+      "frontend/src-tauri/src/pet_cursor_passthrough.rs": "6ee3595d6b7f03bdd24848463241370562ec57ccd5fa88ca837a23146e4e1272",
+      "frontend/src-tauri/src/pet_display_recovery.rs": "8cc776b5fd483de9a6b8187396a54ee4b73109bd915862509e1104fec7a4d77c",
+      "frontend/src-tauri/src/pet_display_topology.rs": "409c597c54d0f57d1596315d5ba58849ee68453db19477bcac5c6ba3f55502a0",
+      "frontend/src-tauri/src/pet_input_evidence/export.rs": "8fb5e19a803d47bd79105a22b5b25fb8c7cad4776ce67f826b60b8780f1625ae",
+      "frontend/src-tauri/src/pet_input_evidence/incidents.rs": "630fb994d54188ca560afc0985b21f3ba50a4f4a8de6c40f8e74efac43bf6cec",
+      "frontend/src-tauri/src/pet_input_evidence/integration.rs": "41c533d5f0dda938bffc077ab0cb1e589df58d1847f30dde4e03ca3fcc5bbc39",
+      "frontend/src-tauri/src/pet_input_evidence/journal.rs": "26266e19ef4f782042567b12a4d87420d9931040f97eeca531f7bf5b819fd9d0",
+      "frontend/src-tauri/src/pet_input_evidence/manager.rs": "77fda5944835b72120deeea145453da3bcd975d06faa10566583d3a2fdbe4847",
+      "frontend/src-tauri/src/pet_input_evidence/mod.rs": "0ef91100809d27160e5fe6b21df2c5d4a715dd65e688fc6dcf25b69e10ff7366",
+      "frontend/src-tauri/src/pet_input_evidence/model.rs": "7356136cdb46d33224f0786089f8afadeb19542cf8b3ca3eef22ff8e44157218",
+      "frontend/src-tauri/src/pet_input_evidence/tests.rs": "69b8397ac1b1a2e7fe6db5aa4254c8621f056ace5e1fc7997c8d683491172c6d",
+      "frontend/src-tauri/src/pet_render_evidence/journal.rs": "50d2fedae5fd5a79bd6f4ff45246108e7a4864913e62e84e4d43ba324c3a2484",
+      "frontend/src-tauri/src/pet_render_evidence/manager.rs": "1e1d64cafb0a0adab398f7d2ae11b2bdab9b85b71e96556857575ddcac61497e",
+      "frontend/src-tauri/src/pet_render_evidence/mod.rs": "a34c47a036d015b807e478976ac6727b90a1ea064df83ffd8dd3ee9c545d71b5",
+      "frontend/src-tauri/src/pet_render_evidence/model.rs": "92d352aee9fbd28d2831980ff7bf8583fa6d7847ee99875419954cc862d978b7",
+      "frontend/src-tauri/src/power_policy/evaluator.rs": "245e645edd2ae57ee2b262dc09eb723567363bb9ec4ebbddb4468b9696a7f273",
+      "frontend/src-tauri/src/power_policy/manager.rs": "ccc3c5d19676604f7018e2affa903e354a793628683f07290206fbe0467dd752",
+      "frontend/src-tauri/src/power_policy/mod.rs": "2fa1b916e4dc38150624afc1f44aedc35d488de8ca52ea07116a39cd95b82c27",
+      "frontend/src-tauri/src/power_policy/model.rs": "06b38bb3eaf087961aa9c41f697295e9085759ea61ed7208689ea2d66edab0ec",
+      "frontend/src-tauri/src/power_policy/platform/macos.rs": "bf20a1465ea9c1c68bad91976a9b82a388edab05b1863a708943fe57a0c2c645",
+      "frontend/src-tauri/src/power_policy/platform/mod.rs": "b6f1887f5251e77f973ff67c07611d5eb52f58faf9f6e6aa9968e47943334a33",
+      "frontend/src-tauri/src/power_policy/platform/windows.rs": "49b380700f336b4e66cbeb2968971cdd43f787a587eda4f6e83ff887a6261966",
+      "frontend/src-tauri/src/presence/macos.rs": "fb7abc6ed4261793fdbf2321fb324bee3348174d8a4d0ad87fb43eb6fd7d0263",
+      "frontend/src-tauri/src/presence/mod.rs": "d39d193a9b442e05f2cb6d0b5b39a09cef1ae5504079f783af8ba9e846ed51f8",
+      "frontend/src-tauri/src/presence/windows.rs": "9b578808465372a5c995b3c5985fc199da07ce5f35df220ce4bfdce723226971",
+      "frontend/src-tauri/src/push_subscriber.rs": "f05592bd906c808baf72a903e5c65110abe9b4328ccd85a1c8d5d96dfdc7c1db",
+      "frontend/src-tauri/src/runtime_config.rs": "be8feeedd353c0bddc321e07cdb2a2733dd12ae24298d03bae8384d146884d96",
+      "frontend/src-tauri/src/runtime_credentials/mod.rs": "e325a9b962faf03e27bad0d2f1ce9fe4bd2414018e98abb41d9379e8f79a68d2",
+      "frontend/src-tauri/src/runtime_credentials/model.rs": "d1ea72e2c9fbe4bb3be333bf68cedae40d68e34df8a2d2bb33bacf8a3d90ac67",
+      "frontend/src-tauri/src/runtime_observability.rs": "ef031715f05a2ef57df51a2d3dc6d26f7d64a474b37066db7b6fa07b7cd2b88b",
+      "frontend/src-tauri/src/runtime_observability/startup.rs": "5fcface621de9147acac56a92b6eb496aaeea44fff0f9ee114fcf60623e6e2b9",
+      "frontend/src-tauri/src/runtime_services/mod.rs": "a5fe64525043ff8a2c150c7a432b02377da15178155cd581dce6e7edaa4ca88e",
+      "frontend/src-tauri/src/runtime_services/model.rs": "4db8ce03aef3b32a676a41e65e75c89da8ba3cc7bc3a4ccab53e9af741b6bb66",
+      "frontend/src-tauri/src/runtime_services/process.rs": "8f65d6fe6ac27a1f4500aa92ed14ef4f71ccde6992a808549dff13da848b690b",
+      "frontend/src-tauri/src/runtime_services/supervisor.rs": "184555c819ca58867eeab87758ec74ceca442c79f897a78e1a83afd3d6ae8b7b",
+      "frontend/src-tauri/src/settings.rs": "a712a449d32a1f2971faee6bd9bfd1c547abd7038f45b414cc1bfe7aaf418bff",
+      "frontend/src-tauri/src/shell_diagnostics/journal.rs": "6bb8e7f54f7128561e1aef3cbcd4889dea82dd7dbbe63d17731305b73e07070d",
+      "frontend/src-tauri/src/shell_diagnostics/manager.rs": "ad1601a2a737f71a3d5c09621e2c65e97748eeb46f15f21a24f11997937afb26",
+      "frontend/src-tauri/src/shell_diagnostics/mod.rs": "245b09e7386b884ac3926b1d2ad71e3ad757f19d16951fbcef58d3621ecdc9bc",
+      "frontend/src-tauri/src/shell_diagnostics/model.rs": "73a3cf55482b4eaa0920594306002d6cce03a5d7bbdac1f8330d3216204cdab8",
+      "frontend/src-tauri/src/shell_diagnostics/platform/mod.rs": "00fda511cb80f1b378c9ff2418ae37b0ab8e2cf5ff6ec9e2f6c7642a91e74a82",
+      "frontend/src-tauri/src/shell_diagnostics/platform/windows.rs": "726a845f8671f90f0f238f37cdcc116b5ba93f4e94213609ad7c6971d5ff5dc1",
+      "frontend/src-tauri/src/startup_instance_gate.rs": "75b0c79142b41c6b83ae8215f3865f087f0bad220c8a92ffc0e973faccb5d527",
+      "frontend/src-tauri/src/ui_state.rs": "f65666c4249a3df80d7042748987b0fa28c0a1a4c67cd5bd6bcd3a11467c137e",
+      "frontend/src-tauri/src/webview_diagnostics/mod.rs": "c2123fb61aec71a3e70afaa8d2783d9ab74bf68d49bbae38b562f26ada8a78bf",
+      "frontend/src-tauri/src/webview_diagnostics/windows.rs": "b038bade589cb1a221ed521f4345bc51017161f8b9b1b5070e1e24eb86d55205",
+      "frontend/src-tauri/src/webview_diagnostics/windows_capture.rs": "506f3bae201d4b48f4cd0d7b6b48cf3e5b949d7b6408249a22b3ae7e5a654e94",
+      "frontend/src-tauri/src/window_placement.rs": "a6251427d1785fa463cf183ebaab051c4864f169088d568be76b63999fc512ce",
+      "frontend/src-tauri/src/windows_display_state.rs": "6255300aa68db7903117fac0548480f0300677afb344e0d6e892316509d10d41",
+      "frontend/src-tauri/tauri.conf.json": "09d794fcace0055e9462cac9abab5e8845de57114388be05c68020dd68fdb83e",
+      "scripts/startup-profile/installed-probe.mjs": "86230615030026478fe7701116364ce3fb6f573dbf78729d239c173c92023868",
+      "scripts/startup-profile/installed_evidence.py": "a0f6dbf2a7279e72c70c4c31e6b0062f3a2eb6c5e617d5837d19a1f47b9fdbdb",
+      "scripts/startup-profile/run.ps1": "5dfee2f69a497c0d4d7518d5e761e38045f6b068448ebf857af3cb8432d599ba",
+      "scripts/startup-profile/run.py": "2c75db767268d7dec1312b14c097a16c1e10b3a07e369de42d76aa672de0551c",
+      "scripts/startup-profile/run.sh": "5042acdb4d3bb1ebda7d1776f33d419e1a46ef3f68fe4946db71a587c3ee2d7a",
+      "scripts/startup-profile/startup_evidence.py": "22969ff7cf0f5dbc745a3e02707b51c5a8e5d69700c3f394895c26487e942aad",
+      "scripts/startup-profile/startup_journal.py": "29b56443c7caf9265f6e2a719f93699fc05f3d75dc861a60b240bca4f5e6fe7f",
+      "scripts/startup-profile/startup_verify.py": "3ea57f8e5e100e7f2f99eb3d8f55df15f3b203907ffdc786a61ad2557f42fccd",
+      "scripts/startup-profile/test_startup_profile.py": "85eee966788a912243ecd3c7d33688dd9e63e86be17d0d8ab8575e973bd70324"
+    },
+    "scope": "measurement source, not package input identity"
+  },
+  "candidate": {
+    "schema_version": 2,
+    "product": "agent-friend-installer-smoke",
+    "version": "0.3.0",
+    "platform": "windows-x64",
+    "build_mode": "local-test",
+    "publishable": false,
+    "build_id": "20261004T091824Z-fedb4fc637da-a2133230",
+    "profile_id": "installer-smoke",
+    "created_at": "2026-10-04T09:46:21.100011+00:00",
+    "distribution": "ordinary",
+    "release_channel": "local-test",
+    "sensitive": false,
+    "source": {
+      "commit": "fedb4fc637da0b6d1fb171dd2e9c06811fb70429",
+      "dirty": true,
+      "tree_sha256": "2a2a393e702939f10e97b80c1df2a0fb8c7fdfad5949fa745b13e05454ca1614",
+      "guide_baseline": {
+        "source_commit": "d8ae318bec94ec3583c9cdecafc86ab2ace71668",
+        "snapshot_sha256": "9dffa78634172f85c0e72d9b9800c0b51c0eb4b2054103738bd5ccff77861088",
+        "lifecycle": "transient"
+      }
+    },
+    "toolchain": {
+      "python": "3.12.6",
+      "pyinstaller": "6.21.0",
+      "node": "v22.15.0",
+      "pnpm": "10.15.0",
+      "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+      "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+      "tauri_cli": "2.11.2"
+    },
+    "installer_verification": {
+      "schemaVersion": 1,
+      "scope": "windows-installer-shared-behavior-v1",
+      "packageInputSha256": "84ab50eeba67c1de8142f126e0abbf44d5c1ee945324ffc2f6af84984154601c",
+      "fileCount": 1295,
+      "buildEnvironment": {
+        "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+        "node": "v22.15.0",
+        "platform_machine": "AMD64",
+        "platform_release": "11",
+        "platform_system": "Windows",
+        "platform_version": "10.0.26200",
+        "pnpm": "10.15.0",
+        "pyinstaller": "6.21.0",
+        "python": "3.12.6",
+        "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+        "source_content_identity": "git-clean-filter-v1",
+        "tauri_cli": "2.11.2"
+      }
+    },
+    "installer": {
+      "name": "agent-friend_0.3.0_windows_x64-local-test-NOT-FOR-DISTRIBUTION-setup.exe",
+      "size": 391846072,
+      "sha256": "2fc2a153903770fa630eda5f49b07d3b3396b0e9f34dcb582f41f4627031646f"
+    },
+    "upgrade_mode": "manual-installer",
+    "identifier": "com.agentfriend.desktop.installer-smoke"
+  },
+  "installerSha256": "2fc2a153903770fa630eda5f49b07d3b3396b0e9f34dcb582f41f4627031646f",
+  "receipt": {
+    "schemaVersion": 1,
+    "profileId": "installer-smoke",
+    "buildIdentitySha256": "382ee91d68bd1c154326c86208757524bb117b20b77118ced7e8e125ae6ad7dc",
+    "buildId": "20261004T091824Z-fedb4fc637da-a2133230",
+    "payloadRelativePath": "packages/20261004T091824Z-fedb4fc637da-a2133230",
+    "payloadManifestSha256": "5b28cec800f402bb1be31a59dd133a296db6f7c7925ed6681b2cc95dc30ff268",
+    "activatedAt": "2026-10-04T09:55:34.182041300+00:00",
+    "transactionId": "20261004T091824Z-fedb4fc637da-a2133230"
+  },
+  "interruptedSession": "55924-1791107737383",
+  "normalPid": 74696,
+  "desktop": {
+    "surface": "desktop DOM via CDP",
+    "page": "/chat.html",
+    "editorEnabled": true,
+    "inputVerified": true,
+    "bundle": {
+      "outcome": "complete",
+      "includedSessionIds": [],
+      "failures": []
+    }
+  },
+  "bundleSha256": "11d8d42b504964ce6a2b6600bfd96f4de9e46d6d4f320b85e1e8e18754826dd4",
+  "normal": {
+    "ok": true,
+    "processSessionId": "74696-1791107737700",
+    "inputs": [
+      {
+        "sha256": "9299f97c27e73e0363cc2a93e0c5ea4ac752833bf68ff2a6c8b06075a0451ee2",
+        "bytes": 21759
+      }
+    ],
+    "matchedEvents": 43,
+    "observedRuntimeIdentities": [
+      {
+        "runtimeKind": null,
+        "buildIdentity": {
+          "schemaVersion": 1,
+          "productVersion": "0.3.0",
+          "buildId": "20261004T091824Z-fedb4fc637da-a2133230",
+          "sourceCommit": "fedb4fc637da0b6d1fb171dd2e9c06811fb70429",
+          "sourceTreeSha256": "2a2a393e702939f10e97b80c1df2a0fb8c7fdfad5949fa745b13e05454ca1614",
+          "dirty": true,
+          "buildMode": "local-test",
+          "distribution": "ordinary",
+          "profileId": "installer-smoke"
+        }
+      }
+    ],
+    "runtimeSourceBinding": "from-log-not-runner-checkout",
+    "phases": [
+      {
+        "phaseId": 1,
+        "phase": "shell-context",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 1.2875,
+          "elapsedMs": 1.2897,
+          "durationMs": 0.0022,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 1.2875,
+          "elapsedMs": 5.1713000000000005,
+          "durationMs": 3.8838000000000004,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 2,
+        "phase": "instance-gate",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 7.092700000000001,
+          "elapsedMs": 7.0931,
+          "durationMs": 0.00039999999999999996,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 7.092700000000001,
+          "elapsedMs": 7.4147,
+          "durationMs": 0.322,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 3,
+        "phase": "settings-load",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 8.1488,
+          "elapsedMs": 8.148900000000001,
+          "durationMs": 9.999999999999999e-05,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 8.1488,
+          "elapsedMs": 8.894300000000001,
+          "durationMs": 0.7454999999999999,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 4,
+        "phase": "runtime-discovery",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 9.4915,
+          "elapsedMs": 9.4916,
+          "durationMs": 9.999999999999999e-05,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 9.4915,
+          "elapsedMs": 1342.8921,
+          "durationMs": 1333.4006,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 5,
+        "phase": "payload-verification",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 9.8265,
+          "elapsedMs": 9.8267,
+          "durationMs": 0.00019999999999999998,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 9.8265,
+          "elapsedMs": 1341.6680999999999,
+          "durationMs": 1331.8416,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 6,
+        "phase": "tauri-build",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 1353.7847000000002,
+          "elapsedMs": 1353.785,
+          "durationMs": 0.0003,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 1353.7847000000002,
+          "elapsedMs": 1429.6205,
+          "durationMs": 75.83579999999999,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 7,
+        "phase": "tauri-setup",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 2403.3208999999997,
+          "elapsedMs": 2403.3212000000003,
+          "durationMs": 0.0003,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 2403.3208999999997,
+          "elapsedMs": 5584.5437999999995,
+          "durationMs": 3181.2228999999998,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 8,
+        "phase": "service-start",
+        "context": {
+          "service": "bridge",
+          "generation": 1
+        },
+        "start": {
+          "startElapsedMs": 5542.0849,
+          "elapsedMs": 5542.0851999999995,
+          "durationMs": 0.0003,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 5542.0849,
+          "elapsedMs": 15059.856899999999,
+          "durationMs": 9517.772,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 9,
+        "phase": "service-spawn",
+        "context": {
+          "service": "bridge",
+          "generation": 1
+        },
+        "start": {
+          "startElapsedMs": 5694.7077,
+          "elapsedMs": 5694.7081,
+          "durationMs": 0.00039999999999999996,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 5694.7077,
+          "elapsedMs": 5882.6253,
+          "durationMs": 187.9176,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 10,
+        "phase": "service-readiness",
+        "context": {
+          "service": "bridge",
+          "generation": 1
+        },
+        "start": {
+          "startElapsedMs": 5883.018599999999,
+          "elapsedMs": 5883.0187,
+          "durationMs": 9.999999999999999e-05,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 5883.018599999999,
+          "elapsedMs": 15059.4192,
+          "durationMs": 9176.400599999999,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 11,
+        "phase": "service-start",
+        "context": {
+          "service": "voice",
+          "generation": 1
+        },
+        "start": {
+          "startElapsedMs": 15060.0981,
+          "elapsedMs": 15060.0981,
+          "durationMs": 0.0,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 15060.0981,
+          "elapsedMs": 16295.8231,
+          "durationMs": 1235.725,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 12,
+        "phase": "service-spawn",
+        "context": {
+          "service": "voice",
+          "generation": 1
+        },
+        "start": {
+          "startElapsedMs": 15210.2217,
+          "elapsedMs": 15210.222,
+          "durationMs": 0.0003,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 15210.2217,
+          "elapsedMs": 15286.503200000001,
+          "durationMs": 76.28150000000001,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 13,
+        "phase": "service-readiness",
+        "context": {
+          "service": "voice",
+          "generation": 1
+        },
+        "start": {
+          "startElapsedMs": 15286.873399999999,
+          "elapsedMs": 15286.8735,
+          "durationMs": 9.999999999999999e-05,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 15286.873399999999,
+          "elapsedMs": 16295.3781,
+          "durationMs": 1008.5047000000001,
+          "status": "ok"
+        }
+      }
+    ],
+    "payloadVerification": [
+      {
+        "phaseId": 5,
+        "status": "ok",
+        "applicable": true,
+        "totalMs": 1331.3896,
+        "metadataMs": 325.7327000000008,
+        "readMs": 640.367999999999,
+        "hashMs": 297.67610000000286,
+        "manifestFiles": 7489,
+        "metadataChecked": 7489,
+        "filesVerified": 7489,
+        "bytesRead": 1218270509
+      }
+    ],
+    "frontendMilestones": [
+      {
+        "milestone": "module-loaded",
+        "pageId": "9365e0ff-9d85-41ef-b791-304b98bb9db6",
+        "elapsedMs": 5613.633,
+        "pageElapsedMs": 286.09999999403954
+      },
+      {
+        "milestone": "settings-ready",
+        "pageId": "9365e0ff-9d85-41ef-b791-304b98bb9db6",
+        "elapsedMs": 5646.415,
+        "pageElapsedMs": 3419.0
+      },
+      {
+        "milestone": "root-committed",
+        "pageId": "9365e0ff-9d85-41ef-b791-304b98bb9db6",
+        "elapsedMs": 5742.4084,
+        "pageElapsedMs": 3487.0999999940395
+      },
+      {
+        "milestone": "models-ready",
+        "pageId": "9365e0ff-9d85-41ef-b791-304b98bb9db6",
+        "elapsedMs": 15364.503900000002,
+        "pageElapsedMs": 13140.0
+      },
+      {
+        "milestone": "restore-ready",
+        "pageId": "9365e0ff-9d85-41ef-b791-304b98bb9db6",
+        "elapsedMs": 15383.6944,
+        "pageElapsedMs": 13166.40000000596
+      },
+      {
+        "milestone": "composer-ready",
+        "pageId": "9365e0ff-9d85-41ef-b791-304b98bb9db6",
+        "elapsedMs": 15415.6342,
+        "pageElapsedMs": 13198.69999998808
+      },
+      {
+        "milestone": "frontend-ready",
+        "pageId": "9365e0ff-9d85-41ef-b791-304b98bb9db6",
+        "elapsedMs": 15416.3029,
+        "pageElapsedMs": 13199.09999999404
+      }
+    ],
+    "frontendReadyObserved": true,
+    "wallClockMarkers": [
+      {
+        "kind": "process-started",
+        "recordedAt": "2026-10-04T09:55:37.700Z"
+      },
+      {
+        "kind": "owner-published",
+        "recordedAt": "2026-10-04T09:55:40.105Z"
+      },
+      {
+        "kind": "runtime-attached",
+        "recordedAt": "2026-10-04T09:55:40.117Z"
+      },
+      {
+        "kind": "page-visibility",
+        "recordedAt": "2026-10-04T09:55:43.293Z",
+        "windowLabel": "pet",
+        "visibilityState": "visible"
+      }
+    ],
+    "missingPhases": [],
+    "gaps": [],
+    "phaseCoverageComplete": true,
+    "firstInteractionVerified": false,
+    "limitations": [
+      "nested/overlapping durations must not be summed",
+      "page visibility is not interactive readiness",
+      "wall-clock markers cannot be subtracted from monotonic fields",
+      "time before the first Rust observer is not measured"
+    ]
+  },
+  "interrupted": {
+    "ok": true,
+    "processSessionId": "55924-1791107737383",
+    "inputs": [
+      {
+        "sha256": "9299f97c27e73e0363cc2a93e0c5ea4ac752833bf68ff2a6c8b06075a0451ee2",
+        "bytes": 21759
+      }
+    ],
+    "matchedEvents": 14,
+    "observedRuntimeIdentities": [
+      {
+        "runtimeKind": null,
+        "buildIdentity": {
+          "schemaVersion": 1,
+          "productVersion": "0.3.0",
+          "buildId": "20261004T091824Z-fedb4fc637da-a2133230",
+          "sourceCommit": "fedb4fc637da0b6d1fb171dd2e9c06811fb70429",
+          "sourceTreeSha256": "2a2a393e702939f10e97b80c1df2a0fb8c7fdfad5949fa745b13e05454ca1614",
+          "dirty": true,
+          "buildMode": "local-test",
+          "distribution": "ordinary",
+          "profileId": "installer-smoke"
+        }
+      }
+    ],
+    "runtimeSourceBinding": "from-log-not-runner-checkout",
+    "phases": [
+      {
+        "phaseId": 1,
+        "phase": "shell-context",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 1.1168,
+          "elapsedMs": 1.1187,
+          "durationMs": 0.0019,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 1.1168,
+          "elapsedMs": 85.2623,
+          "durationMs": 84.1455,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 2,
+        "phase": "instance-gate",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 87.26169999999999,
+          "elapsedMs": 87.262,
+          "durationMs": 0.0003,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 87.26169999999999,
+          "elapsedMs": 87.4827,
+          "durationMs": 0.221,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 3,
+        "phase": "settings-load",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 88.2333,
+          "elapsedMs": 88.2334,
+          "durationMs": 9.999999999999999e-05,
+          "status": "running"
+        },
+        "finish": {
+          "startElapsedMs": 88.2333,
+          "elapsedMs": 89.1018,
+          "durationMs": 0.8685,
+          "status": "ok"
+        }
+      },
+      {
+        "phaseId": 4,
+        "phase": "runtime-discovery",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 89.6335,
+          "elapsedMs": 89.63359999999999,
+          "durationMs": 9.999999999999999e-05,
+          "status": "running"
+        }
+      },
+      {
+        "phaseId": 5,
+        "phase": "payload-verification",
+        "context": {
+          "service": null,
+          "generation": null
+        },
+        "start": {
+          "startElapsedMs": 90.0466,
+          "elapsedMs": 90.04669999999999,
+          "durationMs": 9.999999999999999e-05,
+          "status": "running"
+        }
+      }
+    ],
+    "payloadVerification": [],
+    "frontendMilestones": [],
+    "frontendReadyObserved": false,
+    "wallClockMarkers": [
+      {
+        "kind": "process-started",
+        "recordedAt": "2026-10-04T09:55:37.383Z"
+      }
+    ],
+    "missingPhases": [
+      "tauri-build",
+      "tauri-setup"
+    ],
+    "gaps": [
+      "bridge-identity-readiness-not-observed",
+      "unpaired-phase"
+    ],
+    "phaseCoverageComplete": false,
+    "firstInteractionVerified": false,
+    "limitations": [
+      "nested/overlapping durations must not be summed",
+      "page visibility is not interactive readiness",
+      "wall-clock markers cannot be subtracted from monotonic fields",
+      "time before the first Rust observer is not measured"
+    ]
+  },
+  "completedAt": "2026-10-04T09:55:57.586413+00:00",
+  "evidenceScope": "installed candidate 20261004T091824Z-fedb4fc637da-a2133230; before tauri-initialize probe",
+  "limitations": [
+    "One isolated empty-data run, unknown/warmed OS cache; not a startup performance baseline or a historical 84-second explanation.",
+    "The interrupted sample is intentional termination after payload verification started.",
+    "The probe opens the chat workspace after bridge ready and uses the real visible editor; no provider request.",
+    "Tauri build-to-setup interval is not a named phase in this candidate; later source adds tauri-initialize."
+  ],
+  "privateArtifactHashes": {
+    "bundle-summary.json": "66d25b96fc23095e94c7e66d53f778ad26fa1ba85261c91e586009ec59c35899",
+    "desktop-probe.json": "ab485bb2e2bb59f4da141f5ea36ab7d9748c5a40c8dd82ed32b8aeb276a85118",
+    "diagnostics.zip": "11d8d42b504964ce6a2b6600bfd96f4de9e46d6d4f320b85e1e8e18754826dd4",
+    "tauri.log.runtime": "9299f97c27e73e0363cc2a93e0c5ea4ac752833bf68ff2a6c8b06075a0451ee2"
+  }
+}

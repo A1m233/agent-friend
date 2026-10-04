@@ -7,14 +7,43 @@ const LOCAL_SERVICE_URLS: Record<LocalService, string> = {
   voice: "http://127.0.0.1:18900",
 };
 
-// 本机服务实际监听地址；Vite dev proxy 与 Tauri packaged runtime 共用这一份约定。
-export const BRIDGE_DEFAULT_URL = LOCAL_SERVICE_URLS.bridge;
-export const VOICE_DEFAULT_URL = LOCAL_SERVICE_URLS.voice;
+interface LocalServiceEndpoints extends Record<LocalService, string> {
+  profileId: string;
+}
+
+declare global {
+  interface Window {
+    __AGENT_FRIEND_LOCAL_SERVICES__?: LocalServiceEndpoints;
+  }
+}
 
 interface LocalServiceUrlContext {
   dev: boolean;
   tauri: boolean;
   origin: string;
+  endpoints?: LocalServiceEndpoints;
+}
+
+function desktopServiceUrl(service: LocalService, context: LocalServiceUrlContext): string {
+  if (!context.tauri) return LOCAL_SERVICE_URLS[service];
+  const endpoints = context.endpoints;
+  if (!endpoints?.profileId || ![endpoints.bridge, endpoints.voice].every((value) => {
+    if (typeof value !== "string" || !/^http:\/\/127\.0\.0\.1:\d+$/.test(value)) return false;
+    const port = Number(value.split(":").at(-1));
+    return Number.isInteger(port) && port > 0 && port <= 65535;
+  }) || endpoints.bridge === endpoints.voice) {
+    throw new Error("Desktop local service configuration is missing or invalid");
+  }
+  return endpoints[service];
+}
+
+function currentContext(): LocalServiceUrlContext {
+  return {
+    dev: import.meta.env.DEV,
+    tauri: isTauri(),
+    origin: currentWindowOrigin(),
+    endpoints: typeof window === "undefined" ? undefined : window.__AGENT_FRIEND_LOCAL_SERVICES__,
+  };
 }
 
 function currentWindowOrigin(): string {
@@ -28,13 +57,9 @@ function currentWindowOrigin(): string {
  */
 export function localServiceHttpBaseUrl(
   service: LocalService,
-  context: LocalServiceUrlContext = {
-    dev: import.meta.env.DEV,
-    tauri: isTauri(),
-    origin: currentWindowOrigin(),
-  },
+  context: LocalServiceUrlContext = currentContext(),
 ): string {
-  return context.dev && !context.tauri ? "" : LOCAL_SERVICE_URLS[service];
+  return context.dev && !context.tauri ? "" : desktopServiceUrl(service, context);
 }
 
 /**
@@ -43,14 +68,13 @@ export function localServiceHttpBaseUrl(
  */
 export function localServiceAbsoluteBaseUrl(
   service: LocalService,
-  context: LocalServiceUrlContext = {
-    dev: import.meta.env.DEV,
-    tauri: isTauri(),
-    origin: currentWindowOrigin(),
-  },
+  context: LocalServiceUrlContext = currentContext(),
 ): string {
-  return context.dev && !context.tauri ? context.origin : LOCAL_SERVICE_URLS[service];
+  return context.dev && !context.tauri ? context.origin : desktopServiceUrl(service, context);
 }
+
+export const BRIDGE_DEFAULT_URL = desktopServiceUrl("bridge", currentContext());
+export const VOICE_DEFAULT_URL = desktopServiceUrl("voice", currentContext());
 
 /**
  * bridge HTTP base。

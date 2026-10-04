@@ -29,6 +29,7 @@ import { useVoiceInputStore } from "@/stores/voiceInput";
 import { isVoiceInputLive } from "@/stores/voiceInputStateMachine";
 import { VoiceDraftSession } from "@/services/voiceInput/draftSession";
 import { findSenderTextarea } from "./chatSenderEditor";
+import { observeStartupComposer } from "@/lib/startup-evidence";
 import { cn } from "@/utils/cn";
 import { readStringEventValue } from "@/utils/webComponentEvents";
 import { CHAT_CONTENT_CONTAINER_CLASS } from "../layout";
@@ -168,6 +169,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const cancelling = runPresentation.phase === "stopping";
   const showStop = runPresentation.canStop || cancelling;
   const editSubmitting = editingMessage?.phase === "submitting";
+  useEffect(() => {
+    if (disabled || editSubmitting) return;
+    return observeStartupComposer(() => senderRef.current ? findSenderTextarea(senderRef.current) : null);
+  }, [disabled, editSubmitting]);
   const voiceInputDisabled = disabled || editSubmitting;
   const attachmentsDisabled = disabled
     || editSubmitting

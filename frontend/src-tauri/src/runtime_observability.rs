@@ -12,9 +12,11 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::PathBuf,
-    sync::{Arc, Mutex},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    sync::{atomic::AtomicU64, Arc, Mutex},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+pub(crate) mod startup;
 
 const ACTIVE_FILE_NAME: &str = "tauri.log.runtime";
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
@@ -57,6 +59,9 @@ pub(crate) struct RuntimeObserver {
     process_session_id: String,
     limits: JournalLimits,
     writer_lock: Mutex<()>,
+    started: Instant,
+    next_phase_id: AtomicU64,
+    frontend_milestones: Mutex<std::collections::HashSet<String>>,
 }
 
 impl RuntimeObserver {
@@ -81,6 +86,9 @@ impl RuntimeObserver {
             process_session_id: format!("{}-{started_at}", std::process::id()),
             limits,
             writer_lock: Mutex::new(()),
+            started: Instant::now(),
+            next_phase_id: AtomicU64::new(1),
+            frontend_milestones: Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -243,7 +251,7 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
 
-    fn test_directory(name: &str) -> PathBuf {
+    pub(super) fn test_directory(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")

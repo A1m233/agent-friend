@@ -1,3 +1,4 @@
+pub(crate) mod endpoints;
 mod model;
 mod process;
 mod supervisor;

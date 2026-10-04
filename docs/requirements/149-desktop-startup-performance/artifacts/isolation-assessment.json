@@ -1,0 +1,47 @@
+{
+  "status": "verification-gap",
+  "invalidates": [
+    "installed-03 claim of empty-data isolation",
+    "installed-03 frontend timing as isolated end-to-end startup acceptance"
+  ],
+  "retains": [
+    "native shell/payload/service monotonic timings",
+    "normal and interrupted process journals in actual diagnostic ZIP",
+    "candidate build/source snapshot binding"
+  ],
+  "confirmedDefect": {
+    "frontend": "frontend/src/constants/index.ts fixes bridge/voice URLs at 18800/18900",
+    "supervisor": "installer-smoke embedded profile starts services at 28800/28900",
+    "nativePush": "frontend/src-tauri/src/lib.rs bridge_base_url defaults to 18800",
+    "observation": "installed-04 real WebView screenshot contained production session titles; no session bodies archived"
+  },
+  "actions": [
+    "stopped test runtimes and cleaned installer-smoke state",
+    "no further installed runs or matrix while routing is unresolved",
+    "added fail-closed production-listener preflight to measurement harness",
+    "asked user whether to include independent routing repair"
+  ],
+  "productionProcess": {
+    "pid": 58512,
+    "startedAt": "2026-10-04T16:07:16+08:00",
+    "installationReplaced": false,
+    "restarted": false
+  },
+  "modelRequests": "No chat message sent and no real provider invocation intentionally initiated by this task; do not infer absence of pre-existing user background activity.",
+  "candidate2": {
+    "buildId": "20261004T095950Z-fedb4fc637da-cf7861db",
+    "normalSession": "41740-1791109587297",
+    "nativeMeasuredMs": {
+      "payloadVerification": 1394.5437,
+      "tauriInitialize": 4403.1542,
+      "bridgeReadinessWait": 9996.6762
+    },
+    "filesVerified": 7445,
+    "bytesRead": 1215775238
+  },
+  "privateEvidence": {
+    "desktop-probe.json.failure.json": "3a34eff62d40714c5102bd45691553c262015450be005eb2da775d68c8a57b22",
+    "desktop-probe.json.failure.png": "2915d663e45b0a68f3898777e61e62b4b55a885d2eab3c58d8dd87005be080ef",
+    "tauri.log.runtime": "dbb455ca04839652ca019d18270f6284624e272da19f2c821e373ca8e15a71ab"
+  }
+}

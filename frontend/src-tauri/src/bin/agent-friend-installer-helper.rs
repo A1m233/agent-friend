@@ -1386,17 +1386,33 @@ fn verify(args: &[String]) -> Result<serde_json::Value, String> {
     let payload_relative_path = required_arg(args, "--payload-relative-path")?;
     let profile_id = required_arg(args, "--profile-id")?;
     let build_id = required_arg(args, "--build-id")?;
-    let verified = install_contract::verify_candidate_payload(
+    let timings = args.iter().any(|arg| arg == "--timings");
+    let mut metrics = install_contract::VerificationMetrics::default();
+    let result = install_contract::verify_candidate_payload_with_metrics(
         &install_root,
         &payload_relative_path,
         &profile_id,
         &build_id,
-    )?;
-    Ok(json!({
+        &mut metrics,
+    );
+    let verified = match result {
+        Ok(verified) => verified,
+        Err(error) if timings => {
+            return Ok(json!({"schemaVersion": 1, "ok": false, "command": "verify",
+                "error": error, "verification": metrics}));
+        }
+        Err(error) => return Err(error),
+    };
+    let mut output = json!({
         "ok": true,
         "buildIdentitySha256": verified.identity_sha256,
         "payloadManifestSha256": verified.manifest_sha256
-    }))
+    });
+    if timings {
+        output["verification"] =
+            serde_json::to_value(metrics).expect("finite verification metrics");
+    }
+    Ok(output)
 }
 
 fn rollback(args: &[String]) -> Result<serde_json::Value, String> {
@@ -1515,7 +1531,12 @@ fn main() {
         .nth(1)
         .unwrap_or_else(|| "<missing>".to_string());
     match run() {
-        Ok(value) => println!("{value}"),
+        Ok(value) => {
+            println!("{value}");
+            if value.get("ok") == Some(&json!(false)) {
+                std::process::exit(32);
+            }
+        }
         Err(error) => {
             // The NSIS installer captures stdout into its pre-application
             // diagnostics file. Keep failures structured and on the same

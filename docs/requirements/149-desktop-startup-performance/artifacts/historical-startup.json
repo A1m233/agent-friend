@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "collectedAt": "2026-10-04T08:17:35.9214267+00:00",
+  "classification": "historical-observation-not-controlled-baseline",
+  "processSessionId": "58512-1791101236255",
+  "eventTimestamps": "UTC",
+  "buildIdentity": {
+    "buildId": "20261001T144253Z-87bb34d2d779-8259578d",
+    "buildMode": "local-test",
+    "dirty": true,
+    "distribution": "ordinary",
+    "productVersion": "0.3.0",
+    "profileId": "production",
+    "schemaVersion": 1,
+    "sourceCommit": "87bb34d2d779cc03ca8d26b4e0d286fd5329f925",
+    "sourceTreeSha256": "7007a5798ae9ca5848023ec96a0cf8a31de128f99487cd0568755b9d96205aab"
+  },
+  "manifestSummary": {
+    "fileCount": 7489,
+    "totalBytes": 1218268007.0,
+    "manifestSha256": "8e9ec599eba6bacf6c91a4aa14a15dce089df9be527e70acf9dbcce3046cd50c",
+    "receiptManifestSha256": "8e9ec599eba6bacf6c91a4aa14a15dce089df9be527e70acf9dbcce3046cd50c",
+    "identitySha256": "30579c1e59b164b09daac07f04fff7a8f2d9bccdc79a7e4116f390cf4e874ea0",
+    "receiptIdentitySha256": "30579c1e59b164b09daac07f04fff7a8f2d9bccdc79a7e4116f390cf4e874ea0",
+    "payloadContentsReverified": false
+  },
+  "events": [
+    {
+      "recordedAt": "2026-10-04T08:07:16.258Z",
+      "kind": "process-started",
+      "source": "lifecycle"
+    },
+    {
+      "recordedAt": "2026-10-04T08:07:16.259Z",
+      "kind": "startup-attempted",
+      "source": "instance-governance"
+    },
+    {
+      "recordedAt": "2026-10-04T08:07:16.261Z",
+      "kind": "identity-resolved",
+      "source": "instance-governance"
+    },
+    {
+      "recordedAt": "2026-10-04T08:07:16.261Z",
+      "kind": "startup-gate-waiting",
+      "source": "instance-governance"
+    },
+    {
+      "recordedAt": "2026-10-04T08:07:16.262Z",
+      "kind": "startup-gate-acquired",
+      "source": "instance-governance"
+    },
+    {
+      "recordedAt": "2026-10-04T08:07:16.269Z",
+      "kind": "stale-owner-recovered",
+      "source": "instance-governance"
+    },
+    {
+      "recordedAt": "2026-10-04T08:08:40.734Z",
+      "kind": "page-visibility",
+      "source": "webview2",
+      "windowLabel": "pet",
+      "visibilityState": "visible"
+    },
+    {
+      "recordedAt": "2026-10-04T08:08:40.766Z",
+      "kind": "owner-published",
+      "source": "instance-governance"
+    },
+    {
+      "recordedAt": "2026-10-04T08:08:40.767Z",
+      "kind": "logger-attached",
+      "source": "lifecycle"
+    },
+    {
+      "recordedAt": "2026-10-04T08:08:40.773Z",
+      "kind": "runtime-attached",
+      "source": "webview2",
+      "browserVersion": "154.0.4258.53"
+    }
+  ],
+  "limitations": [
+    "Dirty historical build: exact source overlay unavailable",
+    "Stage timings and filesystem cache state unknown",
+    "Page visibility is not proof of interactive readiness",
+    "Whitelisted projection, not a full log archive",
+    "Receipt and manifest metadata hashes do not verify payload contents"
+  ]
+}

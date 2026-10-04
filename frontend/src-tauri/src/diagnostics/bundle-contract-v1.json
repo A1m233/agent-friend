@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 19,
+  "schemaRevision": 20,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -28,6 +28,12 @@
     ]
   },
   "capabilities": [
+    {
+      "id": "startup-timeline-v1",
+      "manifestFields": [],
+      "requiredEntries": [],
+      "entryPatterns": ["logs/tauri.log.runtime*"]
+    },
     {
       "id": "desktop-application-launch-v1",
       "manifestFields": [],

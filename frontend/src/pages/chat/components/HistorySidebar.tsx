@@ -67,6 +67,7 @@ import {
   SessionDropdownMenuItems,
 } from "./SessionActionMenuItems";
 import { HistorySidebarStatus } from "./HistorySidebarStatus";
+import { recordStartupMilestone } from "@/lib/startup-evidence";
 
 const WINDOW_SHOWN_EVENT = "window://shown";
 const MINUTE_MS = 60 * 1000;
@@ -416,6 +417,10 @@ export function HistorySidebar({
   }, [list.length]);
 
   useEffect(() => {
+    if (sessionsLoaded && persistedSessionId !== undefined && !historyLoading &&
+      (isAutoRestoreBlocked() || currentSessionId)) {
+      recordStartupMilestone("restore-ready");
+    }
     if (
       restoreAttemptedRef.current ||
       isAutoRestoreBlocked() ||
@@ -430,6 +435,7 @@ export function HistorySidebar({
     const restorableSessionId = resolveRestorableChatSessionId(persistedSessionId, list);
     if (!restorableSessionId) {
       if (persistedSessionId) void setLastChatSessionId(null);
+      recordStartupMilestone("restore-ready");
       return;
     }
 
@@ -438,10 +444,12 @@ export function HistorySidebar({
         if (!opened && !isAutoRestoreBlocked()) {
           void setLastChatSessionId(null);
         }
+        if (opened) recordStartupMilestone("restore-ready");
       },
     );
   }, [
     currentSessionId,
+    historyLoading,
     isAutoRestoreBlocked,
     list,
     openSession,

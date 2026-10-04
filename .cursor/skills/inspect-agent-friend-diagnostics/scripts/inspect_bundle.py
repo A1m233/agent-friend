@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 import zipfile
@@ -23,6 +24,7 @@ CORE_ENTRIES = (
     "diagnostics/runtime-config.json",
 )
 CAPABILITY_HANDLERS = {
+    "startup-timeline-v1": "startupTimeline",
     "desktop-application-launch-v1": "desktopApplications",
     "selected-sessions-v1": "sessions",
     "selected-sessions-v2": "sessions",
@@ -1433,6 +1435,192 @@ def summarize_sandbox_incidents(value: Any) -> dict[str, Any]:
     }
 
 
+def summarize_startup_timeline(archive: zipfile.ZipFile, capabilities: list[str]) -> dict[str, Any]:
+    """Bounded content-free inventory; each process retains its own clock and identity."""
+    entries = [
+        info
+        for info in archive.infolist()
+        if re.fullmatch(r"logs/tauri\.log\.runtime(?:\.[0-9]+)?", info.filename)
+    ]
+    if not entries:
+        return {"evidence": "missing" if "startup-timeline-v1" in capabilities else "not-collected"}
+    phases_allowed = (
+        "shell-context",
+        "instance-gate",
+        "settings-load",
+        "runtime-discovery",
+        "tauri-build",
+        "tauri-initialize",
+        "tauri-setup",
+        "service-start",
+        "service-spawn",
+        "service-readiness",
+        "payload-verification",
+    )
+    milestones = (
+        "module-loaded",
+        "settings-ready",
+        "root-committed",
+        "models-ready",
+        "restore-ready",
+        "composer-ready",
+        "frontend-ready",
+    )
+    processes: dict[str, Any] = {}
+    gaps: set[str] = set()
+    budget = 4 * 1024 * 1024
+    records = 0
+
+    def numeric(value: Any) -> bool:
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            and value >= 0
+        )
+
+    for info in entries:
+        if info.file_size > budget:
+            gaps.add("read-budget-exceeded")
+            continue
+        budget -= info.file_size
+        for line in archive.read(info).splitlines():
+            records += 1
+            if records > 10000:
+                gaps.add("record-budget-exceeded")
+                break
+            try:
+                record = json.loads(line)
+            except (ValueError, UnicodeError):
+                gaps.add("invalid-json-line")
+                continue
+            if not isinstance(record, dict):
+                continue
+            session = record.get("processSessionId")
+            if not isinstance(session, str) or not re.fullmatch(r"[0-9]+-[0-9]+", session):
+                continue
+            if record.get("source") != "startup":
+                continue
+            details = record.get("details")
+            if not isinstance(details, dict):
+                gaps.add("invalid-startup-record")
+                continue
+            if session not in processes and len(processes) >= 64:
+                gaps.add("process-budget-exceeded")
+                continue
+            process = processes.setdefault(session, {"phases": {}, "frontendMilestones": []})
+            kind = record.get("kind")
+            if kind == "frontend-milestone":
+                if (
+                    details.get("milestone") not in milestones
+                    or not numeric(details.get("elapsedMs"))
+                    or not numeric(details.get("pageElapsedMs"))
+                    or not isinstance(details.get("pageId"), str)
+                    or not re.fullmatch(r"[a-fA-F0-9-]{36}", details["pageId"])
+                ):
+                    gaps.add("invalid-frontend-milestone")
+                    continue
+                if len(process["frontendMilestones"]) < 56:
+                    process["frontendMilestones"].append(
+                        {
+                            key: details[key]
+                            for key in ("milestone", "pageId", "elapsedMs", "pageElapsedMs")
+                        }
+                    )
+                continue
+            if kind not in ("phase-started", "phase-finished"):
+                continue
+            phase_id = details.get("phaseId")
+            phase = details.get("phase")
+            if (
+                not isinstance(phase_id, int)
+                or isinstance(phase_id, bool)
+                or phase_id < 1
+                or phase not in phases_allowed
+                or not all(
+                    numeric(details.get(key))
+                    for key in ("elapsedMs", "startElapsedMs", "durationMs")
+                )
+                or abs(details["elapsedMs"] - details["startElapsedMs"] - details["durationMs"])
+                > 0.1
+                or details.get("status")
+                not in (("running",) if kind == "phase-started" else ("ok", "error", "incomplete"))
+            ):
+                gaps.add("invalid-phase-record")
+                continue
+            phases = process["phases"]
+            if phase_id not in phases and len(phases) >= 256:
+                gaps.add("phase-budget-exceeded")
+                continue
+            context = details.get("context")
+            context = context if isinstance(context, dict) else {}
+            service = (
+                context.get("service") if context.get("service") in ("bridge", "voice") else None
+            )
+            row = phases.setdefault(
+                phase_id, {"phaseId": phase_id, "phase": phase, "service": service}
+            )
+            if row["phase"] != phase or row["service"] != service:
+                gaps.add("phase-identity-conflict")
+                continue
+            field = "start" if kind == "phase-started" else "finish"
+            if field in row:
+                gaps.add("duplicate-phase-event")
+                continue
+            row[field] = {
+                key: details[key] for key in ("elapsedMs", "startElapsedMs", "durationMs", "status")
+            }
+            metrics = context.get("verification")
+            if phase == "payload-verification" and field == "finish" and isinstance(metrics, dict):
+                keys = (
+                    "totalMs",
+                    "metadataMs",
+                    "readMs",
+                    "hashMs",
+                    "manifestFiles",
+                    "metadataChecked",
+                    "filesVerified",
+                    "bytesRead",
+                )
+                if all(numeric(metrics.get(key)) for key in keys):
+                    row["verification"] = {key: metrics[key] for key in keys}
+                else:
+                    gaps.add("invalid-verification-metrics")
+    result = []
+    for session, process in processes.items():
+        rows = list(process["phases"].values())
+        if any("start" not in row or "finish" not in row for row in rows):
+            gaps.add("unpaired-phase")
+        if any(
+            "start" in row
+            and "finish" in row
+            and row["start"]["startElapsedMs"] != row["finish"]["startElapsedMs"]
+            for row in rows
+        ):
+            gaps.add("phase-clock-mismatch")
+        result.append(
+            {
+                "processSessionId": session,
+                "phases": rows,
+                "unfinishedPhases": [row["phaseId"] for row in rows if "finish" not in row],
+                "failedPhases": [
+                    row["phaseId"]
+                    for row in rows
+                    if row.get("finish", {}).get("status") in {"error", "incomplete"}
+                ],
+                "frontendMilestones": process["frontendMilestones"],
+            }
+        )
+    return {
+        "evidence": "collected" if processes else "not-collected",
+        "processes": result,
+        "gaps": sorted(gaps),
+        "firstInteractionVerified": False,
+        "clock": "process-local-monotonic; frontend elapsed is native receipt time",
+        "retention": "bounded journals; absence does not prove a phase did not run",
+    }
+
+
 def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
     if not path.is_file():
         raise BundleError(f"bundle does not exist or is not a file: {path}")
@@ -1759,6 +1947,7 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 desktop_instance,
                 collected=desktop_instance_collected,
             ),
+            "startupTimeline": summarize_startup_timeline(archive, capabilities),
             "executionEnvironments": summarize_execution_environments(
                 execution_environments,
                 collected=execution_environments_collected,
