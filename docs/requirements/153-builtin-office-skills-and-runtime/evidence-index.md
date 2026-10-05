@@ -26,6 +26,7 @@ OpenAI 公开仓库历史版本同时包含 `doc`、`spreadsheet`、`slides`，�
 | E-012 | Windows Python 3.12 的解析闭包为 openpyxl 3.1.5、pandas 3.0.6、python-docx 1.2.0，以及 7 个传递依赖；wheel 保留 License/LICENCE 与版权文件 | `scripts/package/vendor/managed_python.lock.json` 的 URL、SHA-256、大小及版本；公开 PyPI metadata 与下载 wheel | source-observed / confirmed；实际安装和读写见 E-013，不依赖开发机同名库 |
 | E-013 | 产品受管 Python 3.12.14 离线 smoke 实际读写 XLSX、CSV/TSV、DOCX，通过公式/缓存区别、原件保持和损坏/旧格式拒绝；PDF 渲染回归通过 | `scripts/execution-environment/run.ps1 smoke --offline`；provider identity `28b9fb6d346c1199`；`scripts/package/capability_smoke/office.py` | runtime-observed / confirmed；不证明模型工具选择、所有复杂 Office 格式或真实加密文档支持 |
 | E-014 | 只读 package-baseline 解析到已发布 immutable Guide r78，兼容 >=0.3.0,<0.4.0 | Guide commit `16eb19d54d80c17b75a3947615878fb70c39543a`，snapshot `f55d00802ea49f22ddbce509d5fd0bfb481320ea5781adc10a793763dcf90950`；公开 release API 与 manifest SHA-256 核对 | source-observed / confirmed；公开指南尚未描述本次 Office 能力，待交付流程更新 |
+| E-015 | Windows 最终冻结 doctor、Office/PDF 实际读写及 bridge/voice 启动全部通过，标准 runner 退出码 0，Guide overlay 已恢复 | 构建 `20261005T175550Z-1572864b0d58-f174cc10`，版本 0.3.0/local-test，package-sensitive；精确命令、目录和失败历史见 progress | runtime-observed / confirmed；仅冻结 runtime，无安装器或真实模型验收 |
 
 ## 初步依赖清单
 
@@ -37,12 +38,12 @@ OpenAI 公开仓库历史版本同时包含 `doc`、`spreadsheet`、`slides`，�
 | doc | python-docx；页面检查使用 pdf2image、LibreOffice、Poppler | 无渲染能力时可降级文字读取，但不等于完整视觉流程通过 |
 | slides | Node.js、pptxgenjs；helpers 涉及 skia-canvas、linebreak、fontkit、prismjs、mathjax-full；Python 涉及 Pillow、pdf2image、python-pptx、numpy；核心渲染依赖 LibreOffice、Poppler | 字体检查引用 fc-list；特殊格式转换引用 Inkscape、ImageMagick、Ghostscript、heif-convert、JxrDecApp。必需/可选的实际加载关系及 Windows 可移植性待验证 |
 
-## 未决问题与下一步
+## 实施结果与下一步
 
-1. 核对 doc/spreadsheet 固定版本的完整资源身份，复用现有内置 Skill manifest 与物化流程。
-2. 确认基础 Python 包及传递依赖的离线锁定、许可证和受管环境安装验证；不新增环境 provider。
-3. 核对宿主能力说明入口，明确结构化读写与未提供的渲染、重算边界，保持上游 Skill 原样。
-4. 技术方案明确后取得确认，再导入正式产品资源、补环境并运行真实文件的确定性与 frozen 验证；不以开发机 import 成功代替产品环境验证。
+1. doc/spreadsheet 固定版本已完整导入，下载、Git 提交和工作区字节均已核对；复用已有 manifest 与物化流程。
+2. Python 闭包、许可证、离线安装及实际文件处理已验证，没有新增 provider 或服务依赖。
+3. 宿主命令说明明确基础读写、缓存与公式区别、缺少渲染/重算；上游正文未改。
+4. 项目检查和最终 frozen 验证通过，待用户验收；真实模型验证若需要，另行取得有界授权。
 
 ## 决策影响
 
