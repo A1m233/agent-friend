@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 151: three synthetic tool-image requests; no Files API uploads.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 

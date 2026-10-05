@@ -27,21 +27,23 @@ def _image(size_bytes: int) -> AttachmentRef:
     )
 
 
-def test_deepseek_vision_admission_enforces_model_single_file_limit() -> None:
+def test_deepseek_vision_admission_enforces_application_single_file_limit() -> None:
     store = cast(AttachmentStore, _VerifyingStore())
 
     accepted = prepare_attachment_input(
-        [ExistingAttachmentInput(_image(64 * 1024 * 1024))],
+        [ExistingAttachmentInput(_image(100 * 1024 * 1024))],
         model_id="deepseek/deepseek-flash",
         store=store,
+        session_files_available=True,
     )
-    assert accepted.validated_refs[0].size_bytes == 64 * 1024 * 1024
+    assert accepted.validated_refs[0].size_bytes == 100 * 1024 * 1024
 
     with pytest.raises(HTTPException) as caught:
         prepare_attachment_input(
-            [ExistingAttachmentInput(_image(64 * 1024 * 1024 + 1))],
+            [ExistingAttachmentInput(_image(100 * 1024 * 1024 + 1))],
             model_id="deepseek/deepseek-flash",
             store=store,
+            session_files_available=True,
         )
 
     detail = caught.value.detail
@@ -67,12 +69,11 @@ def test_pdf_admission_uses_session_files_without_enabling_native_images() -> No
         )
     assert isinstance(unavailable.value.detail, dict)
     assert unavailable.value.detail["error"] == "attachment_file_processing_unavailable"
-    with pytest.raises(HTTPException) as unsupported:
-        prepare_attachment_input(
-            [ExistingAttachmentInput(_image(1))],
-            model_id="deepseek/deepseek-v4-pro",
-            store=store,
-            session_files_available=True,
-        )
-    assert isinstance(unsupported.value.detail, dict)
-    assert unsupported.value.detail["error"] == "attachment_type_unsupported"
+    image = _image(1)
+    plan = prepare_attachment_input(
+        [ExistingAttachmentInput(image)],
+        model_id="deepseek/deepseek-v4-pro",
+        store=store,
+        session_files_available=True,
+    )
+    assert plan.resolve() == [image]

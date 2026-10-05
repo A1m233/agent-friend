@@ -144,23 +144,25 @@ def make_default_registry(
         )
     )
     if attachment_store is not None:
+        session_files = None
         if session_store is not None:
             from ..paths import command_workspaces_dir
             from ..session_files import SessionFileService
             from .builtin.session_files import SessionFilesTool
 
-            tools.append(
-                SessionFilesTool(
-                    SessionFileService(session_store, attachment_store, command_workspaces_dir())
-                )
+            session_files = SessionFileService(
+                session_store, attachment_store, command_workspaces_dir()
             )
+            tools.append(SessionFilesTool(session_files))
         from ..filesystem.service import FilesystemService
         from ..image_reading import ImageReadingService
         from .builtin.view_image import ViewImageTool
 
         tools.append(
             ViewImageTool(
-                FilesystemService(filesystem_policy), ImageReadingService(attachment_store)
+                FilesystemService(filesystem_policy),
+                ImageReadingService(attachment_store),
+                session_files,
             )
         )
 

@@ -18,10 +18,7 @@ from .voice import is_voice_attachment
 
 logger = logging.getLogger(__name__)
 
-IM_ATTACHMENT_FAILURE_TEXT = (
-    "这条消息里的附件我暂时没处理好，可以重新发送或改发支持的图片、PDF、TXT。"
-)
-IM_GIF_UNSUPPORTED_TEXT = "我暂时不能读取 GIF 动图，可以发一张 JPG、PNG 或 WebP 静态截图。"
+IM_ATTACHMENT_FAILURE_TEXT = "这条消息里的附件暂时没能保存，请稍后重新发送。"
 
 
 class IMAttachmentResolver:
@@ -56,40 +53,11 @@ class IMAttachmentResolver:
         for index, attachment in enumerate(candidates):
             try:
                 imported = await self._import_one(attachment, fallback_index=index)
-            except AttachmentError as exc:
-                if exc.code == "attachment_type_unsupported" and exc.media_type == "image/gif":
-                    media.append(
-                        InboundMedia(
-                            source="im_attachment",
-                            kind="animated_image",
-                            fidelity="unsupported",
-                            reason="media_gif_unsupported",
-                            display_name=_display_name(
-                                attachment,
-                                _attachment_url(attachment),
-                                fallback_index=index,
-                            ),
-                        )
-                    )
-                    continue
-                return self._failure(event, exc)
-            except (httpx.HTTPError, ValueError) as exc:
+            except (AttachmentError, httpx.HTTPError, ValueError) as exc:
                 return self._failure(event, exc)
             else:
                 media.append(InboundMedia.readable_attachment(imported))
 
-        has_unsupported = any(item.fidelity == "unsupported" for item in media)
-        has_meaningful_text = bool((event.content or "").strip())
-        if has_unsupported and not has_meaningful_text:
-            return InboundResolveResult.direct_reply(
-                OutboundContent(
-                    chat_id=event.chat_id,
-                    chat_scope=event.chat_scope,
-                    text=IM_GIF_UNSUPPORTED_TEXT,
-                    reply_to_message_id=event.message_id,
-                ),
-                reason="media_gif_unsupported",
-            )
         return InboundResolveResult.route(event, media=tuple(media))
 
     @staticmethod
@@ -139,7 +107,6 @@ class IMAttachmentResolver:
                         response.aiter_bytes(),
                         display_name=name,
                         declared_media_type=declared,
-                        image_metadata_policy="advisory",
                     )
                     return self._store.consume_draft(draft_id)
 

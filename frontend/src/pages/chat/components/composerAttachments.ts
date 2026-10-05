@@ -39,7 +39,7 @@ export function draftAttachmentFileType(
   const type = draftAttachmentMediaType(item);
   if (type.startsWith("image/")) return "image";
   if (type === "application/pdf") return "pdf";
-  return "txt";
+  return undefined;
 }
 
 export function draftAttachmentUrl(item: DraftAttachmentState): string | undefined {

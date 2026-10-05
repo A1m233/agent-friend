@@ -295,8 +295,9 @@ def test_attachment_candidates_do_not_invoke_uploading_renderer(tmp_path: Path) 
         context_manager=SummarizingContextManager(),
     )
 
-    def forbidden(message: Any, client: Any) -> dict[str, Any]:
-        pytest.fail("uploaded a budget candidate")
+    def forbidden(message: Message, client: Any) -> dict[str, Any]:
+        assert not message.attachments and not message.images
+        return message.to_openai()
 
     conv._message_renderer = forbidden
     attachment = AttachmentRef("asset", "image.png", "image", "image/png", 100, "a" * 64)
@@ -306,8 +307,8 @@ def test_attachment_candidates_do_not_invoke_uploading_renderer(tmp_path: Path) 
         ],
         None,
     )
-    assert estimate.reason == "attachments_pending_render"
-    assert estimate.tokens >= 1536
+    assert estimate.reason != "attachments_pending_render"
+    assert 0 < estimate.tokens < 1000
 
 
 def test_opaque_provider_state_and_route_change_do_not_reuse_anchor(

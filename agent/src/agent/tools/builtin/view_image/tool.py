@@ -11,6 +11,7 @@ from ....filesystem.models import FilesystemAuthorizationLedger
 from ....filesystem.service import FilesystemError, FilesystemService
 from ....filesystem.tools import FILESYSTEM_LEDGER_ARG
 from ....image_reading import ImageReadingService
+from ....session_files.service import SessionFileError, SessionFileService
 from ...protocol import IMAGE_INPUT_SUPPORTED_ARG, ToolResult
 
 
@@ -20,7 +21,8 @@ class ViewImageTool:
     result_context_retention: ClassVar[str] = "recoverable"
     description: ClassVar[str] = (
         "读取本地静态 PNG/JPEG/WebP，让当前模型直接查看图片。需要观察任务中的图片时使用；"
-        "不读取文本、下载 URL、截图或调用其他视觉模型。先通过 request_filesystem_access "
+        "会话上传图像直接填本轮文件提示或 session_files list 返回的 file_ref，无需目录授权。"
+        "外部本地图片才通过 request_filesystem_access "
         "取得当前轮 read_image 授权；read_text 不包含看图权限。返回图像及来源/尺寸，"
         "每次一张、最多 8 MiB、1600 万像素、单边 8192。权限错误应取得有效 scope 后再试；"
         "格式或大小错误需更换有效图片；模型不支持时停止，不原样重试。"
@@ -29,6 +31,11 @@ class ViewImageTool:
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
         "properties": {
+            "file_ref": {
+                "type": "string",
+                "pattern": "^file-[0-9a-f]{64}$",
+                "description": "当前会话文件提示或 session_files list 返回的 file_ref；不是 asset_id、路径或其他会话引用。",
+            },
             "filesystem_scope_id": {
                 "type": "string",
                 "minLength": 1,
@@ -40,13 +47,25 @@ class ViewImageTool:
                 "description": "授权目录内的相对图片路径；准确文件 scope 填 .；不得使用绝对路径、URL 或 ..。",
             },
         },
-        "required": ["filesystem_scope_id", "path"],
+        "oneOf": [
+            {
+                "required": ["file_ref"],
+                "not": {"anyOf": [{"required": ["filesystem_scope_id"]}, {"required": ["path"]}]},
+            },
+            {"required": ["filesystem_scope_id", "path"], "not": {"required": ["file_ref"]}},
+        ],
         "additionalProperties": False,
     }
 
-    def __init__(self, filesystem: FilesystemService, images: ImageReadingService) -> None:
+    def __init__(
+        self,
+        filesystem: FilesystemService,
+        images: ImageReadingService,
+        session_files: SessionFileService | None = None,
+    ) -> None:
         self._filesystem = filesystem
         self._images = images
+        self._session_files = session_files
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
         if args.get(IMAGE_INPUT_SUPPORTED_ARG) is not True:
@@ -56,16 +75,34 @@ class ViewImageTool:
                 meta={"error_kind": "image_model_unsupported"},
             )
         try:
-            ledger = args.get(FILESYSTEM_LEDGER_ARG)
-            if not isinstance(ledger, FilesystemAuthorizationLedger):
-                raise FilesystemError("permission_denied", "缺少当前轮文件授权。")
-            data, name = self._filesystem.read_image_bytes(
-                ledger,
-                scope_id=args["filesystem_scope_id"],
-                relative_path=args["path"],
-                max_bytes=TOOL_IMAGE_MAX_BYTES,
-            )
+            if "file_ref" in args:
+                session_id = args.get("__agent_friend_current_session_id")
+                if self._session_files is None or not isinstance(session_id, str) or not session_id:
+                    raise SessionFileError("session_context_missing")
+                data, name = self._session_files.read_bytes(
+                    session_id, args["file_ref"], max_bytes=TOOL_IMAGE_MAX_BYTES
+                )
+            else:
+                ledger = args.get(FILESYSTEM_LEDGER_ARG)
+                if not isinstance(ledger, FilesystemAuthorizationLedger):
+                    raise FilesystemError("permission_denied", "缺少当前轮文件授权。")
+                data, name = self._filesystem.read_image_bytes(
+                    ledger,
+                    scope_id=args["filesystem_scope_id"],
+                    relative_path=args["path"],
+                    max_bytes=TOOL_IMAGE_MAX_BYTES,
+                )
             snapshot = self._images.snapshot(data, display_name=name)
+        except SessionFileError as exc:
+            return ToolResult(
+                f"{exc}: 会话附件不可读取。请通过 session_files list 核对引用；原件缺失或损坏时需重新上传。",
+                is_error=True,
+                meta={"error_kind": str(exc)},
+            )
+        except OSError:
+            return ToolResult(
+                "session_file_io_error: 无法读取附件，请检查原件及访问权限。", is_error=True
+            )
         except (FilesystemError, AttachmentError) as exc:
             return ToolResult(
                 f"{exc.code}: {exc} 权限错误请通过 request_filesystem_access 取得当前轮 read_image scope；其他错误请修正图片后再试。",

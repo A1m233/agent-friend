@@ -67,9 +67,7 @@ def test_estimate_tokens_includes_attachment_costs() -> None:
 
     message = Message(role="user", content="", attachments=[image, document])
 
-    assert estimate_tokens([message]) == 1536 + 1000 + int(
-        len(message.to_openai()["content"]) * CHARS_TO_TOKENS
-    )
+    assert estimate_tokens([message]) == int(len(message.to_openai()["content"]) * CHARS_TO_TOKENS)
 
 
 def test_make_budget_snapshot_derives_threshold_from_window() -> None:

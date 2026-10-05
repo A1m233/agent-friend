@@ -46,7 +46,6 @@ import { ComposerEditStatus } from "./ComposerEditStatus";
 import { ComposerAttachmentStrip } from "./ComposerAttachmentStrip";
 import { evaluateAttachmentCompatibility } from "./attachmentCompatibility";
 import {
-  dropzoneAcceptFromMediaTypes,
   filesFromDropEvent,
 } from "./attachmentInput";
 import {
@@ -159,7 +158,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // history loading 等短暂空态，不能回读实时设置并改写已存在草稿的展示。
   const selectedModel = draftRuntimeConfig?.model ?? currentModel ?? DEFAULT_SETTINGS.chatModel.model;
   const selectedModelOption = modelOption(selectedModel);
-  const capabilities = selectedModelOption?.attachmentInputs ?? selectedModelOption?.capabilities ?? null;
+  const capabilities = selectedModelOption?.attachmentInputs ?? null;
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentImagePreview | null>(null);
   const draftTextRef = useRef("");
   const submittedValueEchoRef = useRef<{ workspaceKey: string; value: string } | null>(null);
@@ -194,12 +193,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           ? `单轮最多添加 ${capabilities.maxAttachmentsPerTurn} 个附件`
           : undefined);
   const attachmentActionDisabled = Boolean(attachmentDisabledReason);
-  const dropzoneAccept = useMemo(
-    () => capabilities?.attachments
-      ? dropzoneAcceptFromMediaTypes(capabilities.acceptedMediaTypes)
-      : undefined,
-    [capabilities],
-  );
   const attachmentCompatibility = useMemo(
     () => evaluateAttachmentCompatibility(
       draftAttachments.map((item) => ({
@@ -349,7 +342,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     isDragUnknown,
     open: openFileDialog,
   } = useDropzone({
-    accept: dropzoneAccept,
     maxFiles: Math.max(1, availableAttachmentSlots),
     maxSize: capabilities?.attachments ? capabilities.maxAttachmentBytes : undefined,
     multiple: true,
@@ -375,11 +367,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       ? disabledReason ?? "暂时不能添加附件"
       : editSubmitting
           ? "正在提交修改…"
-        : "当前模型不支持附件"
+        : "当前会话文件处理暂不可用"
     : availableAttachmentSlots <= 0
       ? `单轮最多添加 ${capabilities?.maxAttachmentsPerTurn ?? 0} 个附件`
       : isDragReject
-        ? "文件不符合当前模型的附件限制"
+        ? "文件超过附件大小或数量限制"
         : isDragUnknown
           ? "松开后检查并添加附件"
           : "松开以添加附件";
@@ -498,7 +490,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       return;
     }
     if (!attachmentCompatibility.compatible) {
-      toast.error(attachmentCompatibility.reason ?? "附件与当前模型不兼容");
+      toast.error(attachmentCompatibility.reason ?? "附件超过当前文件限制");
       return;
     }
     void (async () => {

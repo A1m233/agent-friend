@@ -235,9 +235,9 @@ def test_attachment_candidate_preserves_plain_history_without_upload(tmp_path: P
         ],
         None,
     )
-    assert 6536 <= result.tokens < 7000
+    assert 5000 < result.tokens < 5500
     assert result.anchor_tokens == 5000
-    assert result.reason == "attachments_pending_render"
+    assert result.reason == "none"
 
 
 def test_same_length_summary_replacement_can_release_retained_slack(tmp_path: Path) -> None:

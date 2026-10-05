@@ -17,8 +17,10 @@ def prepare_litellm_request(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Apply known model compatibility without changing caller-owned inputs."""
 
+    from .multimodal.chat_images import project_chat_tool_images
+
     # Phase belongs to Responses history, not the Chat wire contract.
-    messages = chat_replay_messages(messages)
+    messages = project_chat_tool_images(chat_replay_messages(messages))
     if spec.provider_id is not None and spec.provider_id.startswith("custom/"):
         # The connection declares OpenAI wire compatibility, not a LiteLLM model
         # family. Keep arbitrary effort strings out of its model-specific mapper.

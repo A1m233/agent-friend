@@ -370,8 +370,8 @@ def _make_persistent_session_manager(
     runtime_identity: RuntimeInstanceIdentity | None = None,
     attachment_store: AttachmentStore | None = None,
 ) -> SessionManager:
-    from agent.attachments.input_projection import AttachmentInputProjector
     from agent.paths import command_workspaces_dir
+    from agent.session_files import SessionFileService
 
     return SessionManager(
         store=store,
@@ -383,7 +383,7 @@ def _make_persistent_session_manager(
         metadata_store=metadata_store,
         session_change_broker=session_change_broker,
         message_renderer=(multimodal_adapter.render_message if multimodal_adapter else None),
-        message_projector=AttachmentInputProjector(attachment_store.open)
+        session_file_service=SessionFileService(store, attachment_store, command_workspaces_dir())
         if attachment_store
         else None,
         skill_service=skill_service,
@@ -444,7 +444,6 @@ def build_runtime(
     attachment_store = AttachmentStore(settings.attachments_dir)
     multimodal_adapter = MultimodalInputAdapter(
         open_asset=attachment_store.open,
-        cache_dir=settings.attachments_dir / "provider-cache",
     )
     session_change_broker = SessionChangeBroker(
         SessionRevisionStore(settings.sessions_dir / "session-revisions.json")

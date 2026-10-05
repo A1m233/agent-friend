@@ -27,13 +27,13 @@ def test_model_catalog_route_projects_provider_capabilities() -> None:
     kimi = next(provider for provider in body["providers"] if provider["id"] == "kimi")
     k26 = next(model for model in kimi["models"] if model["id"] == "kimi/kimi-k2.6")
     assert k26["capabilities"]["attachments"] is True
-    assert "application/pdf" in k26["capabilities"]["acceptedMediaTypes"]
+    assert "application/pdf" not in k26["capabilities"]["acceptedMediaTypes"]
     assert k26["limits"]["contextWindow"] == 256 * 1024
     assert k26["reasoning"]["defaultPreset"] == "on"
     deepseek = next(provider for provider in body["providers"] if provider["id"] == "deepseek")
     vision = next(model for model in deepseek["models"] if model["id"] == "deepseek/deepseek-flash")
     assert vision["label"] == "DeepSeek Flash"
-    assert vision["processingProfile"] == "deepseek-vision-files-v1"
+    assert vision["processingProfile"] == "tool-images-v1"
     assert vision["capabilities"]["inputModalities"] == ["text", "image"]
     assert vision["capabilities"]["acceptedMediaTypes"] == [
         "image/jpeg",
@@ -90,14 +90,12 @@ def test_catalog_separates_native_modalities_from_session_file_inputs(
     deepseek = next(model for model in models if model["id"] == "deepseek/deepseek-flash")
     kimi = next(model for model in models if model["id"] == "kimi/kimi-k2.6")
     assert "application/pdf" not in deepseek["capabilities"]["acceptedMediaTypes"]
-    assert "application/pdf" in kimi["capabilities"]["acceptedMediaTypes"]
+    assert "application/pdf" not in kimi["capabilities"]["acceptedMediaTypes"]
     for model in (deepseek, kimi):
         inputs = model["attachmentInputs"]
-        assert ("application/pdf" in inputs["acceptedMediaTypes"]) is files_available
-        assert inputs["deliveryByMediaType"]["image/png"] == "native"
-        if files_available:
-            assert inputs["deliveryByMediaType"]["application/pdf"] == "session_file"
-            assert inputs["maxAttachmentBytesByType"]["application/pdf"] == 100 * 1024 * 1024
+        assert inputs["attachments"] is files_available
+        assert inputs["acceptsAnyFile"] is True
+        assert inputs["maxAttachmentBytes"] == 100 * 1024 * 1024
 
 
 def test_model_validation_preflights_client_without_creating_session() -> None:

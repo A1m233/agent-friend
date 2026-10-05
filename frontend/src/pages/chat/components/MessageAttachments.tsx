@@ -30,7 +30,7 @@ export function MessageAttachments({
           ? "image"
           : item.mediaType === "application/pdf"
             ? "pdf"
-            : "txt",
+            : undefined,
       name: item.displayName,
       size: item.sizeBytes,
       url: attachmentAssetUrl(item.assetId),

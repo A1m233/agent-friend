@@ -67,7 +67,7 @@ const catalog: ModelCatalog = {
           label: "DeepSeek V4 Flash Vision",
           routeId: "deepseek:vision",
           transportProfile: "openai-compatible",
-          processingProfile: "deepseek-vision-files-v1",
+          processingProfile: "tool-images-v1",
           capabilities,
           reasoning: {
             control: "effort",

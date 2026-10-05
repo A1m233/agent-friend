@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DropEvent } from "react-dropzone";
 import {
-  dropzoneAcceptFromMediaTypes,
   extractClipboardFiles,
   filesFromDropEvent,
 } from "./attachmentInput";
@@ -38,20 +37,6 @@ describe("extractClipboardFiles", () => {
       items: [{ kind: "string", getAsFile: () => null }],
       files: [],
     })).toEqual([]);
-  });
-});
-
-describe("dropzoneAcceptFromMediaTypes", () => {
-  it("adds known extensions and keeps unknown model media types", () => {
-    expect(dropzoneAcceptFromMediaTypes([
-      "image/jpeg",
-      "application/pdf",
-      "application/vnd.example",
-    ])).toEqual({
-      "image/jpeg": [".jpg", ".jpeg"],
-      "application/pdf": [".pdf"],
-      "application/vnd.example": [],
-    });
   });
 });
 

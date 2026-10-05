@@ -37,7 +37,7 @@ export interface CustomConnection {
   baseUrl: string;
   protocol: "chat_completions" | "responses";
   credentialRevision: string;
-  models: { id: string; name: string; contextWindow: number; images?: boolean; documents?: boolean }[];
+  models: { id: string; name: string; contextWindow: number }[];
 }
 export interface ModelConnections {
   revision: number;

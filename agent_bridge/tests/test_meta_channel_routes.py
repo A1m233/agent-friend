@@ -505,8 +505,9 @@ class TestEditResendLatestEndpoint:
         )
 
     def test_edit_resend_replaces_original_and_new_attachments_in_request_order(
-        self, client: TestClient, runtime: BridgeRuntime
+        self, client: TestClient, runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr(BridgeRuntime, "session_files_available", property(lambda _: True))
         sid = client.post(
             "/v1/sessions",
             json={"model": "kimi/kimi-k2.6"},
@@ -566,8 +567,9 @@ class TestEditResendLatestEndpoint:
         ]
 
     def test_edit_resend_rejects_existing_asset_outside_target(
-        self, client: TestClient, runtime: BridgeRuntime
+        self, client: TestClient, runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr(BridgeRuntime, "session_files_available", property(lambda _: True))
         sid = client.post(
             "/v1/sessions",
             json={"model": "kimi/kimi-k2.6"},
@@ -1166,8 +1168,9 @@ class TestRuntimeConfigEndpoint:
         }
 
     def test_invalid_preset_and_busy_use_stable_errors(
-        self, client: TestClient, runtime: BridgeRuntime
+        self, client: TestClient, runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr(BridgeRuntime, "session_files_available", property(lambda _: True))
         sid = client.post(
             "/v1/sessions",
             json={"model": "kimi/kimi-k2.6"},

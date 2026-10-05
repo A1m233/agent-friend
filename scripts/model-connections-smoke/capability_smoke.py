@@ -1,4 +1,4 @@
-"""Bounded CPA boundary smoke for custom effort and native image/PDF content."""
+"""Bounded CPA effort/tool-image smoke and deterministic document-reference checks."""
 
 from __future__ import annotations
 
@@ -6,18 +6,17 @@ import argparse
 import hashlib
 import json
 import struct
-import tempfile
 import zlib
 from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 from uuid import UUID
 
 import httpx
 import yaml
+from agent.attachments.input_projection import project_file_message
 from agent_bridge.model_connections.inspection import error_code
 from llm_providers.catalog import ModelRuntimeConfig
 from llm_providers.connections import (
@@ -29,6 +28,7 @@ from llm_providers.connections import (
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
+from agent import AttachmentRef, Message
 from llm_providers import LLMClient, ModelCallControl, ModelRequest, MultimodalInputAdapter
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -94,7 +94,7 @@ def main() -> int:
         "CPA smoke",
         BASE,
         args.protocol,
-        (CustomModel(str(UUID(int=2)), "gpt-5.6-luna", 100000, images=True, documents=True),),
+        (CustomModel(str(UUID(int=2)), "gpt-5.6-luna", 100000),),
     )
     directory = ModelDirectory([connection])
     spec = replace(
@@ -151,7 +151,6 @@ def main() -> int:
         return sync_original(transport, request)
 
     with (
-        tempfile.TemporaryDirectory(prefix="custom-capability-smoke-") as tmp,
         patch.object(httpx.AsyncHTTPTransport, "handle_async_request", send),
         patch.object(httpx.HTTPTransport, "handle_request", sync_send),
     ):
@@ -205,26 +204,49 @@ def main() -> int:
             messages = [{"role": "user", "content": prompt}]
             if fixture:
                 data, media, kind = fixture
-                adapter = MultimodalInputAdapter(
-                    open_asset=lambda _, data=data: BytesIO(data), cache_dir=Path(tmp)
-                )
-                attachment = SimpleNamespace(
+                adapter = MultimodalInputAdapter(open_asset=lambda _, data=data: BytesIO(data))
+                attachment = AttachmentRef(
                     asset_id=hashlib.sha256(data).hexdigest(),
+                    sha256=hashlib.sha256(data).hexdigest(),
                     display_name="fixture",
                     media_type=media,
                     kind=kind,
                     size_bytes=len(data),
                 )
+                if kind == "document":
+                    projected = project_file_message(
+                        Message(role="user", content=prompt, attachments=[attachment])
+                    )
+                    report["cases"].append(
+                        {
+                            "name": name,
+                            "passed": not projected.attachments,
+                            "scope": "deterministic file-reference projection; no generation",
+                        }
+                    )
+                    continue
                 messages = [
+                    {"role": "user", "content": prompt},
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "fixture-image",
+                                "type": "function",
+                                "function": {"name": "view_image", "arguments": "{}"},
+                            }
+                        ],
+                    },
                     adapter.render_message(
-                        SimpleNamespace(
-                            role="user",
-                            content=prompt,
-                            attachments=[attachment],
-                            meta={"current_input": True},
+                        Message(
+                            role="tool",
+                            content="synthetic fixture image",
+                            images=(attachment,),
+                            meta={"tool_call_id": "fixture-image"},
                         ),
                         client,
-                    )
+                    ),
                 ]
             try:
                 result = client.generate(
