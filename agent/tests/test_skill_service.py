@@ -55,10 +55,12 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
 
     assert [(item.source, item.name) for item in snapshot.entries] == [
         ("builtin", "agent-friend-guide"),
+        ("builtin", "doc"),
         ("builtin", "pdf"),
         ("builtin", "screenshot"),
         ("builtin", "skill-creator"),
         ("builtin", "skill-installer"),
+        ("builtin", "spreadsheet"),
         ("personal", "personal-skill"),
         ("shared", "shared-skill"),
     ]
@@ -71,12 +73,16 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
     assert installer.id == "builtin/skill-installer"
     manifest = json.loads((creator.package_root.parent / "manifest.json").read_text("utf-8"))
     assert manifest["schema_version"] == 2
-    for name in ("pdf", "screenshot"):
+    for name in ("pdf", "screenshot", "doc", "spreadsheet"):
         record = by_name[name]
         source = manifest["skills"][name]
         assert record.id == f"builtin/{name}"
         assert source["source_repository"] == "https://github.com/openai/skills"
-        assert source["source_commit"] == "49f948faa9258a0c61caceaf225e179651397431"
+        assert source["source_commit"] == (
+            "e6afb0d74cc75d220df2faf3dd6c635c2dc6a108"
+            if name in {"doc", "spreadsheet"}
+            else "49f948faa9258a0c61caceaf225e179651397431"
+        )
         assert source["source_path"] == f"skills/.curated/{name}"
         assert source["compatibility_patches"] == []
         assert source["snapshot_sha256"] == _package_digest(record.package_root)
@@ -114,10 +120,12 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
     )
     assert [item.record.name for item in turn.activations] == [
         "agent-friend-guide",
+        "doc",
         "pdf",
         "screenshot",
         "skill-creator",
         "skill-installer",
+        "spreadsheet",
         "personal-skill",
         "shared-skill",
     ]

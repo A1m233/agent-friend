@@ -78,6 +78,8 @@ extend-exclude = [
     "**/dist",
     ".claude/worktrees",
     "agent/src/agent/skills/builtin_assets/screenshot/scripts",
+    "agent/src/agent/skills/builtin_assets/doc",
+    "agent/src/agent/skills/builtin_assets/spreadsheet",
 ]
 
 [tool.ruff.lint]
@@ -118,6 +120,8 @@ exclude = [
     "dist",
     "memory_eval/data",
     "agent/src/agent/skills/builtin_assets/screenshot/scripts",
+    "agent/src/agent/skills/builtin_assets/doc",
+    "agent/src/agent/skills/builtin_assets/spreadsheet",
     ".claude/worktrees",
 ]
 

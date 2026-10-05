@@ -184,6 +184,7 @@ def _smoke_image_reading() -> dict[str, Any]:
 def _smoke_skill_catalog() -> dict[str, Any]:
     """Exercise packaged builtin resources and the native hot-reload watcher."""
     from agent.skills import SkillCatalogService, SkillSelection
+    from agent.skills.first_party_updates.store import package_snapshot_digest
 
     marker = "agent-friend frozen Skill watcher activation smoke"
     with tempfile.TemporaryDirectory(prefix="agent-friend-skill-smoke-") as temp_dir:
@@ -196,6 +197,26 @@ def _smoke_skill_catalog() -> dict[str, Any]:
         )
         try:
             initial = service.initialize()
+            for name in ("doc", "spreadsheet"):
+                office_skill = next(
+                    (record for record in initial.entries if record.id == f"builtin/{name}"),
+                    None,
+                )
+                if office_skill is None:
+                    raise RuntimeError(f"packaged builtin {name} was not discovered")
+                manifest = json.loads(
+                    (office_skill.package_root.parent / "manifest.json").read_text("utf-8")
+                )
+                if (
+                    package_snapshot_digest(office_skill.package_root)
+                    != manifest["skills"][name]["snapshot_sha256"]
+                ):
+                    raise RuntimeError(f"packaged builtin {name} resources differ from manifest")
+                turn = service.begin_turn(
+                    (SkillSelection(office_skill.id, office_skill.version),), model_window=100_000
+                )
+                if len(turn.activations) != 1 or turn.activation_issues:
+                    raise RuntimeError(f"packaged builtin {name} could not activate")
             builtin = next(
                 (record for record in initial.entries if record.id == "builtin/skill-creator"),
                 None,
@@ -460,6 +481,7 @@ def _smoke_skill_catalog() -> dict[str, Any]:
             return {
                 "builtin": builtin.name,
                 "builtin_resources": len(required_resources),
+                "office_skills": ["doc", "spreadsheet"],
                 "installer": installer.name,
                 "installer_validation": "fail-closed",
                 "installer_managed_transaction": "rollback-ok",
@@ -1698,6 +1720,11 @@ def _smoke_managed_execution_environment() -> dict[str, Any]:
             environment.environment,
             temporary,
         )
+        from capability_smoke.office import run_office_smoke
+
+        office_details = run_office_smoke(
+            environment.executable_aliases["python"], environment.environment, temporary
+        )
         return {
             "status": environment.status.value,
             "runtime_version": environment.identity.runtime_version,
@@ -1705,6 +1732,7 @@ def _smoke_managed_execution_environment() -> dict[str, Any]:
             "environment_revision": environment.revision,
             "local_wheel": True,
             "pdf_native_tools": native_details,
+            "office_files": office_details,
         }
 
 
