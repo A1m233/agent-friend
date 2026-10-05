@@ -311,10 +311,17 @@ def map_exception(exc: BaseException) -> ProtocolError:
         )
     if isinstance(exc, LLMProviderError):
         if exc.error_evidence is not None and exc.error_evidence.source == "protocol":
+            if exc.error_evidence.code == "unsupported_output_capability":
+                return ProtocolError(
+                    502,
+                    "model_output_unsupported",
+                    "模型只返回了当前连接尚未接入的输出类型，没有可用回答；已有步骤已保留，请检查连接能力或切换模型。",
+                    False,
+                )
             return ProtocolError(
                 502,
                 "model_protocol_error",
-                "模型返回的内容不符合预期协议，请检查连接兼容性或切换模型后重试。",
+                "模型响应的内容或工具调用不完整、存在冲突；本次响应中的工具未执行，已有步骤已保留。请检查连接兼容性后继续。",
                 False,
             )
         return ProtocolError(

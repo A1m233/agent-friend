@@ -15,6 +15,8 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import uuid4
 
+from llm_providers.assistant_content import content_metadata
+
 from llm_providers import ProviderAssistantTurn
 
 from ..attachments import AttachmentRef
@@ -270,7 +272,7 @@ class SessionModelHistory:
                 for call in assistant.tool_calls
             )
             first: Message | None = None
-            for _, part, identity, phase in sorted(ordered, key=lambda entry: entry[0]):
+            for output_index, part, identity, phase in sorted(ordered, key=lambda entry: entry[0]):
                 message = self.append_provider_assistant(
                     part,
                     timestamp=timestamp,
@@ -287,6 +289,12 @@ class SessionModelHistory:
                     extra["provider_reasoning_state"] = assistant.reasoning_state.to_event_payload()
                     if run_id:
                         extra["provider_reasoning_run_id"] = run_id
+                source_item = next(
+                    (item for item in assistant.text_items if item.output_index == output_index),
+                    None,
+                )
+                if source_item is not None and source_item.content_parts:
+                    extra["content_parts"] = content_metadata(source_item.content_parts)
                 message.meta.update(extra)
                 self.items[-1].meta.update(copy.deepcopy(extra))
                 if first is None:

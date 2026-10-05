@@ -1,6 +1,6 @@
 """Final text consumption, independent of incremental conversation presentation."""
 
-from .errors import LLMEmptyResponseError, LLMIncompleteResponseError
+from .errors import LLMContentPolicyError, LLMEmptyResponseError, LLMIncompleteResponseError
 from .stream_events import LLMTurnDone
 
 
@@ -15,6 +15,8 @@ def final_response_text(done: LLMTurnDone) -> str:
     turn = done.assistant_turn
     if turn is None:
         raise invalid("missing_assistant_turn")
+    if any(part.kind == "refusal" for item in turn.text_items for part in item.content_parts):
+        raise LLMContentPolicyError("模型拒绝生成所需结果。")
     if turn.tool_calls:
         raise invalid("unexpected_tool_calls")
     if turn.text_items:

@@ -34,6 +34,7 @@ UNSUPPORTED_EVENTS = frozenset(
         ("custom_tool_call_input", ("delta", "done")),
         ("shell_call_command", ("added", "delta", "done")),
         ("shell_call_output_content", ("delta", "done")),
+        ("compaction", ("compacting",)),
     )
     for suffix in suffixes
 )
@@ -66,7 +67,7 @@ def event_type(value: Any) -> str:
     if (
         isinstance(value, str)
         and len(value) <= 96
-        and re.fullmatch(r"(?:response\.[a-z_]+(?:\.[a-z_]+)*|error)", value)
+        and re.fullmatch(r"(?:response\.[a-z_]+(?:\.[a-z_]+)*|error|keepalive)", value)
     ):
         return value
     return "<redacted-or-missing>"
@@ -117,7 +118,9 @@ def summarize(
         # No arbitrary provider strings in logs. Unknown protocol-shaped names
         # remain useful, but credentials, free text and oversized values do not.
         digest = reference(kind)
-        if len(kind) <= 96 and re.fullmatch(r"(?:response\.[a-z_]+(?:\.[a-z_]+)*|error)", kind):
+        if len(kind) <= 96 and re.fullmatch(
+            r"(?:response\.[a-z_]+(?:\.[a-z_]+)*|error|keepalive)", kind
+        ):
             safe_type, state = kind, "recorded"
         else:
             state = "redacted"

@@ -5,15 +5,21 @@ from __future__ import annotations
 import json
 import warnings
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any, cast, get_args
 
 import pytest
 import test_responses as fixtures
 from llm_providers.errors import LLMIncompleteResponseError, LLMProviderError
-from llm_providers.responses.evidence import REASONING_EVENTS, REFUSAL_EVENTS, UNSUPPORTED_EVENTS
+from llm_providers.responses.evidence import (
+    REASONING_EVENTS,
+    REFUSAL_EVENTS,
+    UNSUPPORTED_EVENTS,
+    summarize,
+)
 from llm_providers.responses.stream import ResponsesState
 from llm_providers.stream_events import LLMResponseDiagnostics
-from openai.types.responses import ResponseStreamEvent
+from openai.types.responses import ResponseOutputItem, ResponseStreamEvent
 from test_responses import added, delta, message, terminal, text_events
 
 from llm_providers import LLMClient, LLMTextDelta, LLMTurnDone, ModelRequest, build_provider_spec
@@ -52,14 +58,32 @@ def test_locked_sdk_event_inventory_is_explicitly_classified() -> None:
         "response.output_text.annotation.added",
     }
     assert sdk_events <= supported | REASONING_EVENTS | REFUSAL_EVENTS | UNSUPPORTED_EVENTS
+    published = json.loads(
+        (Path(__file__).parent / "fixtures/responses/events-2026-10-05.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert (
+        set(published["events"])
+        == supported | REASONING_EVENTS | REFUSAL_EVENTS | UNSUPPORTED_EVENTS
+    )
+    output_types = {
+        name
+        for member in get_args(get_args(ResponseOutputItem)[0])
+        for name in get_args(member.model_fields["type"].annotation)
+    }
+    assert output_types == set(published["output_items"])
 
 
 @pytest.mark.parametrize("kind", sorted(UNSUPPORTED_EVENTS))
-def test_known_unimplemented_capabilities_are_not_silently_ignored(kind: str) -> None:
-    with pytest.raises(LLMProviderError) as caught:
-        state().feed({"type": kind})
-    assert caught.value.error_evidence is not None
-    assert caught.value.error_evidence.code == "unsupported_response_capability"
+def test_unimplemented_progress_does_not_abort_supported_result(kind: str) -> None:
+    parser = state()
+    assert parser.feed({"type": kind}) == []
+    parser.feed(terminal([message("m1", "hello")]))
+    done = parser.finish(LLMResponseDiagnostics(transport="responses"))
+    assert done.assistant_turn and done.assistant_turn.content == "hello"
+    assert not done.assistant_turn.tool_calls
+    assert parser.skipped_events == 1
 
 
 @pytest.mark.parametrize("kind", sorted(REASONING_EVENTS))
@@ -123,13 +147,6 @@ def test_queued_annotations_and_completion_metadata_through_sdk(
 @pytest.mark.parametrize(
     "event",
     [
-        {},
-        {"type": None},
-        {"type": []},
-        {"type": 123},
-        {"type": "response.reasoning_unknown.delta"},
-        {"type": "response.refusal_unknown.done"},
-        {"type": "response.unrecognized"},
         {"type": "response.output_item.added", "output_index": 0, "item": {"id": "i", "type": []}},
         {"type": "response.output_item.done", "output_index": 0, "item": {"id": []}},
     ],
@@ -206,10 +223,8 @@ def test_evidence_is_bounded_and_does_not_serialize_payload_or_unknown_keys(kind
         "SECRET_FIELD_NAME": "sk-private",
         "item": {"secret": "PRIVATE_REASONING"},
     }
-    with pytest.raises(LLMProviderError) as caught:
-        state().feed(event)
-    evidence = caught.value.error_evidence
-    assert evidence and evidence.protocol
+    assert state().feed(event) == []
+    evidence = summarize(event, stage="skip", number=1, items=0, terminal=False)
     encoded = json.dumps(asdict(evidence))
     assert len(encoded) < 1500
     assert not any(
@@ -223,10 +238,8 @@ def test_evidence_is_bounded_and_does_not_serialize_payload_or_unknown_keys(kind
             "private body",
         ]
     )
-    assert evidence.protocol.unknown_field_count == 1
-    assert evidence.protocol.event_type_state == (
-        "recorded" if kind == "response.unknown" else "redacted"
-    )
+    assert evidence.unknown_field_count == 1
+    assert evidence.event_type_state == ("recorded" if kind == "response.unknown" else "redacted")
 
 
 def test_eof_retains_incomplete_semantics_and_finish_evidence() -> None:
@@ -258,7 +271,18 @@ def test_protocol_evidence_reaches_call_log_without_retry(
 ) -> None:
     caplog.set_level("INFO", logger="llm_providers.call_observation")
     requests = http_mock(
-        [terminal([{"id": "private-id", "type": "not_supported", "text": "PRIVATE_BODY"}])]
+        [
+            terminal(
+                [
+                    {
+                        "id": "private-id",
+                        "type": "message",
+                        "role": "assistant",
+                        "content": "PRIVATE_BODY",
+                    }
+                ]
+            )
+        ]
     )
     client = LLMClient(build_provider_spec(provider_id="deepseek", api_key="fixture"))
     with warnings.catch_warnings(record=True) as recorded:

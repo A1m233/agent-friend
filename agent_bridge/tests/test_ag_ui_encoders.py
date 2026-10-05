@@ -14,6 +14,7 @@ from agent_bridge.session_turns import SessionTurnCoordinator
 
 from agent import (
     AssistantMessageEnd,
+    AssistantMessageMetadata,
     AssistantMessagePhase,
     AssistantMessageStart,
     AssistantPhaseStatus,
@@ -40,6 +41,35 @@ class _ConversationStub:
 
     def stream(self, _user_input: str, **_kwargs: Any) -> Iterator[ConversationEvent]:
         yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
+
+
+def test_refusal_and_citations_encoded_as_message_metadata() -> None:
+    parts = [
+        {
+            "content_index": 0,
+            "kind": "refusal",
+            "start": 0,
+            "end": 2,
+            "annotations": [{"type": "file_citation", "filename": "reference.txt"}],
+        }
+    ]
+
+    class ContentConversation(_ConversationStub):
+        def stream(self, _user_input: str, **_kwargs: Any) -> Iterator[ConversationEvent]:
+            yield TextDelta("No", message_id="answer")
+            yield AssistantMessageMetadata("answer", parts)
+            yield TurnDone(stop_reason="refusal")
+
+    body = b"".join(
+        encode_stream(
+            lambda: cast(Conversation, ContentConversation()), "hi", thread_id="s", run_id="r"
+        )
+    ).decode()
+    events = [json.loads(line[5:]) for line in body.splitlines() if line.startswith("data:")]
+    metadata = next(e for e in events if e.get("name") == "agent_friend.assistant_message_metadata")
+    assert metadata["value"] == {"messageId": "answer", "contentParts": parts}
+    assert events[-1]["type"] == "RUN_FINISHED"
+    assert not any(e["type"] == "RUN_ERROR" for e in events)
 
 
 def test_run_error_serializes_input_acceptance_and_exact_identity() -> None:

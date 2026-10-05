@@ -33,6 +33,7 @@ import type {
 import type { PushEvent } from "@/types/push";
 import { applyAssistantPhase, setAssistantItem, updateAssistantItemPhase } from "./assistantPhase";
 import { parseRunErrorRecovery } from "./taskRecovery";
+import { applyAssistantContent } from "./assistantContent";
 
 /** 工具结果里 bridge 用此前缀表达 is_error（006 encoders：无专用字段，约定前缀）。 */
 export const TOOL_ERROR_PREFIX = "[error] ";
@@ -110,6 +111,10 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
 
     case EventType.CUSTOM: {
       const e = evt as CustomEvent;
+      if (e.name === "agent_friend.assistant_message_metadata") {
+        const data = e.value as Record<string, unknown>;
+        return applyAssistantContent(msg, data?.messageId, data?.contentParts);
+      }
       if (e.name === "agent_friend.assistant_message_reset") {
         return retractAssistantItems(msg, (e.value as Record<string, unknown>)?.messageIds);
       }
@@ -210,6 +215,8 @@ export function applyPushConversationEvent(
   switch (evt.type) {
     case "assistant_phase":
       return applyAssistantPhase(msg, evt, runId);
+    case "assistant_message_metadata":
+      return applyAssistantContent(msg, evt.message_id, evt.content_parts);
     case "assistant_message_start":
       return typeof evt.message_id === "string" ? {
         ...msg, blocks: setAssistantItem(msg.blocks, evt.message_id, evt.phase, evt.item_index),
