@@ -43,7 +43,7 @@ OpenAI 公开仓库历史版本同时包含 `doc`、`spreadsheet`、`slides`，�
 1. doc/spreadsheet 固定版本已完整导入，下载、Git 提交和工作区字节均已核对；复用已有 manifest 与物化流程。
 2. Python 闭包、许可证、离线安装及实际文件处理已验证，没有新增 provider 或服务依赖。
 3. 宿主命令说明明确基础读写、缓存与公式区别、缺少渲染/重算；上游正文未改。
-4. 项目检查和最终 frozen 验证通过，待用户验收；真实模型验证若需要，另行取得有界授权。
+4. 项目检查和最终 frozen 验证通过，用户已确认合入并推送；真实模型验证未执行。
 
 ## 决策影响
 
@@ -62,3 +62,7 @@ OpenAI 公开仓库历史版本同时包含 `doc`、`spreadsheet`、`slides`，�
 ## 当前 Guide 只读复核
 
 目标为 main `d9f8d5d1` 加本期工作区 overlay，公开来源锚点 `faf30397a7ffd303954b2f3631be58062fe35cc3` 是目标祖先。两者之间既有代码已由 r78 覆盖，本期新事实是内置表格/Word Skill 与离线基础读写，渲染、公式重算、旧格式和 PPT 不在承诺范围。`using-agent-friend.md` 的 Skill/附件说明以及 `product-overview.md` 的能力介绍需在交付时更新。package-baseline 仅消费已发布 r78，不修改或发布公开指南，不留下产品 builtin overlay。
+
+## 交付更新
+
+2026-10-06 用户确认交付后，Guide 以产品提交 `33ec5fd16cea7c3e90edc47a3651741cdd92986d` 为来源更新并发布 r79（公开提交 `7804af69485cec937ab1b2e266dcd3c7cc981c9d`，immutable=true）。公开的 using-agent-friend / product-overview 已覆盖基础处理与未提供的能力；此前“待更新”是 package-baseline 阶段的历史结论。产品离线 builtin 未随日常发布改变。

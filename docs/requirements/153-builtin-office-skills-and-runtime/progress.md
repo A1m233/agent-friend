@@ -2,9 +2,9 @@
 
 ## 状态
 
-IN_PROGRESS
+COMPLETED
 
-实现与确定性验证已完成，待用户验收；没有执行真实 LLM、桌面视觉或安装器验收。
+实现与确定性验证已完成；2026-10-06 用户确认合入主干并推送，验收完成。没有执行真实 LLM、桌面视觉或安装器验收。
 
 2026-10-06：需求与技术方案已确认，用户授权开始实现。分支 `feature/153-builtin-office-skills-and-runtime`，起点 `543443d975c8c9c81a4c5021c3a0811215508903`。
 
@@ -16,7 +16,7 @@ IN_PROGRESS
 - [x] 增加真实文件确定性场景和 frozen capability smoke。
 - [x] 完成适用项目检查与 Windows frozen runtime 验证。
 - [x] 汇总 AC 证据与能力限制。
-- [ ] 用户验收；后续 Guide 发布按既定交付流程执行。
+- [x] 用户验收；Guide r79 已完成公开提交、推送与 immutable release。
 
 ## AC 对账
 
@@ -24,7 +24,7 @@ IN_PROGRESS
 - AC-2：catalog / activation 测试通过；最终 frozen doctor 中 doc/spreadsheet 均可发现、激活，完整包摘要与 manifest 一致。没有真实模型选择行为的证据。
 - AC-3 / AC-4 / AC-6：`scripts/execution-environment/run.ps1 smoke --offline` 通过。产品 Python 3.12.14，identity `28b9fb6d346c1199`，真实文件验证 XLSX 多工作表、公式与故意过期缓存、CSV/TSV 中文及引号换行、DOCX 段落和表格、编辑后重开、只读原件内容不变、损坏文件与旧 XLS 格式拒绝。
 - AC-5 / AC-7 / AC-8：项目三阶段检查全部通过；受管 Python 离线基线已通过实际会话准备和读写。最终 frozen doctor 的 session files、filesystem、命令授权/只读/取消/清理、Skill 快照与 Office/PDF 能力全部通过；bridge/voice 启动与身份检查通过。
-- AC-9：待用户确认；Guide 沿用既定发布流程，不在实施中自动发布。
+- AC-9：用户已确认合入主干并推送；Guide r79 已发布，补充表格/Word 能力及限制。
 
 ## 实施日志
 
@@ -53,3 +53,9 @@ IN_PROGRESS
 ## 验证边界
 
 确定性场景证明受管环境的基础读写、缓存区别与失败机制，不证明模型一定选择正确工具。未跑真实 LLM 或桌面视觉验收；本期没有 UI 改动。渲染、重算、PPT、旧格式转换、宏、复杂排版保真及加密解密不在交付范围；测试未声称覆盖所有大文件或真实加密样本。上游原版 Skill 中保留的延期路径不代表宿主已提供对应依赖。
+
+## 合入交付
+
+- 2026-10-06：用户明确要求合入主干并推送。最新 origin/main 为 `d9f8d5d19a4afa8fcbcb4a476b1a46f4a7795dbf`，已包含于本分支；现有三阶段检查与冻结验证继续适用。最终代码之后仅变更验收文档，不重新打包。
+- 已按 merge-main-and-push 流程发布 Guide `agent-friend-guide-r79`，公开提交 `7804af69485cec937ab1b2e266dcd3c7cc981c9d`，immutable=true，ZIP SHA-256 `3296b8d41a994c2c53627db661584d726b98c373bf06ed1d897f46b7680cdb4e`。兼容范围 >=0.3.0,<0.4.0，明确旧版是否支持以实际 Skill 可用性为准；没有同步产品 builtin。
+- Guide 来源锚定 `33ec5fd16cea7c3e90edc47a3651741cdd92986d`；此后只有验收状态及发布证据变化，用户可见功能与已复核版本一致。主干合入与推送结果由 Git merge commit 和远端引用记录。
