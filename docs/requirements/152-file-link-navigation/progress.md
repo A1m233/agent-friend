@@ -2,9 +2,9 @@
 
 ## 总体状态
 
-IN_PROGRESS
+COMPLETED
 
-用户已授权实现，并于 2026-10-05 通知可以开始桌面验收。Windows 主要链接交互及完整重启恢复已完成验证；2026-10-06 用户确认跨组件选区引用修复 OK，并询问能否收尾。技术验证与入口记录已收口，具备提交准备条件；尚未提交或合入，保留整体交付最终确认项。
+用户已授权实现，并于 2026-10-05 通知可以开始桌面验收。Windows 主要链接交互及完整重启恢复已完成验证；2026-10-06 用户确认跨组件选区引用修复 OK，并询问能否收尾。技术验证与入口记录已收口；用户随后明确要求合入主干并推送，整体验收确认完成。
 
 ## 任务列表
 
@@ -15,11 +15,11 @@ IN_PROGRESS
 - [x] 有意义的自动化测试与项目检查。
 - [x] 用户通知桌面可用后，执行真实桌面端验收并记录入口覆盖表与未实测边界。
 - [x] 用户确认验收中追加的引用修复。
-- [ ] 用户确认整体交付完成。
+- [x] 用户确认整体交付完成并授权合入主干、推送远端。
 
 ## AC 验证
 
-AC-1 至 AC-8 的证据按入口表、确定性测试及桌面记录归档；AC-9 完整检查通过，验收修复后前端门禁全绿；AC-10 Windows 桌面核心链路完成，未执行平台／场景列为明确限制。AC-11 已收到引用修复确认，整体交付尚待最终确认，故不提前标记 COMPLETED。
+AC-1 至 AC-8 的证据按入口表、确定性测试及桌面记录归档；AC-9 完整检查通过，验收修复后前端门禁全绿；AC-10 Windows 桌面核心链路完成，未执行平台／场景列为明确限制。AC-11 用户已确认修复，并明确要求合入主干、推送远端，整体交付确认完成。
 
 ### 入口覆盖表
 
@@ -66,3 +66,11 @@ AC-1 至 AC-8 的证据按入口表、确定性测试及桌面记录归档；AC-
 - 本机证据位于 `C:/Users/example-user/.codex/visualizations/2026/10/05/01a10b89-728e-7572-b220-f9867a9bf849/link-navigation-152-verified/`：`02-shared-menu.png`、`03-missing-feedback.png`、`04-process-menu.png`、`05-image-preview.png`、`06-composer-attachment.png`、`07-persona-candidate.png`、`08-quote-cross-shadow-final.png`、`explorer-observation.txt`、`quote-verification.json`。不提交真实桌面截图到仓库。
 - 最终引用修复后的 `VITEST_MAX_WORKERS=4 scripts/check/run.ps1 --stage frontend` 全绿：lint、typecheck、169 文件／1408 项测试、生产构建通过（89.4 秒）。该轮未修改 Python／Rust 生产代码，沿用上轮完整检查。桌面窗口保留供用户继续手验；未提交或合入。
 - 收尾补验：通过标准 dev stop/start 完整重启，lease PID 112516、Tauri PID 110180、bridge PID 70352，均来自同一 worktree／分支的新进程。重新打开持久合成会话后，本地文件共享菜单、相对文件解析／复制、两张消息附件恢复通过；系统剪贴板路径精确对应原会话工作区。证据补充 `09-full-restart-menu.png` 与 `restart-verification.json`。结束后使用标准 dev stop 释放本次实例，合成会话和文件保留用于复验。
+
+### 合入主干交付（2026-10-06）
+
+- 引用修复提交 `d659d9b2`；链接功能提交 `e64b7695`；当前分支已无冲突纳入主干 `543443d9`（包含 151 附件需求），整合提交 `e120379f`。附件 asset/draft URL、会话身份与图片预览契约保持兼容。
+- 整合门禁修正验收脚本 import／格式及循环参数绑定，并规范主干 Conversation 一处长行格式；无产品语义改动。稳定产品来源提交 `faf30397a7ffd303954b2f3631be58062fe35cc3`。
+- 此版本重新运行完整检查的三个独立阶段：backend lint、783 源文件 typecheck、3857 passed / 5 skipped，通过（287.8 秒）；frontend lint、typecheck、169 文件／1408 tests、生产构建，通过（86.0 秒）；Rust fmt、312 passed / 1 ignored、release check，通过（40.6 秒）。首轮脚本 lint 与主干格式问题已修正；最终门禁无失败。
+- 公开 Guide 按 merge-main-and-push 自动流程更新文件链接使用与排错说明，系统 Skill validator（Windows UTF-8 模式）和项目 verify 通过。公开提交 `16eb19d54d80c17b75a3947615878fb70c39543a` 已推送；[r78](https://github.com/A1m233/agent-friend-guide/releases/tag/agent-friend-guide-r78) 已发布并核对 immutable、来源提交及两项资产摘要，兼容范围为 `>=0.3.0, <0.4.0`。
+- 公开内容锚定 `faf30397`；之后仅更新本需求的验收元信息，与已验证产品运行时及公开语义等价，不重复发布 Guide。不改离线 builtin，不构建安装包，不新增模型调用。
