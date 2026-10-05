@@ -734,7 +734,7 @@ def _stage_runtime(
         f"Source: {managed_python_lock['python']['url']}\n"
         "Distribution: python-build-standalone; includes CPython and bundled notices\n"
         "Licenses: see execution-environments/python/licenses/\n\n"
-        "PDF and Office Python baseline\n"
+        "PDF Python baseline\n"
         "Source and wheel hashes: execution-environments/python/vendor-lock.json\n"
         "Licenses: retained in baseline-wheels and installed distribution metadata\n\n"
         "PowerShell 7 and Poppler\n"
