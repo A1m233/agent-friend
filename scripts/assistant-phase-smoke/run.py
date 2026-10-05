@@ -68,9 +68,7 @@ class WireBudget:
         ):
             raise BoundaryExceeded("unexpected destination/method")
         if request.url.path == "/files":
-            if self.uploads:
-                raise BoundaryExceeded("only one synthetic image upload is authorized")
-            self.uploads += 1
+            raise BoundaryExceeded("native attachment upload is no longer supported")
         elif request.url.path == "/responses":
             body = json.loads(request.content)
             if (
@@ -133,23 +131,21 @@ class ObservedModel:
 class LookupFixture:
     name: ClassVar[str] = "lookup_fixture"
     description: ClassVar[str] = (
-        "Return the secret test value associated with the code read from the synthetic image."
+        "Return the synthetic test image and its associated secret test value. Read this tool output to answer the image task."
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
-        "properties": {"code": {"type": "string"}},
-        "required": ["code"],
+        "properties": {},
         "additionalProperties": False,
     }
 
-    def __init__(self) -> None:
+    def __init__(self, image: AttachmentRef) -> None:
+        self.image = image
         self.calls = 0
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
         self.calls += 1
-        if args != {"code": IMAGE_CODE}:
-            return ToolResult(text="The code was not read correctly.", is_error=True)
-        return ToolResult(text='{"value":"cobalt-115"}')
+        return ToolResult(text='{"value":"cobalt-115"}', images=(self.image,))
 
 
 def source_identity() -> dict[str, Any]:
@@ -297,11 +293,9 @@ def run() -> dict[str, Any]:
                 size_bytes=path.stat().st_size,
                 sha256=digest,
             )
-            adapter = MultimodalInputAdapter(
-                open_asset=lambda _: path.open("rb"), cache_dir=root / "cache"
-            )
+            adapter = MultimodalInputAdapter(open_asset=lambda _: path.open("rb"))
             catalog = PersonaCatalog(external_dir=root / "personas")
-            tool = LookupFixture()
+            tool = LookupFixture(attachment)
             registry = ToolRegistry([tool])
             store = JsonlSessionStore(root / "sessions")
             manager = SessionManager(
@@ -326,7 +320,7 @@ def run() -> dict[str, Any]:
                 conversation = manager.start_conversation(session)
                 output = list(
                     conversation.stream(
-                        "请先简短说明接下来要做什么，再读取图片中的代码，调用 lookup_fixture 查询对应值。"
+                        "请先简短说明接下来要做什么，调用 lookup_fixture 获取图片和对应值，再读取图片中的代码。"
                         "工具返回后，简短告诉我查询值。只需要这一次工具查询，不要做其他工作。",
                         attachments=[attachment],
                         run_id="smoke-115",
@@ -370,7 +364,7 @@ def run() -> dict[str, Any]:
                 )
                 report["passed"] = (
                     budget.generations == 2
-                    and budget.uploads == 1
+                    and budget.uploads == 0
                     and tool.calls == 1
                     and "commentary" in phases
                     and "final_answer" in phases

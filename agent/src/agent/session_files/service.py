@@ -88,12 +88,28 @@ class SessionFileService:
                 if (
                     not re.fullmatch(r"[0-9a-f]{64}", ref.asset_id)
                     or ref.asset_id != ref.sha256
-                    or ref.size_bytes <= 0
+                    or ref.size_bytes < 0
                 ):
                     raise SessionFileError("session_file_reference_invalid")
                 identity = hashlib.sha256(f"{event.uuid}:{index}".encode()).hexdigest()
                 found.append(SessionFile(f"file-{identity}", event.uuid, ref))
         return found
+
+    def read_bytes(self, session_id: str, file_ref: str, *, max_bytes: int) -> tuple[bytes, str]:
+        """Read a bounded original through an active-session reference, not a workspace path."""
+        selected = next(
+            (item for item in self.files(session_id) if item.file_ref == file_ref), None
+        )
+        if selected is None:
+            raise SessionFileError("session_file_not_found")
+        ref = selected.attachment
+        if ref.size_bytes > max_bytes:
+            raise SessionFileError("session_file_too_large")
+        with self.assets.open(ref.asset_id) as stream:
+            data = stream.read(max_bytes + 1)
+        if len(data) != ref.size_bytes or hashlib.sha256(data).hexdigest() != ref.sha256:
+            raise SessionFileError("attachment_integrity_failed")
+        return data, ref.display_name
 
     def prepare(self, session_id: str, file_ref: str) -> dict[str, Any]:
         with self._lock:

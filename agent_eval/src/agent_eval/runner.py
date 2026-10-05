@@ -469,7 +469,6 @@ def _build_manager(
         message_renderer=(
             MultimodalInputAdapter(
                 open_asset=attachment_store.open,
-                cache_dir=attachment_store.root / "provider-cache",
             ).render_message
             if attachment_store is not None
             else None

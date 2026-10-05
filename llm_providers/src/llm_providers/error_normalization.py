@@ -33,6 +33,7 @@ from .errors import (
     LLMContentPolicyError,
     LLMContextWindowError,
     LLMError,
+    LLMImageInputUnsupportedError,
     LLMModelUnavailableError,
     LLMNetworkError,
     LLMPaymentRequiredError,
@@ -43,6 +44,7 @@ from .errors import (
     LLMTransientProviderError,
     LLMUnsupportedParameterError,
 )
+from .image_input import is_image_input_rejection
 
 _CONTEXT_WINDOW_ERROR_CODES = frozenset(
     {
@@ -320,6 +322,8 @@ def map_provider_error(error: Exception, *, provider_id: str | None = None) -> L
     elif isinstance(error, openai.BadRequestError) or metadata.status_code in {400, 404, 422}:
         cls, category = LLMBadRequestError, "request"
     message = metadata.message or str(error)
+    if cls is LLMBadRequestError and is_image_input_rejection(message):
+        cls, category = LLMImageInputUnsupportedError, "image_input_unsupported"
     request_ref = (
         "sha256:" + sha256(metadata.request_id.encode()).hexdigest()[:24]
         if metadata.request_id

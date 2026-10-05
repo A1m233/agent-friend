@@ -216,9 +216,9 @@ class IMRouter:
             model = self._bridge.persistent_model(session_id, default=self._default_model)
             capabilities = self._capability_resolver(model)
             try:
-                AttachmentInputPolicy(capabilities, self._session_files_available()).validate(
-                    list(attachments)
-                )
+                AttachmentInputPolicy(
+                    capabilities.tool_calling, self._session_files_available()
+                ).validate(list(attachments))
             except AttachmentError as exc:
                 await send_fn(
                     OutboundContent(

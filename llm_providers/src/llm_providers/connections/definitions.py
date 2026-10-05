@@ -22,13 +22,9 @@ class CustomModel:
     id: str
     name: str
     context_window: int
-    images: bool = False
-    documents: bool = False
 
     def __post_init__(self) -> None:
         _identity(self.id)
-        if type(self.images) is not bool or type(self.documents) is not bool:
-            raise ValueError("Invalid attachment capability")
         if not self.name.strip() or self.name != self.name.strip():
             raise ValueError("Model name must be non-empty and have no surrounding whitespace")
         if any(ord(char) < 32 for char in self.name):

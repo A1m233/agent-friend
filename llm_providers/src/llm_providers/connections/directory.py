@@ -3,13 +3,11 @@
 from collections.abc import Iterable
 from dataclasses import replace
 from types import MappingProxyType
-from urllib.parse import urlsplit
 
 from ..catalog import (
     CUSTOM_REASONING,
     KIMI_MULTIMODAL_CAPABILITIES,
     PROVIDER_DEFINITIONS,
-    InputModality,
     ModelRouteCapabilities,
     ModelRuntimeConfig,
     ProviderDefinition,
@@ -48,16 +46,8 @@ class ModelDirectory:
                     context_window=custom.context_window,
                     api_base=connection.base_url,
                     reasoning=CUSTOM_REASONING,
-                    processing_profile="openai-attachments-v1",
-                    capabilities=replace(
-                        custom_attachment_capabilities(custom.images, custom.documents),
-                        multimodal_tool_results=(
-                            custom.images
-                            and connection.protocol == "responses"
-                            and urlsplit(connection.base_url).scheme == "https"
-                            and urlsplit(connection.base_url).netloc == "api.openai.com"
-                        ),
-                    ),
+                    processing_profile="tool-images-v1",
+                    capabilities=custom_tool_image_capabilities(),
                     responses=(
                         ResponsesRoute(custom.name, connection.base_url)
                         if connection.protocol == "responses"
@@ -127,19 +117,11 @@ class ModelDirectory:
         )
 
 
-def custom_attachment_capabilities(images: bool, documents: bool) -> ModelRouteCapabilities:
-    baseline = KIMI_MULTIMODAL_CAPABILITIES
-    modalities: list[InputModality] = ["text"]
-    if images:
-        modalities.append("image")
-    if documents:
-        modalities.append("document")
+def custom_tool_image_capabilities() -> ModelRouteCapabilities:
+    """Protocol-compatible image transport; remote model support is unverified."""
     return replace(
-        baseline,
-        input_modalities=tuple(modalities),
-        accepted_media_types=tuple(
-            t
-            for t in baseline.accepted_media_types
-            if (images if t.startswith("image/") else documents)
-        ),
+        KIMI_MULTIMODAL_CAPABILITIES,
+        input_modalities=("text", "image"),
+        accepted_media_types=("image/jpeg", "image/png", "image/webp"),
+        multimodal_tool_results=True,
     )

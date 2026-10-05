@@ -835,7 +835,8 @@ def test_stream_first_llm_failure_persists_user_turn(tmp_path: Path) -> None:
 def test_stream_context_render_failure_persists_user_before_failure(tmp_path: Path) -> None:
     def fail_renderer(message: Message, client: LanguageModel) -> dict[str, Any]:
         del client
-        if message.attachments:
+        if "evidence.png" in message.content:
+            assert not message.attachments
             raise RuntimeError("attachment render failed")
         return message.to_openai()
 

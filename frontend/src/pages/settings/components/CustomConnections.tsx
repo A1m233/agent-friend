@@ -121,7 +121,7 @@ export function CustomConnections() {
         ...draft,
         name: draft.name.trim(),
         baseUrl: draft.baseUrl.trim(),
-        models: draft.models.map((m) => ({ ...m, name: m.name.trim() })),
+        models: draft.models.map((m) => ({ id: m.id, name: m.name.trim(), contextWindow: m.contextWindow })),
         credentialRevision: key.trim()
           ? crypto.randomUUID()
           : draft.credentialRevision,

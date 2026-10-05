@@ -24,14 +24,10 @@ export type ReasoningControl = "unsupported" | "toggle" | "effort" | "fixed";
 
 export interface AttachmentInputCapabilities {
   attachments: boolean;
-  acceptedMediaTypes: string[];
+  acceptsAnyFile: boolean;
   maxAttachmentBytes: number;
   maxAttachmentsPerTurn: number;
   maxTotalAttachmentBytes: number;
-  maxAttachmentBytesByType?: Record<string, number>;
-  nativeMaxAttachmentsPerTurn?: number;
-  nativeMaxTotalAttachmentBytes?: number;
-  deliveryByMediaType?: Record<string, "session_file" | "native">;
 }
 
 export interface ReasoningPresetOption {

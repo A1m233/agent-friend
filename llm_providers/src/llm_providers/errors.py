@@ -96,6 +96,10 @@ class LLMBadRequestError(LLMError):
     """请求格式错误。多半是 bug，CLI 层不重试。"""
 
 
+class LLMImageInputUnsupportedError(LLMBadRequestError):
+    """Explicit provider rejection of image input, without retaining provider text."""
+
+
 class LLMUnsupportedParameterError(LLMBadRequestError):
     """The local SDK rejected a model parameter before sending a request."""
 

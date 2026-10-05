@@ -31,7 +31,10 @@ export async function saveConnections(
   }>("save_model_connections", {
     payload: {
       expectedRevision,
-      connections,
+      connections: connections.map((connection) => ({
+        ...connection,
+        models: connection.models.map(({ id, name, contextWindow }) => ({ id, name, contextWindow })),
+      })),
       apiKeys,
       chatModel: defaults?.chatModel ?? snapshot.chatModel,
       memoryModel: defaults?.memoryModel ?? snapshot.memoryModel,

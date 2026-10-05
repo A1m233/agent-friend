@@ -73,6 +73,7 @@ if TYPE_CHECKING:
         ToolHookInvoker,
     )
     from ..prompts import PromptBuilder
+    from ..session_files.service import SessionFileService
     from ..skills import SkillCatalogService
     from ..tool_runtime import ToolRunContext, ToolRunPolicy
     from ..tools import ToolRegistry
@@ -145,6 +146,7 @@ class SessionManager:
         session_change_broker: SessionChangeBroker | None = None,
         message_renderer: MessageRenderer | None = None,
         message_projector: MessageProjector | None = None,
+        session_file_service: SessionFileService | None = None,
         skill_service: SkillCatalogService | None = None,
         command_workspaces_root: Path | None = None,
         time_provider: TimeProvider | None = None,
@@ -164,6 +166,7 @@ class SessionManager:
         self._session_change_broker = session_change_broker
         self._message_renderer = message_renderer
         self._message_projector = message_projector
+        self._session_file_service = session_file_service
         self._skill_service = skill_service
         self._time_provider = time_provider or SystemTimeProvider()
         self._runtime_states: dict[str, _SessionRuntimeState] = {}
@@ -736,6 +739,7 @@ class SessionManager:
                 post_turn_external=post_turn_external,
                 message_renderer=self._message_renderer,
                 message_projector=self._message_projector,
+                session_file_service=self._session_file_service,
                 skill_service=self._skill_service,
                 session_model_history=runtime_state.model_history,
                 session_model_context=runtime_state.model_context,

@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"
+# 151: capabilities uses tool images; documents only check reference projection.
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Set-Location (Join-Path $PSScriptRoot "..\..")
 if ($args.Count -gt 0 -and $args[0] -eq "cpa") {

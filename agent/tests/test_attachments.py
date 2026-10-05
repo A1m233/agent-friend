@@ -41,58 +41,32 @@ def test_attachment_store_streams_deduplicates_and_consumes_draft(tmp_path: Path
     assert store.verify(second.asset_id).read_bytes() == b"\x89PNG\r\n\x1a\npayload"
 
 
-def test_attachment_store_rejects_declared_type_mismatch_and_cleans_temp(tmp_path: Path) -> None:
-    store = AttachmentStore(tmp_path / "attachments")
-
-    with pytest.raises(AttachmentError) as error:
-        asyncio.run(
-            store.import_stream(
-                _chunks(b"%PDF-1.7\nbody"),
-                display_name="fake.png",
-                declared_media_type="image/png",
-            )
-        )
-
-    assert error.value.code == "attachment_type_mismatch"
-    assert list(store.tmp_dir.iterdir()) == []
-
-
-def test_attachment_store_advisory_image_metadata_uses_detected_type(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    ("name", "data", "media"),
+    [
+        ("fake.png", b"%PDF-1.7\nbody", "application/pdf"),
+        ("photo.png", b"\xff\xd8\xffpayload", "image/jpeg"),
+        ("binary.dat", b"\x00\xff", "application/octet-stream"),
+        ("empty.txt", b"", "text/plain"),
+        (
+            "report.docx",
+            b"PK\x03\x04binary",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        ("animation.gif", b"GIF89a\x00", "image/gif"),
+    ],
+)
+def test_store_accepts_files_without_model_or_parser_requirements(
+    tmp_path: Path, name: str, data: bytes, media: str
 ) -> None:
     store = AttachmentStore(tmp_path / "attachments")
-
-    _, ref = asyncio.run(
-        store.import_stream(
-            _chunks(b"\xff\xd8\xffpayload"),
-            display_name="photo.png",
-            declared_media_type="image/png",
-            image_metadata_policy="advisory",
-        )
+    draft, ref = asyncio.run(
+        store.import_stream(_chunks(data), display_name=name, declared_media_type="image/png")
     )
-
-    assert ref.media_type == "image/jpeg"
-    assert ref.display_name == "photo.jpg"
-    assert "reason=declared_media_type_mismatch" in caplog.text
-    assert "reason=filename_extension_mismatch" in caplog.text
-
-
-def test_attachment_store_keeps_document_metadata_strict_in_advisory_image_mode(
-    tmp_path: Path,
-) -> None:
-    store = AttachmentStore(tmp_path / "attachments")
-
-    with pytest.raises(AttachmentError) as error:
-        asyncio.run(
-            store.import_stream(
-                _chunks(b"%PDF-1.7\nbody"),
-                display_name="report.txt",
-                declared_media_type="text/plain",
-                image_metadata_policy="advisory",
-            )
-        )
-
-    assert error.value.code == "attachment_type_mismatch"
+    assert store.consume_draft(draft) == ref
+    assert ref.display_name == name and ref.media_type == media
+    assert store.verify(ref.asset_id).read_bytes() == data
+    assert list(store.tmp_dir.iterdir()) == []
 
 
 def test_attachment_store_enforces_streaming_size_limit(tmp_path: Path) -> None:
@@ -111,28 +85,11 @@ def test_attachment_store_enforces_streaming_size_limit(tmp_path: Path) -> None:
     assert list(store.tmp_dir.iterdir()) == []
 
 
-def test_attachment_store_validates_entire_text_and_filename_extension(tmp_path: Path) -> None:
+def test_non_utf8_text_is_stored_without_decoding(tmp_path: Path) -> None:
     store = AttachmentStore(tmp_path / "attachments")
-
-    with pytest.raises(AttachmentError) as binary_error:
-        asyncio.run(
-            store.import_stream(
-                _chunks(b"a" * 9000, b"\xff"),
-                display_name="binary.txt",
-                declared_media_type="application/octet-stream",
-            )
-        )
-    with pytest.raises(AttachmentError) as extension_error:
-        asyncio.run(
-            store.import_stream(
-                _chunks(b"%PDF-1.7\nbody"),
-                display_name="misleading.png",
-                declared_media_type="application/octet-stream",
-            )
-        )
-
-    assert binary_error.value.code == "attachment_type_unsupported"
-    assert extension_error.value.code == "attachment_type_mismatch"
+    data = b"a" * 9000 + b"\xff"
+    _, ref = asyncio.run(store.import_stream(_chunks(data), display_name="binary.txt"))
+    assert store.verify(ref.asset_id).read_bytes() == data
 
 
 def test_attachment_store_expires_draft_lease(tmp_path: Path) -> None:

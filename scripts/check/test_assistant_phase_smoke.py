@@ -39,7 +39,6 @@ def test_wire_limits_cover_model_tokens_endpoint_retry_and_upload() -> None:
     module = load()
     budget = module.WireBudget()
     upload = httpx.Request("POST", "https://api.deepseek.com/files")
-    budget.observe(upload)
     with pytest.raises(module.BoundaryExceeded):
         budget.observe(upload)
     request = httpx.Request(
@@ -125,7 +124,7 @@ def test_full_agent_smoke_with_only_fake_http(
                     "type": "function_call",
                     "call_id": "call-fixture",
                     "name": "lookup_fixture",
-                    "arguments": '{"code":"AF-115"}',
+                    "arguments": "{}",
                     "status": "completed",
                 }
             )
@@ -162,10 +161,10 @@ def test_full_agent_smoke_with_only_fake_http(
         assert result["error"] == "LLMProviderError"
         assert result["error_chain"][0]["message"].startswith("responses_protocol_error:")
         assert result["stream_shapes"][0]["type"] == "response.completed"
-        assert len(result["wire_requests"]) == 2
+        assert len(result["wire_requests"]) == 1
         return
     assert result["passed"], result
-    assert len(result["wire_requests"]) == 3
+    assert len(result["wire_requests"]) == 2
     assert result["phases"] == ["commentary", "final_answer"]
     assert result["replayed_phases"] == result["phases"]
     assert any(item.get("phase") == "commentary" for item in requests[1]["input"])

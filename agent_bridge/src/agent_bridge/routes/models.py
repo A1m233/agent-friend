@@ -50,7 +50,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime | None = None) -> None:
             for provider in catalog["providers"]:
                 for model in provider["models"]:
                     model["attachmentInputs"] = AttachmentInputPolicy(
-                        runtime.attachment_capabilities(model["id"]),
+                        runtime.attachment_capabilities(model["id"]).tool_calling,
                         session_files_available=runtime.session_files_available,
                         **(
                             {"file_max_bytes": runtime.attachment_store.max_attachment_bytes}

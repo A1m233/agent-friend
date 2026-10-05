@@ -201,7 +201,8 @@ OPENROUTER_LUNA_REASONING = ModelReasoningDefinition(
 class ModelRouteCapabilities:
     """Product-visible capabilities for one concrete model route.
 
-    This is the single source of truth used by the bridge, agent runtime and UI.
+    These are model transport capabilities, not application file-upload admission.
+    Session files have their own application-level policy.
     Provider adapters may have additional internal limits, but callers must not
     maintain another model capability table.
     """
@@ -223,8 +224,9 @@ class ModelRouteCapabilities:
 
 TEXT_ONLY_CAPABILITIES = ModelRouteCapabilities()
 KIMI_MULTIMODAL_CAPABILITIES = ModelRouteCapabilities(
-    input_modalities=("text", "image", "document"),
-    accepted_media_types=("image/jpeg", "image/png", "image/webp", "application/pdf", "text/plain"),
+    multimodal_tool_results=True,
+    input_modalities=("text", "image"),
+    accepted_media_types=("image/jpeg", "image/png", "image/webp"),
     max_attachment_bytes=100 * 1024 * 1024,
     max_total_attachment_bytes=100 * 1024 * 1024,
     max_attachments_per_turn=10,
@@ -298,7 +300,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 label="DeepSeek Flash",
                 litellm_model=DEEPSEEK_VISION_LITELLM_MODEL,
                 context_window=1_000_000,
-                processing_profile="deepseek-vision-files-v1",
+                processing_profile="tool-images-v1",
                 api_base=DEEPSEEK_API_BASE,
                 capabilities=DEEPSEEK_VISION_CAPABILITIES,
                 reasoning=DEEPSEEK_REASONING,
@@ -330,7 +332,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 label="kimi-k2.6",
                 litellm_model="openai/kimi-k2.6",
                 context_window=KIMI_CONTEXT_WINDOW,
-                processing_profile="kimi-multimodal-v1",
+                processing_profile="tool-images-v1",
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
                 reasoning=KIMI_TOGGLE_REASONING,
             ),
@@ -339,7 +341,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 label="kimi-k2.5",
                 litellm_model="openai/kimi-k2.5",
                 context_window=KIMI_CONTEXT_WINDOW,
-                processing_profile="kimi-multimodal-v1",
+                processing_profile="tool-images-v1",
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
                 reasoning=KIMI_TOGGLE_REASONING,
             ),
@@ -348,7 +350,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 label="kimi-k2.7-code",
                 litellm_model="openai/kimi-k2.7-code",
                 context_window=KIMI_CONTEXT_WINDOW,
-                processing_profile="kimi-multimodal-v1",
+                processing_profile="tool-images-v1",
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
                 reasoning=KIMI_FIXED_REASONING,
             ),
@@ -357,7 +359,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 label="kimi-k2.7-code-highspeed",
                 litellm_model="openai/kimi-k2.7-code-highspeed",
                 context_window=KIMI_CONTEXT_WINDOW,
-                processing_profile="kimi-multimodal-v1",
+                processing_profile="tool-images-v1",
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
                 reasoning=KIMI_FIXED_REASONING,
             ),

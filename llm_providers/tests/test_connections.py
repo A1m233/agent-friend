@@ -71,7 +71,7 @@ def test_custom_does_not_inherit_capabilities_from_remote_name() -> None:
     original = replace(original, models=(replace(original.models[0], name="kimi-k2.5"),))
     directory = ModelDirectory([original])
     ref = model_reference(original.id, original.models[0].id)
-    assert not directory.model(ref).capabilities.attachments
+    assert directory.model(ref).capabilities.multimodal_tool_results
     assert not uses_kimi_stream_transport(
         directory.build_spec(directory.default_config(ref), api_key="fixture")
     )
@@ -174,20 +174,40 @@ def test_custom_effort_rejects_malformed_selection(preset: str) -> None:
         custom_effort(preset)
 
 
-def test_custom_capabilities_are_bound_to_the_directory_snapshot() -> None:
+def test_custom_protocol_image_transport_needs_no_manual_declarations() -> None:
     item = connection()
-    enabled = replace(item, models=(replace(item.models[0], images=True, documents=True),))
+    directory = ModelDirectory([item])
     ref = model_reference(item.id, item.models[0].id)
-    before, after = ModelDirectory([item]), ModelDirectory([enabled])
-    assert not before.model(ref).capabilities.attachments
-    spec = after.build_spec(after.default_config(ref), api_key="fixture")
+    spec = directory.build_spec(directory.default_config(ref), api_key="fixture")
     assert spec.attachment_capabilities is not None
-    assert spec.attachment_capabilities.attachments
-    assert set(spec.attachment_capabilities.accepted_media_types) == {
-        "image/png",
-        "image/jpeg",
-        "image/webp",
-        "text/plain",
-        "application/pdf",
+    assert spec.attachment_capabilities.multimodal_tool_results
+    assert "application/pdf" not in spec.attachment_capabilities.accepted_media_types
+
+
+def test_legacy_capability_fields_are_ignored() -> None:
+    from llm_providers.connections.codec import decode_connections
+
+    item = connection()
+    raw = {
+        "revision": 1,
+        "connections": [
+            {
+                "id": item.id,
+                "name": item.name,
+                "baseUrl": item.base_url,
+                "protocol": item.protocol,
+                "credentialRevision": item.id,
+                "models": [
+                    {
+                        "id": item.models[0].id,
+                        "name": "fixture",
+                        "contextWindow": 8192,
+                        "images": False,
+                        "documents": True,
+                    }
+                ],
+            }
+        ],
     }
-    assert spec.attachment_profile == "openai-attachments-v1"
+    decoded = decode_connections(raw)
+    assert decoded[0].models[0] == CustomModel(item.models[0].id, "fixture", 8192)

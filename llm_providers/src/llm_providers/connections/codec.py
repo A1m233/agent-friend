@@ -50,8 +50,6 @@ def decode_connections(value: Any) -> tuple[ConnectionDefinition, ...]:
                     model["id"],
                     model["name"],
                     model["contextWindow"],
-                    model.get("images", False),
-                    model.get("documents", False),
                 )
             )
         result.append(
