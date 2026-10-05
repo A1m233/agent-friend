@@ -54,6 +54,7 @@ from agent.system_prompt.surfaces import InteractionSurfaceId
 
 from agent import (
     AssistantMessageEnd,
+    AssistantMessageMetadata,
     AssistantMessagePhase,
     AssistantMessageReset,
     AssistantMessageStart,
@@ -198,6 +199,14 @@ def encode_stream(
                                 "phase": ev.phase,
                                 "itemIndex": ev.item_index,
                             },
+                        )
+                    )
+                elif isinstance(ev, AssistantMessageMetadata):
+                    yield _encode(
+                        CustomEvent(
+                            type=EventType.CUSTOM,
+                            name="agent_friend.assistant_message_metadata",
+                            value={"messageId": ev.message_id, "contentParts": ev.content_parts},
                         )
                     )
                 elif isinstance(ev, AssistantMessagePhase):

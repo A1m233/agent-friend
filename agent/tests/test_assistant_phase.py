@@ -15,11 +15,13 @@ from agent.sessions import (
     SessionRolloutRecorder,
     restore_rollout,
 )
+from llm_providers.assistant_content import AssistantContentPart, content_metadata
 from llm_providers.chat_request import chat_replay_messages
 from llm_providers.responses.request import prepare_request
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
+    AssistantMessageMetadata,
     AssistantMessagePhase,
     AssistantPhaseStatus,
     Conversation,
@@ -412,3 +414,42 @@ def test_run_snapshot_and_both_model_switch_directions(
     }
     for native, client in zip(modes, clients, strict=True):
         assert ("可见消息阶段" in client.received[0][0]["content"]) == native
+
+
+def test_refusal_metadata_survives_stream_durable_messages_and_rollout(tmp_path: Path) -> None:
+    parts = (
+        AssistantContentPart(
+            0,
+            "refusal",
+            0,
+            2,
+            ({"type": "url_citation", "url": "https://example.com", "title": "Source"},),
+        ),
+    )
+    turn = ProviderAssistantTurn(
+        "No",
+        (),
+        text_items=(ProviderAssistantItem("a", 0, "No", "final_answer", content_parts=parts),),
+    )
+    model = NativeModel(
+        script=[
+            [
+                LLMAssistantItemStart("a", 0, "final_answer"),
+                LLMTextDelta("No", item_id="a", output_index=0, phase="final_answer"),
+                LLMTurnDone(stop_reason="end_turn", assistant_turn=turn),
+            ]
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=model)
+    output = list(conv.stream("hi", run_id="refusal"))
+    metadata = [ev for ev in output if isinstance(ev, AssistantMessageMetadata)]
+    assert len(metadata) == 1 and metadata[0].content_parts == content_metadata(parts)
+    saved = JsonlSessionStore(tmp_path / "sessions").load(conv.session.session_id)
+    message = next(ev for ev in saved.events if ev.type == "assistant_message")
+    assert metadata[0].message_id == message.uuid
+    assert message.payload["content_parts"] == content_metadata(parts)
+    restored = restore_rollout(saved)
+    assistant = next(item for item in restored.history.items if item.role == "assistant")
+    assert assistant.meta["content_parts"] == content_metadata(parts)
+    assert assistant.to_openai()["content"] == "No"
+    assert "content_parts" not in assistant.to_openai()

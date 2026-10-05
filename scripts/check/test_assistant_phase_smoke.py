@@ -147,7 +147,7 @@ def test_full_agent_smoke_with_only_fake_http(
             },
         }
         if protocol_failure:
-            raw["type"] = "response.unsupported_fixture_event"
+            raw["response"]["status"] = "in_progress"
         return httpx.Response(
             200,
             content=f"event: {raw['type']}\ndata: {json.dumps(raw)}\n\n".encode(),
@@ -161,7 +161,7 @@ def test_full_agent_smoke_with_only_fake_http(
         assert not result["passed"]
         assert result["error"] == "LLMProviderError"
         assert result["error_chain"][0]["message"].startswith("responses_protocol_error:")
-        assert result["stream_shapes"][0]["type"] == "response.unsupported_fixture_event"
+        assert result["stream_shapes"][0]["type"] == "response.completed"
         assert len(result["wire_requests"]) == 2
         return
     assert result["passed"], result

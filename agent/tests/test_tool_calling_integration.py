@@ -1584,11 +1584,19 @@ def test_responses_protocol_failure_never_executes_partial_or_repeats_tools(
                 )
                 yield parser.finish(LLMResponseDiagnostics(transport="responses"))
                 return
-            yield from parser.feed({"type": "response.unrecognized"})
+            yield from parser.feed(
+                {
+                    "type": "response.output_text.delta",
+                    "item_id": "missing",
+                    "output_index": 0,
+                    "content_index": 0,
+                    "delta": "bad",
+                }
+            )
 
     fake = ProtocolClient()
     conv = _make_conversation(tmp_path, fake_llm=fake, registry=ToolRegistry([echo]))
-    with pytest.raises(LLMProviderError, match="unsupported stream event"):
+    with pytest.raises(LLMProviderError, match="unknown or mismatched item"):
         list(conv.stream("use echo", run_id="protocol-failure"))
     assert fake.calls == (2 if completed_first_call else 1)
     assert echo.call_count == (1 if completed_first_call else 0)

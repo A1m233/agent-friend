@@ -11,8 +11,10 @@ import httpx
 import pytest
 from agent.context import ContextCompactionUnavailableError, SummarizingContextManager
 from agent.context.summary_generation import generate_summary
+from llm_providers.assistant_content import AssistantContentPart
 from llm_providers.errors import LLMIncompleteResponseError
 from llm_providers.stream_events import ProviderAssistantItem, ProviderAssistantTurn
+from llm_providers.timeouts import ModelTimeoutPolicy
 
 from llm_providers import (
     LLMClient,
@@ -70,7 +72,35 @@ def test_partial_summary_is_never_accepted(terminal: bool) -> None:
         generate_summary(Model(), ModelRequest(messages=[]))
 
 
-@pytest.mark.parametrize("outcome", ["progress", "stall", "cancel"])
+def test_refused_summary_does_not_create_compaction() -> None:
+    class Model(_FakeLLM):
+        def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+            yield LLMTurnDone(
+                stop_reason="end_turn",
+                assistant_turn=ProviderAssistantTurn(
+                    content="No",
+                    text_items=(
+                        ProviderAssistantItem(
+                            "r",
+                            0,
+                            "No",
+                            "final_answer",
+                            content_parts=(AssistantContentPart(0, "refusal", 0, 2),),
+                        ),
+                    ),
+                ),
+            )
+
+    history = _turns(12, 100)
+    original = [(m.uuid, m.content) for m in history]
+    with pytest.raises(ContextCompactionUnavailableError):
+        SummarizingContextManager().build_messages(
+            history, "system", runtime=_runtime(Model(), 1600)
+        )
+    assert [(m.uuid, m.content) for m in history] == original
+
+
+@pytest.mark.parametrize("outcome", ["progress", "keepalive", "stall", "cancel"])
 def test_compaction_http_progress_idle_timeout_and_cancel(
     monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
@@ -98,7 +128,11 @@ def test_compaction_http_progress_idle_timeout_and_cancel(
                 await asyncio.sleep(0.1)
                 if outcome == "cancel" and index == 1:
                     token.cancel(CancelReason.EXPLICIT_REQUEST)
-                yield sse({"type": "response.in_progress", "response": {"id": "resp-summary"}})
+                yield sse(
+                    {"type": "keepalive"}
+                    if outcome == "keepalive"
+                    else {"type": "response.in_progress", "response": {"id": "resp-summary"}}
+                )
             yield sse(
                 {
                     "type": "response.completed",
@@ -137,18 +171,32 @@ def test_compaction_http_progress_idle_timeout_and_cancel(
 
     monkeypatch.setattr(httpx, "AsyncClient", MockClient)
     spec = build_provider_spec(provider_id="deepseek", api_key="fixture")
-    client = LLMClient(
-        replace(spec, defaults={**spec.defaults, "timeout": 0.5}),
-        network_retry_backoff_seconds=0,
-        stream_timeout_seconds=0.5,
-    )
+
+    class IdleClient(LLMClient):
+        def stream(
+            self,
+            request: ModelRequest | list[dict[str, Any]],
+            *,
+            tools: list[dict[str, Any]] | None = None,
+            **overrides: Any,
+        ) -> Iterator[LLMStreamEvent]:
+            # Cold SDK imports occur before HTTP; bound that separately from
+            # the 0.5s event-silence behavior this fixture actually exercises.
+            assert isinstance(request, ModelRequest)
+            control = replace(
+                request.control,
+                timeout_policy=ModelTimeoutPolicy(response_seconds=5, idle_seconds=0.5),
+            )
+            yield from super().stream(replace(request, control=control), tools=tools, **overrides)
+
+    client = IdleClient(spec, network_retry_backoff_seconds=0)
     runtime = _runtime(client, 1600)
     runtime.cancel_check = token.raise_if_cancelled
     history = _turns(12, 100)
     original = [(message.uuid, message.content) for message in history]
     manager = SummarizingContextManager()
 
-    if outcome == "progress":
+    if outcome in {"progress", "keepalive"}:
         result = manager.build_messages(history, "system", runtime=runtime)
         assert result.new_compaction is not None
         assert "complete summary" in result.new_compaction.summary

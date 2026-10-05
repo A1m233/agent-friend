@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
+from ..assistant_content import AssistantContentPart, normalize_annotations
 from ..error_normalization import map_provider_error
 from ..errors import (
     ErrorEvidence,
-    LLMContentPolicyError,
     LLMEmptyResponseError,
     LLMError,
     LLMIncompleteResponseError,
@@ -52,6 +53,7 @@ from .request import prepare_request
 from .transport import open_responses_stream
 
 Phase = Literal["commentary", "final_answer"] | None
+logger = logging.getLogger(__name__)
 
 
 def _object(value: Any) -> dict[str, Any]:
@@ -111,6 +113,9 @@ class _Item:
     metadata_indices: set[int] = field(default_factory=set)
     snapshot: dict[str, Any] | None = None
     done: bool = False
+    refusal_indices: set[int] = field(default_factory=set)
+    annotations: dict[int, dict[int, dict[str, Any]]] = field(default_factory=dict)
+    content_parts: tuple[AssistantContentPart, ...] = ()
 
 
 class ResponsesState:
@@ -126,10 +131,34 @@ class ResponsesState:
         self.event_number = 0
         self.recent_event_types: deque[str] = deque(maxlen=8)
         self.expected_item_type: str | None = None
+        self.skipped_events = 0
+
+    def _skip(self, event: dict[str, Any] | None, reason: str) -> list[LLMStreamEvent]:
+        self.skipped_events += 1
+        # One response cannot flood logs; never serialize provider payloads.
+        if self.skipped_events <= 8:
+            probe = summarize(
+                event,
+                stage="skip",
+                number=self.event_number,
+                items=len(self.items),
+                terminal=self.terminal is not None,
+            )
+            logger.info(
+                "responses_event_skipped response_ref=%s reason=%s event=%s digest=%s count=%d",
+                reference(self.response_id),
+                reason,
+                probe.event_type,
+                probe.event_type_digest,
+                self.skipped_events,
+            )
+        return []
 
     def _add(self, raw: dict[str, Any], index: Any) -> tuple[_Item, list[LLMStreamEvent]]:
         identity = raw.get("id")
         kind = raw.get("type")
+        if isinstance(kind, str) and kind not in {"message", "function_call", "reasoning"}:
+            identity = identity or f"other-{index}"
         if (
             not isinstance(identity, str)
             or not identity
@@ -140,8 +169,8 @@ class ResponsesState:
             raise _protocol("invalid item identity")
         if identity in self.items or index in self.indices:
             raise _protocol("duplicate item identity")
-        if not isinstance(kind, str) or kind not in {"message", "function_call", "reasoning"}:
-            raise _protocol("unsupported output item type")
+        if not isinstance(kind, str) or not kind:
+            raise _protocol("invalid output item type")
         item = _Item(identity=identity, kind=kind, output_index=index)
         events: list[LLMStreamEvent] = []
         if kind == "message":
@@ -203,6 +232,13 @@ class ResponsesState:
         if not isinstance(index, int) or isinstance(index, bool) or index < 0:
             raise _protocol("invalid output index")
         identity = raw.get("id")
+        if isinstance(raw.get("type"), str) and raw["type"] not in {
+            "message",
+            "function_call",
+            "reasoning",
+        }:
+            raw = {"id": identity or f"other-{index}", "type": raw["type"]}
+            identity = raw["id"]
         if not isinstance(identity, str) or not identity:
             raise _protocol("invalid item identity")
         events: list[LLMStreamEvent] = []
@@ -212,24 +248,28 @@ class ResponsesState:
             item = self.items[identity]
             if self.indices.get(index) != identity or raw.get("type") != item.kind:
                 raise _protocol("item completion identity mismatch")
+        if item.kind not in {"message", "function_call", "reasoning"}:
+            item.done = True
+            self._skip({"type": "response.output_item.done"}, "unsupported_output_item")
+            return events
         if raw.get("status") not in (None, "completed"):
             raise _protocol("item did not complete")
+        was_done = item.done
         if item.done:
             if response_complete and item.kind == "message" and item.snapshot is not None:
                 # Phase is lifecycle metadata. Only the complete response may
                 # supersede the item-done phase; other snapshot fields stay strict.
-                previous_snapshot = {
-                    key: value for key, value in item.snapshot.items() if key != "phase"
-                }
-                current_snapshot = {key: value for key, value in raw.items() if key != "phase"}
+                previous_snapshot = self._business_snapshot(item.snapshot, annotations=False)
+                current_snapshot = self._business_snapshot(raw, annotations=False)
                 if current_snapshot != previous_snapshot:
                     raise _protocol("conflicting item completion")
-                item.phase = _phase(raw.get("phase"))
-                item.snapshot = raw
+                for part in item.content_parts:
+                    if part.annotations:
+                        item.annotations[part.content_index] = dict(enumerate(part.annotations))
+            else:
+                if self._business_snapshot(raw) != self._business_snapshot(item.snapshot or {}):
+                    raise _protocol("conflicting item completion")
                 return []
-            if raw != item.snapshot:
-                raise _protocol("conflicting item completion")
-            return []
         if item.kind == "message":
             if raw.get("role") != "assistant":
                 raise _protocol("output message must be assistant")
@@ -238,14 +278,40 @@ class ResponsesState:
             if not isinstance(content, list):
                 raise _protocol("message completion lacks content")
             seen: set[int] = set()
+            content_parts: list[AssistantContentPart] = []
+            offset = 0
             for content_index, block in enumerate(content):
                 if not isinstance(block, dict):
                     raise _protocol("completed content must be an object")
-                if block.get("type") == "refusal":
-                    raise LLMContentPolicyError("模型拒绝生成此响应。")
-                if block.get("type") != "output_text" or not isinstance(block.get("text"), str):
+                refusal = block.get("type") == "refusal"
+                text = block.get("refusal" if refusal else "text")
+                if block.get("type") not in ("output_text", "refusal") or not isinstance(text, str):
                     raise _protocol("unsupported completed message content")
-                text = block["text"]
+                if refusal:
+                    item.refusal_indices.add(content_index)
+                elif content_index in item.refusal_indices:
+                    raise _protocol("refusal content changed kind")
+                annotations = normalize_annotations(block.get("annotations"))
+                streamed = item.annotations.get(content_index, {})
+                if streamed:
+                    # A terminal snapshot may omit optional annotations; retain
+                    # already observed citations while rejecting contradictions.
+                    if annotations and any(
+                        i >= len(annotations) or annotations[i] != a for i, a in streamed.items()
+                    ):
+                        raise _protocol("annotation completion conflicts with metadata")
+                    if not annotations:
+                        annotations = tuple(streamed[i] for i in sorted(streamed))
+                content_parts.append(
+                    AssistantContentPart(
+                        content_index,
+                        "refusal" if refusal else "text",
+                        offset,
+                        offset + len(text),
+                        annotations,
+                    )
+                )
+                offset += len(text)
                 if (
                     content_index in item.completed_texts
                     and item.completed_texts[content_index] != text
@@ -267,7 +333,9 @@ class ResponsesState:
                 seen.add(content_index)
             if (set(item.texts) | set(item.completed_texts) | item.metadata_indices) - seen:
                 raise _protocol("text content missing from completion")
-            events.append(LLMAssistantItemDone(item.identity, item.output_index, item.phase))
+            if not was_done:
+                events.append(LLMAssistantItemDone(item.identity, item.output_index, item.phase))
+            item.content_parts = tuple(content_parts)
         elif item.kind == "function_call":
             if raw.get("call_id") != item.call_id or raw.get("name") != item.name:
                 raise _protocol("function identity changed")
@@ -282,10 +350,45 @@ class ResponsesState:
         item.snapshot = raw
         return events
 
+    @staticmethod
+    def _business_snapshot(raw: dict[str, Any], *, annotations: bool = True) -> dict[str, Any]:
+        result = {
+            k: raw[k]
+            for k in (
+                "id",
+                "type",
+                "role",
+                "call_id",
+                "name",
+                "arguments",
+                "summary",
+                "encrypted_content",
+            )
+            if k in raw
+        }
+        if "content" in raw:
+            result["content"] = (
+                [
+                    {
+                        k: b[k]
+                        for k in ("type", "text", "refusal", "annotations")
+                        if k in b and (annotations or k != "annotations")
+                    }
+                    if isinstance(b, dict)
+                    else b
+                    for b in raw["content"]
+                ]
+                if isinstance(raw["content"], list)
+                else raw["content"]
+            )
+        return result
+
     def feed(self, raw: Any) -> list[LLMStreamEvent]:
         self.event_number += 1
         self.expected_item_type = None
         event = None
+        if not isinstance(raw, dict) and not callable(getattr(raw, "model_dump", None)):
+            return self._skip(None, "unrecognized_envelope")
         try:
             event = _object(raw)
             self.recent_event_types.append(event_type(event.get("type")))
@@ -309,7 +412,13 @@ class ResponsesState:
                         schema_revision=2,
                         recent_event_types=tuple(self.recent_event_types),
                         expected_item_type=self.expected_item_type,
-                        actual_item_type=item.kind if item else None,
+                        actual_item_type=(
+                            item.kind
+                            if item.kind in {"message", "function_call", "reasoning"}
+                            else "<other>"
+                        )
+                        if item
+                        else None,
                         part_type=part_type(event),
                         output_index=index,
                         content_index=safe_index(event.get("content_index")) if event else None,
@@ -325,7 +434,7 @@ class ResponsesState:
     def _feed(self, event: dict[str, Any]) -> list[LLMStreamEvent]:
         kind = event.get("type", "")
         if not isinstance(kind, str) or not kind:
-            raise _protocol("invalid event type")
+            return self._skip(event, "unrecognized_envelope")
         if self.terminal is not None:
             raise _protocol("event after terminal response")
         if kind in {"response.created", "response.in_progress", "response.queued"}:
@@ -410,9 +519,35 @@ class ResponsesState:
                 self.last_activity = time.monotonic()
                 return [LLMActivity(kind="reasoning")]
         elif kind in REFUSAL_EVENTS:
-            raise LLMContentPolicyError("模型拒绝生成此响应。")
+            item = self._item(event, "message")
+            index = event.get("content_index")
+            text = event.get("delta" if kind.endswith(".delta") else "refusal")
+            if type(index) is not int or index < 0 or not isinstance(text, str):
+                raise _protocol("invalid refusal content")
+            item.refusal_indices.add(index)
+            previous = item.texts.get(index, "")
+            if kind.endswith(".done"):
+                if not text.startswith(previous):
+                    raise _protocol("refusal snapshot conflicts with deltas")
+                item.completed_texts[index] = text
+                text = text[len(previous) :]
+            elif index in item.completed_texts:
+                raise _protocol("refusal delta after content completion")
+            item.texts[index] = previous + text
+            return (
+                [
+                    LLMTextDelta(
+                        text=text,
+                        phase=item.phase,
+                        item_id=item.identity,
+                        output_index=item.output_index,
+                    )
+                ]
+                if text
+                else []
+            )
         elif kind in UNSUPPORTED_EVENTS:
-            raise _protocol("unsupported response capability")
+            return self._skip(event, "unimplemented_capability_progress")
         elif kind in {"response.content_part.added", "response.content_part.done"}:
             self._content_part(event)
         elif kind in {
@@ -421,7 +556,7 @@ class ResponsesState:
         }:
             self._text_metadata(event)
         else:
-            raise _protocol("unsupported stream event")
+            return self._skip(event, "extension_event")
         return []
 
     def _content_part(self, event: dict[str, Any]) -> None:
@@ -458,16 +593,24 @@ class ResponsesState:
                 )
             ):
                 raise _protocol("invalid text annotation")
+            normalized = normalize_annotations([event.get("annotation")])
+            if normalized:
+                existing = item.annotations.setdefault(index, {}).get(annotation_index)
+                if existing is not None and existing != normalized[0]:
+                    raise _protocol("conflicting annotation metadata")
+                item.annotations[index][annotation_index] = normalized[0]
             return
         if kind == "response.output_text.done":
             text = event.get("text")
         else:
             part = _object(event.get("part"))
             if part.get("type") == "refusal":
-                raise LLMContentPolicyError("模型拒绝生成此响应。")
-            if part.get("type") != "output_text":
+                item.refusal_indices.add(index)
+                text = part.get("refusal")
+            elif part.get("type") == "output_text":
+                text = part.get("text")
+            else:
                 raise _protocol("unsupported content part")
-            text = part.get("text")
         if not isinstance(text, str) or not text.startswith(item.texts.get(index, "")):
             raise _protocol("text metadata conflicts with deltas")
         if kind != "response.content_part.added":
@@ -555,7 +698,11 @@ class ResponsesState:
             for item in ordered
             if item.kind == "function_call"
         )
+        if calls and any(item.refusal_indices for item in ordered):
+            raise _protocol("refusal response contains tool calls")
         if not text and not calls:
+            if any(item.kind not in {"message", "function_call", "reasoning"} for item in ordered):
+                raise _protocol("unsupported output capability")
             raise LLMEmptyResponseError("模型未返回可见正文或工具调用。")
         reasoning = [
             item.snapshot
@@ -580,6 +727,7 @@ class ResponsesState:
                         item.output_index,
                         "".join(item.texts[index] for index in sorted(item.texts)),
                         item.phase,
+                        item.content_parts,
                     )
                     for item in ordered
                     if item.kind == "message"
@@ -682,6 +830,8 @@ def stream_responses(
                 )
                 notify("first_reasoning_delta")
             yield from normalized
+            if state.terminal is not None:
+                break
         if cancel_check:
             cancel_check()
         diagnostics = replace(
@@ -723,5 +873,12 @@ def stream_responses(
         mapped.usage = extract_responses_usage(state.terminal) if state.terminal else None  # type: ignore[attr-defined]
         raise mapped from None
     finally:
+        if state.skipped_events:
+            logger.info(
+                "responses_stream_compatibility response_ref=%s skipped_events=%d terminal=%s",
+                reference(state.response_id),
+                state.skipped_events,
+                state.terminal.get("status") if state.terminal else "missing",
+            )
         if stream is not None:
             stream.close()

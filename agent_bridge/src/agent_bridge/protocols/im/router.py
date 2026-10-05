@@ -47,7 +47,13 @@ from agent.runtime import AgentRuntime, RunOutcome, RunRequest, UserEvent
 from agent.system_prompt import IM_QQ_SURFACE, InteractionSurfaceId
 from llm_providers.catalog import ModelRouteCapabilities
 
-from agent import ContextCompactionStatus, Conversation, TextDelta, ToolCallResult
+from agent import (
+    AssistantMessageMetadata,
+    ContextCompactionStatus,
+    Conversation,
+    TextDelta,
+    ToolCallResult,
+)
 from llm_providers import model_capabilities
 
 from ...errors import map_exception
@@ -527,6 +533,23 @@ class IMRouter:
                 return
             if isinstance(ev, ToolCallResult):
                 tool_boundary_pending = bool(buf)
+                return
+            if isinstance(ev, AssistantMessageMetadata):
+                sources: list[str] = []
+                for part in ev.content_parts:
+                    for source in part.get("annotations", []):
+                        url = source.get("url", "")
+                        label = source.get("title") or source.get("filename") or "外部文件引用"
+                        sources.append(
+                            f"{label}: {url}"
+                            if isinstance(url, str) and url.startswith(("https://", "http://"))
+                            else f"{label}（当前无法打开）"
+                        )
+                if sources:
+                    suffix = "\n\n来源：\n" + "\n".join(dict.fromkeys(sources))
+                    buf.append(suffix)
+                    if on_text_delta is not None:
+                        on_text_delta(suffix)
                 return
             if not isinstance(ev, TextDelta) or not ev.text:
                 return

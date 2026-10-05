@@ -53,6 +53,7 @@ import type {
   PrimaryActivityPresentation,
 } from "./activity/primaryActivity";
 import { MessageAttachments } from "./MessageAttachments";
+import { AssistantContentDetails } from "./AssistantContentDetails";
 import { MessageActionBar } from "./MessageActionBar";
 import { MessageQuoteSelectionAction } from "./MessageQuoteSelectionAction";
 import { RunExecutionDisclosure } from "./RunExecutionDisclosure";
@@ -455,7 +456,8 @@ function MessageContent({
       if (b.kind === "text") {
         if (!b.text) return null;
         return (
-          message.status === "streaming" ? (
+          <div key={`t:${b.mid || i}`}>
+          {message.status === "streaming" ? (
             <StreamingMarkdownBubble key={`t:${b.mid || i}`} text={b.text} />
           ) : (
             <TextBubble
@@ -470,7 +472,9 @@ function MessageContent({
               actionBar={i === actionBarBlockIndex ? actionBar : undefined}
               searchAnchor={b.mid === searchAnchorEventUuid ? b.mid : undefined}
             />
-          )
+          )}
+          <AssistantContentDetails parts={b.contentParts} />
+          </div>
         );
       }
       if (b.kind === "reminder") {

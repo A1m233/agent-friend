@@ -39,6 +39,27 @@ export interface TextBlock {
   itemIndex?: number;
   /** Durable evidence of an interrupted draft, not a completed model item. */
   partial?: boolean;
+  contentParts?: AssistantContentPart[];
+}
+
+export interface AssistantAnnotation {
+  type: string;
+  url?: string;
+  title?: string;
+  filename?: string;
+  file_id?: string;
+  container_id?: string;
+  start_index?: number;
+  end_index?: number;
+  index?: number;
+}
+
+export interface AssistantContentPart {
+  content_index: number;
+  kind: "text" | "refusal";
+  start: number;
+  end: number;
+  annotations: AssistantAnnotation[];
 }
 
 /** 工具调用块（卡片）。 */

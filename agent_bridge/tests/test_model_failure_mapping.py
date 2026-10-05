@@ -53,6 +53,9 @@ def test_local_request_and_protocol_errors_keep_their_origin() -> None:
 
     assert map_exception(_invalid("unsupported request settings")).code == "model_request_invalid"
     assert map_exception(_protocol("expected an object")).code == "model_protocol_error"
+    unsupported = map_exception(_protocol("unsupported output capability"))
+    assert unsupported.code == "model_output_unsupported"
+    assert "没有可用回答" in unsupported.message
 
 
 @pytest.mark.parametrize(

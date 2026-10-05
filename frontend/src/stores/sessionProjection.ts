@@ -34,6 +34,7 @@ import type { SessionEvent } from "@/types/meta";
 import { TOOL_ERROR_PREFIX } from "./conversationReducer";
 import { normalizeAssistantPhase, parseAssistantPhaseState } from "./assistantPhase";
 import { parseRunErrorRecovery } from "./taskRecovery";
+import { parseAssistantContent } from "./assistantContent";
 
 function textMessage(
   id: string,
@@ -252,6 +253,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       message.createdAt = ev.ts;
       if (content) {
         message.blocks.push({ kind: "text", mid: ev.uuid, text: content,
+          ...(p.content_parts ? { contentParts: parseAssistantContent(p.content_parts) } : {}),
           ...(p.partial === true ? { partial: true } : {}),
           ...(p.phase === undefined ? {} : { phase: normalizeAssistantPhase(p.phase) }) });
       }

@@ -30,7 +30,14 @@ from agent_bridge.protocols.im.media import InboundMedia
 from agent_bridge.protocols.im.router import FALLBACK_TEXT, IMRouter
 from agent_bridge.session_bridge import PersistentBootstrap
 
-from agent import ContextCompactionStatus, TextDelta, ToolCallRequest, ToolCallResult, TurnDone
+from agent import (
+    AssistantMessageMetadata,
+    ContextCompactionStatus,
+    TextDelta,
+    ToolCallRequest,
+    ToolCallResult,
+    TurnDone,
+)
 from llm_providers import LLMTransientProviderError
 
 
@@ -154,6 +161,51 @@ def test_session_id_for_stable_output(router: IMRouter) -> None:
     assert router.session_id_for("qq", ev) == "im:qq:OPENID-A"
     # 同入参再算一次还应一样
     assert router.session_id_for("qq", ev) == "im:qq:OPENID-A"
+
+
+def test_im_sources_are_readable_and_unsafe_links_unavailable(
+    router: IMRouter, session_bridge: MagicMock
+) -> None:
+    session_bridge.bind_persistent.return_value = _make_conv(
+        [
+            TextDelta("Answer", message_id="a"),
+            AssistantMessageMetadata(
+                "a",
+                [
+                    {
+                        "annotations": [
+                            {
+                                "type": "url_citation",
+                                "title": "Source",
+                                "url": "https://example.com",
+                            },
+                            {
+                                "type": "file_citation",
+                                "filename": "notes.txt",
+                                "file_id": "private-id",
+                            },
+                            {
+                                "type": "url_citation",
+                                "title": "Blocked",
+                                "url": "javascript:alert(1)",
+                            },
+                        ]
+                    }
+                ],
+            ),
+            TurnDone(),
+        ]
+    )
+    boot = PersistentBootstrap(
+        thread_id="im:qq:fixture",
+        new_user_input="hi",
+        default_persona="default-persona",
+        default_model="default-model",
+    )
+    result = router._run_turn_sync(boot)
+    assert "Source: https://example.com" in str(result)
+    assert "notes.txt（当前无法打开）" in str(result)
+    assert "javascript:" not in str(result) and "private-id" not in str(result)
 
 
 def test_session_id_for_different_chat_id_different(router: IMRouter) -> None:

@@ -73,6 +73,13 @@ class AssistantMessagePhase:
 
 
 @dataclass(frozen=True)
+class AssistantMessageMetadata:
+    message_id: str
+    content_parts: list[dict[str, Any]]
+    type: Literal["assistant_message_metadata"] = "assistant_message_metadata"
+
+
+@dataclass(frozen=True)
 class AssistantPhaseStatus:
     run_id: str
     mode: Literal["native", "legacy"]
@@ -205,6 +212,7 @@ ConversationEvent = (
     | AssistantMessageEnd
     | AssistantMessageReset
     | AssistantMessagePhase
+    | AssistantMessageMetadata
     | AssistantPhaseStatus
     | ToolCallRequest
     | ToolCallResult

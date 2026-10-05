@@ -9,6 +9,7 @@ from llm_providers.cancellable_stream import (
     StreamIdleTimeoutExceeded,
     open_cancellable_stream,
 )
+from llm_providers.timeouts import ModelCallDeadlineExceeded, controlled_cancel
 
 
 class _StallingSource:
@@ -69,3 +70,32 @@ def test_close_does_not_cancel_cleanup_after_request_has_completed() -> None:
 
     assert cleaned_up.is_set()
     assert not stream._thread.is_alive()
+
+
+def test_heartbeats_reset_idle_but_do_not_override_deadline_or_cancel() -> None:
+    class Heartbeats(_StallingSource):
+        async def open(self) -> AsyncIterator[object]:
+            async def chunks() -> AsyncIterator[object]:
+                while True:
+                    yield {"type": "keepalive"}
+                    await asyncio.sleep(0.01)
+
+            return chunks()
+
+    import time
+
+    source = Heartbeats()
+    stream = open_cancellable_stream(source, lambda: None, timeout_seconds=0.5)
+    start = time.monotonic()
+    while time.monotonic() - start < 0.6:
+        assert next(stream) == {"type": "keepalive"}
+    stream.close()
+    assert source.closed.wait(1)
+
+    source = Heartbeats()
+    cancel = controlled_cancel(None, time.monotonic() + 0.1)
+    assert cancel is not None
+    stream = open_cancellable_stream(source, cancel, timeout_seconds=0.5)
+    with pytest.raises(ModelCallDeadlineExceeded):
+        list(stream)
+    assert source.closed.wait(1)

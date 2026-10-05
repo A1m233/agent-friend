@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from typing import Literal
 from uuid import uuid4
 
+from llm_providers.assistant_content import AssistantContentPart
+
 from llm_providers import (
     LLMAssistantItemStart,
     LLMTextDelta,
@@ -34,6 +36,7 @@ class TextItem:
     text: str = ""
     done: bool = False
     persisted: bool = False
+    content_parts: tuple[AssistantContentPart, ...] = ()
 
 
 @dataclass
@@ -85,6 +88,7 @@ class PhaseRun:
                 item.index,
                 item.text,
                 None if item.phase == "unknown" else item.phase,
+                item.content_parts,
             )
             for item in self.ordered_text()
             if item.source_id is not None
@@ -107,6 +111,7 @@ class PhaseRun:
             if item is None or item.index != complete.output_index or item.text != complete.content:
                 raise ValueError("completed assistant item does not match streamed identity/text")
             phase = normalize_phase(complete.phase)
+            item.content_parts = complete.content_parts
             if item.phase != phase:
                 item.phase = phase
                 changed.append(item)

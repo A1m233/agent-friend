@@ -41,6 +41,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from uuid import uuid4
 
+from llm_providers.assistant_content import content_metadata
 from llm_providers.multimodal.tool_images import supports_tool_images
 from llm_providers.protocol import DEFAULT_MODEL_RETRIES
 
@@ -121,6 +122,7 @@ from .context.usage_anchor import (
 )
 from .conversation_events import (
     AssistantMessageEnd,
+    AssistantMessageMetadata,
     AssistantMessagePhase,
     AssistantMessageReset,
     AssistantMessageStart,
@@ -1520,6 +1522,7 @@ class Conversation:
                     AssistantMessageEnd,
                     AssistantMessageReset,
                     AssistantMessagePhase,
+                    AssistantMessageMetadata,
                     AssistantPhaseStatus,
                 ),
             ):
@@ -2286,6 +2289,7 @@ class Conversation:
                     interruption_reason=interruption_reason,
                     message_id=item.message_id,
                     phase=item.phase,
+                    content_parts=content_metadata(item.content_parts),
                 )
                 item.persisted = True
                 if first is None:
@@ -2314,6 +2318,7 @@ class Conversation:
         interruption_reason: str | None = None,
         message_id: str | None = None,
         phase: Literal["commentary", "final_answer", "unknown"] = "unknown",
+        content_parts: list[dict[str, Any]] | None = None,
     ) -> Event:
         meta: dict[str, Any] = self._run_event_meta(
             {
@@ -2330,6 +2335,8 @@ class Conversation:
         if self._active_tool_run_state is not None:
             meta["tool_run"] = self._active_tool_run_state.diagnostics()
         payload: dict[str, Any] = {"content": content, "partial": partial, "phase": phase}
+        if content_parts:
+            payload["content_parts"] = content_parts
         if partial and interruption_reason:
             payload["interruption_reason"] = interruption_reason
         event = Event(
@@ -2426,6 +2433,11 @@ class Conversation:
                     for item in state.reconcile_phases(event):
                         if item.text:
                             yield AssistantMessagePhase(item.message_id, item.phase)
+                    for item in state.ordered_text():
+                        if item.content_parts:
+                            yield AssistantMessageMetadata(
+                                item.message_id, content_metadata(item.content_parts)
+                            )
                     state.finish(event)
                     for item in state.ordered_text():
                         if not item.done:
@@ -5478,6 +5490,7 @@ class Conversation:
                         AssistantMessageEnd,
                         AssistantMessageReset,
                         AssistantMessagePhase,
+                        AssistantMessageMetadata,
                         AssistantPhaseStatus,
                     ),
                 ):
@@ -5601,7 +5614,12 @@ class Conversation:
                     # A tool-free empty turn is handled by provider recovery before this
                     # point. Keep the session free of zero-content assistant messages.
                     self._pending_context_usage = None
-                yield self._turn_done(runtime)
+                refused = any(
+                    part.kind == "refusal"
+                    for item in completed_assistant_turn.text_items
+                    for part in item.content_parts
+                )
+                yield self._turn_done(runtime, "refusal" if refused else "end_turn")
                 return
             yield from self._execute_tool_calls(
                 tool_calls,
@@ -5968,6 +5986,7 @@ class Conversation:
                     AssistantMessageEnd,
                     AssistantMessageReset,
                     AssistantMessagePhase,
+                    AssistantMessageMetadata,
                     AssistantPhaseStatus,
                 ),
             ):

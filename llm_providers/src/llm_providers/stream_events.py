@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from .assistant_content import AssistantContentPart
 from .reasoning import ProviderReasoningState
 from .request_witness import ProviderRequestRelation, ProviderRequestWitness
 
@@ -42,6 +43,7 @@ class ProviderAssistantItem:
     output_index: int
     content: str
     phase: Literal["commentary", "final_answer"] | None = None
+    content_parts: tuple[AssistantContentPart, ...] = ()
 
 
 @dataclass(frozen=True, repr=False)
