@@ -17,6 +17,7 @@ mod data_migration;
 mod desktop_instance;
 mod diagnostics;
 pub mod install_contract;
+mod link_navigation;
 mod model_connections;
 mod notification_sound;
 mod owner_capabilities;
@@ -1475,6 +1476,7 @@ pub fn run() {
         open_settings,
         consume_pending_workspace_navigation,
         open_persona_target,
+        link_navigation::reveal_link_target,
         diagnostics::generate_diagnostic_bundle,
         webview_diagnostics::get_webview_render_evidence_status,
         webview_diagnostics::set_webview_render_evidence_armed,
@@ -1586,6 +1588,7 @@ pub fn run() {
         data_migration::coordinator::get_last_migration_result,
         data_migration::coordinator::clear_last_migration_result,
         open_persona_target,
+        link_navigation::reveal_link_target,
         diagnostics::generate_diagnostic_bundle,
         webview_diagnostics::get_webview_render_evidence_status,
         webview_diagnostics::set_webview_render_evidence_armed,

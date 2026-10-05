@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatTextReference } from "@/types/chat";
 
 import { FeedbackIcon } from "@/components/app/FeedbackIcon";
+import { LinkInteractionBoundary } from "@/components/app/link-interactions/LinkInteractionBoundary";
 import { Button, StatusDot, type StatusDotProps } from "@/components/ui";
 import { runtimeCredentialApplyReason } from "@/lib/runtime-config";
 import { openFeedback } from "@/lib/settings/navigation";
@@ -65,6 +66,7 @@ export function ChatContentSurface() {
   const focusComposer = useCallback(() => composerRef.current?.focus(), []);
 
   return (
+    <LinkInteractionBoundary context={{ kind: "session", sessionId: currentSessionId }}>
     <SessionApprovalModeController>
       <div className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden">
       <header className="flex items-center justify-end gap-2 border-b border-border px-4 py-2.5">
@@ -114,6 +116,7 @@ export function ChatContentSurface() {
       )}
       </div>
     </SessionApprovalModeController>
+    </LinkInteractionBoundary>
   );
 }
 
