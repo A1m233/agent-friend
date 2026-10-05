@@ -98,11 +98,11 @@ async def test_resolver_accepts_qq_image_metadata_mismatch_using_detected_type(
     assert result.action == "route"
     assert len(result.attachments) == 1
     assert result.attachments[0].media_type == "image/png"
-    assert result.attachments[0].display_name == "photo.png"
+    assert result.attachments[0].display_name == filename
 
 
 @pytest.mark.asyncio
-async def test_resolver_still_rejects_unknown_attachment_bytes(tmp_path: Path) -> None:
+async def test_resolver_stores_unknown_attachment_bytes(tmp_path: Path) -> None:
     async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -127,12 +127,12 @@ async def test_resolver_still_rejects_unknown_attachment_bytes(tmp_path: Path) -
         ),
     )
 
-    assert result.action == "reply"
-    assert result.reason == "attachment_import_failed"
+    assert result.action == "route"
+    assert result.attachments[0].kind == "document"
 
 
 @pytest.mark.asyncio
-async def test_resolver_replies_specifically_for_gif_only_message(tmp_path: Path) -> None:
+async def test_resolver_stores_gif_only_message(tmp_path: Path) -> None:
     async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -157,15 +157,12 @@ async def test_resolver_replies_specifically_for_gif_only_message(tmp_path: Path
         ),
     )
 
-    assert result.action == "reply"
-    assert result.reason == "media_gif_unsupported"
-    assert result.reply is not None
-    assert "GIF" in result.reply.text
-    assert "静态截图" in result.reply.text
+    assert result.action == "route"
+    assert result.attachments[0].media_type == "image/gif"
 
 
 @pytest.mark.asyncio
-async def test_resolver_keeps_text_when_gif_is_unsupported(tmp_path: Path) -> None:
+async def test_resolver_keeps_text_and_gif(tmp_path: Path) -> None:
     async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -194,9 +191,8 @@ async def test_resolver_keeps_text_when_gif_is_unsupported(tmp_path: Path) -> No
     assert result.action == "route"
     assert result.event is not None
     assert result.event.content == "这个是什么意思？"
-    assert result.attachments == ()
-    assert result.media[0].kind == "animated_image"
-    assert result.media[0].fidelity == "unsupported"
+    assert len(result.attachments) == 1
+    assert result.attachments[0].media_type == "image/gif"
 
 
 @pytest.mark.asyncio

@@ -72,19 +72,10 @@ def estimate_tokens(messages: list[Message]) -> int:
 
 def estimate_attachment_allowance(messages: list[Message]) -> int:
     """Unrendered media cost only; textual source markers are counted separately."""
-    attachment_tokens = 0
-    for msg in messages:
-        for attachment in msg.attachments:
-            if attachment.kind == "image":
-                attachment_tokens += IMAGE_ATTACHMENT_TOKENS
-            elif attachment.media_type != "application/pdf":
-                # Only a fallback for unprepared text. Production projects the
-                # actual UTF-8 text before budgeting; never cap document cost.
-                attachment_tokens += max(1, attachment.size_bytes)
     # Tool images have bounded bytes/pixels, but their actual token cost is model-specific.
     # Reserve more than thumbnail attachments; real request usage still owns calibration.
     image_tokens = sum(len(msg.images) * TOOL_IMAGE_TOKENS for msg in messages)
-    return attachment_tokens + image_tokens
+    return image_tokens
 
 
 def estimate_tool_schema_tokens(tool_specs: list[dict[str, Any]] | None) -> int:

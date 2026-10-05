@@ -1,17 +1,9 @@
-import type { Accept, DropEvent, FileRejection } from "react-dropzone";
+import type { DropEvent, FileRejection } from "react-dropzone";
 
 interface ClipboardFileSource {
   items?: ArrayLike<Pick<DataTransferItem, "kind" | "getAsFile">> | null;
   files?: ArrayLike<File> | null;
 }
-
-const EXTENSIONS_BY_MEDIA_TYPE: Readonly<Record<string, readonly string[]>> = {
-  "image/jpeg": [".jpg", ".jpeg"],
-  "image/png": [".png"],
-  "image/webp": [".webp"],
-  "application/pdf": [".pdf"],
-  "text/plain": [".txt"],
-};
 
 export function extractClipboardFiles(source: ClipboardFileSource | null): File[] {
   if (!source) return [];
@@ -25,15 +17,6 @@ export function extractClipboardFiles(source: ClipboardFileSource | null): File[
   if (itemFiles.length > 0) return itemFiles;
 
   return Array.from(source.files ?? []);
-}
-
-export function dropzoneAcceptFromMediaTypes(mediaTypes: readonly string[]): Accept {
-  return Object.fromEntries(
-    mediaTypes.map((mediaType) => [
-      mediaType,
-      EXTENSIONS_BY_MEDIA_TYPE[mediaType] ?? [],
-    ]),
-  );
 }
 
 export function filesFromDropEvent(

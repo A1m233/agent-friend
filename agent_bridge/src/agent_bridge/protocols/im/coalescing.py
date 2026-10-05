@@ -7,7 +7,6 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
@@ -31,32 +30,6 @@ PendingReason = Literal["started", "appended"]
 TimeoutCallback = Callable[[IMBindingKey, str], Awaitable[None]]
 SleepCallback = Callable[[float], Awaitable[None]]
 Clock = Callable[[], float]
-
-_SUPPORTED_MEDIA_TYPES = frozenset(
-    {"image/jpeg", "image/png", "image/webp", "application/pdf", "text/plain"}
-)
-_SUPPORTED_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".pdf", ".txt"})
-_EXPLICITLY_UNSUPPORTED_EXTENSIONS = frozenset(
-    {
-        ".gif",
-        ".mp3",
-        ".m4a",
-        ".ogg",
-        ".opus",
-        ".wav",
-        ".mp4",
-        ".mov",
-        ".avi",
-        ".mkv",
-        ".doc",
-        ".docx",
-        ".xls",
-        ".xlsx",
-        ".ppt",
-        ".pptx",
-    }
-)
-_GENERIC_MEDIA_TYPES = frozenset({"", "application/octet-stream", "binary/octet-stream"})
 
 
 @dataclass(frozen=True)
@@ -477,22 +450,7 @@ def _is_attachment_only_candidate(event: InboundEvent) -> bool:
 
 
 def _attachment_can_wait(attachment: object) -> bool:
-    if is_voice_attachment(attachment):
-        return False
-    media_type = str(getattr(attachment, "content_type", "") or "")
-    media_type = media_type.split(";", 1)[0].strip().lower()
-    filename = str(getattr(attachment, "filename", "") or "").strip()
-    suffix = Path(filename).suffix.lower()
-
-    if media_type == "image/gif" or suffix == ".gif":
-        return False
-    if media_type.startswith(("audio/", "video/")):
-        return False
-    if suffix in _EXPLICITLY_UNSUPPORTED_EXTENSIONS:
-        return False
-    if media_type in _SUPPORTED_MEDIA_TYPES or suffix in _SUPPORTED_EXTENSIONS:
-        return True
-    return media_type in _GENERIC_MEDIA_TYPES
+    return not is_voice_attachment(attachment)
 
 
 def _all_attachments(event: InboundEvent) -> list[object]:

@@ -269,6 +269,7 @@ class LLMClient:
         if stream_timeout_seconds is not None and stream_timeout_seconds <= 0:
             raise ValueError("stream_timeout_seconds 必须大于 0")
         self.spec = spec
+        self.tool_images_rejected = False
         self._network_retries = network_retries
         self._network_retry_backoff_seconds = network_retry_backoff_seconds
         self._engine_overload_retries = engine_overload_retries

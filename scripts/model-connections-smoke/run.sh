@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 151: capabilities uses tool images; documents only check reference projection.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 if [[ "${1:-}" == "cpa" ]]; then

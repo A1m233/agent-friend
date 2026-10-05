@@ -127,14 +127,14 @@ def prepare_attachment_input(
                 status_code=400,
                 detail={
                     "error": "attachment_type_unsupported",
-                    "message": "当前模型不支持此附件类型。",
+                    "message": "附件类型与上传记录不一致。",
                 },
             )
         prepared.append(_PreparedAttachment(ref, draft_index))
 
     try:
         AttachmentInputPolicy(
-            capabilities,
+            capabilities.tool_calling,
             session_files_available=session_files_available,
             **({"file_max_bytes": store.max_attachment_bytes} if store else {}),
         ).validate([entry.validated_ref for entry in prepared])

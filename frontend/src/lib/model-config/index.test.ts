@@ -81,7 +81,7 @@ const catalog: ModelCatalog = {
           label: "DeepSeek V4 Flash Vision",
           routeId: "deepseek:vision",
           transportProfile: "openai-compatible",
-          processingProfile: "deepseek-vision-files-v1",
+          processingProfile: "tool-images-v1",
           capabilities: {
             inputModalities: ["text", "image"],
             acceptedMediaTypes: ["image/jpeg", "image/png", "image/webp"],
@@ -119,7 +119,7 @@ const catalog: ModelCatalog = {
         label: "vision",
         routeId: "kimi:vision",
         transportProfile: "openai-compatible",
-        processingProfile: "kimi-multimodal-v1",
+        processingProfile: "tool-images-v1",
         capabilities: {
           inputModalities: ["text", "image", "document"],
           acceptedMediaTypes: ["image/png", "application/pdf", "text/plain"],
@@ -190,7 +190,7 @@ describe("model config", () => {
     ]);
     expect(modelOption("deepseek/deepseek-v4-flash-vision-exp")).toMatchObject({
       label: "DeepSeek V4 Flash Vision",
-      processingProfile: "deepseek-vision-files-v1",
+      processingProfile: "tool-images-v1",
       capabilities: {
         inputModalities: ["text", "image"],
         acceptedMediaTypes: ["image/jpeg", "image/png", "image/webp"],

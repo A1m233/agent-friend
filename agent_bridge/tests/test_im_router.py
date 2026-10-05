@@ -788,6 +788,7 @@ async def test_inbound_attachments_allow_text_output_streaming(
 ) -> None:
     from agent.attachments import AttachmentRef
 
+    router._session_files_available = lambda: True
     session_bridge.persistent_model.return_value = model_id
     session_bridge.bind_persistent.return_value = _make_conv(
         [TextDelta(text="attachment answer"), TurnDone()]
@@ -817,7 +818,7 @@ async def test_inbound_attachments_allow_text_output_streaming(
 
 
 @pytest.mark.asyncio
-async def test_unsupported_inbound_attachment_does_not_open_stream(
+async def test_unavailable_file_processing_does_not_open_stream(
     router: IMRouter, session_bridge: MagicMock
 ) -> None:
     from agent.attachments import AttachmentRef
@@ -836,7 +837,7 @@ async def test_unsupported_inbound_attachment_does_not_open_stream(
     await router.handle_inbound("qq", _make_event(), provider, attachments=(attachment,))
 
     assert provider.contexts == []
-    assert [item.text for item in provider.sent] == ["当前模型不支持此附件类型。"]
+    assert "文件处理能力不可用" in provider.sent[0].text
 
 
 @pytest.mark.asyncio
@@ -845,6 +846,7 @@ async def test_deepseek_vision_rejects_oversized_inbound_image_before_stream(
 ) -> None:
     from agent.attachments import AttachmentRef
 
+    router._session_files_available = lambda: True
     session_bridge.persistent_model.return_value = "deepseek/deepseek-flash"
     provider = StubStreamingProvider(StubStreamSession())
     attachment = AttachmentRef(
@@ -852,7 +854,7 @@ async def test_deepseek_vision_rejects_oversized_inbound_image_before_stream(
         kind="image",
         media_type="image/png",
         display_name="large.png",
-        size_bytes=64 * 1024 * 1024 + 1,
+        size_bytes=100 * 1024 * 1024 + 1,
         sha256="0" * 64,
     )
 

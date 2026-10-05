@@ -248,10 +248,7 @@ export function ConnectionModelPicker({
               : "服务和目录未提供上下文信息，请在下面补充；仍可先测试模型。"}
           </p>
           <div className="flex flex-wrap gap-4 text-sm">
-            <label className="flex items-center gap-2"><Checkbox disabled={busy} checked={model.images ?? false} onCheckedChange={(checked) => onChange(draft.models.map((m) => m.id === model.id ? { ...m, images: checked === true } : m))} />图片输入</label>
-            <label className="flex items-center gap-2"><Checkbox disabled={busy} checked={model.documents ?? false} onCheckedChange={(checked) => onChange(draft.models.map((m) => m.id === model.id ? { ...m, documents: checked === true } : m))} />文档输入（PDF / TXT）</label>
           </div>
-          <p className="text-xs text-muted">按服务能力启用。图片与 PDF 使用 OpenAI 内容格式；TXT 发送文本。服务拒绝时会报错，不切换其他模型。</p>
           <Collapsible defaultOpen={model.contextWindow <= 0}>
             <CollapsibleTrigger asChild>
               <Button variant="outline" size="sm" disabled={busy}>

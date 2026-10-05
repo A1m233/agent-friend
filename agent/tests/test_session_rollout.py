@@ -1032,7 +1032,7 @@ def test_image_tool_result_survives_rollout_restart_and_route_change(tmp_path: P
         responses=ResponsesRoute("test", "https://example.test", "deepseek"),
     )
     client = LLMClient(spec)
-    adapter = MultimodalInputAdapter(open_asset=assets.open, cache_dir=tmp_path / "cache")
+    adapter = MultimodalInputAdapter(open_asset=assets.open)
 
     class ImageEcho(_CountingEcho):
         def invoke(self, args: dict[str, Any]) -> ToolResult:
@@ -1056,6 +1056,7 @@ def test_image_tool_result_survives_rollout_restart_and_route_change(tmp_path: P
 
     second_llm = _RecordingLLM()
     unsupported = LLMClient(replace(spec, responses=None))
+    unsupported.tool_images_rejected = True
     second = _manager(
         tmp_path,
         second_llm,

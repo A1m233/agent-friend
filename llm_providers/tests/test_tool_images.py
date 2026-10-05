@@ -51,7 +51,7 @@ def message(data: bytes = b"validated image snapshot") -> SimpleNamespace:
 @pytest.mark.parametrize("profile", ["openai", "deepseek"])
 def test_image_is_native_tool_output_not_user_or_string(tmp_path: Path, profile: str) -> None:
     data = b"validated image snapshot"
-    adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(data), cache_dir=tmp_path)
+    adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(data))
     rendered = adapter.render_message(message(data), client(profile))
     wire = convert_messages(
         [
@@ -76,16 +76,14 @@ def test_image_is_native_tool_output_not_user_or_string(tmp_path: Path, profile:
     assert not any(item.get("role") == "user" for item in wire)
 
 
-@pytest.mark.parametrize("kwargs", [{"chat": True}, {"supported": False}, {"profile": "kimi"}])
+@pytest.mark.parametrize("kwargs", [{"supported": False}, {"profile": "kimi"}])
 def test_route_gate_does_not_read_assets_when_unsupported(tmp_path: Path, kwargs: dict) -> None:  # type: ignore[type-arg]
     def forbidden(_id: str) -> BytesIO:
         raise AssertionError("must not read or upload")
 
     llm = client(**kwargs)
     assert not supports_tool_images(llm)
-    rendered = MultimodalInputAdapter(open_asset=forbidden, cache_dir=tmp_path).render_message(
-        message(), llm
-    )
+    rendered = MultimodalInputAdapter(open_asset=forbidden).render_message(message(), llm)
     assert rendered["role"] == "tool"
     assert "未提供" in rendered["content"]
 
@@ -97,9 +95,7 @@ def test_missing_or_corrupt_asset_becomes_explicit_marker(tmp_path: Path, missin
             raise FileNotFoundError("private path")
         return BytesIO(b"wrong bytes")
 
-    rendered = MultimodalInputAdapter(open_asset=source, cache_dir=tmp_path).render_message(
-        message(), client()
-    )
+    rendered = MultimodalInputAdapter(open_asset=source).render_message(message(), client())
     assert all(block["type"] == "text" for block in rendered["content"])
     assert "未提供" in rendered["content"][-1]["text"]
     assert "private path" not in str(rendered)

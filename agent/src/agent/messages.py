@@ -128,14 +128,9 @@ class Message:
             else self.content
         )
         if self.attachments and self.role == "user":
-            from .attachments.input_projection import pdf_reference
+            from .attachments.input_projection import file_reference
 
-            markers = "\n".join(
-                pdf_reference(item)
-                if item.media_type == "application/pdf"
-                else f"[附件 {item.display_name} | {item.media_type} | {item.asset_id}]"
-                for item in self.attachments
-            )
+            markers = "\n".join(file_reference(item) for item in self.attachments)
             content = f"{content}\n{markers}".strip()
         if self.images:
             content += "\n[工具图像未提供给模型：需要多模态投递适配器；不能据此推断图像内容]"

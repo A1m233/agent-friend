@@ -42,7 +42,8 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from uuid import uuid4
 
 from llm_providers.assistant_content import content_metadata
-from llm_providers.multimodal.tool_images import supports_tool_images
+from llm_providers.multimodal.chat_images import project_tool_image_transport
+from llm_providers.multimodal.tool_images import record_image_rejection, supports_tool_images
 from llm_providers.protocol import DEFAULT_MODEL_RETRIES
 
 from llm_providers import (
@@ -51,6 +52,7 @@ from llm_providers import (
     LLMActivity,
     LLMAssistantItemDone,
     LLMAssistantItemStart,
+    LLMBadRequestError,
     LLMContextWindowError,
     LLMEmptyResponseError,
     LLMOutputBudgetExhaustedError,
@@ -225,6 +227,8 @@ from .tools.builtin.skills import (
 from .tools.protocol import IMAGE_INPUT_SUPPORTED_ARG
 
 if TYPE_CHECKING:
+    from .session_files.service import SessionFileService
+
     PromptBuilderFactory = Callable[[str], PromptBuilder]
 
 
@@ -448,6 +452,7 @@ class Conversation:
         post_turn_external: bool = False,
         message_renderer: MessageRenderer | None = None,
         message_projector: MessageProjector | None = None,
+        session_file_service: SessionFileService | None = None,
         tool_run_context_factory: Callable[[str], ToolRunContext] | None = None,
         skill_service: SkillCatalogService | None = None,
         session_model_history: SessionModelHistory | None = None,
@@ -476,9 +481,19 @@ class Conversation:
         self._tool_post_hook = tool_post_hook
         self._post_turn_external = post_turn_external
         self._message_renderer = message_renderer
-        from .attachments.input_projection import project_pdf_message
+        from .attachments.input_projection import project_file_message
+        from .session_files.inputs import SessionFileInputs
 
-        self._message_projector = message_projector or project_pdf_message
+        self._session_file_inputs = (
+            SessionFileInputs(session_file_service, session.session_id)
+            if session_file_service
+            else None
+        )
+        self._message_projector = (
+            self._session_file_inputs.project
+            if self._session_file_inputs
+            else message_projector or project_file_message
+        )
         self._time_provider = time_provider or SystemTimeProvider()
         self._tool_run_context_factory = tool_run_context_factory or (
             lambda user_input: ToolRunContext.create(
@@ -1099,6 +1114,11 @@ class Conversation:
                         yield AssistantMessageEnd(replay.uuid)
                 yield TurnDone(stop_reason="idempotent_replay", total_tool_calls=0)
                 return
+            if self._session_file_inputs is not None:
+                accepted_event_id = (
+                    existing_user_event.uuid if existing_user_event else appended_user_id
+                )
+                self._session_file_inputs.prepare(accepted_event_id if turn_attachments else None, cancel_check)
             yield from self._run_tool_loop(
                 prepare_first_turn=prepare_first_turn,
                 first_turn_prelude=self._skill_activation_status_events,
@@ -3374,17 +3394,7 @@ class Conversation:
         return digest(identity)
 
     def _input_calibration_key(self, messages: list[Message]) -> str:
-        kinds = {
-            "session_pdf"
-            if ref.media_type == "application/pdf"
-            else "inline_text"
-            if ref.media_type == "text/plain"
-            else "native_image"
-            if ref.kind == "image"
-            else "native_document"
-            for message in messages
-            for ref in message.attachments
-        }
+        kinds = {"session_file" for message in messages for ref in message.attachments}
         if any(message.images for message in messages):
             kinds.add("tool_image")
         return digest(
@@ -3440,6 +3450,9 @@ class Conversation:
             rendered, tools, fallback_floor=fallback, calibration_key=calibration_key
         )
 
+    def _project_image_transport(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return project_tool_image_transport(messages, self._active_llm_client())
+
     def _estimate_rendered_input(
         self,
         messages: list[dict[str, Any]],
@@ -3449,6 +3462,7 @@ class Conversation:
         fallback_floor: int | Callable[[], int] = 0,
         calibration_key: str | None = None,
     ) -> InputEstimate:
+        messages = self._project_image_transport(messages)
         key = calibration_key or self._input_calibration_key(self._last_built_model_messages or [])
         factor = self._calibration_by_input.get(key, 1.0)
 
@@ -3513,9 +3527,7 @@ class Conversation:
             "attachment_input_projection": INPUT_PROJECTION_VERSION,
             "calibration_key": calibration_key,
             "session_file_inputs": sum(
-                ref.media_type == "application/pdf"
-                for message in build.messages
-                for ref in message.attachments
+                True for message in build.messages for ref in message.attachments
             ),
             "token_estimate": estimate_tokens(build.messages),
             "effective_window": runtime.budget.effective_window,
@@ -3842,7 +3854,7 @@ class Conversation:
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[Any]:
         """Stream one model response with context and incomplete-output recovery."""
-        current_messages = messages
+        current_messages = self._project_image_transport(messages)
         request_overrides = dict(overrides or {})
         cache_key = self._session.session_id
         recovery_builder = recovery_builder or (
@@ -4006,6 +4018,23 @@ class Conversation:
                 finally:
                     self._context_emergency_ratio = previous_ratio
                     self._context_trigger_reason = previous_reason
+            except LLMBadRequestError as exc:
+                if (
+                    request_accepted
+                    or retries_used >= DEFAULT_MODEL_RETRIES
+                    or not record_image_rejection(client, exc)
+                ):
+                    raise
+                self._pending_request_measurement = None
+                self._usage_anchor = None
+                discarded = self._discard_pending_context_checkpoints()
+                if discarded is not None:
+                    yield discarded
+                request_attempt += 1
+                retries_used += 1
+                rebuilt = recovery_builder()
+                rebuilt_messages = rebuilt if isinstance(rebuilt, list) else (yield from rebuilt)
+                current_messages = self._project_image_transport(rebuilt_messages)
             except LLMEmptyResponseError as exc:
                 if (
                     request_accepted
@@ -5281,7 +5310,12 @@ class Conversation:
             )
         if name == "todo_manage":
             invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
-        if name in {_RECOVER_TOOL_RESULT_TOOL_NAME, "inspect_tool_calls", "session_files"}:
+        if name in {
+            _RECOVER_TOOL_RESULT_TOOL_NAME,
+            "inspect_tool_calls",
+            "session_files",
+            "view_image",
+        }:
             invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
         if name in {"social_search", "social_read"}:
             invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id

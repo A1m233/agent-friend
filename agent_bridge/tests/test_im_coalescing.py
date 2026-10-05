@@ -140,8 +140,15 @@ async def test_explicitly_unsupported_attachment_bypasses_wait(
         on_timeout=no_timeout,
     )
 
-    assert [item.reason for item in decision.dispatches] == ["direct"]
-    assert coalescer.pending_count == 0
+    from agent_bridge.protocols.im.voice import is_voice_attachment
+
+    if is_voice_attachment(item):
+        assert [dispatch.reason for dispatch in decision.dispatches] == ["direct"]
+        assert coalescer.pending_count == 0
+    else:
+        assert decision.dispatches == ()
+        assert coalescer.pending_count == 1
+        await coalescer.cancel_all()
     assert not coordinator.has_pending_turn(key())
 
 

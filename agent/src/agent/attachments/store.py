@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import codecs
 import hashlib
 import json
 import logging
+import mimetypes
 import os
 import re
 import secrets
@@ -13,7 +13,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import BinaryIO
 
 from .models import AttachmentKind, AttachmentRef
 
@@ -22,9 +22,6 @@ logger = logging.getLogger(__name__)
 MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024
 DEFAULT_DRAFT_TTL_SECONDS = 24 * 60 * 60
 DEFAULT_GC_GRACE_SECONDS = 24 * 60 * 60
-SUPPORTED_MEDIA_TYPES = frozenset(
-    {"image/jpeg", "image/png", "image/webp", "application/pdf", "text/plain"}
-)
 _CANONICAL_EXTENSIONS = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -45,7 +42,7 @@ def _safe_name(value: str) -> str:
     return name[:255] or "attachment"
 
 
-def _detect_media_type(head: bytes, *, valid_utf8_text: bool) -> tuple[str, AttachmentKind]:
+def _detect_media_type(head: bytes) -> tuple[str, AttachmentKind]:
     if head.startswith(b"\xff\xd8\xff"):
         return "image/jpeg", "image"
     if head.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -53,27 +50,10 @@ def _detect_media_type(head: bytes, *, valid_utf8_text: bool) -> tuple[str, Atta
     if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         return "image/webp", "image"
     if head.startswith((b"GIF87a", b"GIF89a")):
-        raise AttachmentError(
-            "attachment_type_unsupported",
-            "暂不支持 GIF 动图。",
-            media_type="image/gif",
-        )
+        return "image/gif", "document"
     if head.startswith(b"%PDF-"):
         return "application/pdf", "document"
-    if valid_utf8_text:
-        return "text/plain", "document"
-    raise AttachmentError("attachment_type_unsupported", "仅支持 JPG、PNG、WebP、PDF 和 TXT 文件。")
-
-
-def _extension_media_type(display_name: str) -> str | None:
-    return {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".webp": "image/webp",
-        ".pdf": "application/pdf",
-        ".txt": "text/plain",
-    }.get(Path(display_name).suffix.lower())
+    return "application/octet-stream", "document"
 
 
 def _canonical_image_name(display_name: str, media_type: str) -> str:
@@ -114,15 +94,12 @@ class AttachmentStore:
         *,
         display_name: str,
         declared_media_type: str | None = None,
-        image_metadata_policy: Literal["strict", "advisory"] = "strict",
     ) -> tuple[str, AttachmentRef]:
         fd, tmp_name = tempfile.mkstemp(prefix="upload-", dir=self.tmp_dir)
         tmp = Path(tmp_name)
         digest = hashlib.sha256()
         size = 0
         head = bytearray()
-        text_decoder = codecs.getincrementaldecoder("utf-8")()
-        valid_utf8_text = True
         try:
             with os.fdopen(fd, "wb") as output:
                 async for chunk in chunks:
@@ -136,63 +113,17 @@ class AttachmentStore:
                         )
                     if len(head) < 8192:
                         head.extend(chunk[: 8192 - len(head)])
-                    if valid_utf8_text:
-                        if b"\x00" in chunk:
-                            valid_utf8_text = False
-                        else:
-                            try:
-                                text_decoder.decode(chunk, final=False)
-                            except UnicodeDecodeError:
-                                valid_utf8_text = False
                     digest.update(chunk)
                     output.write(chunk)
                 output.flush()
                 os.fsync(output.fileno())
-            if size == 0:
-                raise AttachmentError("attachment_type_unsupported", "空文件不能作为附件发送。")
-            if valid_utf8_text:
-                try:
-                    text_decoder.decode(b"", final=True)
-                except UnicodeDecodeError:
-                    valid_utf8_text = False
-            media_type, kind = _detect_media_type(bytes(head), valid_utf8_text=valid_utf8_text)
-            declared = (declared_media_type or "").split(";", 1)[0].strip().lower()
-            if declared and declared not in ("application/octet-stream", media_type):
-                if kind != "image" or image_metadata_policy == "strict":
-                    raise AttachmentError(
-                        "attachment_type_mismatch", "文件内容与声明的类型不一致。"
-                    )
-                logger.warning(
-                    "Attachment image metadata mismatch "
-                    "reason=declared_media_type_mismatch "
-                    "declared_media_type=%s detected_media_type=%s",
-                    declared,
-                    media_type,
-                )
-            extension_type = _extension_media_type(display_name)
-            if (
-                extension_type is not None
-                and extension_type != media_type
-                and (kind != "image" or image_metadata_policy == "strict")
-            ):
-                raise AttachmentError(
-                    "attachment_type_mismatch", "文件扩展名与实际内容类型不一致。"
-                )
-
+            # Upload admission does not parse documents or depend on model modalities.
+            # Only recognized raster signatures are eligible for image preview.
+            media_type, kind = _detect_media_type(bytes(head))
             normalized_display_name = _safe_name(display_name)
-            if kind == "image" and image_metadata_policy == "advisory":
-                filename_extension = Path(normalized_display_name).suffix.lower()
-                canonical_extension = _CANONICAL_EXTENSIONS[media_type]
-                if filename_extension and filename_extension != canonical_extension:
-                    logger.warning(
-                        "Attachment image metadata mismatch "
-                        "reason=filename_extension_mismatch "
-                        "filename_extension=%s detected_media_type=%s",
-                        filename_extension,
-                        media_type,
-                    )
-                normalized_display_name = _canonical_image_name(display_name, media_type)
-
+            if media_type == "application/octet-stream":
+                media_type = mimetypes.guess_type(normalized_display_name)[0] or media_type
+            # Preserve user filenames: preparation already creates safe, isolated copies.
             sha256 = digest.hexdigest()
             ref = AttachmentRef(
                 asset_id=sha256,
@@ -211,7 +142,7 @@ class AttachmentStore:
         """Persist already decoded image bytes; keep a lease until event publication."""
         if not data or len(data) > self.max_attachment_bytes:
             raise AttachmentError("attachment_file_too_large", "图片为空或超过资产大小限制。")
-        media_type, kind = _detect_media_type(data[:8192], valid_utf8_text=False)
+        media_type, kind = _detect_media_type(data[:8192])
         if kind != "image":
             raise AttachmentError("attachment_type_unsupported", "需要图像内容。")
         digest = hashlib.sha256(data).hexdigest()

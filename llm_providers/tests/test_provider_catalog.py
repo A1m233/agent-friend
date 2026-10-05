@@ -140,7 +140,7 @@ def test_public_model_catalog_is_the_capability_source_of_truth() -> None:
     }
     vision = deepseek[DEEPSEEK_VISION_MODEL_ID]
     assert vision["label"] == "DeepSeek Flash"
-    assert vision["processingProfile"] == "deepseek-vision-files-v1"
+    assert vision["processingProfile"] == "tool-images-v1"
     assert vision["capabilities"]["inputModalities"] == ("text", "image")
     assert vision["capabilities"]["acceptedMediaTypes"] == (
         "image/jpeg",
@@ -164,14 +164,11 @@ def test_public_model_catalog_is_the_capability_source_of_truth() -> None:
     assert kimi["kimi/kimi-k2.6"]["capabilities"]["inputModalities"] == (
         "text",
         "image",
-        "document",
     )
     assert kimi["kimi/kimi-k2.6"]["capabilities"]["acceptedMediaTypes"] == (
         "image/jpeg",
         "image/png",
         "image/webp",
-        "application/pdf",
-        "text/plain",
     )
     assert kimi["kimi/kimi-k2.6"]["limits"] == {
         "contextWindow": 256 * 1024,
@@ -181,19 +178,16 @@ def test_public_model_catalog_is_the_capability_source_of_truth() -> None:
         for model in provider["models"]:
             assert model["limits"]["contextWindow"] > 0
     for model_id in ("kimi/kimi-k2.7-code", "kimi/kimi-k2.7-code-highspeed"):
-        assert kimi[model_id]["processingProfile"] == "kimi-multimodal-v1"
+        assert kimi[model_id]["processingProfile"] == "tool-images-v1"
         assert kimi[model_id]["capabilities"]["attachments"] is True
         assert kimi[model_id]["capabilities"]["inputModalities"] == (
             "text",
             "image",
-            "document",
         )
         assert kimi[model_id]["capabilities"]["acceptedMediaTypes"] == (
             "image/jpeg",
             "image/png",
             "image/webp",
-            "application/pdf",
-            "text/plain",
         )
 
 
