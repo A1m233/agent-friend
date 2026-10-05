@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-IN_PROGRESS
+COMPLETED
 
 ## 任务列表
 
@@ -24,7 +24,7 @@ IN_PROGRESS
 - [x] AC-6 多入口一致：AG-UI、编辑重发、IM 准入/合并测试；真实 IM 平台未发送消息。
 - [x] AC-7 历史恢复与隔离：session_files 重启、压缩、失效引用、校验、路径与配额自动化。
 - [x] AC-8 预算一致：预算/历史计量/rollout 回归测试。
-- [ ] AC-9 关联盘点、项目门禁与用户验收。
+- [x] AC-9 关联盘点、项目门禁与用户验收；公开 Guide r77 已发布。
 
 ## 关联盘点
 
@@ -40,7 +40,7 @@ IN_PROGRESS
 | diagnostics / reconciliation | 保留原件引用和默认不含原件的隐私语义 |
 | IM voice | 保留独立语音处理流程 |
 | frozen runtime | standard；既有 session_files/image_reading smoke 覆盖文件 I/O 与图像解码高风险路径，无新增依赖或资源装配 |
-| 公开 guide / builtin 快照 | 旧附件说明已识别；按 Guide 发布治理在合入 main 并推送时维护公开知识，打包时刷新离线基线，不直接修改 immutable 快照 |
+| 公开 guide / builtin 快照 | 公开 Guide r77 已覆盖使用、模型、设置、隐私、概览和排错；打包时刷新离线基线，不直接修改 immutable 快照 |
 
 ## 实现日志
 
@@ -67,4 +67,6 @@ IN_PROGRESS
 - 两次隔离实验均使用正式 Conversation、SessionFileService、view_image 和 provider 适配；TXT 读取用限制于合成工作副本的验证工具，**不是命令沙箱或桌面发送的完整 E2E**。模型主动选择文本工具和 view_image，正确返回随机码及蓝/红左右颜色。首次真实请求均无 TXT 正文或图像 data URL，第二次含工具读取结果。HTTP 发送边界限制总预算，未读取私人附件，未运行记忆或标题生成。
 - 打包影响为 `standard`：未改依赖、lock、资源装配或原生库；既有 frozen session_files/image_reading smoke 覆盖文件校验/复制/清理与图像解码快照高风险路径。本次未构建安装包或 frozen runtime。
 - Windows 实际验证；macOS/Linux 未实机运行。保留现有跨平台路径和双端脚本入口。真实 Chat 图像路由、真实不支持图像服务和真实 IM 平台仅由确定性测试覆盖。
-- 用户已要求合入主干并推送远端；当前进入公开 Guide 维护与 Git 交付流程。离线 builtin 仍归打包基线流程。
+- 用户已确认交付并要求合入主干、推送远端。实现提交 `536735a8`；纳入最新主干待办文档后的稳定产品来源为 `97cc98db`，与已验证实现的代码完全相同。
+- 公开 Guide 提交 `abb6affb6c870d0fb04a678325e6ad212c530a6c` 已推送，校验器和项目 verify 通过；[r77](https://github.com/A1m233/agent-friend-guide/releases/tag/agent-friend-guide-r77) 已发布并确认 immutable、资产摘要和提交一致，兼容范围为 `>=0.3.0, <0.4.0`。仅修改知识内容，无需重新构建产品或再次调用模型。
+- 本次收尾文档只记录已验证事实，不改变 Guide 所锚定的运行时语义。离线 builtin 仍归打包基线流程，本次未构建安装包。
