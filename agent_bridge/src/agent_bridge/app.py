@@ -47,6 +47,7 @@ from .request_observation import RequestObservationMiddleware
 from .routes.approvals import register_routes as register_approval_routes
 from .routes.attachments import register_routes as register_attachment_routes
 from .routes.filesystem import register_routes as register_filesystem_routes
+from .routes.link_targets import register_routes as register_link_target_routes
 from .routes.memory import register_routes as register_memory_routes
 from .routes.meta import register_routes as register_meta_routes
 from .routes.models import register_routes as register_model_routes
@@ -159,6 +160,7 @@ def create_app_with_runtime(
     if memory_inspector_enabled:
         register_memory_routes(app, runtime)
     register_attachment_routes(app, runtime)
+    register_link_target_routes(app, runtime)
     register_approval_routes(app, runtime)
     register_filesystem_routes(app, runtime)
     register_model_routes(app, runtime)

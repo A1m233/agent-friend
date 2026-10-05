@@ -1,13 +1,9 @@
 // @vitest-environment jsdom
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { AssistantContentDetails } from "./AssistantContentDetails";
-
-vi.mock("./useExternalLinkOpener", () => ({
-  useExternalLinkOpener: () => () => {},
-  toOpenableExternalUrl: (url: string) => { try { return new URL(url).href; } catch { return null; } },
-}));
+import { originalLinkHref } from "@/lib/links/targets";
 
 it("renders refusal, safe sources and unavailable references without exposing file identifiers", async () => {
   const container = document.createElement("div");
@@ -21,7 +17,7 @@ it("renders refusal, safe sources and unavailable references without exposing fi
     }] })));
     expect(container.textContent).toContain("模型拒绝了这次请求");
     expect(container.querySelectorAll("a")).toHaveLength(1);
-    expect(container.querySelector("a")?.getAttribute("href")).toBe("https://example.com/");
+    expect(originalLinkHref(container.querySelector("a")?.getAttribute("href") ?? "")).toBe("https://example.com/");
     expect(container.textContent).toContain("Unsafe（当前无法打开）");
     expect(container.textContent).toContain("source.txt（当前无法打开）");
     expect(container.textContent).not.toContain("file-private");

@@ -88,7 +88,6 @@ import { buildMessagePresentationSegments } from "./toolActivityPresentation";
 import { executionDisclosurePolicy, executionSections, socialAuthNeedsUserAction } from "./executionDisclosurePolicy";
 import { ExecutionDisclosureStateProvider } from "./ExecutionDisclosure";
 import { CHAT_MARKDOWN_CONTENT_PROPS } from "./chatMarkdownConfig";
-import { useExternalLinkOpener } from "./useExternalLinkOpener";
 import { ReferenceSummaryPopover } from "./ReferenceSummaryPopover";
 import {
   findQuoteBlockHost,
@@ -772,7 +771,6 @@ export function MessageTimeline({
   const scrollButtonBottom = composerInset + SCROLL_BUTTON_GAP_PX;
   const showHistoryStatus = Boolean(onLoadOlderHistory && (hasOlderHistory || historyControlVisible));
   const lastUserMessageId = [...messages].reverse().find((m) => m.role === "user")?.id ?? null;
-  const handleExternalLinkClick = useExternalLinkOpener();
   const getItemKey = useCallback(
     (index: number) => getMessageVirtualItemKey(messages, index),
     [messages],
@@ -1345,7 +1343,6 @@ export function MessageTimeline({
         viewportClassName={CHAT_SCROLL_VIEWPORT_CLASS}
       >
         <div
-          onClickCapture={handleExternalLinkClick}
           className="relative w-full"
           style={{ height: virtualTotalSize }}
         >

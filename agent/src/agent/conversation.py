@@ -1118,7 +1118,9 @@ class Conversation:
                 accepted_event_id = (
                     existing_user_event.uuid if existing_user_event else appended_user_id
                 )
-                self._session_file_inputs.prepare(accepted_event_id if turn_attachments else None, cancel_check)
+                self._session_file_inputs.prepare(
+                    accepted_event_id if turn_attachments else None, cancel_check
+                )
             yield from self._run_tool_loop(
                 prepare_first_turn=prepare_first_turn,
                 first_turn_prelude=self._skill_activation_status_events,

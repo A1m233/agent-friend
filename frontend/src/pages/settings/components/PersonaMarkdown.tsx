@@ -1,7 +1,15 @@
-import Markdown, { type Components } from "react-markdown";
+import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { LinkInteractionBoundary } from "@/components/app/link-interactions/LinkInteractionBoundary";
+import { remarkManagedLinks, classifyLink, originalLinkHref } from "@/lib/links/targets";
 
 const PERSONA_MARKDOWN_COMPONENTS: Components = {
+  a: ({ href = "", children }) => {
+    const target = classifyLink(href);
+    return <a href={href} title={target.kind === "unavailable" ? target.reason : originalLinkHref(href)}
+      aria-disabled={target.kind === "unavailable" || undefined}
+      className={target.kind === "unavailable" ? "text-muted" : "text-accent underline"}>{children}</a>;
+  },
   h1: ({ children }) => (
     <h1 className="mb-4 mt-6 text-xl font-semibold leading-tight first:mt-0">
       {children}
@@ -45,14 +53,17 @@ const PERSONA_MARKDOWN_COMPONENTS: Components = {
 
 export function PersonaMarkdown({ content }: { content: string }) {
   return (
+    <LinkInteractionBoundary context={{ kind: "persona" }}>
     <div className="min-h-48 text-sm leading-6">
       <Markdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkManagedLinks]}
         components={PERSONA_MARKDOWN_COMPONENTS}
         skipHtml
+        urlTransform={defaultUrlTransform}
       >
         {content}
       </Markdown>
     </div>
+    </LinkInteractionBoundary>
   );
 }
