@@ -998,6 +998,7 @@ def test_doctor_without_configured_model_checks_static_html_extraction(monkeypat
     skill_check = payload["checks"]["capability:skill_catalog_hot_reload"]
     assert skill_check["ok"] is True
     assert skill_check["builtin"] == "skill-creator"
+    assert skill_check["office_skills"] == ["doc", "spreadsheet"]
     assert skill_check["installer"] == "skill-installer"
     assert skill_check["installer_validation"] == "fail-closed"
     assert skill_check["installer_managed_transaction"] == "rollback-ok"

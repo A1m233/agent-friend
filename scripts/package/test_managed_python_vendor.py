@@ -38,6 +38,32 @@ def test_managed_python_lock_is_immutable_windows_x64_contract() -> None:
     assert lock["capabilities"]["runtime_downloads"] is False
 
 
+def test_office_baseline_has_exact_offline_wheels_and_transitive_dependencies() -> None:
+    lock = managed_python.load_lock()
+    wheels = {item["name"]: item for item in lock["baseline_wheels"]}
+    assert len(wheels) == len(lock["baseline_wheels"])
+    assert set(lock["baseline_requirements"]) == {
+        f"{name}=={item['version']}" for name, item in wheels.items()
+    }
+    for name in (
+        "openpyxl",
+        "pandas",
+        "python-docx",
+        "numpy",
+        "lxml",
+        "et-xmlfile",
+        "python-dateutil",
+        "six",
+        "typing-extensions",
+        "tzdata",
+    ):
+        wheel = wheels[name]
+        assert wheel["filename"].endswith(("none-any.whl", "win_amd64.whl"))
+        assert wheel["url"].startswith("https://files.pythonhosted.org/")
+        assert len(bytes.fromhex(wheel["sha256"])) == 32
+        assert wheel["size"] > 0
+
+
 @pytest.mark.parametrize("name", ["../escape", "/absolute", "nested/../../escape"])
 def test_managed_python_archive_path_validation_rejects_escape(tmp_path: Path, name: str) -> None:
     with pytest.raises(RuntimeError, match=r"unsafe|escaped"):
