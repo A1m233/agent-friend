@@ -5,13 +5,16 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
+from collections.abc import Callable
 from typing import Any, Literal
 from urllib.parse import quote
 
 from agent.latency import RunLatencyContext, log_run_latency
 from qqbot_agent_sdk.api_client import QQApiClient
 
+from ..delivery.models import DeliveryFailure, StreamDeliveryState
 from ..streaming import OutboundStreamContext
+from .qq_delivery_errors import classify_qq_failure
 
 __all__ = ["QQC2CStreamSession"]
 
@@ -30,7 +33,7 @@ class QQC2CStreamSession:
         api: QQApiClient,
         bind_id: str,
         context: OutboundStreamContext,
-        msg_seq: int,
+        msg_seq: int | Callable[[], int],
     ) -> None:
         self._api = api
         self._context = context
@@ -43,6 +46,7 @@ class QQC2CStreamSession:
         self._successful_updates = 0
         self._phase: Literal["idle", "streaming", "completed", "failed"] = "idle"
         self._had_failure = False
+        self._failure: DeliveryFailure | None = None
         self._started_at = time.monotonic()
         self._last_accepted_at: float | None = None
         self._run_latency = (
@@ -71,13 +75,18 @@ class QQC2CStreamSession:
     def provider_message_id(self) -> str | None:
         return self._stream_msg_id
 
+    def delivery_state(self) -> StreamDeliveryState:
+        return StreamDeliveryState(
+            self._last_accepted_text, self._stream_msg_id, self.is_completed, self._failure
+        )
+
     async def update(self, full_text: str) -> None:
         if not full_text or self._phase in {"completed", "failed"}:
             return
         await self._send(full_text, input_state=_GENERATING, terminal=False)
 
     async def finish(self, full_text: str) -> None:
-        if not self.has_started or self._phase == "completed":
+        if not self.has_started or self._phase in {"completed", "failed"}:
             return
         await self._send(full_text or self._last_accepted_text, input_state=_DONE, terminal=True)
 
@@ -92,7 +101,7 @@ class QQC2CStreamSession:
             len(full_text),
             self.has_started,
         )
-        if self.has_started:
+        if self.has_started and self._phase not in {"completed", "failed"}:
             await self._send(
                 full_text or self._last_accepted_text,
                 input_state=_DONE,
@@ -100,6 +109,8 @@ class QQC2CStreamSession:
             )
 
     async def _send(self, full_text: str, *, input_state: int, terminal: bool) -> None:
+        if callable(self._msg_seq):
+            self._msg_seq = self._msg_seq()
         index = self._next_index
         payload: dict[str, Any] = {
             "input_mode": "replace",
@@ -123,7 +134,7 @@ class QQC2CStreamSession:
                 payload,
             )
         except Exception as exc:
-            self._record_failure()
+            self._record_failure(classify_qq_failure(exc, stream=True))
             log_run_latency(
                 logger,
                 self._run_latency,
@@ -152,7 +163,7 @@ class QQC2CStreamSession:
 
         code = response.get("code", 0) if isinstance(response, dict) else 0
         if code:
-            self._record_failure()
+            self._record_failure(classify_qq_failure(response, stream=True))
             log_run_latency(
                 logger,
                 self._run_latency,
@@ -183,22 +194,20 @@ class QQC2CStreamSession:
             )
             return
 
+        response_id = _response_id(response)
+        if not response_id or (
+            self._stream_msg_id is not None and response_id != self._stream_msg_id
+        ):
+            self._record_failure(classify_qq_failure(response, stream=True))
+            logger.warning(
+                "QQ stream invalid receipt stream_trace=%s phase=%s index=%d",
+                self._context.stream_trace,
+                phase,
+                index,
+            )
+            return
+
         if self._stream_msg_id is None:
-            response_id = _response_id(response)
-            if not response_id:
-                self._record_failure()
-                logger.warning(
-                    "QQ stream response missing id stream_trace=%s run_id=%s phase=%s "
-                    "index=%d content_len=%d bind_ref=%s chat_ref=%s",
-                    self._context.stream_trace,
-                    self._context.run_id or "",
-                    phase,
-                    index,
-                    len(full_text),
-                    self._bind_ref,
-                    self._chat_ref,
-                )
-                return
             self._stream_msg_id = response_id
 
         first_delivery = self._successful_updates == 0
@@ -265,10 +274,10 @@ class QQC2CStreamSession:
                 had_failure=self._had_failure,
             )
 
-    def _record_failure(self) -> None:
+    def _record_failure(self, failure: DeliveryFailure) -> None:
         self._had_failure = True
-        if not self.has_started:
-            self._phase = "failed"
+        self._failure = failure
+        self._phase = "failed"
 
 
 def _response_id(response: object) -> str:

@@ -57,6 +57,7 @@ from ..event import InboundInteraction
 from ..provider import OutboundSendResult, ProviderStatus
 from ..state import ControlCapability, IMStateStore
 from ..streaming import IMStreamSession, OutboundStreamContext
+from .qq_delivery_errors import classify_qq_failure
 from .qq_streaming import QQC2CStreamSession
 
 __all__ = ["QQAdapter"]
@@ -351,7 +352,8 @@ class QQAdapter:
                 _text_len(content.text),
                 content.text_format,
             )
-            return OutboundSendResult("unknown", error_kind="network_or_http")
+            failure = classify_qq_failure(exc)
+            return OutboundSendResult(failure.outcome, error_kind=failure.kind)
 
         code = resp.get("code", 0) if isinstance(resp, dict) else 0
         if code:
@@ -369,12 +371,14 @@ class QQAdapter:
             )
             if keyboard is not None and _is_controls_rejection(resp):
                 return await self._retry_without_controls_after_rejection(content)
-            return OutboundSendResult("failed", error_kind=f"provider_code_{code}")
+            return OutboundSendResult("failed", error_kind="platform_rejected")
 
         if keyboard is not None:
             self._set_controls_capability("supported")
 
         response_message_id = _response_message_id(resp)
+        if not response_message_id:
+            return OutboundSendResult("unknown", error_kind="missing_receipt")
         logger.info(
             "QQ outbound sent bind=%s chat=%s reply_to_message_id=%s msg_seq=%d "
             "response_message_id=%s text_len=%d text_format=%s",
@@ -425,7 +429,7 @@ class QQAdapter:
             api=api,
             bind_id=self.bind_id,
             context=context,
-            msg_seq=self._next_msg_seq(),
+            msg_seq=self._next_msg_seq,
         )
 
     async def stop(self) -> None:
@@ -631,14 +635,15 @@ class QQAdapter:
         msg = _message_to_create(content, msg_seq=msg_seq)
         try:
             response = await api.post_c2c_message(content.chat_id, msg)
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "QQ text fallback after keyboard rejection failed (bind=%s, chat=%s)",
                 self.bind_id,
                 content.chat_id,
                 exc_info=True,
             )
-            return OutboundSendResult("unknown", error_kind="fallback_network_or_http")
+            failure = classify_qq_failure(exc)
+            return OutboundSendResult(failure.outcome, error_kind=failure.kind)
         code = response.get("code", 0) if isinstance(response, dict) else 0
         if code:
             logger.warning(
@@ -647,11 +652,14 @@ class QQAdapter:
                 self.bind_id,
                 content.chat_id,
             )
-            return OutboundSendResult("failed", error_kind=f"provider_code_{code}")
+            return OutboundSendResult("failed", error_kind="platform_rejected")
         self._set_controls_capability("unsupported")
+        message_id = _response_message_id(response)
+        if not message_id:
+            return OutboundSendResult("unknown", error_kind="missing_receipt")
         return OutboundSendResult(
             "delivered",
-            provider_message_id=_response_message_id(response) or None,
+            provider_message_id=message_id,
         )
 
     def _set_controls_capability(self, status: ControlCapability) -> None:
