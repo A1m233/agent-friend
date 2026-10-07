@@ -53,7 +53,7 @@ class InstallerError(RuntimeError):
 
 
 def _http_error(exc: urllib.error.HTTPError) -> InstallerError:
-    headers = exc.headers or {}
+    headers = exc.headers or http.client.HTTPMessage()
     message = ""
     if exc.code == 403:
         try:
