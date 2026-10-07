@@ -61,3 +61,11 @@ COMPLETED
 ## 用户交付决定
 
 2026-10-07：用户明确表示无需继续修复验收脚本的恢复防重放，授权合入主干并推送远端，再继续既有 0.4.0 release 打包。按该决定关闭需求交付；QQ 回复续接行为和自动化验证通过，验收工具的恢复重放风险保留为已知限制，不删除原会话记录，不把该风险写成已修复。
+
+## 主干合入前验证
+
+- 已合并最新 main（8565f215），代码无冲突；验证源码提交 016137ab。
+- backend：3914 passed / 5 skipped，ruff 938 files、mypy 796 files。首次全量有既有 Windows 文件锁竞争失败；相关源/测试无变更，模块 14 项复验与随后完整门禁均通过，保留失败事实。
+- frontend：177 files / 1452 tests，lint/typecheck/production build 通过。
+- Rust：fmt、单元测试和 release check 通过。
+- Guide：36bb347，r81 已发布且 immutable=true，补充 QQ 续接的用户行为与限制；未将验收脚本副作用写成产品已修复。
