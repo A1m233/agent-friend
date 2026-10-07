@@ -6,6 +6,7 @@ export type ApprovalDecisionSource =
   | "user_once"
   | "user_enable_session_auto"
   | "session_auto"
+  | "request_auto"
   | "catastrophic_policy";
 
 export interface ApprovalRiskAssessment {
@@ -59,6 +60,7 @@ export interface CommandApprovalRequest {
   version: number;
   status: ApprovalStatus;
   approval_mode?: "per_request" | "session_auto";
+  approval_mode_source?: "session" | "request";
   approval_mode_version?: number;
   decision_source?: ApprovalDecisionSource | null;
   risk?: ApprovalRiskAssessment | null;

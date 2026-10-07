@@ -11,6 +11,15 @@ function ev(
 }
 
 describe("projectSessionEvents", () => {
+  it("preserves scheduled provenance without applying it to later manual messages", () => {
+    const out = projectSessionEvents([
+      ev("user_message", { content: "daily", request_source: { kind: "scheduled_task", task_id: "t", task_name: "Original name", occurrence_id: "o" } }),
+      ev("user_message", { content: "manual" }),
+    ]);
+    expect(out[0].requestSource).toEqual({ taskId: "t", taskName: "Original name", occurrenceId: "o" });
+    expect(out[1].requestSource).toBeUndefined();
+  });
+
   it("投影 user / assistant 文本消息，忽略元事件", () => {
     const out = projectSessionEvents([
       ev("session_meta", { initial_title: "t" }),

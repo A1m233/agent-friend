@@ -51,6 +51,11 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             )
         return runtime.agent_runtime
 
+    @router.get("/sessions/{session_id}/requests")
+    def list_requests(session_id: str) -> dict[str, Any]:
+        service = runtime.session_request_service
+        return {"requests": service.store.list(session_id) if service else []}
+
     @router.get("/runs")
     def list_runs(
         include_recent_terminal: bool = Query(True, alias="includeRecentTerminal"),

@@ -47,6 +47,7 @@ import {
 } from "../layout";
 import { toMarkdownContent } from "../projection";
 import { openSettings } from "@/lib/settings/navigation";
+import { openScheduledTask } from "@/pages/scheduled-tasks/navigation";
 import { EditMessageHint } from "./EditMessageHint";
 import type {
   MessagePrimaryActivity,
@@ -598,6 +599,11 @@ const MessageItem = memo(function MessageItem({
         searchAnchorEventUuid && "bg-search-target",
       )}
     >
+      {message.role === "user" && message.requestSource && (
+        <div className="mb-1 flex items-center justify-end gap-1 text-xs text-muted">
+          由 <Button variant="link" size="sm" className="h-auto p-0 text-xs text-accent" onClick={() => openScheduledTask(message.requestSource!.taskId)}>{message.requestSource.taskName}</Button> 定时任务发起
+        </div>
+      )}
       <MessageContent
         message={message}
         actionBar={actionBar}
@@ -1212,6 +1218,7 @@ export function MessageTimeline({
   useLayoutEffect(() => {
     if (
       !searchTarget ||
+      searchTarget.loading ||
       historyLoading ||
       handledSearchTargetTokenRef.current === searchTarget.token ||
       processingSearchTargetTokenRef.current === searchTarget.token

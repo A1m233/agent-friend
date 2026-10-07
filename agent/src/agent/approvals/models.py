@@ -14,6 +14,7 @@ ApprovalDecisionSource = Literal[
     "user_once",
     "user_enable_session_auto",
     "session_auto",
+    "request_auto",
     "catastrophic_policy",
 ]
 RiskLevel = Literal["normal", "catastrophic"]

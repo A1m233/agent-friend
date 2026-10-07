@@ -33,6 +33,8 @@ export interface SearchNavigationTarget {
   sessionId: string;
   anchorEventUuid: string;
   query: string;
+  /** Keep the anchor pending while older turn pages are being loaded. */
+  loading?: boolean;
 }
 
 export interface SessionSearchResponse {

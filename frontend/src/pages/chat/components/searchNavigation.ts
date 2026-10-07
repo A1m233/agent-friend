@@ -1,23 +1,10 @@
-import type { ChatMessage } from "@/types/chat";
+export { findMessageAnchorIndex as findSearchMessageIndex } from "@/stores/messageNavigation";
 
 export const SEARCH_HIGHLIGHT_NAME = "agent-friend-search-hit";
 
 export interface TextMatchRange {
   start: number;
   end: number;
-}
-
-export function findSearchMessageIndex(
-  messages: ChatMessage[],
-  anchorEventUuid: string,
-): number {
-  return messages.findIndex(
-    (message) =>
-      message.id === anchorEventUuid ||
-      message.blocks.some(
-        (block) => block.kind === "text" && block.mid === anchorEventUuid,
-      ),
-  );
 }
 
 export function findCaseInsensitiveOccurrences(text: string, query: string): TextMatchRange[] {

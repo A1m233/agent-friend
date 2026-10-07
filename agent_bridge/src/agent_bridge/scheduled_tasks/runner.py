@@ -9,12 +9,9 @@ from datetime import UTC, datetime
 
 from agent.runtime import (
     AgentRuntime,
-    ConsumerAbandonPolicy,
     RunHandle,
     RunOutcome,
-    RunPriority,
     RunStatus,
-    UserEvent,
 )
 from agent.scheduled_tasks import (
     ScheduledOccurrenceClaim,
@@ -23,10 +20,12 @@ from agent.scheduled_tasks import (
     ScheduledTaskError,
     ScheduledTaskStore,
 )
-from agent.sessions import SessionNotFoundError, SessionPersistError
+from agent.session_requests.errors import SessionRequestError
 from agent.skills import SkillCatalogService, SkillSelection, SkillTurnSnapshot
 
 from agent import SessionManager
+
+from ..session_requests import SessionRequestService
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,9 @@ class ScheduledTaskRunOrchestrator:
         tracker: ScheduledRunTracker,
         skill_service: SkillCatalogService | None,
         clock: Clock | None = None,
+        request_service: SessionRequestService | None = None,
     ) -> None:
+        self._request_service = request_service
         self._store = store
         self._sessions = sessions
         self._agent_runtime = agent_runtime
@@ -90,11 +91,14 @@ class ScheduledTaskRunOrchestrator:
             skill_source = activation.record.source
             skill_version = activation.version
 
+        if self._request_service is None:
+            self._fail_pre_submit(occurrence.id, "request_service_unavailable")
+            return
         try:
-            self._ensure_session(claim)
-        except (SessionPersistError, ValueError):
-            logger.exception("scheduled session reconciliation failed: %s", occurrence.id)
-            self._fail_pre_submit(occurrence.id, "session_reconciliation_failed")
+            self._request_service.validate_target(occurrence.session_id)
+        except SessionRequestError as exc:
+            self._store.pause_for_target(occurrence.session_id, exc.kind)
+            self._fail_pre_submit(occurrence.id, exc.kind)
             return
 
         try:
@@ -105,33 +109,29 @@ class ScheduledTaskRunOrchestrator:
                 skill_version=skill_version,
             )
 
-            def runner(conv, run_request, token):  # type: ignore[no-untyped-def]
-                return conv.stream(
-                    occurrence.task_snapshot.instruction,
-                    channel=run_request.channel,
-                    surface=run_request.surface,
-                    run_id=run_request.run_id,
-                    cancel_check=token.raise_if_cancelled,
-                    skill_selections=((selection,) if selection is not None else ()),
-                    skill_turn_snapshot=skill_snapshot,
-                )
+            from ..session_bridge import PersistentBootstrap
 
-            handle = self._agent_runtime.submit(
-                UserEvent(
-                    session_id=occurrence.session_id,
-                    user_input=occurrence.task_snapshot.instruction,
+            snapshot = occurrence.task_snapshot
+            handle = self._request_service.submit(
+                boot=PersistentBootstrap(
+                    thread_id=occurrence.session_id,
+                    new_user_input=snapshot.instruction,
+                    default_persona=snapshot.persona_name,
+                    default_model=snapshot.model_id,
                 ),
                 run_id=occurrence.run_id,
-                priority=RunPriority.PROACTIVE,
-                conversation_runner=runner,
-                consumer_abandon_policy=ConsumerAbandonPolicy.DETACH,
-                metadata={
-                    "protocol": "scheduled_task",
-                    "detached": True,
-                    "scheduled_task_id": occurrence.task_id,
-                    "scheduled_occurrence_id": occurrence.id,
+                user_event_id=f"scheduled:{occurrence.id}",
+                options=snapshot.request_options,
+                source={
+                    "kind": "scheduled_task",
+                    "task_id": occurrence.task_id,
+                    "occurrence_id": occurrence.id,
+                    "task_name": snapshot.name,
                 },
-                control_scope=f"scheduled_task:{occurrence.task_id}",
+                skills=((selection,) if selection else ()),
+                skill_snapshot=skill_snapshot,
+                supersede_background=False,
+                detached=True,
             )
         except Exception:
             logger.exception("scheduled AgentRuntime submit failed: %s", occurrence.id)
@@ -147,32 +147,6 @@ class ScheduledTaskRunOrchestrator:
             )
             return
         self._tracker.track(occurrence.id, handle)
-
-    def _ensure_session(self, claim: ScheduledOccurrenceClaim) -> None:
-        occurrence = claim.occurrence
-        assert occurrence.session_id is not None
-        try:
-            existing = self._sessions.open(occurrence.session_id)
-        except SessionNotFoundError:
-            self._sessions.create(
-                persona=occurrence.task_snapshot.persona_name,
-                persona_id=occurrence.task_snapshot.persona_id,
-                model=occurrence.task_snapshot.model_id,
-                title=occurrence.task_snapshot.name,
-                session_id=occurrence.session_id,
-                channel="text",
-                origin_kind="scheduled_task",
-                origin_id=occurrence.task_id,
-                origin_occurrence_id=occurrence.id,
-            )
-            return
-        if (
-            len(existing.events) != 1
-            or existing.origin_kind != "scheduled_task"
-            or existing.origin_id != occurrence.task_id
-            or existing.origin_occurrence_id != occurrence.id
-        ):
-            raise SessionPersistError("existing scheduled session does not match occurrence")
 
     def _fail_pre_submit(self, occurrence_id: str, reason_code: str) -> None:
         try:
@@ -202,10 +176,12 @@ class ScheduledRunTracker:
         *,
         clock: Clock | None = None,
         poll_seconds: float = 0.2,
+        terminal_lookup: Callable[[str], tuple[str, str] | None] | None = None,
     ) -> None:
         self._store = store
         self._clock = clock or (lambda: datetime.now(UTC))
         self._poll_seconds = poll_seconds
+        self._terminal_lookup = terminal_lookup
         self._condition = threading.Condition()
         self._handles: dict[str, RunHandle] = {}
         self._stopping = False
@@ -215,7 +191,7 @@ class ScheduledRunTracker:
         with self._condition:
             if self._thread is not None:
                 return {"released_claims": 0, "interrupted_runs": 0}
-            recovered = self._store.recover_startup(self._now())
+            recovered = self._store.recover_startup(self._now(), self._terminal_lookup)
             self._handles.clear()
             self._stopping = False
             self._thread = threading.Thread(
@@ -273,9 +249,12 @@ class ScheduledRunTracker:
                 return
             self._store.mark_terminal(
                 occurrence_id,
-                outcome=_map_outcome(snapshot.outcome),
+                outcome=ScheduledOccurrenceOutcome.INTERRUPTED
+                if snapshot.reason_code == "runtime_stopping"
+                else _map_outcome(snapshot.outcome),
                 reason_code=snapshot.reason_code,
                 now=snapshot.finished_at or self._now(),
+                started_at=snapshot.started_at,
                 expected=(
                     ScheduledOccurrenceState.SUBMITTED,
                     ScheduledOccurrenceState.RUNNING,

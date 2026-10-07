@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from agent.runtime import (
     RunHandle,
@@ -22,7 +23,7 @@ from agent.scheduling import OnceSchedule
 from agent.skills import SkillCatalogService
 from agent_bridge.scheduled_tasks import ScheduledRunTracker, ScheduledTaskRunOrchestrator
 
-from agent import JsonlSessionStore, SessionCatalog, SessionManager
+from agent import JsonlSessionStore, SessionManager
 
 NOW = datetime(2026, 8, 23, 8, tzinfo=UTC)
 
@@ -53,6 +54,33 @@ class _Runtime:
         return handle
 
 
+class _RequestService:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def validate_target(self, session_id: str) -> None:
+        assert session_id == "fixed-session"
+
+    def submit(self, **kwargs: Any) -> RunHandle:
+        self.calls.append(kwargs)
+        handle = RunHandle(
+            RunRequest(
+                event=UserEvent(
+                    session_id=kwargs["boot"].thread_id, user_input=kwargs["boot"].new_user_input
+                ),
+                run_id=kwargs["run_id"],
+                priority=RunPriority.INTERACTIVE,
+            ),
+            primary_consumer=False,
+        )
+        handle.publish_initial()
+        handle.mark_running()
+        handle.finish_once(
+            RunOutcome.COMPLETED, reason_code="end_turn", turn_status=TurnStatus.COMPLETED
+        )
+        return handle
+
+
 def _wait_terminal(store: ScheduledTaskStore, occurrence_id: str) -> None:
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
@@ -62,10 +90,11 @@ def _wait_terminal(store: ScheduledTaskStore, occurrence_id: str) -> None:
     raise AssertionError("occurrence did not become terminal")
 
 
-def test_runner_creates_hidden_origin_session_and_persists_terminal(tmp_path: Path) -> None:
+def test_runner_submits_to_fixed_session_and_persists_terminal(tmp_path: Path) -> None:
     store = ScheduledTaskStore(tmp_path / "scheduled.db")
     service = ScheduledTaskService(store, clock=lambda: NOW)
     task = service.create(
+        target_session_id="fixed-session",
         name="日报",
         instruction="总结今天",
         schedule=OnceSchedule(datetime(2026, 8, 24, 9), "UTC"),
@@ -79,7 +108,9 @@ def test_runner_creates_hidden_origin_session_and_persists_terminal(tmp_path: Pa
     tracker = ScheduledRunTracker(store, clock=lambda: NOW, poll_seconds=0.01)
     tracker.start()
     claim = store.claim_pending(NOW)[0]
+    request_service = _RequestService()
     runner = ScheduledTaskRunOrchestrator(
+        request_service=request_service,  # type: ignore[arg-type]
         store=store,
         sessions=sessions,
         agent_runtime=runtime,  # type: ignore[arg-type]
@@ -94,20 +125,20 @@ def test_runner_creates_hidden_origin_session_and_persists_terminal(tmp_path: Pa
 
     saved = store.get_occurrence(occurrence.id)
     assert saved.outcome is ScheduledOccurrenceOutcome.COMPLETED
+    assert saved.started_at is not None
     assert saved.session_id and saved.run_id
-    session = sessions.open(saved.session_id)
-    assert session.origin_kind == "scheduled_task"
-    assert session.origin_id == task.id
-    assert sessions.list() == []
-    assert sessions.latest() is None
-    assert SessionCatalog(session_store).list_all() == ()
-    assert sessions.list(include_scheduled=True)[0].session_id == saved.session_id
+    assert saved.session_id == "fixed-session"
+    assert request_service.calls[0]["boot"].thread_id == "fixed-session"
+    assert request_service.calls[0]["user_event_id"] == f"scheduled:{occurrence.id}"
+    assert request_service.calls[0]["source"]["task_id"] == task.id
+    assert sessions.list() == []  # The producer must never create a replacement session.
 
 
 def test_bound_skill_without_service_fails_before_runtime_submit(tmp_path: Path) -> None:
     store = ScheduledTaskStore(tmp_path / "scheduled.db")
     service = ScheduledTaskService(store, clock=lambda: NOW)
     task = service.create(
+        target_session_id="fixed-session",
         name="日报",
         instruction="总结今天",
         schedule=OnceSchedule(datetime(2026, 8, 24, 9), "UTC"),
@@ -120,7 +151,9 @@ def test_bound_skill_without_service_fails_before_runtime_submit(tmp_path: Path)
     tracker = ScheduledRunTracker(store, clock=lambda: NOW)
     tracker.start()
     claim = store.claim_pending(NOW)[0]
+    request_service = _RequestService()
     runner = ScheduledTaskRunOrchestrator(
+        request_service=request_service,  # type: ignore[arg-type]
         store=store,
         sessions=SessionManager(JsonlSessionStore(tmp_path / "sessions")),
         agent_runtime=runtime,  # type: ignore[arg-type]
@@ -154,6 +187,7 @@ def test_bound_skill_records_frozen_source_and_version(tmp_path: Path) -> None:
     store = ScheduledTaskStore(tmp_path / "scheduled.db")
     service = ScheduledTaskService(store, clock=lambda: NOW)
     task = service.create(
+        target_session_id="fixed-session",
         name="Skill 日报",
         instruction="执行 Skill",
         schedule=OnceSchedule(datetime(2026, 8, 24, 9), "UTC"),
@@ -164,7 +198,9 @@ def test_bound_skill_records_frozen_source_and_version(tmp_path: Path) -> None:
     occurrence = service.run_now(task.id)
     tracker = ScheduledRunTracker(store, clock=lambda: NOW, poll_seconds=0.01)
     tracker.start()
+    request_service = _RequestService()
     runner = ScheduledTaskRunOrchestrator(
+        request_service=request_service,  # type: ignore[arg-type]
         store=store,
         sessions=SessionManager(JsonlSessionStore(tmp_path / "sessions")),
         agent_runtime=_Runtime(),  # type: ignore[arg-type]
@@ -187,6 +223,7 @@ def test_tracker_stop_persists_final_terminal_snapshot(tmp_path: Path) -> None:
     tracker.start()
     service = ScheduledTaskService(store, clock=lambda: NOW)
     task = service.create(
+        target_session_id="fixed-session",
         name="立即完成",
         instruction="执行",
         schedule=OnceSchedule(datetime(2026, 8, 24, 9), "UTC"),

@@ -73,6 +73,7 @@ enum WorkspaceTarget {
     Chat,
     Settings,
     ImConnect,
+    ScheduledTasks,
     MemoryInspector,
 }
 
@@ -803,6 +804,11 @@ fn open_im_connect(app: tauri::AppHandle) -> Result<(), String> {
     navigate_workspace(&app, WorkspaceTarget::ImConnect, None)
 }
 
+#[tauri::command]
+fn open_scheduled_tasks(app: tauri::AppHandle) -> Result<(), String> {
+    navigate_workspace(&app, WorkspaceTarget::ScheduledTasks, None)
+}
+
 /// 029 · 打开独立语音通话小窗。
 #[tauri::command]
 fn open_voice_call(app: tauri::AppHandle) -> Result<(), String> {
@@ -1494,6 +1500,7 @@ pub fn run() {
         data_migration::coordinator::get_last_migration_result,
         data_migration::coordinator::clear_last_migration_result,
         open_im_connect,
+        open_scheduled_tasks,
         open_voice_call,
         open_voice_call_with_start,
         consume_pending_voice_start,
@@ -1596,6 +1603,7 @@ pub fn run() {
         webview_diagnostics::clear_webview_render_evidence,
         webview_diagnostics::record_pet_webview_visibility,
         open_im_connect,
+        open_scheduled_tasks,
         open_voice_call,
         open_voice_call_with_start,
         consume_pending_voice_start,

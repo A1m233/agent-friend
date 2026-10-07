@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-10-06T07:09:21.335Z",
+  "surface": "Tauri WebView2 via CDP; real UI and Bridge; deterministic LLM double",
+  "baseCommit": "4fe7151a4be4dc877c8fb87986dd2298d3818195",
+  "branch": "feature/154-session-scheduled-requests",
+  "dirty": true,
+  "cdp": "http://127.0.0.1:9222",
+  "page": "http://localhost:1420/chat.html",
+  "targetSession": "fd9e870c-366c-49a3-9e36-f6a623ad9951",
+  "sourceColors": {
+    "label": "rgb(107, 114, 128)",
+    "link": "rgb(0, 117, 149)"
+  },
+  "configurationSequence": [
+    "deepseek/deepseek-flash;per_request",
+    "deepseek/deepseek-v4-pro;session_auto",
+    "deepseek/deepseek-flash;per_request"
+  ],
+  "queue": {
+    "running": 1,
+    "waiting": 3,
+    "cancelled": 1,
+    "completedInOrder": true
+  },
+  "pagination": {
+    "fixtureUserTurns": 35,
+    "initialSourceLabelCount": 0,
+    "historyLinkReachedOlderSource": true
+  },
+  "restart": {
+    "before": [
+      {
+        "id": "1a28ec563f2f4e22a5da243dea2c1199",
+        "status": "running",
+        "inputAccepted": true
+      },
+      {
+        "id": "3a44ee5f-b9e2-4401-a34c-edeb9c9f4797",
+        "status": "queued",
+        "inputAccepted": false
+      }
+    ],
+    "after": [
+      {
+        "id": "1a28ec563f2f4e22a5da243dea2c1199",
+        "status": "terminal",
+        "outcome": "interrupted",
+        "reason": "runtime_restarted",
+        "inputAccepted": true
+      },
+      {
+        "id": "3a44ee5f-b9e2-4401-a34c-edeb9c9f4797",
+        "status": "terminal",
+        "outcome": "interrupted",
+        "reason": "runtime_restarted",
+        "inputAccepted": false
+      }
+    ],
+    "modelCallsBefore": 5,
+    "modelCallsAfter": 5,
+    "replayedQueuedMessage": false
+  },
+  "originalArtifactDirectory": "C:/Users/example-user/AppData/Local/Temp/agent-friend-154-desktop-qp7371_r/evidence",
+  "limitations": [
+    "No real LLM provider calls",
+    "History pagination used dev-only persisted fixture messages",
+    "Native OS file picker was not exercised; the real WebView file input and upload were exercised",
+    "Only Windows desktop was observed"
+  ],
+  "automaticTrigger": {
+    "planned": "2026-10-06T07:09:00Z",
+    "started": "2026-10-06T07:09:01.064399Z",
+    "trigger": "scheduled",
+    "outcome": "completed",
+    "target": "fd9e870c-366c-49a3-9e36-f6a623ad9951",
+    "taskStatus": "exhausted"
+  },
+  "runtime": {
+    "worktree": "C:/Users/example-user/.codex/worktrees/f5d5/agent-friend",
+    "mode": "tauri",
+    "shellPid": 50016,
+    "shellStartedLocal": "2026-10-06T15:06:23+08:00",
+    "bridgePid": 41864,
+    "bridgeStartedLocal": "2026-10-06T15:06:25+08:00",
+    "ports": [
+      1420,
+      1421,
+      9222,
+      18800,
+      18900
+    ],
+    "lastProductSourceChangeLocal": "2026-10-06T14:43:16+08:00",
+    "leaseReleased": true,
+    "portsFree": true,
+    "ownerEvidence": "stale: owner-process-exited"
+  },
+  "harnessNotes": [
+    "An initial unarchive automation attempt timed out before any PATCH because the action appears only on row hover; retry used the real hover interaction. That attempt is not restart evidence.",
+    "Final launcher uses the local model cost map; earlier metadata initialization attempted a public cost-map download, not a model API call."
+  ]
+}

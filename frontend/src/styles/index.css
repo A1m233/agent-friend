@@ -19,6 +19,7 @@
  */
 @theme inline {
   --color-bg: var(--bg);
+  --color-overlay: var(--overlay);
   --color-surface: var(--surface);
   --color-surface-hover: var(--surface-hover);
   --color-fg: var(--fg);

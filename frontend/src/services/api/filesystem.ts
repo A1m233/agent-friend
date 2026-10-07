@@ -28,11 +28,13 @@ export interface FilesystemApprovalRequest {
   version: number;
   status: "pending" | "approved" | "denied" | "expired" | "cancelled";
   approval_mode?: "per_request" | "session_auto";
+  approval_mode_source?: "session" | "request";
   approval_mode_version?: number;
   decision_source?:
     | "user_once"
     | "user_enable_session_auto"
     | "session_auto"
+  | "request_auto"
     | "catastrophic_policy"
     | null;
   risk?: {

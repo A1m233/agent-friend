@@ -42,6 +42,7 @@ from agent.paths import (
     command_workspaces_dir,
     log_dir,
     notifications_db_path,
+    session_requests_db_path,
     tool_execution_evidence_dir,
 )
 from agent.runtime import (
@@ -123,6 +124,7 @@ from .runtime_config import (
 )
 from .scheduled_tasks import ScheduledRunTracker, ScheduledTaskRunOrchestrator
 from .session_models import SessionModelService
+from .session_requests import SessionRequestService
 from .session_turns import SessionTurnCoordinator
 from .settings import BridgeSettings
 from .social_auth import SocialAuthOrchestrator
@@ -271,6 +273,7 @@ class BridgeRuntime:
     """070：Agent tool、REST 与调度共享的领域服务。"""
     presence_registry: PresenceRegistry | None = None
     """070：桌面/IM 活跃信号和最近路由诊断。"""
+    session_request_service: SessionRequestService | None = None
     scheduled_task_store: ScheduledTaskStore | None = None
     """099：全局 Scheduled Agent Task SQLite store。"""
     scheduled_task_service: ScheduledTaskService | None = None
@@ -569,6 +572,7 @@ def build_runtime(
         settings.todos_db or settings.sessions_dir.parent / "todos" / "todos.db",
         settings.scheduled_tasks_db
         or settings.sessions_dir.parent / "scheduled-tasks" / "scheduled-tasks.db",
+        settings.session_requests_db or session_requests_db_path(settings.sessions_dir.parent),
         log_dir(),
         default_settings_path(),
         tool_execution_evidence_dir(settings.sessions_dir.parent),
@@ -741,6 +745,7 @@ def build_runtime(
     agent_runtime.register_hook(HookKind.PRE_TURN, prepare_execution_environment)
     agent_runtime.register_hook(HookKind.POST_TURN, release_execution_environment)
     session_change_broker.set_publisher(agent_runtime.listeners.publish_session_change)
+    scheduled_task_service.add_wake_listener(agent_runtime.listeners.publish_scheduled_tasks_change)
     approval_broker.add_listener(agent_runtime.listeners.publish_approval_change)
     command_runtime.add_listener(agent_runtime.listeners.publish_command_process_change)
     command_runtime.add_sandbox_capability_listener(
@@ -777,13 +782,16 @@ def build_runtime(
     def make_schedule_runtime(
         reminder_delivery: ReminderDeliveryOrchestrator,
     ) -> tuple[ScheduledRunTracker, ScheduleCoordinator]:
-        tracker = ScheduledRunTracker(scheduled_task_store)
+        tracker = ScheduledRunTracker(
+            scheduled_task_store, terminal_lookup=request_service.terminal_receipt
+        )
         orchestrator = ScheduledTaskRunOrchestrator(
             store=scheduled_task_store,
             sessions=persistent_session_manager,
             agent_runtime=agent_runtime,
             tracker=tracker,
             skill_service=skill_service,
+            request_service=request_service,
         )
         coordinator = ScheduleCoordinator(
             (
@@ -836,6 +844,10 @@ def build_runtime(
         execution_environment_manager=execution_environment_manager,
         application_launch_evidence=tool_evidence_store,
     )
+
+    request_service = SessionRequestService(base_runtime)
+    scheduled_task_service.target_validator = request_service.validate_target
+    base_runtime = dataclasses.replace(base_runtime, session_request_service=request_service)
 
     # 022:IM 通道装配(SessionBridge 复用现有 persistent path,session_id 由 IMRouter 决定)
     im_runtime: IMRuntime | None = None

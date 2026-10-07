@@ -26,6 +26,7 @@ def test_task_lifecycle_pause_resume_and_soft_delete(tmp_path: Path) -> None:
     now = datetime(2026, 8, 1, tzinfo=UTC)
     store, service = _service(tmp_path, now)
     task = service.create(
+        target_session_id="session-1",
         name="日报",
         instruction="总结今天的工作",
         schedule=RecurringSchedule(
@@ -59,6 +60,7 @@ def test_run_latest_coalesces_missed_calendar_occurrences(tmp_path: Path) -> Non
     created_at = datetime(2026, 8, 1, tzinfo=UTC)
     store, service = _service(tmp_path, created_at)
     task = service.create(
+        target_session_id="session-1",
         name="日报",
         instruction="总结",
         schedule=RecurringSchedule(
@@ -85,6 +87,7 @@ def test_missed_once_beyond_seven_days_is_expired(tmp_path: Path) -> None:
     created_at = datetime(2026, 8, 1, tzinfo=UTC)
     store, service = _service(tmp_path, created_at)
     task = service.create(
+        target_session_id="session-1",
         name="一次",
         instruction="执行",
         schedule=OnceSchedule(datetime(2026, 8, 2, 9), "UTC"),
@@ -102,6 +105,7 @@ def test_small_dispatch_delay_is_not_reported_as_catch_up(tmp_path: Path) -> Non
     due_at = datetime(2026, 8, 2, 9, tzinfo=UTC)
     store, service = _service(tmp_path, datetime(2026, 8, 1, tzinfo=UTC))
     task = service.create(
+        target_session_id="session-1",
         name="一次",
         instruction="执行",
         schedule=OnceSchedule(datetime(2026, 8, 2, 9), "UTC"),
@@ -118,6 +122,7 @@ def test_updating_exhausted_task_with_future_schedule_reactivates_it(tmp_path: P
     now = datetime(2026, 8, 1, tzinfo=UTC)
     store, service = _service(tmp_path, now)
     task = service.create(
+        target_session_id="session-1",
         name="一次",
         instruction="执行",
         schedule=OnceSchedule(datetime(2026, 8, 1, 1), "UTC"),
@@ -144,6 +149,7 @@ def test_occurrence_is_idempotent_non_overlapping_and_freezes_task_snapshot(
     now = datetime(2026, 8, 1, tzinfo=UTC)
     store, service = _service(tmp_path, now)
     task = service.create(
+        target_session_id="session-1",
         name="日报",
         instruction="旧指令",
         schedule=OnceSchedule(datetime(2026, 8, 2, 9), "UTC"),
@@ -175,6 +181,7 @@ def test_delete_rejects_stale_revision_even_after_soft_delete(tmp_path: Path) ->
     now = datetime(2026, 8, 1, tzinfo=UTC)
     _store, service = _service(tmp_path, now)
     task = service.create(
+        target_session_id="session-1",
         name="一次",
         instruction="执行",
         schedule=OnceSchedule(datetime(2026, 8, 2, 9), "UTC"),
@@ -193,6 +200,7 @@ def test_update_rejects_empty_patch(tmp_path: Path) -> None:
     now = datetime(2026, 8, 1, tzinfo=UTC)
     _store, service = _service(tmp_path, now)
     task = service.create(
+        target_session_id="session-1",
         name="一次",
         instruction="执行",
         schedule=OnceSchedule(datetime(2026, 8, 2, 9), "UTC"),
@@ -209,6 +217,7 @@ def test_claim_is_recoverable_before_submit_but_not_after(tmp_path: Path) -> Non
     now = datetime(2026, 8, 1, tzinfo=UTC)
     store, service = _service(tmp_path, now)
     task = service.create(
+        target_session_id="session-1",
         name="立即运行",
         instruction="执行",
         schedule=OnceSchedule(datetime(2026, 8, 2, 9), "UTC"),

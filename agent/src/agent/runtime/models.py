@@ -114,6 +114,8 @@ class RunRequest:
     run_id: str = field(default_factory=lambda: uuid4().hex)
     runtime_instance_id: str = ""
     priority: RunPriority = RunPriority.INTERACTIVE
+    supersede_lower_priority: bool = True
+    replaceable: bool = True
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime | None = None
     dedupe_key: str | None = None

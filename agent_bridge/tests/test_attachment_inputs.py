@@ -12,6 +12,12 @@ from agent import AttachmentRef, AttachmentStore
 class _VerifyingStore:
     max_attachment_bytes = 100 * 1024 * 1024
 
+    def __init__(self, ref: AttachmentRef) -> None:
+        self.ref = ref
+
+    def metadata(self, _asset_id: str) -> AttachmentRef:
+        return self.ref
+
     def verify(self, _asset_id: str) -> None:
         return None
 
@@ -28,7 +34,8 @@ def _image(size_bytes: int) -> AttachmentRef:
 
 
 def test_deepseek_vision_admission_enforces_application_single_file_limit() -> None:
-    store = cast(AttachmentStore, _VerifyingStore())
+    backing = _VerifyingStore(_image(100 * 1024 * 1024))
+    store = cast(AttachmentStore, backing)
 
     accepted = prepare_attachment_input(
         [ExistingAttachmentInput(_image(100 * 1024 * 1024))],
@@ -38,6 +45,7 @@ def test_deepseek_vision_admission_enforces_application_single_file_limit() -> N
     )
     assert accepted.validated_refs[0].size_bytes == 100 * 1024 * 1024
 
+    backing.ref = _image(100 * 1024 * 1024 + 1)
     with pytest.raises(HTTPException) as caught:
         prepare_attachment_input(
             [ExistingAttachmentInput(_image(100 * 1024 * 1024 + 1))],
@@ -54,8 +62,9 @@ def test_deepseek_vision_admission_enforces_application_single_file_limit() -> N
 def test_pdf_admission_uses_session_files_without_enabling_native_images() -> None:
     from dataclasses import replace
 
-    store = cast(AttachmentStore, _VerifyingStore())
     pdf = replace(_image(80 * 1024 * 1024), kind="document", media_type="application/pdf")
+    backing = _VerifyingStore(pdf)
+    store = cast(AttachmentStore, backing)
     plan = prepare_attachment_input(
         [ExistingAttachmentInput(pdf)],
         model_id="deepseek/deepseek-v4-pro",
@@ -70,6 +79,7 @@ def test_pdf_admission_uses_session_files_without_enabling_native_images() -> No
     assert isinstance(unavailable.value.detail, dict)
     assert unavailable.value.detail["error"] == "attachment_file_processing_unavailable"
     image = _image(1)
+    backing.ref = image
     plan = prepare_attachment_input(
         [ExistingAttachmentInput(image)],
         model_id="deepseek/deepseek-v4-pro",
@@ -77,3 +87,16 @@ def test_pdf_admission_uses_session_files_without_enabling_native_images() -> No
         session_files_available=True,
     )
     assert plan.resolve() == [image]
+
+
+def test_existing_metadata_cannot_understate_asset_size() -> None:
+    store = cast(AttachmentStore, _VerifyingStore(_image(101 * 1024 * 1024)))
+    with pytest.raises(HTTPException) as caught:
+        prepare_attachment_input(
+            [ExistingAttachmentInput(_image(1))],
+            model_id="deepseek/deepseek-flash",
+            store=store,
+            session_files_available=True,
+        )
+    assert isinstance(caught.value.detail, dict)
+    assert caught.value.detail["error"] == "attachment_size_limit_exceeded"

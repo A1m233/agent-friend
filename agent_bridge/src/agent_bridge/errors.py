@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent.runtime import SessionBusyError
+from agent.session_requests.errors import SessionRequestError
 
 from agent import (
     AttachmentError,
@@ -104,6 +105,8 @@ def map_exception(exc: BaseException) -> ProtocolError:
 
     映射规则见 design §4.6.1。增改异常类型时同步更新映射表与 design 文档。
     """
+    if isinstance(exc, SessionRequestError):
+        return ProtocolError(http_status=409, code=exc.kind, message=exc.message, recoverable=False)
     if isinstance(exc, AttachmentError):
         return ProtocolError(
             http_status=400,

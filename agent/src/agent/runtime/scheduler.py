@@ -130,7 +130,8 @@ class RunScheduler:
             # interactive 先清理同 session 的低优先级排队再做容量判断；否则
             # mailbox 被主动事件占满时，真正的用户输入会被错误拒绝。
             if request.priority is RunPriority.INTERACTIVE:
-                self._supersede_lower_priority_locked(request.session_id)
+                if request.supersede_lower_priority:
+                    self._supersede_lower_priority_locked(request.session_id)
                 self._mailbox_head_locked(request.session_id)
                 if (
                     request.interactive_busy_policy
@@ -206,25 +207,39 @@ class RunScheduler:
             return RunCancelResult.ACCEPTED, handle.snapshot()
 
     @contextmanager
-    def try_reserve_session_mutation(self, session_id: str) -> Iterator[None]:
+    def try_reserve_session_mutation(
+        self, session_id: str, *, cancel_queued: bool = False
+    ) -> Iterator[None]:
         """Reserve an idle session for a short non-run mutation.
 
-        Existing active or queued work wins. Runs submitted after the reservation
-        are admitted to the mailbox but cannot start until the mutation releases.
+        Active work always wins. With cancel_queued, waiters (including newly
+        admitted runs) are cancelled only after the mutation succeeds. Failed
+        mutations leave the mailbox intact. No run starts during the reservation.
         """
 
         with self._condition:
             if (
                 session_id in self._active
-                or self._mailbox_head_locked(session_id) is not None
+                or (not cancel_queued and self._mailbox_head_locked(session_id) is not None)
                 or session_id in self._mutating_sessions
             ):
                 raise SessionBusyError(f"session {session_id!r} is busy")
             self._mutating_sessions.add(session_id)
+        succeeded = False
         try:
             yield
+            succeeded = True
         finally:
             with self._condition:
+                if cancel_queued and succeeded:
+                    for _, _, run_id in tuple(self._mailboxes.get(session_id, [])):
+                        handle = self._handles.get(run_id)
+                        if handle is not None and handle.status is RunStatus.QUEUED:
+                            handle.cancel(CancelReason.EXPLICIT_REQUEST)
+                            if handle.finish_once(
+                                RunOutcome.CANCELLED, reason_code="session_mutation"
+                            ):
+                                self._queued_count -= 1
                 self._mutating_sessions.discard(session_id)
                 self._refresh_ready_locked(session_id)
                 self._condition.notify_all()
@@ -334,7 +349,7 @@ class RunScheduler:
         active_id = self._active.get(session_id)
         if active_id is not None:
             active_request = self._requests[active_id]
-            if active_request.priority > RunPriority.INTERACTIVE:
+            if active_request.priority > RunPriority.INTERACTIVE and active_request.replaceable:
                 self._handles[active_id].cancel(CancelReason.SUPERSEDED_BY_USER)
         for _, _, run_id in self._mailboxes.get(session_id, []):
             request = self._requests.get(run_id)
@@ -343,6 +358,7 @@ class RunScheduler:
                 request is not None
                 and handle is not None
                 and request.priority > RunPriority.INTERACTIVE
+                and request.replaceable
                 and handle.status is RunStatus.QUEUED
             ):
                 handle.cancel(CancelReason.SUPERSEDED_BY_USER)
