@@ -21,6 +21,7 @@ description: 查询和解答 agent-friend 的产品功能、使用方法、设�
 | --- | --- |
 | 产品是什么、能做什么、能力边界 | `references/product-overview.md` |
 | 对话、会话、搜索、附件、人格、待办、定时任务、桌宠、Skill 等怎么用 | `references/using-agent-friend.md` |
+| 添加或安装明日方舟 / Ark-Models Spine 桌宠模型 | `references/arknights-avatar-models.md` |
 | 设置页在哪里、设置何时生效 | `references/settings-reference.md` |
 | DeepSeek / Kimi / OpenRouter 模型与 API Key | `references/model-credentials.md` |
 | 联网搜索、Tavily Key | `references/web-search-credentials.md` |
