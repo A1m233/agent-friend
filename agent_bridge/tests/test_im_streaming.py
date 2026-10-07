@@ -257,7 +257,7 @@ async def test_qq_stream_first_failure_allows_static_fallback(
 
 
 @pytest.mark.asyncio
-async def test_qq_stream_mid_failure_retries_latest_text_as_done() -> None:
+async def test_qq_stream_mid_failure_stops_old_stream_and_retains_receipt() -> None:
     api = AsyncMock()
     api.request = AsyncMock(
         side_effect=[
@@ -279,10 +279,55 @@ async def test_qq_stream_mid_failure_retries_latest_text_as_done() -> None:
 
     assert session.has_started is True
     assert session.is_failed is True
-    assert session.is_completed is True
+    assert session.is_completed is False
     failed_payload = api.request.await_args_list[1].args[2]
-    final_payload = api.request.await_args_list[2].args[2]
     assert failed_payload["index"] == 1
-    assert final_payload["index"] == 1
-    assert final_payload["input_state"] == 10
-    assert final_payload["content_raw"] == "first second final"
+    assert api.request.await_count == 2
+    assert session.delivery_state().accepted_text == "first"
+    assert session.delivery_state().failure is not None
+
+
+@pytest.mark.asyncio
+async def test_cancel_discards_queued_and_coalesced_text_without_spin() -> None:
+    stopped = False
+    session = StubStreamSession()
+    relay = StreamRelay(
+        session, stream_trace="cancel", throttle_seconds=0.01, should_stop=lambda: stopped
+    )
+    await relay.feed("accepted")
+    await relay.feed(" buffered")
+    stopped = True
+    queue: asyncio.Queue[object] = asyncio.Queue()
+    marker = object()
+    queue.put_nowait(" queued")
+    queue.put_nowait(marker)
+    await asyncio.wait_for(relay.feed_from_queue(queue, marker), timeout=1)
+    await relay.flush()
+    assert session.updates == ["accepted"]
+
+
+@pytest.mark.asyncio
+async def test_independent_progress_once_does_not_start_body_stream() -> None:
+    session = StubStreamSession()
+    send_progress = AsyncMock()
+    relay = StreamRelay(session, stream_trace="progress", progress_sender=send_progress)
+    for phase in ("started", "completed", "started", "discarded"):
+        await relay.show_progress(StreamProgressUpdate(phase=phase))
+    send_progress.assert_awaited_once()
+    assert session.has_started is False
+    await relay.feed("body")
+    assert session.updates == ["body"]
+
+
+@pytest.mark.asyncio
+async def test_qq_invalid_receipt_cannot_advance_confirmed_text() -> None:
+    api = AsyncMock()
+    api.request.side_effect = [{"id": "first"}, {"id": "different"}]
+    session = QQC2CStreamSession(api=api, bind_id="bot", context=stream_context(), msg_seq=1)
+    await session.update("confirmed")
+    await session.update("confirmed uncertain")
+    state = session.delivery_state()
+    assert state.accepted_text == "confirmed"
+    assert state.failure is not None and state.failure.outcome == "unknown"
+    await session.finish("confirmed uncertain end")
+    assert api.request.await_count == 2

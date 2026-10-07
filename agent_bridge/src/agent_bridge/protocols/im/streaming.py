@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
@@ -92,6 +93,8 @@ class StreamRelay:
         *,
         stream_trace: str,
         throttle_seconds: float = 0.5,
+        progress_sender: Callable[[], Awaitable[None]] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> None:
         self._session = session
         self._stream_trace = stream_trace
@@ -101,6 +104,9 @@ class StreamRelay:
         self._last_sent_text = ""
         self._transient_progress_active = False
         self._last_progress_phase: str | None = None
+        self._progress_sender = progress_sender
+        self._progress_attempted = False
+        self._should_stop = should_stop or (lambda: False)
 
     @property
     def full_text(self) -> str:
@@ -111,7 +117,7 @@ class StreamRelay:
         return self._session
 
     async def feed(self, delta: str) -> None:
-        if not delta:
+        if not delta or self._should_stop():
             return
         self._parts.append(delta)
         if self._session.is_failed:
@@ -140,6 +146,13 @@ class StreamRelay:
     async def show_progress(self, update: StreamProgressUpdate) -> None:
         """Replace the visible placeholder without appending it to ``full_text``."""
 
+        if self._should_stop():
+            return
+        if self._progress_sender is not None:
+            if update.phase == "started" and not self._progress_attempted:
+                self._progress_attempted = True
+                await self._progress_sender()
+            return
         if self.full_text or self._session.is_failed:
             return
         if self._transient_progress_active and self._last_progress_phase == update.phase:
@@ -159,7 +172,12 @@ class StreamRelay:
         """Send a coalesced trailing snapshot before the terminal update."""
 
         snapshot = self.full_text
-        if not snapshot or snapshot == self._last_sent_text or self._session.is_failed:
+        if (
+            self._should_stop()
+            or not snapshot
+            or snapshot == self._last_sent_text
+            or self._session.is_failed
+        ):
             return
         self._last_attempt_at = time.monotonic()
         await self._session.update(snapshot)
@@ -169,7 +187,7 @@ class StreamRelay:
             self._last_progress_phase = None
 
     def _trailing_flush_delay(self) -> float | None:
-        if self._session.is_failed or not self.full_text:
+        if self._should_stop() or self._session.is_failed or not self.full_text:
             return None
         if self.full_text == self._last_sent_text:
             return None

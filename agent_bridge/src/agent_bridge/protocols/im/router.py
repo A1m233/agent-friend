@@ -36,7 +36,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from uuid import uuid4
 
 from agent.attachments import AttachmentError, AttachmentRef
@@ -60,6 +62,8 @@ from ...errors import map_exception
 from ...session_bridge import PersistentBootstrap, SessionBridge
 from .content import OutboundContent, OutboundTextFormat
 from .control import menu_controls
+from .delivery.models import TrackedStream
+from .delivery.recovery import recover_reply, send_observed
 from .event import InboundEvent
 from .media import InboundMedia, render_model_media_context, render_user_media_notice
 from .provider import IMOutboundProvider, OutboundSendResult
@@ -94,6 +98,10 @@ _STREAM_INTERRUPTED_SUFFIX = "\n\n（回复生成中断，请稍后重试。）"
 _STREAM_MENU_TEXT = "操作"
 _STREAM_MENU_DELAY_SECONDS = 0.8
 _IM_SURFACES: dict[str, InteractionSurfaceId] = {"qq": IM_QQ_SURFACE}
+
+
+class _IMRunCancelled(Exception):
+    """Keep runtime cancellation separate from model or transport failure."""
 
 
 def _surface_for_im(im_type: str) -> InteractionSurfaceId:
@@ -267,19 +275,46 @@ class IMRouter:
         relay_task: asyncio.Task[None] | None = None
         on_text_delta: Callable[[str], None] | None = None
         on_compaction_progress: Callable[[StreamProgressUpdate], None] | None = None
+        stop_delivery = threading.Event()
+        tracked = im_type == "qq" and isinstance(stream_session, TrackedStream)
+
+        async def send_progress() -> None:
+            receipt = await send_observed(
+                send_fn,
+                OutboundContent(
+                    chat_id=event.chat_id,
+                    chat_scope=event.chat_scope,
+                    reply_to_message_id=event.message_id,
+                    text="正在整理较长对话，稍后继续回复。",
+                ),
+            )
+            logger.info(
+                "IM progress delivery stream_trace=%s outcome=%s error_kind=%s",
+                stream_trace,
+                receipt.outcome,
+                receipt.error_kind,
+            )
+
         if stream_session is not None:
             delta_queue = asyncio.Queue()
-            relay = StreamRelay(stream_session, stream_trace=stream_trace)
+            relay = StreamRelay(
+                stream_session,
+                stream_trace=stream_trace,
+                progress_sender=send_progress if im_type == "qq" else None,
+                should_stop=stop_delivery.is_set,
+            )
             relay_task = asyncio.create_task(relay.feed_from_queue(delta_queue, _STREAM_END))
             loop = asyncio.get_running_loop()
 
             def publish_delta(delta: str) -> None:
-                loop.call_soon_threadsafe(delta_queue.put_nowait, delta)
+                if not stop_delivery.is_set():
+                    loop.call_soon_threadsafe(delta_queue.put_nowait, delta)
 
             on_text_delta = publish_delta
 
             def publish_progress(update: StreamProgressUpdate) -> None:
-                loop.call_soon_threadsafe(delta_queue.put_nowait, update)
+                if not stop_delivery.is_set():
+                    loop.call_soon_threadsafe(delta_queue.put_nowait, update)
 
             on_compaction_progress = publish_progress
             if reply_prefix:
@@ -302,20 +337,36 @@ class IMRouter:
                 event=event,
                 session_id=session_id,
             )
-            agent_text = await asyncio.to_thread(
-                self._run_turn_sync,
-                boot,
-                attachments,
-                references,
-                on_text_delta,
-                on_compaction_progress,
-                run_id,
-                model_media_context,
-                surface,
-                latency_started_ms,
-                origin_destination_id,
-                user_event_id,
-            )
+
+            def run_turn() -> str:
+                try:
+                    return self._run_turn_sync(
+                        boot,
+                        attachments,
+                        references,
+                        on_text_delta,
+                        on_compaction_progress,
+                        run_id,
+                        model_media_context,
+                        surface,
+                        latency_started_ms,
+                        origin_destination_id,
+                        user_event_id,
+                    )
+                except BaseException:
+                    if tracked:
+                        stop_delivery.set()
+                    raise
+
+            agent_text = await asyncio.to_thread(run_turn)
+        except asyncio.CancelledError:
+            stop_delivery.set()
+            if relay_task is not None:
+                relay_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await relay_task
+            logger.info("IM delivery cancelled stream_trace=%s", stream_trace)
+            raise
         except Exception as exc:
             fallback_text = map_exception(exc).message
             log_run_latency(
@@ -325,6 +376,39 @@ class IMRouter:
                 error_type=type(exc).__name__,
             )
             partial_text = await _finish_relay(delta_queue, relay_task, relay)
+            if tracked and isinstance(stream_session, TrackedStream):
+                cancelled = isinstance(exc, _IMRunCancelled)
+                status_text = "本轮已取消。" if cancelled else fallback_text
+                state = stream_session.delivery_state()
+                if stream_session.has_started and not stream_session.is_failed:
+                    await stream_session.abort(
+                        state.accepted_text + "\n\n" + status_text,
+                        "cancelled" if cancelled else "generation_failed",
+                    )
+                state = stream_session.delivery_state()
+                status_outcome = "delivered" if state.terminal_accepted else "not_sent"
+                if not state.terminal_accepted and (
+                    state.failure is None or state.failure.recoverable
+                ):
+                    receipt = await send_observed(
+                        send_fn,
+                        OutboundContent(
+                            chat_id=event.chat_id,
+                            chat_scope=event.chat_scope,
+                            reply_to_message_id=event.message_id,
+                            text=status_text,
+                        ),
+                    )
+                    status_outcome = receipt.outcome
+                logger.info(
+                    "IM delivery interrupted stream_trace=%s generation=%s "
+                    "accepted_chars=%d status_outcome=%s",
+                    stream_trace,
+                    "cancelled" if cancelled else "failed",
+                    len(state.accepted_text),
+                    status_outcome,
+                )
+                return
             logger.exception(
                 "IM turn 跑挂 (im_type=%s, session=%s, message_id=%s, content_len=%d, "
                 "stream_trace=%s, stream_started=%s)",
@@ -400,6 +484,85 @@ class IMRouter:
             _text_len(text),
             text_format,
         )
+
+        if tracked and isinstance(stream_session, TrackedStream):
+            if stream_session.has_started and not stream_session.is_failed:
+                await stream_session.finish(text)
+            state = stream_session.delivery_state()
+            result = await recover_reply(
+                state,
+                OutboundContent(
+                    chat_id=event.chat_id,
+                    chat_scope=event.chat_scope,
+                    reply_to_message_id=event.message_id,
+                    text=text,
+                    text_format=text_format,
+                ),
+                send_fn,
+            )
+            if assistant_event is not None:
+                for message_id in result.message_ids:
+                    self._register_outbound_alias(
+                        provider_or_send,
+                        im_type=im_type,
+                        event=event,
+                        session_id=session_id,
+                        event_uuid=assistant_event.uuid,
+                        event_uuids=assistant_sources,
+                        provider_message_id=message_id,
+                    )
+            logger.info(
+                "IM reply delivery stream_trace=%s run_id=%s outcome=%s "
+                "accepted_chars=%d total_chars=%d terminal_accepted=%s "
+                "recovery_attempted=%s duplicate_risk=%s error_kind=%s",
+                stream_trace,
+                run_id or "",
+                result.outcome,
+                result.accepted_chars,
+                len(text),
+                result.terminal_accepted,
+                result.recovery_attempted,
+                result.duplicate_risk,
+                result.error_kind,
+            )
+            log_run_latency(
+                logger,
+                run_latency,
+                "im_turn_done",
+                outcome=result.outcome,
+                delivery="recovered" if result.recovery_attempted else "native_stream",
+                response_chars=len(text),
+            )
+            if (
+                result.outcome != "delivered"
+                and (state.failure is None or state.failure.recoverable)
+                and result.error_kind not in {"http_rejected", "platform_rejected"}
+            ):
+                receipt = await send_observed(
+                    send_fn,
+                    OutboundContent(
+                        chat_id=event.chat_id,
+                        chat_scope=event.chat_scope,
+                        reply_to_message_id=event.message_id,
+                        text="这轮回复未能确认完整发送，请在桌面端原会话查看。",
+                    ),
+                )
+                logger.info(
+                    "IM delivery notice stream_trace=%s outcome=%s", stream_trace, receipt.outcome
+                )
+            elif result.outcome == "delivered" and include_menu and not result.recovery_attempted:
+                await asyncio.sleep(_STREAM_MENU_DELAY_SECONDS)
+                await send_observed(
+                    send_fn,
+                    OutboundContent(
+                        chat_id=event.chat_id,
+                        chat_scope=event.chat_scope,
+                        reply_to_message_id=event.message_id,
+                        text=_STREAM_MENU_TEXT,
+                        controls=menu_controls(),
+                    ),
+                )
+            return
 
         if stream_session is not None and stream_session.has_started:
             await stream_session.finish(text)
@@ -486,7 +649,7 @@ class IMRouter:
             logger,
             run_latency,
             "im_turn_done",
-            outcome="completed",
+            outcome=send_result.outcome if send_result is not None else "unknown",
             delivery="static",
             response_chars=_text_len(text),
         )
@@ -603,6 +766,8 @@ class IMRouter:
                 consume_event(ev)
             terminal = handle.terminal
             if terminal is None or terminal.outcome is not RunOutcome.COMPLETED:
+                if terminal is not None and terminal.outcome is RunOutcome.CANCELLED:
+                    raise _IMRunCancelled()
                 if terminal is not None and terminal.error is not None:
                     raise terminal.error
                 raise RuntimeError(
@@ -647,19 +812,22 @@ class IMRouter:
         bind_id = str(getattr(provider_or_send, "bind_id", "") or "")
         if aliases is None or not bind_id:
             return
-        persisted = self._bridge.persistent_event(session_id, user_event_id)
-        if persisted is None or persisted.type != "user_message":
-            return
-        aliases.put(
-            im_type=im_type,
-            provider_bind_id=bind_id,
-            chat_scope=event.chat_scope,
-            chat_id=event.chat_id,
-            message_aliases=qq_current_message_aliases(event),
-            session_id=session_id,
-            event_uuid=user_event_id,
-            source_role="user",
-        )
+        try:
+            persisted = self._bridge.persistent_event(session_id, user_event_id)
+            if persisted is None or persisted.type != "user_message":
+                return
+            aliases.put(
+                im_type=im_type,
+                provider_bind_id=bind_id,
+                chat_scope=event.chat_scope,
+                chat_id=event.chat_id,
+                message_aliases=qq_current_message_aliases(event),
+                session_id=session_id,
+                event_uuid=user_event_id,
+                source_role="user",
+            )
+        except Exception:
+            logger.warning("IM inbound alias registration failed")
 
     def _register_outbound_alias(
         self,
@@ -676,17 +844,20 @@ class IMRouter:
         bind_id = str(getattr(provider_or_send, "bind_id", "") or "")
         if aliases is None or not bind_id or not provider_message_id:
             return
-        aliases.put(
-            im_type=im_type,
-            provider_bind_id=bind_id,
-            chat_scope=event.chat_scope,
-            chat_id=event.chat_id,
-            message_aliases=[provider_message_id],
-            session_id=session_id,
-            event_uuid=event_uuid,
-            source_role="assistant",
-            event_uuids=event_uuids,
-        )
+        try:
+            aliases.put(
+                im_type=im_type,
+                provider_bind_id=bind_id,
+                chat_scope=event.chat_scope,
+                chat_id=event.chat_id,
+                message_aliases=[provider_message_id],
+                session_id=session_id,
+                event_uuid=event_uuid,
+                source_role="assistant",
+                event_uuids=event_uuids,
+            )
+        except Exception:
+            logger.warning("IM outbound alias registration failed")
 
     @staticmethod
     def _open_stream(
