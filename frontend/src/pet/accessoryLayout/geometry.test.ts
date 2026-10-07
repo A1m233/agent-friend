@@ -445,10 +445,10 @@ describe("native accessory coordinates", () => {
   });
 
   it("preserves current action counts and carousel dimensions while hidden", () => {
-    expect(actionBarButtonCount(false, false)).toBe(6);
-    expect(actionBarButtonCount(true, true)).toBe(13);
-    expect(actionBarButtonCount(true, false)).toBe(12);
-    expect(actionBarButtonCount(false, true)).toBe(7);
+    expect(actionBarButtonCount(false, false)).toBe(7);
+    expect(actionBarButtonCount(true, true)).toBe(14);
+    expect(actionBarButtonCount(true, false)).toBe(13);
+    expect(actionBarButtonCount(false, true)).toBe(8);
     expect(actionBarMetrics(6, 4)).toEqual({ horizontal: { w: 228, h: 44 }, vertical: { w: 48, h: 224 } });
     expect(actionBarMetrics(12, 4)).toEqual({ horizontal: { w: 300, h: 44 }, vertical: { w: 48, h: 296 } });
     expect(actionBarMinimumMetrics(1, 4)).toEqual({ horizontal: { w: 48, h: 44 }, vertical: { w: 48, h: 44 } });

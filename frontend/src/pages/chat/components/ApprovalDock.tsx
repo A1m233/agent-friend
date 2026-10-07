@@ -59,7 +59,7 @@ function PendingApprovalPanel({
               >
                 {current.submitting ? "处理中…" : "仅本次允许"}
               </Button>
-              <Button
+              {current.modeSource !== "request" && <Button
                 size="xs"
                 variant="destructive"
                 disabled={actionDisabled}
@@ -67,11 +67,12 @@ function PendingApprovalPanel({
                 onClick={enableSessionAuto}
               >
                 本会话无需授权
-              </Button>
+              </Button>}
             </>
           )}
         </div>
       </div>
+      {current.modeSource === "request" && <p className="text-xs text-muted">本次请求使用独立的逐次审批设置</p>}
       <p className="text-sm font-medium text-fg">{current.reason}</p>
       {current.command ? (
         <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface/60 p-2 text-xs text-fg">

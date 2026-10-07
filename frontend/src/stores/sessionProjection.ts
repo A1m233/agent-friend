@@ -234,6 +234,13 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       const message = textMessage(ev.uuid, "user", asString(p.content), ev.ts);
       message.attachments = attachmentsOf(p.attachments);
       message.references = referencesOf(p.references);
+      if (p.request_source && typeof p.request_source === "object") {
+        const source = p.request_source as Record<string, unknown>;
+        if (source.kind === "scheduled_task" && typeof source.task_id === "string" && typeof source.task_name === "string"
+          && typeof source.occurrence_id === "string") {
+          message.requestSource = { taskId: source.task_id, taskName: source.task_name, occurrenceId: source.occurrence_id };
+        }
+      }
       messages.push(message);
       currentAssistant = null;
       pendingSkipAssistant = false;

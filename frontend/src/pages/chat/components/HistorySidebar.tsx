@@ -489,6 +489,16 @@ export function HistorySidebar({
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
+              isActive={workspaceTarget === "scheduled-tasks"}
+              className={NAVIGATION_BUTTON_CLASS}
+              onClick={() => navigateWorkspace("scheduled-tasks")}
+            >
+              <Clock3 />
+              <span>定时任务</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
               isActive={workspaceTarget === "im-connect"}
               className={NAVIGATION_BUTTON_CLASS}
               onClick={() => navigateWorkspace("im-connect")}

@@ -309,6 +309,11 @@ class AttachmentStore:
         except FileNotFoundError as exc:
             raise AttachmentError("attachment_asset_missing", "附件原件不存在。") from exc
 
+    @property
+    def reference_guard(self) -> threading.RLock:
+        """Serialize durable reference handoff with canonical asset collection."""
+        return self._lock
+
     def verify(self, asset_id: str) -> Path:
         ref = self.metadata(asset_id)
         blob = self._blob_path(asset_id)

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any, Protocol, cast
 
 from .models import (
@@ -59,6 +60,7 @@ class ApprovalBroker:
     ) -> None:
         self._lock = threading.Lock()
         self._pending: dict[str, Any] = {}
+        self._run_modes: dict[tuple[str, str], SessionApprovalModeState] = {}
         self._listeners: list[Callable[[dict[str, object]], None]] = []
         self._session_locks: dict[str, threading.RLock] = {}
         self._mode_store = mode_store
@@ -70,7 +72,12 @@ class ApprovalBroker:
         with self._lock:
             self._listeners.append(listener)
 
-    def mode_state(self, session_id: str) -> SessionApprovalModeState:
+    def mode_state(self, session_id: str, run_id: str | None = None) -> SessionApprovalModeState:
+        if run_id is not None:
+            with self._lock:
+                override = self._run_modes.get((session_id, run_id))
+            if override is not None:
+                return override
         store = self._mode_store
         if store is None:
             return SessionApprovalModeState()
@@ -79,6 +86,25 @@ class ApprovalBroker:
             getattr(metadata, "approval_mode", "per_request"),
             getattr(metadata, "approval_mode_version", 0),
         )
+
+    @contextmanager
+    def run_mode(
+        self, session_id: str, run_id: str, mode: SessionApprovalMode | None
+    ) -> Iterator[None]:
+        """Bind a trusted request override without writing session settings."""
+        if mode is None:
+            yield
+            return
+        with self._lock:
+            key = (session_id, run_id)
+            if key in self._run_modes:
+                raise ValueError("duplicate run approval binding")
+            self._run_modes[key] = SessionApprovalModeState(mode, 1)
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._run_modes.pop(key, None)
 
     def reassess(self, request: Any) -> Any | None:
         """Re-run the deterministic policy immediately before a side effect."""
@@ -125,9 +151,12 @@ class ApprovalBroker:
         lock = self._session_lock(request.session_id)
         immediate = False
         with lock:
-            mode_state = self.mode_state(request.session_id)
+            mode_state = self.mode_state(request.session_id, request.run_id)
             request.approval_mode = mode_state.mode
             request.approval_mode_version = mode_state.version
+            request.approval_mode_source = (
+                "request" if (request.session_id, request.run_id) in self._run_modes else "session"
+            )
             request.risk_assessment = assessment
             if mode_state.mode == "session_auto":
                 immediate = True
@@ -137,7 +166,11 @@ class ApprovalBroker:
                     request.status = "denied"
                 else:
                     decision = request.fully_approved_decision()
-                    request.decision_source = "session_auto"
+                    request.decision_source = (
+                        "request_auto"
+                        if request.approval_mode_source == "request"
+                        else "session_auto"
+                    )
                     request.status = "approved"
                 request._decision = decision
                 request.version += 1
@@ -253,6 +286,8 @@ class ApprovalBroker:
                 ):
                     raise ApprovalRequestStaleError("approval request is no longer pending")
             assert request is not None
+            if (session_id, run_id) in self._run_modes:
+                raise ApprovalRequestStaleError("本次请求使用独立权限配置，请选择仅本次允许。")
             pending_request = cast(Any, request)
             if precondition is not None:
                 precondition(pending_request)
@@ -364,6 +399,7 @@ class ApprovalBroker:
             request
             for request in self._pending.values()
             if request.session_id == session_id
+            and (session_id, request.run_id) not in getattr(self, "_run_modes", {})
             and request.request_id != exclude_request_id
             and not request._event.is_set()
         )

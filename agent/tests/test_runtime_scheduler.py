@@ -459,3 +459,77 @@ def test_terminal_runs_release_scheduler_tracking_indexes() -> None:
     assert scheduler._requests == {}
     assert scheduler._dedupe == {}
     assert scheduler._mailboxes == {}
+
+
+def test_explicit_requests_are_fifo_and_not_superseded() -> None:
+    from dataclasses import replace
+
+    started = threading.Event()
+    release = threading.Event()
+    order = []
+
+    def execute(request: RunRequest, handle: RunHandle) -> None:
+        order.append(request.run_id)
+        if len(order) == 1:
+            started.set()
+            assert release.wait(3)
+            handle.token.raise_if_cancelled()
+
+    scheduler = RunScheduler(execute, max_workers=1)
+    scheduler.start()
+    first = scheduler.submit(replace(_user("s", "scheduled"), replaceable=False))
+    assert started.wait(2)
+    second = scheduler.submit(replace(_user("s", "manual"), replaceable=False))
+    third = scheduler.submit(
+        replace(_user("s", "scheduled again"), replaceable=False, supersede_lower_priority=False)
+    )
+    try:
+        assert not first.token.is_cancelled
+        release.set()
+        for handle in (first, second, third):
+            terminal = handle.wait(3)
+            assert terminal is not None and terminal.outcome is RunOutcome.COMPLETED
+        assert order == [first.run_id, second.run_id, third.run_id]
+    finally:
+        release.set()
+        scheduler.stop()
+
+
+def test_session_mutation_cancels_waiters_but_refuses_active_run() -> None:
+    release = threading.Event()
+    started = threading.Event()
+
+    def execute(request: RunRequest, _handle: RunHandle) -> None:
+        if request.session_id == "blocker":
+            started.set()
+            assert release.wait(3)
+
+    scheduler = RunScheduler(execute, max_workers=1)
+    scheduler.start()
+    blocker = scheduler.submit(_user("blocker", "hold"))
+    assert started.wait(2)
+    waiter = scheduler.submit(_user("s", "waiting"))
+    try:
+        with (
+            pytest.raises(SessionBusyError),
+            scheduler.try_reserve_session_mutation("blocker", cancel_queued=True),
+        ):
+            pass
+        with (
+            pytest.raises(ValueError, match="mutation failed"),
+            scheduler.try_reserve_session_mutation("s", cancel_queued=True),
+        ):
+            raise ValueError("mutation failed")
+        assert waiter.status is RunStatus.QUEUED
+        with scheduler.try_reserve_session_mutation("s", cancel_queued=True):
+            late_waiter = scheduler.submit(_user("s", "arrived during mutation"))
+            assert waiter.status is RunStatus.QUEUED
+            assert late_waiter.status is RunStatus.QUEUED
+        for handle in (waiter, late_waiter):
+            terminal = handle.wait(1)
+            assert terminal is not None and terminal.outcome is RunOutcome.CANCELLED
+        release.set()
+        assert blocker.wait(2)
+    finally:
+        release.set()
+        scheduler.stop()

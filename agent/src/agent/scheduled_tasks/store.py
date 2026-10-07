@@ -6,7 +6,7 @@ import json
 import sqlite3
 import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -15,6 +15,7 @@ from typing import Any
 from agent.paths import scheduled_tasks_db_path
 
 from ..scheduling import advance_due_window, schedule_from_dict, schedule_to_dict
+from ..session_requests.models import RequestOptions
 from .models import (
     ScheduledOccurrence,
     ScheduledOccurrenceClaim,
@@ -51,8 +52,9 @@ class ScheduledTaskStore:
                 INSERT INTO scheduled_tasks (
                     id, name, instruction, schedule_json, next_fire_at_utc, status,
                     persona_id, persona_name, model_id, skill_id, origin_session_id,
-                    fire_count, revision, created_at, updated_at, deleted_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    fire_count, revision, created_at, updated_at, deleted_at,
+                    target_session_id, request_options_json, pause_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _task_values(task),
             )
@@ -94,7 +96,8 @@ class ScheduledTaskStore:
                 UPDATE scheduled_tasks SET name = ?, instruction = ?, schedule_json = ?,
                     next_fire_at_utc = ?, status = ?, persona_id = ?, persona_name = ?,
                     model_id = ?, skill_id = ?, origin_session_id = ?, fire_count = ?,
-                    revision = ?, updated_at = ?, deleted_at = ?
+                    revision = ?, updated_at = ?, deleted_at = ?,
+                    target_session_id = ?, request_options_json = ?, pause_reason = ?
                 WHERE id = ? AND revision = ?
                 """,
                 (
@@ -112,6 +115,9 @@ class ScheduledTaskStore:
                     task.revision,
                     _dump_dt(task.updated_at),
                     _dump_dt(task.deleted_at),
+                    task.target_session_id,
+                    json.dumps(task.request_options.to_dict(), sort_keys=True),
+                    task.pause_reason,
                     task.id,
                     expected_revision,
                 ),
@@ -119,6 +125,23 @@ class ScheduledTaskStore:
             if cursor.rowcount != 1:
                 raise ScheduledTaskError("revision_conflict", "Scheduled Task 已被其他操作修改")
         return task
+
+    def pause_for_target(self, session_id: str, reason: str) -> None:
+        with self._transaction() as conn:
+            conn.execute(
+                "UPDATE scheduled_tasks SET status=CASE WHEN status='active' THEN 'paused' ELSE status END,next_fire_at_utc=NULL,pause_reason=?,revision=revision+1 WHERE target_session_id=? AND status!='deleted' AND pause_reason!=?",
+                (reason, session_id, reason),
+            )
+
+    def referenced_assets(self) -> set[str]:
+        with self._connect() as conn:
+            tasks = conn.execute(
+                "SELECT request_options_json FROM scheduled_tasks WHERE status!='deleted'"
+            ).fetchall()
+            runs = conn.execute("SELECT task_snapshot_json FROM scheduled_occurrences").fetchall()
+        values = [json.loads(row[0]) for row in tasks]
+        values.extend(json.loads(row[0]).get("request_options", {}) for row in runs)
+        return {ref["asset_id"] for options in values for ref in options.get("attachments", [])}
 
     def create_due_occurrences(
         self,
@@ -253,7 +276,14 @@ class ScheduledTaskStore:
                 (limit,),
             ).fetchall()
             for row in rows:
-                session_id = row["session_id"] or str(uuid.uuid4())
+                snapshot = _snapshot_from_dict(json.loads(row["task_snapshot_json"]))
+                if snapshot.target_session_id is None:
+                    conn.execute(
+                        "UPDATE scheduled_occurrences SET state='terminal',outcome='rejected',reason_code='target_confirmation_required' WHERE id=?",
+                        (row["id"],),
+                    )
+                    continue
+                session_id = snapshot.target_session_id
                 run_id = row["run_id"] or uuid.uuid4().hex
                 cursor = conn.execute(
                     """
@@ -310,6 +340,7 @@ class ScheduledTaskStore:
         outcome: ScheduledOccurrenceOutcome,
         reason_code: str,
         now: datetime,
+        started_at: datetime | None = None,
         expected: tuple[ScheduledOccurrenceState, ...] = (
             ScheduledOccurrenceState.CLAIMED,
             ScheduledOccurrenceState.SUBMITTED,
@@ -324,10 +355,13 @@ class ScheduledTaskStore:
             outcome=outcome,
             reason_code=reason_code,
             finished_at=_as_utc(now),
+            started_at=started_at,
             clear_claim=True,
         )
 
-    def recover_startup(self, now: datetime) -> dict[str, int]:
+    def recover_startup(
+        self, now: datetime, terminal_lookup: Callable[[str], tuple[str, str] | None] | None = None
+    ) -> dict[str, int]:
         current = _as_utc(now)
         with self._transaction() as conn:
             released = conn.execute(
@@ -337,6 +371,18 @@ class ScheduledTaskStore:
                 """,
                 (_dump_dt(current),),
             ).rowcount
+            if terminal_lookup is not None:
+                rows = conn.execute(
+                    "SELECT id,run_id FROM scheduled_occurrences WHERE state IN ('submitted','running')"
+                ).fetchall()
+                for row in rows:
+                    terminal = terminal_lookup(row["run_id"])
+                    if terminal is not None:
+                        outcome, reason = terminal
+                        conn.execute(
+                            "UPDATE scheduled_occurrences SET state='terminal',outcome=?,reason_code=?,claim_until=NULL,finished_at=?,updated_at=? WHERE id=?",
+                            (outcome, reason, _dump_dt(current), _dump_dt(current), row["id"]),
+                        )
             interrupted = conn.execute(
                 """
                 UPDATE scheduled_occurrences SET state = 'terminal', outcome = 'interrupted',
@@ -550,6 +596,21 @@ class ScheduledTaskStore:
                     ON scheduled_occurrences(task_id, scheduled_at_utc DESC);
                 """
             )
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(scheduled_tasks)")}
+            if "target_session_id" not in columns:
+                conn.execute("ALTER TABLE scheduled_tasks ADD COLUMN target_session_id TEXT")
+                conn.execute(
+                    "ALTER TABLE scheduled_tasks ADD COLUMN request_options_json TEXT NOT NULL DEFAULT '{}'"
+                )
+                conn.execute(
+                    "ALTER TABLE scheduled_tasks ADD COLUMN pause_reason TEXT NOT NULL DEFAULT ''"
+                )
+                for row in conn.execute("SELECT id,model_id FROM scheduled_tasks").fetchall():
+                    options = RequestOptions.from_dict({"model": {"model_id": row["model_id"]}})
+                    conn.execute(
+                        "UPDATE scheduled_tasks SET request_options_json=?,pause_reason='target_confirmation_required',status=CASE WHEN status='active' THEN 'paused' ELSE status END,next_fire_at_utc=NULL WHERE id=?",
+                        (json.dumps(options.to_dict()), row["id"]),
+                    )
             conn.commit()
 
     @contextmanager
@@ -615,6 +676,8 @@ def _new_occurrence(
         persona_name=task.persona_name,
         model_id=task.model_id,
         skill_id=task.skill_id,
+        target_session_id=task.target_session_id,
+        request_options=task.request_options,
     )
     terminal_at = current if state is ScheduledOccurrenceState.TERMINAL else None
     return ScheduledOccurrence(
@@ -658,6 +721,9 @@ def _task_values(task: ScheduledTask) -> tuple[object, ...]:
         _dump_dt(task.created_at),
         _dump_dt(task.updated_at),
         _dump_dt(task.deleted_at),
+        task.target_session_id,
+        json.dumps(task.request_options.to_dict(), sort_keys=True),
+        task.pause_reason,
     )
 
 
@@ -681,6 +747,9 @@ def _task_from_row(row: sqlite3.Row) -> ScheduledTask:
         created_at=_required_dt(row["created_at"]),
         updated_at=_required_dt(row["updated_at"]),
         deleted_at=_load_dt(row["deleted_at"]),
+        target_session_id=row["target_session_id"],
+        request_options=RequestOptions.from_dict(json.loads(row["request_options_json"])),
+        pause_reason=str(row["pause_reason"]),
     )
 
 
@@ -722,6 +791,8 @@ def _snapshot_to_dict(snapshot: ScheduledTaskSnapshot) -> dict[str, Any]:
         "persona_name": snapshot.persona_name,
         "model_id": snapshot.model_id,
         "skill_id": snapshot.skill_id,
+        "target_session_id": snapshot.target_session_id,
+        "request_options": snapshot.request_options.to_dict(),
     }
 
 
@@ -736,6 +807,8 @@ def _snapshot_from_dict(value: dict[str, Any]) -> ScheduledTaskSnapshot:
         persona_name=str(value["persona_name"]),
         model_id=str(value["model_id"]),
         skill_id=str(value["skill_id"]) if value.get("skill_id") else None,
+        target_session_id=value.get("target_session_id"),
+        request_options=RequestOptions.from_dict(value.get("request_options", {})),
     )
 
 

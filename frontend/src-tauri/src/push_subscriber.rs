@@ -124,7 +124,7 @@ pub fn spawn_push_subscriber(app: &AppHandle, bridge_base_url: String) {
 
 async fn run_reconnecting(app: AppHandle, base_url: String) {
     let url = format!(
-        "{}/push/subscribe?kinds=agent_turn,run_event,session_changed,run_changed,filesystem_approval_changed,approval_changed,command_process_changed,sandbox_capability_changed,notification_changed",
+        "{}/push/subscribe?kinds=agent_turn,run_event,session_changed,run_changed,filesystem_approval_changed,approval_changed,command_process_changed,sandbox_capability_changed,notification_changed,scheduled_tasks_changed",
         base_url.trim_end_matches('/')
     );
     let client = reqwest::Client::new();
@@ -186,6 +186,11 @@ async fn run_connection(
                 Some(env) if env.kind == "notification_changed" => {
                     if let Err(error) = app.emit_to("bubble", "notification://changed", env) {
                         log::warn!("emit_to(bubble, notification changed) failed: {error}");
+                    }
+                }
+                Some(env) if env.kind == "scheduled_tasks_changed" => {
+                    if let Err(error) = app.emit_to("chat", "scheduled-tasks://changed", env) {
+                        log::warn!("emit_to(chat, scheduled tasks changed) failed: {error}");
                     }
                 }
                 Some(env) if env.kind == "session_changed" => {

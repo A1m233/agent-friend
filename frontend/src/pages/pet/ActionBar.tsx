@@ -15,6 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  Clock3,
   Lock,
   Maximize2,
   MessageSquare,
@@ -76,6 +77,7 @@ interface Props {
   onMouseEnter: MouseEventHandler<HTMLDivElement>;
   onMouseLeave: MouseEventHandler<HTMLDivElement>;
   onOpenChat: () => void;
+  onOpenScheduledTasks: () => void;
   petAvatarSize: PetAvatarSize;
   onCollapseToEdge: () => void;
   onRestoreNormal: () => void;
@@ -201,6 +203,7 @@ export function ActionBar({
   onMouseEnter,
   onMouseLeave,
   onOpenChat,
+  onOpenScheduledTasks,
   petAvatarSize,
   onCollapseToEdge,
   onRestoreNormal,
@@ -227,6 +230,7 @@ export function ActionBar({
       tooltip: voiceCallActive ? "查看通话" : "语音通话",
       onClick: onStartVoiceCall,
     },
+    { icon: <Clock3 />, tooltip: "定时任务", onClick: onOpenScheduledTasks },
     petAvatarSize === "mini"
       ? { icon: <Maximize2 />, tooltip: "恢复桌宠大小", onClick: onRestoreNormal }
       : { icon: <Minimize2 />, tooltip: "缩小桌宠并移动到边上", onClick: onCollapseToEdge },

@@ -127,6 +127,42 @@ def test_session_auto_fully_approves_normal_request(tmp_path: Path) -> None:
     assert broker.pending() == ()
 
 
+def test_request_auto_is_scoped_and_preserves_session_default(tmp_path: Path) -> None:
+    broker = _broker(tmp_path)
+    with broker.run_mode("sid-1", "run-1", "session_auto"):
+        request = _request()
+        assert broker.request(request, timeout_seconds=0.1).approved
+        assert request.decision_source == "request_auto"
+        assert request.to_dict()["approval_mode_source"] == "request"
+        assert broker.mode_state("sid-1").mode == "per_request"
+        assert broker.mode_state("sid-1", "other-run").mode == "per_request"
+    assert broker.mode_state("sid-1", "run-1").mode == "per_request"
+
+
+def test_session_auto_change_does_not_release_request_override(tmp_path: Path) -> None:
+    broker = _broker(tmp_path)
+    request = _request()
+    with broker.run_mode("sid-1", "run-1", "per_request"):
+        thread = threading.Thread(target=lambda: broker.request(request, timeout_seconds=2))
+        thread.start()
+        try:
+            _wait_pending(broker)
+            broker.set_session_mode("sid-1", mode="session_auto", expected_version=0)
+            assert request.status == "pending"
+            with pytest.raises(ApprovalRequestStaleError):
+                broker.decide_and_enable_session_auto(
+                    request.request_id,
+                    session_id="sid-1",
+                    run_id="run-1",
+                    expected_request_version=request.version,
+                    expected_mode_version=1,
+                )
+        finally:
+            broker.cancel_run("sid-1", "run-1")
+            thread.join(2)
+    assert str(request.status) == "cancelled"
+
+
 def test_session_auto_keeps_explicit_host_user_command_once_scoped(tmp_path: Path) -> None:
     broker = _broker(tmp_path)
     broker.set_session_mode("sid-1", mode="session_auto", expected_version=0)

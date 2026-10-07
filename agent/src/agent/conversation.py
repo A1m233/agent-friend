@@ -670,26 +670,39 @@ class Conversation:
     def current_model_config(self) -> ModelRuntimeConfig:
         return self._session.current_model_config
 
-    def _capture_run_model_snapshot(self) -> _RunModelSnapshot:
+    def _capture_run_model_snapshot(
+        self, model_override: ModelRuntimeConfig | None = None
+    ) -> _RunModelSnapshot:
         from llm_providers.binding import bind_language_model
 
-        binding = bind_language_model(self._llm_client)
+        if model_override is not None and self._llm_client_factory is None:
+            raise ValueError("model override requires client factory")
+        selected = (
+            self._llm_client_factory(model_override)
+            if model_override is not None and self._llm_client_factory is not None
+            else self._llm_client
+        )
+        binding = bind_language_model(selected)
         client = binding.__enter__()
 
         def release() -> None:
             binding.__exit__(None, None, None)
 
-        return _RunModelSnapshot(
-            config=self._session.current_model_config,
-            llm_client=client,
-            release=release,
-            phase=PhaseRun(
-                mode="native"
-                if get_model_capabilities(client).assistant_message_phase == "native"
-                else "legacy",
-                run_id=self._run_id_override or str(uuid4()),
-            ),
-        )
+        try:
+            return _RunModelSnapshot(
+                config=model_override or self._session.current_model_config,
+                llm_client=client,
+                release=release,
+                phase=PhaseRun(
+                    mode="native"
+                    if get_model_capabilities(client).assistant_message_phase == "native"
+                    else "legacy",
+                    run_id=self._run_id_override or str(uuid4()),
+                ),
+            )
+        except BaseException:
+            release()
+            raise
 
     def _restore_run_model_snapshot(self, previous: _RunModelSnapshot | None) -> None:
         current = self._run_model_snapshot
@@ -794,6 +807,9 @@ class Conversation:
         skill_selections: tuple[SkillSelection, ...] = (),
         skill_turn_snapshot: SkillTurnSnapshot | None = None,
         turn_context: str | None = None,
+        model_override: ModelRuntimeConfig | None = None,
+        request_source: dict[str, Any] | None = None,
+        approval_mode_override: SessionApprovalModeState | None = None,
     ) -> Iterator[ConversationEvent]:
         """流式发送一轮对话，按 :class:`ConversationEvent` discriminated union
         yield 多通道事件（文本增量 / 工具调用请求 / 工具调用结果 / 完成）。
@@ -857,6 +873,9 @@ class Conversation:
             skill_selections=skill_selections,
             skill_turn_snapshot=skill_turn_snapshot,
             turn_context=turn_context,
+            model_override=model_override,
+            request_source=request_source,
+            approval_mode_override=approval_mode_override,
         )
 
     def _stream_user_turn(
@@ -874,6 +893,9 @@ class Conversation:
         skill_selections: tuple[SkillSelection, ...] = (),
         skill_turn_snapshot: SkillTurnSnapshot | None = None,
         turn_context: str | None = None,
+        model_override: ModelRuntimeConfig | None = None,
+        request_source: dict[str, Any] | None = None,
+        approval_mode_override: SessionApprovalModeState | None = None,
         rewrite_plan: _RewritePlan | None = None,
         resume_task: bool = False,
         recovery_mode: Literal["automatic", "compact_then_resume"] = "automatic",
@@ -900,10 +922,12 @@ class Conversation:
         self._interaction_destination_id_override = interaction_destination_id
         self._run_id_override = run_id
         self._turn_context_override = _compose_turn_context(turn_context, turn_attachments)
-        with observe_run_phase(logger, self._run_latency_context, "model_snapshot"):
-            self._turn_prompt_builder = self._snapshot_prompt_builder()
-            self._run_model_snapshot = self._capture_run_model_snapshot()
+        previous_approval_override = getattr(self, "_request_approval_override", None)
+        self._request_approval_override = approval_mode_override
         try:
+            with observe_run_phase(logger, self._run_latency_context, "model_snapshot"):
+                self._turn_prompt_builder = self._snapshot_prompt_builder()
+                self._run_model_snapshot = self._capture_run_model_snapshot(model_override)
             persona_name = self._session.current_persona_name
             persona_id = self._session.current_persona_id
             model_snapshot = self._active_model_id()
@@ -980,6 +1004,7 @@ class Conversation:
                         existing_user_event.payload.get("content", "") != user_input
                         or existing_attachments != requested_attachments
                         or existing_references != requested_reference_dicts
+                        or existing_user_event.payload.get("request_source") != request_source
                     ):
                         raise ValueError("user_event_id_conflict: 相同消息标识不能对应不同内容。")
                     if (
@@ -1058,6 +1083,7 @@ class Conversation:
                 )
 
         except BaseException:
+            self._request_approval_override = previous_approval_override
             self._restore_run_model_snapshot(previous_run_model_snapshot)
             self._compaction_control = previous_compaction_control
             raise
@@ -1077,6 +1103,7 @@ class Conversation:
                         attachments=turn_attachments,
                         references=turn_references,
                         event_id=user_event_id,
+                        request_source=request_source,
                     )
                     user_event_appended = True
                     if self._input_accepted_callback is not None:
@@ -1160,6 +1187,7 @@ class Conversation:
             self._run_id_override = previous_run_id
             self._turn_context_override = previous_turn_context
             self._turn_prompt_builder = previous_turn_prompt_builder
+            self._request_approval_override = previous_approval_override
             self._restore_run_model_snapshot(previous_run_model_snapshot)
             self._active_skill_turn_snapshot = previous_skill_turn_snapshot
             self._active_skill_selections = previous_skill_selections
@@ -2111,7 +2139,7 @@ class Conversation:
                 "budget_profile": snapshot.rendered_catalog.budget_profile,
             },
             meta={
-                "model": self._session.current_model,
+                "model": self._active_model_id(),
                 "content_persistence": "metadata_only",
             },
         )
@@ -2132,7 +2160,7 @@ class Conversation:
                 payload={**durable_payload, "user_event_id": user_event_id},
                 meta=self._run_event_meta(
                     {
-                        "model": self._session.current_model,
+                        "model": self._active_model_id(),
                         "content_persistence": "metadata_only",
                     }
                 ),
@@ -2256,7 +2284,7 @@ class Conversation:
                 "inactive_event_uuids": list(plan.inactive_event_uuids),
                 "replacement_text_sha256": sha256(replacement_text.encode("utf-8")).hexdigest(),
             },
-            meta=self._run_event_meta({"model": self._session.current_model}),
+            meta=self._run_event_meta({"model": self._active_model_id()}),
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
@@ -2268,8 +2296,11 @@ class Conversation:
         attachments: list[AttachmentRef] | None = None,
         references: list[QuotedTextReference] | None = None,
         event_id: str | None = None,
+        request_source: dict[str, Any] | None = None,
     ) -> str:
         payload: dict[str, Any] = {"content": content}
+        if request_source is not None:
+            payload["request_source"] = dict(request_source)
         if attachments:
             payload["attachments"] = [item.to_dict() for item in attachments]
         if references:
@@ -2279,7 +2310,7 @@ class Conversation:
             uuid=event_id or str(uuid4()),
             ts=datetime.now(UTC),
             payload=payload,
-            meta=self._run_event_meta({"model": self._session.current_model}),
+            meta=self._run_event_meta({"model": self._active_model_id()}),
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
@@ -2950,7 +2981,7 @@ class Conversation:
             else None
         )
         current_channel = str(self._prompt_channel_override or self._session.current_channel)
-        approval_state = (
+        approval_state = getattr(self, "_request_approval_override", None) or (
             self._approval_mode_provider() if self._approval_mode_provider is not None else None
         )
         model_context_plan = SessionModelContext().plan(

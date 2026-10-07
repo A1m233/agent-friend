@@ -1,12 +1,48 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from agent.runtime import Subscriber, UserEvent
 from agent.runtime.listeners import ListenerRegistry, PushEnvelope
+from agent.scheduled_tasks import ScheduledTaskError, ScheduledTaskService, ScheduledTaskStore
+from agent.scheduling import OnceSchedule
 
 from agent import TextDelta
+
+
+@pytest.mark.asyncio
+async def test_task_invalidation_follows_committed_management_changes(tmp_path: Path) -> None:
+    registry = ListenerRegistry()
+    sub = Subscriber(
+        loop=asyncio.get_running_loop(), accept_kinds=frozenset({"scheduled_tasks_changed"})
+    )
+    registry.register(sub)
+    now = datetime.now(UTC)
+    service = ScheduledTaskService(ScheduledTaskStore(tmp_path / "tasks.db"), clock=lambda: now)
+    service.add_wake_listener(registry.publish_scheduled_tasks_change)
+    task = service.create(
+        name="task",
+        instruction="hello",
+        target_session_id="s",
+        schedule=OnceSchedule(
+            local_datetime=(now + timedelta(hours=1)).replace(tzinfo=None), timezone="UTC"
+        ),
+        persona_name="default",
+        model_id="fake/model",
+    )
+    await asyncio.sleep(0)
+    assert (await sub.queue.get()).kind == "scheduled_tasks_changed"
+    assert service.get(task.id) == task
+    with pytest.raises(ScheduledTaskError):
+        service.update(task.id, revision=0, name="conflict")
+    await asyncio.sleep(0)
+    assert sub.queue.empty()
+    service.pause(task.id, revision=task.revision)
+    await asyncio.sleep(0)
+    assert (await sub.queue.get()).seq == 2
 
 
 def test_pending_loop_callbacks_are_bounded_before_async_queue_runs() -> None:

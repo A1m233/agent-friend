@@ -10,6 +10,7 @@ export type PendingApproval = {
   kind: "command" | "filesystem" | "desktop_application";
   requestId: string;
   requestVersion: number;
+  modeSource?: "session" | "request";
   sessionId: string;
   runId: string;
   reason: string;
@@ -136,6 +137,7 @@ export function buildPendingApprovalQueue(input: {
       kind: request.kind,
       requestId: request.request_id,
       requestVersion: request.version,
+      modeSource: request.approval_mode_source,
       sessionId: request.session_id,
       runId: request.run_id,
       reason: request.reason,
@@ -158,6 +160,7 @@ export function buildPendingApprovalQueue(input: {
       kind: "filesystem" as const,
       requestId: entry.request.request_id,
       requestVersion: entry.request.version,
+      modeSource: entry.request.approval_mode_source,
       sessionId: entry.request.session_id,
       runId: entry.request.run_id,
       reason: entry.request.reason,

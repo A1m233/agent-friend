@@ -111,6 +111,8 @@ class ScheduledTaskManageTool:
         "删除必须使用 list/get 返回的 task_id 与 revision；目标不唯一时先澄清。run_now 会立即"
         "创建同一历史中的 occurrence，但不会绕过同任务非重叠或现有权限。任务不会获得额外"
         "授权；工具失败时不得声称成功。"
+        "任务必须绑定用户明确选择的已有普通会话，多次执行共用该会话。归档后停止，重启不重放未完成请求。"
+        "附件和任务专用模型、权限请在桌面定时任务页面设置；本工具不能授予自动权限。"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
@@ -144,7 +146,12 @@ class ScheduledTaskManageTool:
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 20000,
-                "description": "每次独立 Agent run 要完成的自包含用户指令。",
+                "description": "每次向固定目标会话发送的用户指令，可使用该会话上下文。",
+            },
+            "target_session_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "明确选择的目标会话 ID，来自会话查询结果；不是 task_id 或 occurrence_id。新建会话请使用桌面任务表单。不能把创建来源默认为执行目标。",
             },
             "schedule": _SCHEDULE_SCHEMA,
             "skill_id": {
@@ -175,7 +182,7 @@ class ScheduledTaskManageTool:
         "oneOf": [
             {
                 "properties": {"operation": {"const": "create"}},
-                "required": ["name", "instruction", "schedule"],
+                "required": ["name", "instruction", "schedule", "target_session_id"],
             },
             {"properties": {"operation": {"const": "list"}}},
             {"properties": {"operation": {"const": "get"}}, "required": ["task_id"]},
@@ -187,6 +194,7 @@ class ScheduledTaskManageTool:
                     "required": ["skill_id", "clear_skill"],
                 },
                 "anyOf": [
+                    {"required": ["target_session_id"]},
                     {"required": ["name"]},
                     {"required": ["instruction"]},
                     {"required": ["schedule"]},
@@ -276,6 +284,7 @@ class ScheduledTaskManageTool:
                 model_id=self._default_model_id,
                 skill_id=skill_id,
                 origin_session_id=_optional_string(args, _RUNTIME_SESSION_ID),
+                target_session_id=_required_string(args, "target_session_id"),
             )
             return {"status": "ok", "operation": operation, "task": task_to_dict(task)}
         if operation == "list":
@@ -323,6 +332,7 @@ class ScheduledTaskManageTool:
                 ),
                 skill_id=skill_id,
                 clear_skill=bool(args.get("clear_skill", False)),
+                target_session_id=_optional_string(args, "target_session_id"),
             )
             return {"status": "ok", "operation": operation, "task": task_to_dict(task)}
         if operation in {"pause", "resume", "delete"}:

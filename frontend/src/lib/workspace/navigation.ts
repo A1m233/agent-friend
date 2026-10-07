@@ -11,6 +11,7 @@ export type WorkspaceTarget =
   | "chat"
   | "settings"
   | "im-connect"
+  | "scheduled-tasks"
   | "memory-inspector";
 
 export interface WorkspaceNavigationEnvelope {

@@ -21,6 +21,7 @@ function props(): ComponentProps<typeof ActionBar> {
     petAvatarSize: "normal", voiceCallActive: false, passthroughDisabled: false,
     memoryInspectorEnabled: true,
     onMouseEnter: noop, onMouseLeave: noop, onOpenChat: noop,
+    onOpenScheduledTasks: noop,
     onCollapseToEdge: noop, onRestoreNormal: noop, onOpenSettings: noop,
     onOpenFeedback: noop, onOpenIMConnect: noop, onStartVoiceCall: noop,
     onTogglePassthrough: noop, onOpenMemoryInspector: noop, onOpenLive2DDebugger: noop,
@@ -48,6 +49,8 @@ describe("ActionBar notification debug controls", () => {
     expect(markup).not.toContain("data-notification-debug");
     expect(markup).not.toContain("清空调试通知");
     expect(markup).toContain('aria-label="打开对话"');
+    expect(markup.indexOf('aria-label="语音通话"')).toBeLessThan(markup.indexOf('aria-label="定时任务"'));
+    expect(markup.indexOf('aria-label="定时任务"')).toBeLessThan(markup.indexOf('aria-label="缩小桌宠并移动到边上"'));
   });
 });
 

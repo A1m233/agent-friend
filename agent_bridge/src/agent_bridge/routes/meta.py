@@ -93,6 +93,9 @@ class RuntimeConfigPatchBody(BaseModel):
 class CreateSessionBody(BaseModel):
     """``POST /v1/sessions`` 请求体（007 起新增）。"""
 
+    creation_id: str | None = Field(None, pattern=r"^[a-f0-9-]{36}$")
+    title: str | None = Field(None, max_length=200)
+
     persona: str | None = Field(None, description="目标 persona name；不传走 bridge 默认")
     model: str | None = Field(None, description="目标 model 名；不传走 bridge 默认")
     reasoning_preset: str | None = Field(None, alias="reasoningPreset")
@@ -223,12 +226,18 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             raise HTTPException(status_code=400, detail=str(e)) from e
         model_name = body.model or runtime.default_model
         try:
-            session = mgr.create(
-                persona=persona_info.name,
-                model=model_name,
-                reasoning_preset=body.reasoning_preset,
-                persona_id=persona_info.id,
-                channel=body.channel,
+            session = (
+                mgr.open(body.creation_id)
+                if body.creation_id and mgr.exists(body.creation_id)
+                else mgr.create(
+                    persona=persona_info.name,
+                    model=model_name,
+                    reasoning_preset=body.reasoning_preset,
+                    persona_id=persona_info.id,
+                    channel=body.channel,
+                    session_id=body.creation_id,
+                    title=body.title,
+                )
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -353,7 +362,9 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 if body.archived is not None:
                     if runtime.agent_runtime is not None:
                         stack.enter_context(
-                            runtime.agent_runtime.try_reserve_session_mutation(session_id)
+                            runtime.agent_runtime.try_reserve_session_mutation(
+                                session_id, cancel_queued=body.archived is True
+                            )
                         )
                     stack.enter_context(runtime.turn_coordinator.try_hold(session_id))
                 summary = None
@@ -361,6 +372,10 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     summary = mgr.rename(session_id, body.title)
                 if body.archived is True:
                     summary = mgr.archive(session_id)
+                    if runtime.scheduled_task_store:
+                        runtime.scheduled_task_store.pause_for_target(
+                            session_id, "target_session_archived"
+                        )
                 elif body.archived is False:
                     summary = mgr.unarchive(session_id)
         except Exception as exc:
@@ -723,10 +738,17 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 for summary in sorted(targets, key=lambda item: item.session_id):
                     if runtime.agent_runtime is not None:
                         stack.enter_context(
-                            runtime.agent_runtime.try_reserve_session_mutation(summary.session_id)
+                            runtime.agent_runtime.try_reserve_session_mutation(
+                                summary.session_id, cancel_queued=True
+                            )
                         )
                     stack.enter_context(runtime.turn_coordinator.try_hold(summary.session_id))
                 deleted = mgr.delete_archived(query=q)
+                if runtime.scheduled_task_store:
+                    for deleted_id in deleted:
+                        runtime.scheduled_task_store.pause_for_target(
+                            deleted_id, "target_session_missing"
+                        )
         except Exception as exc:
             error = map_exception(exc)
             return JSONResponse(
@@ -757,10 +779,16 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             with ExitStack() as stack:
                 if runtime.agent_runtime is not None:
                     stack.enter_context(
-                        runtime.agent_runtime.try_reserve_session_mutation(session_id)
+                        runtime.agent_runtime.try_reserve_session_mutation(
+                            session_id, cancel_queued=True
+                        )
                     )
                 stack.enter_context(runtime.turn_coordinator.try_hold(session_id))
                 mgr.delete(session_id)
+                if runtime.scheduled_task_store:
+                    runtime.scheduled_task_store.pause_for_target(
+                        session_id, "target_session_missing"
+                    )
         except SessionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as exc:

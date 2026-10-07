@@ -88,6 +88,8 @@ class BridgeSettings(BaseSettings):
     """Todo DB 单项覆盖；未设置时跟随 ``sessions_dir`` 的用户数据根。"""
     scheduled_tasks_db: Path | None = None
     """Scheduled Task DB 单项覆盖；未设置时跟随 ``sessions_dir`` 的用户数据根。"""
+    session_requests_db: Path | None = None
+    """Request receipts override; defaults to the configured session data root."""
     memory_model_dir: Path | None = Field(
         default=None,
         validation_alias=AliasChoices(

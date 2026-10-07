@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Generator, Iterator
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
+from agent.scheduled_tasks import ScheduledTaskService, ScheduledTaskStatus, ScheduledTaskStore
+from agent.scheduling import OnceSchedule
 from agent_bridge.app import create_app_with_runtime
 from agent_bridge.assembly import BridgeRuntime
 from agent_bridge.settings import BridgeSettings
@@ -107,6 +110,40 @@ def client(runtime: BridgeRuntime) -> TestClient:
 
 
 # ===== POST /v1/sessions =====
+
+
+@pytest.mark.parametrize("delete", [False, True])
+def test_target_lifecycle_stops_tasks_without_resuming_on_unarchive(
+    runtime: BridgeRuntime, tmp_path: Path, delete: bool
+) -> None:
+    store = ScheduledTaskStore(tmp_path / "scheduled.db")
+    service = ScheduledTaskService(store)
+    runtime = replace(runtime, scheduled_task_store=store, scheduled_task_service=service)
+    client = TestClient(create_app_with_runtime(runtime))
+    target = client.post("/v1/sessions", json={}).json()["session_id"]
+    task = service.create(
+        name="target-bound",
+        instruction="hello",
+        target_session_id=target,
+        schedule=OnceSchedule((datetime.now(UTC) + timedelta(days=1)).replace(tzinfo=None), "UTC"),
+        persona_name="default",
+        model_id="fake/model",
+    )
+    response = (
+        client.delete(f"/v1/sessions/{target}")
+        if delete
+        else client.patch(f"/v1/sessions/{target}", json={"archived": True})
+    )
+    assert response.status_code == 200
+    stopped = service.get(task.id)
+    assert stopped.status is ScheduledTaskStatus.PAUSED
+    assert stopped.pause_reason == (
+        "target_session_missing" if delete else "target_session_archived"
+    )
+    assert stopped.next_fire_at_utc is None
+    if not delete:
+        assert client.patch(f"/v1/sessions/{target}", json={"archived": False}).status_code == 200
+        assert service.get(task.id).status is ScheduledTaskStatus.PAUSED
 
 
 class TestCreateSessionEndpoint:

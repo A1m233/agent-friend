@@ -38,6 +38,9 @@ export function requireJsonRestResponse(data: unknown, contentType: unknown): vo
 
 function backendDetailOf(data: unknown): FriendlyError | null {
   if (!data || typeof data !== "object") return null;
+  if ("error_kind" in data && typeof data.error_kind === "string" && "message" in data && typeof data.message === "string") {
+    return { friendly: data.message, code: data.error_kind };
+  }
   const envelope = "error" in data ? (data as { error?: unknown }).error : null;
   if (envelope && typeof envelope === "object") {
     const message =
