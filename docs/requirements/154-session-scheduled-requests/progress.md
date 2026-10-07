@@ -2,9 +2,11 @@
 
 ## 总体状态
 
-IN_PROGRESS
+COMPLETED
 
 用户于本需求会话明确授权“开始实现吧”。范围与方案见 [requirement.md](./requirement.md) 和 [design.md](./design.md)。
+
+用户于 2026-10-07 完成手验并明确授权合入主干、推送远端；本地测试包按随后指令暂缓。最终检查与指南发布见文末收口记录。
 
 ## 任务列表
 
@@ -18,11 +20,11 @@ IN_PROGRESS
 - [x] 相关确定性测试和 backend／frontend／rust 门禁
 - [x] 打包影响评估与所需验证
 - [x] 真实 Tauri 桌面视觉与交互验收（Windows；模型为确定性 double，范围见下）
-- [ ] 用户验收
+- [x] 用户验收（2026-10-07 明确同意合入主干并推送）
 
 ## AC 验证
 
-以下记录确定性证据及其边界；不把单测、jsdom 或冻结 doctor 写成桌面交互实测。用户曾延后桌面验收，随后明确恢复授权：“你可以去做桌面端验收了”。2026-10-06 已完成下述真实 Windows Tauri 验收，执行前确认安装版已退出；使用隔离数据和本地模型 double，没有真实 LLM 调用。需求最终验收仍待用户确认，状态保持 IN_PROGRESS。
+以下记录确定性证据及其边界；不把单测、jsdom 或冻结 doctor 写成桌面交互实测。用户曾延后桌面验收，随后明确恢复授权：“你可以去做桌面端验收了”。2026-10-06 已完成下述真实 Windows Tauri 验收，执行前确认安装版已退出；使用隔离数据和本地模型 double，没有真实 LLM 调用。2026-10-07 用户完成后续手验，明确授权合入主干并推送；本地测试包随后由用户明确暂缓。
 
 | AC | 已有证据 | 尚待验证／局限 |
 |---|---|---|
@@ -36,7 +38,7 @@ IN_PROGRESS
 | AC-10 | `test_session_requests.py::test_legacy_tasks_are_paused_without_guessing_target`、旧数据库迁移／历史兼容测试 | 本次隔离桌面使用新数据库，旧任务迁移页面未单独实测，自动化证据仍为主 |
 | AC-11 | 生命周期和 barrier 自动化；真实归档对话使任务暂停、手动运行被明确拒绝；取消归档后仍暂停，显式恢复才启用；任务删除后历史来源仍能打开已删除详情 | 目标会话永久删除由接口测试覆盖；没有操作真实用户数据 |
 | AC-12 | scheduling／runner／Skill／恢复自动化；停止并重启真实 Tauri 及 Bridge 后，原 running 与 queued 两条均为 interrupted，已完成历史保留；模型调用计数仍为 5，排队消息未落盘 | 实测进程重启；未操作设备休眠，Skill 和审批恢复由自动化覆盖 |
-| AC-13 | 下列项目检查、冻结验证、真实桌面截图／交互与持久化交叉核对；未产生真实 LLM 调用 | 最终用户验收未完成 |
+| AC-13 | 下列项目检查、冻结验证、真实桌面截图／交互与持久化交叉核对；未产生真实 LLM 调用 | 用户已于 2026-10-07 确认验收并授权合入 |
 
 ## 自动化检查
 
@@ -184,3 +186,12 @@ IN_PROGRESS
 - 自动化覆盖当前／跨会话缓存命中、搜索命中窗口外消息、按需停止、重复跳转共享请求、离开会话、目标不存在、读取失败及页面等待 pending。完整 frontend gate 通过：176 文件／1449 tests、lint、typecheck、来源／颜色／token 门禁，Vite 8800 modules、built in 46.93s。随后新增 3 条入口回归，相关 2 文件／93 tests 与 lint/typecheck 再次通过；生产代码未再改变。
 - 验收时发现长驻 Vite 模块图同时引用带时间戳及不带时间戳的权限 Context，导致页面报错。确认没有 active run 后按标准脚本重启本任务 dev；新 lease 18500、Tauri shell 40212、Bridge 50800，当前 worktree 与 feature 分支一致。此轮仅修改前端，重启后加载新源码，无模型请求或任务数据修改。
 - desktop interaction / desktop DOM via CDP：实际任务记录“查看消息”点击至锚点挂载后绘制约 684.5ms，历史详情请求为 0（修复前同入口约 2675.1ms，读取 18,409,288 bytes）。实际全局搜索命中同一已加载消息，点击至绘制约 75.4ms，历史详情请求也为 0。检查真实窗口截图，目标用户气泡位于可视区域；旧消息分页及竞态由自动化验证，本轮没有以真实长历史冷加载断言固定耗时。dev 继续运行供用户验收。
+
+### 2026-10-07 用户验收与主干交付
+
+- 用户明确授权合入主干并推送远端；随后将本地测试包暂缓。本次只完成源码及指南交付，不启动新的 frozen runtime／installer 构建，也不安装到 production。
+- 实现提交 `c583e80586c05bd031aad24ade4046bb40c876dc`，来源为本需求完整已验收工作树；issue 068、069 仅登记，保持 open。此前 frozen runtime 验证仍覆盖本次后端输入，后续修改为前端及文档。
+- 最终 `scripts/check/run.ps1 --stage backend`：ruff、791 文件 mypy 和 3872 passed／5 skipped 全部通过，退出码 0；保留第三方异步清理警告。`--stage frontend`：lint、来源／颜色／token 门禁、typecheck、177 文件／1452 tests 及 Vite 构建通过（8800 modules，1m 15s）。`--stage rust`：fmt、测试及 release check 通过，保留原 dead-code 警告。
+- `merge-main-and-push` Guide 复核以原公开基线 `33ec5fd1` 至实现提交为范围，更新固定目标会话、任务管理入口、配置覆盖、附件数据、归档／中断和排查说明。公开提交 `5bae7fd06177d458d034eb8339d10934647294c9` 已推送并由 origin 精确确认；系统 Skill validator（UTF-8）和项目 verify 通过。
+- 已发布 [agent-friend-guide-r80](https://github.com/A1m233/agent-friend-guide/releases/tag/agent-friend-guide-r80)，immutable=true，兼容范围 `>=0.3.0 <0.4.0`；snapshot `4c6953c62b45ec37d3f411deb1fa4fc8bd845612ba21f39107b42481586b1749`，ZIP SHA256 `f84bfb9192352288e5232a4e21616c8810b61e97c49496980ea14fcc761d68a1`。发布未修改产品 builtin；后续产品差异仅为本验收记录，用户可见产品事实未变化。
+- 合入前再次 fetch，远端 main 仍为 `4fe7151a`，是实现提交祖先；现有 main worktree 干净，无需解决冲突。正常 dev 按用户要求保留运行，源码与已验收实现一致。
