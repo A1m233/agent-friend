@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from agent.attachments.input_policy import AttachmentInputPolicy
@@ -99,7 +99,13 @@ def prepare_attachment_input(
         cancel_check()
     capabilities = capability_resolver(model_id)
     if entries and store is None:
-        raise HTTPException(status_code=503, detail="attachment store unavailable")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "attachment_store_unavailable",
+                "message": "附件服务暂不可用，请稍后重试。",
+            },
+        )
 
     prepared: list[_PreparedAttachment] = []
     draft_ids: list[str] = []
@@ -110,7 +116,9 @@ def prepare_attachment_input(
             if isinstance(entry, ExistingAttachmentInput):
                 assert store is not None
                 store.verify(entry.ref.asset_id)
-                ref = entry.ref
+                ref = replace(
+                    store.metadata(entry.ref.asset_id), display_name=entry.ref.display_name
+                )
                 draft_index = None
             else:
                 assert store is not None

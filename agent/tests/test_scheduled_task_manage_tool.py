@@ -29,6 +29,7 @@ def test_create_list_run_and_history(tmp_path: Path) -> None:
     created = tool.invoke(
         {
             "operation": "create",
+            "target_session_id": "fixed-session",
             "name": "一小时后总结",
             "instruction": "总结今天的工作",
             "schedule": {
@@ -162,6 +163,7 @@ def test_history_projects_waiting_for_approval_without_changing_run_state(tmp_pa
         tool.invoke(
             {
                 "operation": "create",
+                "target_session_id": "fixed-session",
                 "name": "审批投影",
                 "instruction": "执行",
                 "schedule": {

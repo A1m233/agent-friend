@@ -496,6 +496,12 @@ class SessionManager:
             )
         return self._summary(session_id)
 
+    def is_archived(self, session_id: str) -> bool:
+        return (
+            self._metadata_store is not None
+            and self._metadata_store.get(session_id).archived_at is not None
+        )
+
     def archive(self, session_id: str) -> SessionSummary:
         """归档会话。"""
         self.query(session_id)

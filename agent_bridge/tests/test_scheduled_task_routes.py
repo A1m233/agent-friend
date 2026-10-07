@@ -22,6 +22,7 @@ def _client(
     broker = SimpleNamespace(pending=lambda **_kwargs: ("pending",))
     runtime = SimpleNamespace(
         scheduled_task_service=service,
+        session_request_service=None,
         skill_service=None,
         catalog=_Catalog(),
         default_persona="default",
@@ -38,6 +39,7 @@ def test_scheduled_task_crud_and_history(tmp_path: Path) -> None:
     created = client.post(
         "/v1/scheduled-tasks",
         json={
+            "target_session_id": "session-1",
             "name": "日报",
             "instruction": "总结今天",
             "schedule": {
@@ -94,6 +96,7 @@ def test_revision_conflict_is_409(tmp_path: Path) -> None:
     task = client.post(
         "/v1/scheduled-tasks",
         json={
+            "target_session_id": "session-1",
             "name": "日报",
             "instruction": "总结今天",
             "schedule": {
@@ -116,6 +119,7 @@ def test_schedule_dict_is_strictly_validated_at_rest_boundary(tmp_path: Path) ->
     response = client.post(
         "/v1/scheduled-tasks",
         json={
+            "target_session_id": "session-1",
             "name": "非法周期",
             "instruction": "不应创建",
             "schedule": {

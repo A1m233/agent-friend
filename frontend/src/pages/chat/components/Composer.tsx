@@ -729,7 +729,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     <ConversationModelSelector
                       selectedModel={selectedModel}
                       selectedReasoningPreset={draftRuntimeConfig?.reasoningPreset}
-                      disabled={disabled || editSubmitting}
+                      disabled={disabled || editSubmitting || streaming}
                       disabledReason={composerControlDisabledReason}
                     />
                     <VoiceInputAction

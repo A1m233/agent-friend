@@ -37,6 +37,7 @@ EnvelopeKind = Literal[
     "session_changed",
     "run_changed",
     "notification_changed",
+    "scheduled_tasks_changed",
     "filesystem_approval_changed",
     "approval_changed",
     "command_process_changed",
@@ -524,6 +525,24 @@ class ListenerRegistry:
                         events=[],
                         run=snapshot,
                         runtime_instance_id=snapshot.runtime_instance_id,
+                    ),
+                )
+
+    def publish_scheduled_tasks_change(self) -> None:
+        """Invalidate task views after a committed management operation."""
+        with self._lock:
+            for sub in list(self._subs.values()):
+                if "scheduled_tasks_changed" not in sub.accept_kinds:
+                    continue
+                self._seq[sub.id] += 1
+                self._safe_push(
+                    sub,
+                    PushEnvelope(
+                        kind="scheduled_tasks_changed",
+                        session_id="",
+                        seq=self._seq[sub.id],
+                        source_kind=None,
+                        events=[],
                     ),
                 )
 

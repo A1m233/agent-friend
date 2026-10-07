@@ -279,6 +279,19 @@ describe("MessageTimeline disclosure scrolling", () => {
     expect(setHighlight).toHaveBeenCalledTimes(2);
   });
 
+  it("does not consume a pending navigation anchor before its history page arrives", async () => {
+    const handled = vi.fn();
+    const target = { token: 91, sessionId: "session-a", anchorEventUuid: "older-0", query: "", loading: true };
+    await renderTimeline(messages(), false, false, { searchTarget: target, onSearchTargetHandled: handled });
+    await flushFrames();
+    expect(handled).not.toHaveBeenCalled();
+    await renderTimeline(messages(), false, false, {
+      searchTarget: { ...target, loading: false }, onSearchTargetHandled: handled,
+    });
+    await flushFrames();
+    expect(handled).toHaveBeenCalledExactlyOnceWith(91, false);
+  });
+
   it("loads one older page near the top and preserves the visible message through prepend", async () => {
     let finish!: (success: boolean) => void;
     const load = vi.fn(() => new Promise<boolean>((resolve) => { finish = resolve; }));

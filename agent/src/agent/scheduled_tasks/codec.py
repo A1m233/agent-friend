@@ -123,6 +123,10 @@ def task_to_dict(task: ScheduledTask) -> dict[str, Any]:
         "model_id": task.model_id,
         "skill_id": task.skill_id,
         "origin_session_id": task.origin_session_id,
+        "target_session_id": task.target_session_id,
+        "request_options": task.request_options.to_dict(),
+        "pause_reason": task.pause_reason,
+        "needs_target": task.target_session_id is None,
         "fire_count": task.fire_count,
         "revision": task.revision,
         "created_at": _dt(task.created_at),
@@ -149,6 +153,9 @@ def occurrence_to_dict(
         "coalesced_from_utc": _dt(occurrence.coalesced_from_utc),
         "session_id": occurrence.session_id,
         "run_id": occurrence.run_id,
+        "user_event_id": f"scheduled:{occurrence.id}"
+        if occurrence.task_snapshot.target_session_id
+        else None,
         "waiting_for_approval": waiting_for_approval,
         "skill_source": occurrence.skill_source,
         "skill_version": occurrence.skill_version,

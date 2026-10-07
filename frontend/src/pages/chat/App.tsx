@@ -41,6 +41,9 @@ import { recordStartupMilestone } from "@/lib/startup-evidence";
 const SettingsApp = lazy(() =>
   import("@/pages/settings/App").then((module) => ({ default: module.SettingsApp })),
 );
+const ScheduledTasksApp = lazy(() =>
+  import("@/pages/scheduled-tasks/App").then((module) => ({ default: module.ScheduledTasksApp })),
+);
 const IMConnectPanel = lazy(() =>
   import("@/components/im/IMConnectPanel").then((module) => ({
     default: module.IMConnectPanel,
@@ -191,6 +194,11 @@ export function ChatApp() {
           {visitedTargets.includes("settings") ? (
             <WorkspaceSurface active={target === "settings"}>
               <SettingsApp navigation={settingsNavigation} />
+            </WorkspaceSurface>
+          ) : null}
+          {visitedTargets.includes("scheduled-tasks") ? (
+            <WorkspaceSurface active={target === "scheduled-tasks"}>
+              <ScheduledTasksApp active={target === "scheduled-tasks"} />
             </WorkspaceSurface>
           ) : null}
           {visitedTargets.includes("im-connect") ? (

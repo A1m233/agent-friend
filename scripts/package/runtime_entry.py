@@ -610,6 +610,7 @@ def _smoke_scheduled_tasks() -> dict[str, Any]:
         ScheduledTaskService,
         ScheduledTaskStore,
     )
+    from agent.session_requests import SessionRequestStore
     from agent.tools.builtin.scheduled_task_manage import ScheduledTaskManageTool
 
     now = datetime(2026, 1, 1, tzinfo=UTC)
@@ -625,6 +626,7 @@ def _smoke_scheduled_tasks() -> dict[str, Any]:
         created = tool.invoke(
             {
                 "operation": "create",
+                "target_session_id": "frozen-fixed-session",
                 "name": "Frozen scheduled task smoke",
                 "instruction": "Exercise deterministic frozen scheduling.",
                 "schedule": {
@@ -649,6 +651,17 @@ def _smoke_scheduled_tasks() -> dict[str, Any]:
             skill_source=None,
             skill_version=None,
         )
+        requests = SessionRequestStore(Path(temp_dir) / "requests.db")
+        run_id = claim.occurrence.run_id
+        if not run_id or claim.occurrence.session_id != "frozen-fixed-session":
+            raise RuntimeError("frozen Scheduled Task lost the selected session")
+        requests.admit(
+            run_id, "frozen-fixed-session", "frozen-user", {"text": "deterministic smoke"}
+        )
+        requests.recover(lambda _session, _run: None)
+        receipt = requests.get(run_id)
+        if receipt is None or receipt["outcome"] != "interrupted":
+            raise RuntimeError("frozen session request recovery did not interrupt pending input")
         recovered = store.recover_startup(due_at + timedelta(seconds=1))
         occurrence = store.get_occurrence(claim.occurrence.id)
         history = tool.invoke({"operation": "history", "task_id": task_id})

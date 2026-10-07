@@ -1,3 +1,4 @@
+import { PendingRequests } from "./PendingRequests";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatTextReference } from "@/types/chat";
 
@@ -109,7 +110,7 @@ export function ChatContentSurface() {
             disabled={composerDisabled}
             disabledReason={composerDisabledReason}
             onHeightChange={setComposerHeight}
-            topSlot={<ApprovalDock activity={primaryActivity} />}
+            topSlot={<><PendingRequests key={currentSessionId} sessionId={currentSessionId} /><ApprovalDock activity={primaryActivity} /></>}
             onReferenceSelect={selectReference}
           />
         </>

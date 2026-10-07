@@ -4,6 +4,7 @@ html[theme="light"] {
   color-scheme: light;
 
   --bg: #ffffff;
+  --overlay: rgb(0 0 0 / 50%);
   --surface: #f5f6f8;
   --surface-hover: #e5e7eb;
   --fg: #1a1a1a;

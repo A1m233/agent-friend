@@ -91,6 +91,11 @@ def scheduled_tasks_db_path() -> Path:
     return user_data_dir() / "scheduled-tasks" / "scheduled-tasks.db"
 
 
+def session_requests_db_path(data_root: Path | None = None) -> Path:
+    """Durable session request receipts."""
+    return (data_root or user_data_dir()) / "session-requests" / "session-requests.db"
+
+
 def personas_dir() -> Path:
     """用户自定义 persona 目录：``<user_data_dir>/personas``。"""
     return user_data_dir() / "personas"
@@ -149,6 +154,7 @@ __all__ = [
     "persona_internal_dir",
     "personas_dir",
     "scheduled_tasks_db_path",
+    "session_requests_db_path",
     "sessions_dir",
     "skills_dir",
     "todos_db_path",

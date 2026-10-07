@@ -16,6 +16,8 @@ from ..scheduling import (
     next_fire_after,
     validate_schedule,
 )
+from ..session_requests.errors import SessionRequestError
+from ..session_requests.models import RequestOptions
 from .models import (
     ScheduledOccurrence,
     ScheduledTask,
@@ -29,8 +31,15 @@ Clock = Callable[[], datetime]
 
 
 class ScheduledTaskService:
-    def __init__(self, store: ScheduledTaskStore, *, clock: Clock | None = None) -> None:
+    def __init__(
+        self,
+        store: ScheduledTaskStore,
+        *,
+        clock: Clock | None = None,
+        target_validator: Callable[[str], None] | None = None,
+    ) -> None:
         self.store = store
+        self.target_validator = target_validator
         self._clock = clock or (lambda: datetime.now(UTC))
         self._wake_listeners: builtins.list[Callable[[], None]] = []
 
@@ -48,7 +57,10 @@ class ScheduledTaskService:
         persona_id: str | None = None,
         skill_id: str | None = None,
         origin_session_id: str | None = None,
+        target_session_id: str | None = None,
+        request_options: RequestOptions | None = None,
     ) -> ScheduledTask:
+        self._validate_target(target_session_id)
         now = self._now()
         next_fire = _next_future(schedule, now, generated_count=0, once_must_be_future=True)
         status = (
@@ -57,7 +69,7 @@ class ScheduledTaskService:
         task = ScheduledTask(
             id=str(uuid.uuid4()),
             name=_name(name),
-            instruction=_instruction(instruction),
+            instruction=_instruction(instruction, request_options),
             schedule=schedule,
             next_fire_at_utc=next_fire,
             status=status,
@@ -66,6 +78,8 @@ class ScheduledTaskService:
             model_id=_required_text(model_id, "model_id"),
             skill_id=_optional_text(skill_id),
             origin_session_id=_optional_text(origin_session_id),
+            target_session_id=target_session_id,
+            request_options=request_options or RequestOptions(),
             fire_count=0,
             revision=1,
             created_at=now,
@@ -94,6 +108,8 @@ class ScheduledTaskService:
         model_id: str | None = None,
         skill_id: str | None = None,
         clear_skill: bool = False,
+        target_session_id: str | None = None,
+        request_options: RequestOptions | None = None,
     ) -> ScheduledTask:
         if (
             name is None
@@ -104,6 +120,8 @@ class ScheduledTaskService:
             and model_id is None
             and skill_id is None
             and not clear_skill
+            and target_session_id is None
+            and request_options is None
         ):
             raise ScheduledTaskError("invalid_arguments", "update 至少需要一个实际变更字段")
         if clear_skill and skill_id is not None:
@@ -114,6 +132,8 @@ class ScheduledTaskService:
         current = self.store.get_task(task_id)
         if current.status is ScheduledTaskStatus.DELETED:
             raise ScheduledTaskError("invalid_task_state", "已删除任务不能修改")
+        target = target_session_id or current.target_session_id
+        self._validate_target(target)
         now = self._now()
         next_schedule = schedule or current.schedule
         next_fire = current.next_fire_at_utc
@@ -127,8 +147,14 @@ class ScheduledTaskService:
             )
         updated = replace(
             current,
+            target_session_id=target,
+            request_options=current.request_options if request_options is None else request_options,
+            pause_reason="" if target_session_id else current.pause_reason,
             name=current.name if name is None else _name(name),
-            instruction=(current.instruction if instruction is None else _instruction(instruction)),
+            instruction=_instruction(
+                current.instruction if instruction is None else instruction,
+                current.request_options if request_options is None else request_options,
+            ),
             schedule=next_schedule,
             next_fire_at_utc=next_fire,
             status=next_status,
@@ -177,6 +203,7 @@ class ScheduledTaskService:
         current = self.store.get_task(task_id)
         if current.status is not ScheduledTaskStatus.PAUSED:
             raise ScheduledTaskError("invalid_task_state", "只有 paused 任务可以恢复")
+        self._validate_target(current.target_session_id)
         now = self._now()
         next_fire = _next_future(
             current.schedule,
@@ -192,6 +219,7 @@ class ScheduledTaskService:
                     if next_fire is not None
                     else ScheduledTaskStatus.EXHAUSTED
                 ),
+                pause_reason="",
                 next_fire_at_utc=next_fire,
                 revision=current.revision + 1,
                 updated_at=now,
@@ -227,6 +255,7 @@ class ScheduledTaskService:
         return result
 
     def run_now(self, task_id: str) -> ScheduledOccurrence:
+        self._validate_target(self.get(task_id).target_session_id)
         result = self.store.create_manual_occurrence(task_id, now=self._now())
         self._notify_wake()
         return result
@@ -243,6 +272,17 @@ class ScheduledTaskService:
                 "invalid_arguments", "history limit 必须为 1-100，offset 不能小于 0"
             )
         return self.store.list_occurrences(task_id, limit=limit, offset=offset)
+
+    def _validate_target(self, session_id: str | None) -> None:
+        if not session_id or not session_id.strip():
+            raise ScheduledTaskError(
+                "target_confirmation_required", "请选择已有会话或新建会话作为任务目标。"
+            )
+        if self.target_validator is not None:
+            try:
+                self.target_validator(session_id)
+            except SessionRequestError as exc:
+                raise ScheduledTaskError(exc.kind, exc.message) from exc
 
     def _now(self) -> datetime:
         value = self._clock()
@@ -287,9 +327,9 @@ def _name(value: str) -> str:
     return result
 
 
-def _instruction(value: str) -> str:
+def _instruction(value: str, options: RequestOptions | None = None) -> str:
     result = value.strip()
-    if not result:
+    if not result and not (options and options.attachments):
         raise ScheduledTaskError("invalid_arguments", "任务指令不能为空")
     if len(result) > 20_000:
         raise ScheduledTaskError("invalid_arguments", "任务指令不能超过 20000 个字符")

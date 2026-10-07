@@ -8,6 +8,7 @@ from enum import StrEnum
 from typing import Any
 
 from ..scheduling import Schedule
+from ..session_requests.models import RequestOptions
 
 
 class ScheduledTaskStatus(StrEnum):
@@ -59,6 +60,9 @@ class ScheduledTask:
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None = None
+    target_session_id: str | None = None
+    request_options: RequestOptions = field(default_factory=RequestOptions)
+    pause_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -72,6 +76,8 @@ class ScheduledTaskSnapshot:
     persona_name: str
     model_id: str
     skill_id: str | None
+    target_session_id: str | None = None
+    request_options: RequestOptions = field(default_factory=RequestOptions)
 
 
 @dataclass(frozen=True)

@@ -92,7 +92,7 @@ def test_cancel_rejects_a_different_runtime_instance(tmp_path: Path) -> None:
     assert response.json()["detail"]["error"] == "run_runtime_mismatch"
 
 
-def test_agui_attachment_validation_is_registered_before_preparation_failure(
+def test_agui_invalid_attachment_is_rejected_before_queue_admission(
     tmp_path: Path,
 ) -> None:
     from agent.runtime.hooks import PRE_TURN_PROCEED, HookKind, PreTurnDecision
@@ -138,14 +138,9 @@ def test_agui_attachment_validation_is_registered_before_preparation_failure(
                 "state": {},
             },
         )
-        assert response.status_code == 200
-        assert '"type":"RUN_STARTED"' in response.text
-        assert '"type":"RUN_ERROR"' in response.text
-        assert '"code":"attachment_store_unavailable"' in response.text
-        assert '"inputAccepted":false' in response.text
-        snapshot = agent_runtime.get_run_snapshot("preparing-run")
-        assert snapshot is not None and snapshot.input_accepted is False
-        assert snapshot.outcome == "failed"
+        assert response.status_code == 503
+        assert response.json()["detail"]["error"] == "attachment_store_unavailable"
+        assert agent_runtime.get_run_snapshot("preparing-run") is None
         assert hooks == []
         assert not runtime.persistent_store.exists("preparing-session")
     finally:

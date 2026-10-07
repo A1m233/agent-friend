@@ -348,6 +348,8 @@ class AgentRuntime:
         interactive_busy_policy: InteractiveBusyPolicy = InteractiveBusyPolicy.QUEUE,
         control_scope: str | None = None,
         input_accepted: bool | None = None,
+        supersede_lower_priority: bool = True,
+        replaceable: bool = True,
     ) -> RunHandle:
         """提交一轮到 session-aware scheduler，返回可流式消费的句柄。"""
         if priority is None:
@@ -375,6 +377,8 @@ class AgentRuntime:
             "interactive_busy_policy": interactive_busy_policy,
             "control_scope": control_scope,
             "input_accepted": input_accepted,
+            "supersede_lower_priority": supersede_lower_priority,
+            "replaceable": replaceable,
         }
         if run_id is not None:
             kwargs["run_id"] = run_id
@@ -430,10 +434,12 @@ class AgentRuntime:
     def activity_snapshot(self) -> RuntimeActivitySnapshot:
         return self._scheduler.activity_snapshot()
 
-    def try_reserve_session_mutation(self, session_id: str) -> AbstractContextManager[None]:
+    def try_reserve_session_mutation(
+        self, session_id: str, *, cancel_queued: bool = False
+    ) -> AbstractContextManager[None]:
         """Reserve an idle session for a short state mutation without queueing it."""
 
-        return self._scheduler.try_reserve_session_mutation(session_id)
+        return self._scheduler.try_reserve_session_mutation(session_id, cancel_queued=cancel_queued)
 
     def quiesce(self) -> RuntimeActivitySnapshot:
         return self._scheduler.quiesce()
@@ -463,6 +469,11 @@ class AgentRuntime:
                 if previous is not None and previous.version >= snapshot.version:
                     return
                 self._active_run_snapshots[snapshot.run_id] = snapshot
+        for observer in tuple(getattr(self, "_run_observers", ())):
+            try:
+                observer(snapshot)
+            except Exception:
+                logger.exception("run receipt observer failed: %s", snapshot.run_id)
         self._listeners.publish_run_change(snapshot)
         if snapshot.status is RunStatus.TERMINAL:
             for observer in tuple(getattr(self, "_terminal_observers", ())):
@@ -470,6 +481,12 @@ class AgentRuntime:
                     observer(snapshot)
                 except Exception:
                     logger.exception("run terminal observer failed: %s", snapshot.run_id)
+
+    def add_run_observer(self, observer: Callable[[RunSnapshot], None]) -> None:
+        """Observe admission and execution without owning a second queue."""
+        if not hasattr(self, "_run_observers"):
+            self._run_observers: list[Callable[[RunSnapshot], None]] = []
+        self._run_observers.append(observer)
 
     def add_terminal_observer(self, observer: Callable[[RunSnapshot], None]) -> None:
         """Observe final persisted run outcomes without adding a push subscriber."""

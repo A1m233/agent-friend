@@ -59,6 +59,7 @@ import {
 import { createStreamUpdateScheduler } from "./streamUpdateScheduler";
 import { createSessionDetailReads } from "./sessionDetailReads";
 import { createSessionHistoryPages } from "./sessionHistoryPages";
+import { findMessageAnchorIndex } from "./messageNavigation";
 import { createRunCancellation, type StopRequestPhase } from "./runCancellation";
 import {
   createApprovalModeRefresher,
@@ -127,7 +128,7 @@ let openSessionToken = 0;
 let detailRefreshSeq = 0;
 let runtimeGeneration = 0;
 const historyPages = createSessionHistoryPages();
-const olderReads = new Set<string>();
+const olderReads = new Map<string, Promise<boolean>>();
 const detailReads = createSessionDetailReads(
   (sessionId) => sessionsApi.get(sessionId),
   (sessionId) => { void useConversationStore.getState().refreshCurrentSession(sessionId); },
@@ -207,6 +208,9 @@ export interface ConversationState {
   resolveNewConversationDraftRuntimeConfig: () => void;
   /** 切换到历史会话并加载其上下文。 */
   openSession: (sessionId: string, options?: OpenSessionOptions) => Promise<boolean>;
+  /** Shared message navigation for search, scheduled runs and other deep links. */
+  openMessage: (sessionId: string, anchorEventUuid: string,
+    options?: { query?: string; detached?: boolean; remember?: boolean }) => Promise<boolean>;
   hasOlderHistory: () => boolean;
   loadOlderHistory: () => Promise<boolean>;
   loadReferenceHistory: () => Promise<boolean>;
@@ -800,6 +804,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   async openSession(sessionId, options) {
     if (get().editingMessage?.phase === "submitting") return false;
+    if (!options?.searchTarget) searchNavigationToken += 1;
     get().cancelEditing();
     const failureMode = options?.failureMode ?? "message";
     const remember = options?.remember ?? true;
@@ -814,6 +819,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     approvalModeMutationSeq += 1;
     if (remember) rememberLastChatSession(sessionId);
     const cached = get().sessionViews[sessionId];
+    const cachedAnchor = cached && !cached.historyLoading && options?.searchTarget
+      && findMessageAnchorIndex(cached.messages, options.searchTarget.anchorEventUuid) >= 0;
     const epoch = runtimeGeneration;
     const activeRun = sessionActiveRun(get(), sessionId);
     set((state) => ({
@@ -823,7 +830,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           : { ...emptyView(), historyLoading: true },
       ),
       currentSessionId: sessionId,
-      historyLoading: cached && activeRun ? false : true,
+      historyLoading: Boolean(!(cached && activeRun) && !cachedAnchor),
       modelSwitching: false,
       modelSwitchTarget: null,
       approvalModeChanging: false,
@@ -839,15 +846,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     // Only explicitly opening an existing session triggers this read. Sending a
     // first message selects an optimistic ID before the backend creates it.
     void get().refreshApprovalMode(sessionId);
-    if (cached && activeRun) {
+    if ((cached && activeRun) || cachedAnchor) {
       get().markSessionViewed(sessionId);
       get().pruneCaches();
       return true;
     }
     try {
-      const detail = options?.searchTarget
-        ? await sessionsApi.getFull(sessionId)
-        : await detailReads.read(sessionId);
+      const detail = await detailReads.read(sessionId);
       if (detail.session_id !== sessionId) throw new Error("Session detail identity mismatch");
       if (token !== openSessionToken || get().currentSessionId !== sessionId || epoch !== runtimeGeneration) return false;
       if ((get().sessionViews[sessionId]?.revision ?? 0) > (detail.revision ?? 0)) {
@@ -942,12 +947,49 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
   },
 
+  async openMessage(sessionId, anchorEventUuid, options) {
+    if (get().editingMessage?.phase === "submitting") return false;
+    const token = ++searchNavigationToken;
+    const epoch = runtimeGeneration;
+    const target: SearchNavigationTarget = {
+      token, sessionId, anchorEventUuid, query: options?.query ?? "", loading: true,
+    };
+    const isCurrent = get().currentSessionId === sessionId;
+    if (isCurrent && !get().historyLoading) {
+      get().cancelEditing();
+      set({ searchTarget: target,
+        detachedSessionId: (options?.detached ?? get().detachedSessionId === sessionId) ? sessionId : null });
+    } else {
+      const opened = await get().openSession(sessionId, {
+        ...options, failureMode: "previous", searchTarget: target,
+      });
+      if (!opened) return false;
+    }
+    const isCurrentTarget = () => token === searchNavigationToken
+      && epoch === runtimeGeneration && get().currentSessionId === sessionId;
+    try {
+      // Preserve contiguous complete turns and stop as soon as the anchor is found.
+      const visited = new Set<string>();
+      while (isCurrentTarget() && findMessageAnchorIndex(get().messages, anchorEventUuid) < 0) {
+        const cursor = historyPages.get(sessionId)?.history_cursor;
+        if (!cursor || visited.has(cursor)) break;
+        visited.add(cursor);
+        if (!await get().loadOlderHistory()) break;
+      }
+      if (!isCurrentTarget()) return false;
+      // The renderer reports a missing/deleted anchor using its existing feedback.
+      set({ searchTarget: { ...target, loading: false } });
+      return true;
+    } finally {
+      if (!isCurrentTarget()) get().clearSearchTarget(token);
+    }
+  },
+
   async openSearchResult(result, query) {
-    searchNavigationToken += 1;
-    const targetToken = searchNavigationToken;
     const isCurrentSession = get().currentSessionId === result.session_id;
 
     if (result.kind === "title") {
+      searchNavigationToken += 1;
       if (isCurrentSession) {
         set({
           detachedSessionId: result.archived ? result.session_id : null,
@@ -963,32 +1005,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       });
     }
 
-    const navigationTarget: SearchNavigationTarget = {
-      token: targetToken,
-      sessionId: result.session_id,
-      anchorEventUuid: result.anchor_event_uuid,
-      query,
-    };
-
-    if (!isCurrentSession) {
-      const opened = await get().openSession(result.session_id, {
-        detached: result.archived,
-        failureMode: "previous",
-        remember: !result.archived,
-        searchTarget: navigationTarget,
-      });
-      if (!opened || targetToken !== searchNavigationToken) return false;
-    } else {
-      set({
-        detachedSessionId: result.archived ? result.session_id : null,
-        searchTarget: navigationTarget,
-      });
-    }
-
-    if (get().currentSessionId !== result.session_id || targetToken !== searchNavigationToken) {
-      return false;
-    }
-    return true;
+    return get().openMessage(result.session_id, result.anchor_event_uuid, {
+      query, detached: result.archived, remember: !result.archived,
+    });
   },
 
   clearSearchTarget(token) {
@@ -1345,31 +1364,40 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   async loadOlderHistory() {
     const id = get().currentSessionId;
-    if (!id || olderReads.has(id) || isSessionBusy(get(), id)) return false;
+    if (!id || isSessionBusy(get(), id)) return false;
+    const pending = olderReads.get(id);
+    if (pending) return pending;
     const previous = historyPages.get(id);
     if (!previous?.history_cursor || previous.history_epoch === undefined) return false;
+    const cursor = previous.history_cursor;
+    const historyEpoch = previous.history_epoch;
     const epoch = runtimeGeneration;
-    olderReads.add(id);
-    try {
-      const detail = await sessionsApi.getOlder(id, previous.history_cursor, previous.history_epoch);
-      if (detail.session_id !== id) return false;
-      if (get().currentSessionId !== id || runtimeGeneration !== epoch || isSessionBusy(get(), id)) return false;
-      if ((detail.revision ?? 0) !== (previous.revision ?? 0)) {
-        await get().refreshCurrentSession(id);
+    const openToken = openSessionToken;
+    const read = (async () => {
+      try {
+        const detail = await sessionsApi.getOlder(id, cursor, historyEpoch);
+        if (detail.session_id !== id) return false;
+        if (get().currentSessionId !== id || runtimeGeneration !== epoch
+          || openSessionToken !== openToken || isSessionBusy(get(), id)) return false;
+        if ((detail.revision ?? 0) !== (previous.revision ?? 0)) {
+          await get().refreshCurrentSession(id);
+          return false;
+        }
+        if (historyPages.get(id)?.history_epoch !== historyEpoch) return false;
+        const merged = historyPages.accept(detail, true);
+        const messages = projectSessionDetail(merged);
+        set((state) => ({ messages, sessionViews: { ...state.sessionViews,
+          [id]: { ...state.sessionViews[id]!, messages } } }));
+        return true;
+      } catch {
+        // A rewritten cursor must never attach pages from another history epoch.
         return false;
+      } finally {
+        if (runtimeGeneration === epoch) olderReads.delete(id);
       }
-      if (historyPages.get(id)?.history_epoch !== previous.history_epoch) return false;
-      const merged = historyPages.accept(detail, true);
-      const messages = projectSessionDetail(merged);
-      set((state) => ({ messages, sessionViews: { ...state.sessionViews,
-        [id]: { ...state.sessionViews[id]!, messages } } }));
-      return true;
-    } catch {
-      // A rewritten cursor must never attach pages from another history epoch.
-      return false;
-    } finally {
-      if (runtimeGeneration === epoch) olderReads.delete(id);
-    }
+    })();
+    olderReads.set(id, read);
+    return read;
   },
 
   async selectModel(modelId) {

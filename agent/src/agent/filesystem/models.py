@@ -102,6 +102,7 @@ class PendingFilesystemApproval:
     version: int = 1
     status: FilesystemApprovalStatus = "pending"
     approval_mode: SessionApprovalMode = "per_request"
+    approval_mode_source: str = "session"
     approval_mode_version: int = 0
     decision_source: ApprovalDecisionSource | None = None
     risk_assessment: RiskAssessment | None = None
@@ -144,6 +145,7 @@ class PendingFilesystemApproval:
             "status": self.status,
             "approval_mode": self.approval_mode,
             "approval_mode_version": self.approval_mode_version,
+            "approval_mode_source": self.approval_mode_source,
             "decision_source": self.decision_source,
             "risk": (self.risk_assessment.to_dict() if self.risk_assessment is not None else None),
         }

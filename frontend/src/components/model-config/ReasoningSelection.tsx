@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui";
+import { Button, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui";
 import type { ModelReasoningDefinition } from "@/lib/model-config";
 
 export function CustomReasoningInput({ disabled, onChange }: { disabled?: boolean; onChange: (value: string) => void }) {
@@ -11,16 +11,19 @@ export function CustomReasoningInput({ disabled, onChange }: { disabled?: boolea
   </div>;
 }
 
-export function ReasoningSelection({ definition, value, disabled, onChange }: { definition: ModelReasoningDefinition; value: string; disabled?: boolean; onChange: (value: string) => void }) {
+export function ReasoningSelection({ definition, value, disabled, compact = false, onChange }: { definition: ModelReasoningDefinition; value: string; disabled?: boolean; compact?: boolean; onChange: (value: string) => void }) {
   const known = definition.presets.some((item) => item.id === value);
-  return <div className="min-w-64 space-y-2">
+  return <div className={compact ? "min-w-0 space-y-2" : "min-w-64 space-y-2"}>
     <Select value={value} disabled={disabled || definition.control === "fixed" || definition.control === "unsupported"} onValueChange={onChange}>
-      <SelectTrigger className="ml-auto" aria-label="推理强度"><SelectValue /></SelectTrigger>
+      <SelectTrigger className={compact ? "w-full bg-bg" : "ml-auto"} aria-label="推理强度"><SelectValue /></SelectTrigger>
       <SelectContent>
         {definition.presets.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
         {!known && <SelectItem value={value}>{value.startsWith("effort:") ? value.slice(7) : value}</SelectItem>}
       </SelectContent>
     </Select>
-    {definition.allowCustom && <CustomReasoningInput disabled={disabled} onChange={onChange} />}
+    {definition.allowCustom && (compact ? <Collapsible>
+      <CollapsibleTrigger asChild><Button size="sm" variant="outline" disabled={disabled}>自定义强度</Button></CollapsibleTrigger>
+      <CollapsibleContent><CustomReasoningInput disabled={disabled} onChange={onChange} /></CollapsibleContent>
+    </Collapsible> : <CustomReasoningInput disabled={disabled} onChange={onChange} />)}
   </div>;
 }

@@ -817,8 +817,8 @@ class ExecCommandTool:
                 raise CommandRuntimeError(
                     "approval_target_changed", "授权目标发生变化，未继续执行。"
                 )
-            if request.decision_source == "session_auto":
-                current_mode = self._broker.mode_state(session_id)
+            if request.decision_source in ("session_auto", "request_auto"):
+                current_mode = self._broker.mode_state(session_id, request.run_id)
                 if (
                     current_mode.mode != "session_auto"
                     or current_mode.version != request.approval_mode_version

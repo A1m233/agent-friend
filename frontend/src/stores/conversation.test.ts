@@ -207,6 +207,120 @@ it("preserves server recovery eligibility while loading older history", async ()
   expect(lastMessage().canContinue).toBe(true);
 });
 
+describe("shared message navigation", () => {
+  it("uses the same paged navigation for a search hit outside the current loaded window", async () => {
+    mockGet.mockResolvedValueOnce(historyPage(["new"], "new:user"));
+    await useConversationStore.getState().openSession("paged");
+    vi.mocked(sessionsApi.getOlder).mockResolvedValueOnce(historyPage(["old"], "old:user"));
+    const result: SessionMessageSearchResult = {
+      result_id: "message:paged:old:user", kind: "message", session_id: "paged", session_title: "paged",
+      archived: false, role: "user", occurred_at: "2026-09-10T00:00:00Z",
+      anchor_event_uuid: "old:user", matched_field: "content", segments: [{ text: "old", matched: true }],
+    };
+    expect(await useConversationStore.getState().openSearchResult(result, "old")).toBe(true);
+    expect(sessionsApi.getOlder).toHaveBeenCalledOnce();
+    expect(sessionsApi.getFull).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().searchTarget).toMatchObject({
+      anchorEventUuid: "old:user", query: "old", loading: false,
+    });
+  });
+
+  it("locates an already loaded anchor without reading or replacing the current view", async () => {
+    mockGet.mockResolvedValue(historyPage(["new"], "new:user"));
+    await useConversationStore.getState().openSession("paged");
+    const messages = useConversationStore.getState().messages;
+    mockGet.mockClear();
+    await useConversationStore.getState().openMessage("paged", "new:user");
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(sessionsApi.getFull).not.toHaveBeenCalled();
+    expect(sessionsApi.getOlder).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().messages).toBe(messages);
+    expect(useConversationStore.getState().searchTarget).toMatchObject({
+      anchorEventUuid: "new:user", loading: false,
+    });
+  });
+
+  it("restores a cached session containing the target without refetching history", async () => {
+    mockGet.mockResolvedValueOnce(historyPage(["new"], "new:user"));
+    await useConversationStore.getState().openSession("paged");
+    mockGet.mockResolvedValueOnce(sessionDetail("other", "other"));
+    await useConversationStore.getState().openSession("other");
+    mockGet.mockClear();
+    await useConversationStore.getState().openMessage("paged", "new:assistant");
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().historyLoading).toBe(false);
+    expect(useConversationStore.getState().currentSessionId).toBe("paged");
+    expect(useConversationStore.getState().searchTarget?.anchorEventUuid).toBe("new:assistant");
+  });
+
+  it("keeps a target pending and stops paging once its complete turn is loaded", async () => {
+    mockGet.mockResolvedValueOnce(historyPage(["new"], "new:user"));
+    const older = deferred<SessionDetail>();
+    vi.mocked(sessionsApi.getOlder).mockReturnValueOnce(older.promise);
+    const opening = useConversationStore.getState().openMessage("paged", "old:assistant");
+    await vi.waitFor(() => expect(sessionsApi.getOlder).toHaveBeenCalledOnce());
+    expect(useConversationStore.getState().searchTarget?.loading).toBe(true);
+    older.resolve(historyPage(["old"], "old:user"));
+    expect(await opening).toBe(true);
+    expect(sessionsApi.getOlder).toHaveBeenCalledExactlyOnceWith("paged", "new:user", "initial");
+    expect(sessionsApi.getFull).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().hasOlderHistory()).toBe(true);
+    expect(useConversationStore.getState().messages.map((m) => m.id)).toEqual([
+      "old:user", "old:assistant", "new:user", "new:assistant",
+    ]);
+    expect(useConversationStore.getState().searchTarget?.loading).toBe(false);
+  });
+
+  it("lets a newer target share a pending page without an older target stealing focus", async () => {
+    mockGet.mockResolvedValueOnce(historyPage(["new"], "new:user"));
+    await useConversationStore.getState().openSession("paged");
+    const older = deferred<SessionDetail>();
+    vi.mocked(sessionsApi.getOlder).mockReturnValueOnce(older.promise);
+    const first = useConversationStore.getState().openMessage("paged", "old:user");
+    const second = useConversationStore.getState().openMessage("paged", "old:assistant");
+    older.resolve(historyPage(["old"], null));
+    expect(await first).toBe(false);
+    expect(await second).toBe(true);
+    expect(sessionsApi.getOlder).toHaveBeenCalledOnce();
+    expect(useConversationStore.getState().searchTarget).toMatchObject({
+      anchorEventUuid: "old:assistant", loading: false,
+    });
+  });
+
+  it("discards a pending page after leaving the session", async () => {
+    mockGet.mockResolvedValueOnce(historyPage(["new"], "new:user"));
+    await useConversationStore.getState().openSession("paged");
+    const older = deferred<SessionDetail>();
+    vi.mocked(sessionsApi.getOlder).mockReturnValueOnce(older.promise);
+    const opening = useConversationStore.getState().openMessage("paged", "old:user");
+    mockGet.mockResolvedValueOnce(sessionDetail("other", "other"));
+    await useConversationStore.getState().openSession("other");
+    older.resolve(historyPage(["old"], null));
+    expect(await opening).toBe(false);
+    expect(useConversationStore.getState().currentSessionId).toBe("other");
+    expect(firstText()).toBe("other");
+    expect(useConversationStore.getState().searchTarget).toBeNull();
+  });
+
+  it("settles missing anchors at the end of history without a full-history fallback", async () => {
+    mockGet.mockResolvedValueOnce(historyPage(["new"], "new:user"));
+    vi.mocked(sessionsApi.getOlder).mockResolvedValueOnce(historyPage(["middle"], "middle:user"))
+      .mockResolvedValueOnce(historyPage(["old"], null));
+    await useConversationStore.getState().openMessage("paged", "deleted");
+    expect(sessionsApi.getOlder).toHaveBeenCalledTimes(2);
+    expect(sessionsApi.getFull).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().searchTarget).toMatchObject({ anchorEventUuid: "deleted", loading: false });
+  });
+
+  it("settles a failed older-page request without losing visible messages", async () => {
+    mockGet.mockResolvedValueOnce(historyPage(["new"], "new:user"));
+    vi.mocked(sessionsApi.getOlder).mockRejectedValueOnce(new Error("offline"));
+    await useConversationStore.getState().openMessage("paged", "old:user");
+    expect(useConversationStore.getState().messages).toHaveLength(2);
+    expect(useConversationStore.getState().searchTarget?.loading).toBe(false);
+  });
+});
+
 function runSnapshot(
   runId: string,
   sessionId: string,
@@ -585,10 +699,8 @@ describe("conversation store · cancel lifecycle", () => {
     expect(sessionActiveRun(useConversationStore.getState(), sendResult.sessionId)?.run_id)
       .toBe(sendResult.runId);
     expect(isSessionBusy(useConversationStore.getState(), sendResult.sessionId)).toBe(true);
-    expect(useConversationStore.getState().send("不能抢跑下一条")).toEqual({
-      accepted: false,
-      reason: "busy",
-    });
+    expect(useConversationStore.getState().send("等待当前执行结束"))
+      .toMatchObject({ accepted: false, reason: "busy" });
 
     terminalGate.resolve(
       runSnapshot(sendResult.runId, sendResult.sessionId, "terminal", 3, "cancelled"),
@@ -935,7 +1047,7 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
   });
 
   it("从归档搜索结果打开消息时保持 detached，并提交稳定事件锚点", async () => {
-    vi.mocked(sessionsApi.getFull).mockResolvedValue(sessionDetail("sid-archived", "归档历史"));
+    mockGet.mockResolvedValue(sessionDetail("sid-archived", "归档历史"));
     const result: SessionMessageSearchResult = {
       result_id: "message:sid-archived:a-anchor",
       kind: "message",
@@ -965,7 +1077,7 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
   it("搜索结果在打开失败时恢复此前会话，不用错误页覆盖它", async () => {
     mockGet.mockResolvedValueOnce(sessionDetail("sid-current", "当前历史"));
     await useConversationStore.getState().openSession("sid-current");
-    vi.mocked(sessionsApi.getFull).mockRejectedValueOnce(new Error("deleted"));
+    mockGet.mockRejectedValueOnce(new Error("deleted"));
     const result: SessionMessageSearchResult = {
       result_id: "message:sid-deleted:u-1",
       kind: "message",
@@ -1115,10 +1227,7 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     });
     const accepted = useConversationStore.getState().send("第一条");
     expect(accepted.accepted).toBe(true);
-    expect(useConversationStore.getState().send("第二条")).toEqual({
-      accepted: false,
-      reason: "busy",
-    });
+    expect(useConversationStore.getState().send("第二条")).toEqual({ accepted: false, reason: "busy" });
     expect(messageTexts()).not.toContain("第二条");
 
     streamGate.resolve();
@@ -1219,10 +1328,8 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     expect(isSessionBusy(useConversationStore.getState(), result.sessionId)).toBe(true);
     expect(sessionActiveRun(useConversationStore.getState(), result.sessionId)?.run_id)
       .toBe(result.runId);
-    expect(useConversationStore.getState().send("不应重复接纳")).toEqual({
-      accepted: false,
-      reason: "busy",
-    });
+    expect(useConversationStore.getState().send("等待连接恢复"))
+      .toMatchObject({ accepted: false, reason: "busy" });
   });
 
   it("打开历史会话时优先投影 active_events", async () => {
@@ -1918,10 +2025,8 @@ describe("conversation store · background detail refresh", () => {
     await useConversationStore.getState().openSession("sid-external");
 
     expect(isSessionBusy(useConversationStore.getState(), "sid-external")).toBe(true);
-    expect(useConversationStore.getState().send("不应接纳")).toEqual({
-      accepted: false,
-      reason: "busy",
-    });
+    expect(useConversationStore.getState().send("等待外部运行完成"))
+      .toEqual({ accepted: false, reason: "busy" });
   });
 
   it("重连 pull 中缺失的旧 active run 会解除 busy 并刷新当前 detail", async () => {
