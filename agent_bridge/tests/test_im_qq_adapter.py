@@ -38,6 +38,71 @@ from qqbot_agent_sdk.dto import MessageAttachment, QQMessageType
 # ---------- fixtures ----------
 
 
+@pytest.mark.asyncio
+async def test_progress_body_and_recovery_allocate_distinct_ordered_sequences(
+    adapter: QQAdapter,
+) -> None:
+    api = MagicMock()
+    api.post_c2c_message = AsyncMock(return_value={"id": "static"})
+    api.request = AsyncMock(return_value={"id": "stream"})
+    adapter._api = api
+    context = OutboundStreamContext(
+        chat_id="user",
+        chat_scope="c2c",
+        reply_to_message_id="inbound",
+        text_format="markdown",
+        stream_trace="trace",
+    )
+    stream = adapter.open_text_stream(context)
+    assert stream is not None
+    await adapter.send(
+        OutboundContent(
+            chat_id="user",
+            chat_scope="c2c",
+            reply_to_message_id="inbound",
+            text="progress",
+        )
+    )
+    await stream.update("body")
+    await adapter.send(
+        OutboundContent(
+            chat_id="user",
+            chat_scope="c2c",
+            reply_to_message_id="inbound",
+            text="rest",
+        )
+    )
+    sequences = [
+        api.post_c2c_message.await_args_list[0].args[1].msg_seq,
+        api.request.await_args_list[0].args[2]["msg_seq"],
+        api.post_c2c_message.await_args_list[1].args[1].msg_seq,
+    ]
+    assert sequences == sorted(set(sequences))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply", [{}, {"code": 0}])
+async def test_send_missing_receipt_is_unknown(adapter: QQAdapter, reply: dict[str, int]) -> None:
+    api = MagicMock()
+    api.post_c2c_message = AsyncMock(return_value=reply)
+    adapter._api = api
+    result = await adapter.send(OutboundContent(chat_id="user", chat_scope="c2c", text="body"))
+    assert result.outcome == "unknown"
+    assert result.error_kind == "missing_receipt"
+
+
+@pytest.mark.asyncio
+async def test_send_explicit_http_denial_is_failed(adapter: QQAdapter) -> None:
+    api = MagicMock()
+    api.post_c2c_message = AsyncMock(
+        side_effect=RuntimeError("QQ Bot API error [403] /v2/users/user/messages: forbidden")
+    )
+    adapter._api = api
+    result = await adapter.send(OutboundContent(chat_id="user", chat_scope="c2c", text="body"))
+    assert result.outcome == "failed"
+    assert result.error_kind == "http_rejected"
+
+
 @pytest.fixture
 def cred() -> ImCredential:
     return ImCredential(

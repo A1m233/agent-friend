@@ -17,17 +17,21 @@
 
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import ANY, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 from agent.runtime import AgentRuntime, RunOutcome
 from agent.system_prompt import IM_QQ_SURFACE
+from agent_bridge.protocols.im.adapters.qq_streaming import QQC2CStreamSession
 from agent_bridge.protocols.im.content import OutboundContent
 from agent_bridge.protocols.im.event import InboundEvent
 from agent_bridge.protocols.im.media import InboundMedia
-from agent_bridge.protocols.im.router import FALLBACK_TEXT, IMRouter
+from agent_bridge.protocols.im.provider import OutboundSendResult
+from agent_bridge.protocols.im.router import FALLBACK_TEXT, IMRouter, _IMRunCancelled
+from agent_bridge.protocols.im.streaming import OutboundStreamContext
 from agent_bridge.session_bridge import PersistentBootstrap
 
 from agent import (
@@ -97,6 +101,28 @@ class StubBoundProvider:
 
     async def send(self, content: OutboundContent) -> None:
         self.sent.append(content)
+
+
+class ReceiptStreamingProvider:
+    type = "qq"
+    bind_id = "BOUND-ACCOUNT"
+
+    def __init__(self, responses: list[object]) -> None:
+        self.api = AsyncMock()
+        self.api.request.side_effect = responses
+        self.sent: list[OutboundContent] = []
+        self.receipt = OutboundSendResult("delivered", "static-message")
+        self.stream: QQC2CStreamSession | None = None
+
+    def open_text_stream(self, context: OutboundStreamContext) -> QQC2CStreamSession:
+        self.stream = QQC2CStreamSession(
+            api=self.api, bind_id=self.bind_id, context=context, msg_seq=1
+        )
+        return self.stream
+
+    async def send(self, content: OutboundContent) -> OutboundSendResult:
+        self.sent.append(content)
+        return self.receipt
 
 
 # ---------- fixtures ----------
@@ -667,6 +693,186 @@ async def test_send_callback_exception_propagates(
 # ---------- native stream routing ----------
 
 
+def immutable_stream_error() -> RuntimeError:
+    return RuntimeError(
+        "QQ Bot API error [404] /v2/users/user/stream_messages: 已经提交的消息内容不可修改"
+    )
+
+
+@pytest.mark.asyncio
+async def test_qq_compaction_progress_does_not_block_full_answer_recovery(
+    router: IMRouter,
+    session_bridge: MagicMock,
+) -> None:
+    session_bridge.bind_persistent.return_value = _make_conv(
+        [
+            ContextCompactionStatus(activity_id="a", phase="started"),
+            ContextCompactionStatus(activity_id="a", phase="completed"),
+            TextDelta(text="完整回答"),
+            TurnDone(),
+        ]
+    )
+    provider = ReceiptStreamingProvider([immutable_stream_error()])
+    await router.handle_inbound("qq", _make_event(), provider)
+    assert [item.text for item in provider.sent] == [
+        "正在整理较长对话，稍后继续回复。",
+        "完整回答",
+    ]
+    assert provider.api.request.await_count == 1
+    assert provider.api.request.await_args.args[2]["content_raw"] == "完整回答"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        immutable_stream_error(),
+        RuntimeError(
+            "QQ Bot API error [400] /v2/users/user/stream_messages: 流式消息已经结束，不能继续发送"
+        ),
+        TimeoutError("timeout"),
+    ],
+)
+@pytest.mark.parametrize("receipt_outcome", ["delivered", "failed", "unknown"])
+async def test_qq_partial_answer_recovery_uses_confirmed_prefix_once(
+    router: IMRouter,
+    session_bridge: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+    failure: Exception,
+    receipt_outcome: str,
+) -> None:
+    import logging
+
+    first_sent = threading.Event()
+    provider = ReceiptStreamingProvider([])
+    aliases = MagicMock()
+    router._reference_aliases = aliases
+    session_bridge.assistant_event_after.return_value = SimpleNamespace(uuid="assistant-event")
+
+    async def request(_method: str, _path: str, payload: dict[str, object]) -> dict[str, str]:
+        if payload["index"] == 0:
+            first_sent.set()
+            return {"id": "native-message"}
+        raise failure
+
+    provider.api.request.side_effect = request
+    provider.receipt = OutboundSendResult(cast(Any, receipt_outcome), "recovery-message")
+
+    def generate(_text: str, **_kwargs: Any) -> Any:
+        yield TextDelta(text="已收到😀")
+        assert first_sent.wait(timeout=3)
+        yield TextDelta(text="剩余回答")
+        yield TurnDone()
+
+    session_bridge.bind_persistent.return_value.stream.side_effect = generate
+    with caplog.at_level(logging.INFO):
+        await router.handle_inbound("qq", _make_event(), provider)
+    assert provider.api.request.await_count == 2
+    assert provider.sent[0].text == "接上条：\n剩余回答"
+    assert provider.sent[0].text_format == "plain_text"
+    assert sum("剩余回答" in item.text for item in provider.sent) == 1
+    assert len(provider.sent) == (1 if receipt_outcome == "delivered" else 2)
+    assert f"outcome={receipt_outcome}" in caplog.text
+    if isinstance(failure, TimeoutError):
+        assert "duplicate_risk=True" in caplog.text
+    registered = [call.kwargs["message_aliases"] for call in aliases.put.call_args_list]
+    assert registered == (
+        [["native-message"], ["recovery-message"]]
+        if receipt_outcome == "delivered"
+        else [["native-message"]]
+    )
+
+
+@pytest.mark.asyncio
+async def test_qq_full_body_accepted_but_done_rejected_does_not_resend(
+    router: IMRouter,
+    session_bridge: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("agent_bridge.protocols.im.router._STREAM_MENU_DELAY_SECONDS", 0)
+    session_bridge.bind_persistent.return_value = _make_conv([TextDelta(text="全文"), TurnDone()])
+    provider = ReceiptStreamingProvider([{"id": "native-message"}, immutable_stream_error()])
+    await router.handle_inbound("qq", _make_event(), provider)
+    assert all(item.text != "全文" for item in provider.sent)
+    assert provider.api.request.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_qq_permission_failure_does_not_send_new_body_or_notice(
+    router: IMRouter,
+    session_bridge: MagicMock,
+) -> None:
+    session_bridge.bind_persistent.return_value = _make_conv([TextDelta(text="回答"), TurnDone()])
+    provider = ReceiptStreamingProvider(
+        [RuntimeError("QQ Bot API error [403] /v2/users/user/stream_messages: forbidden")]
+    )
+    await router.handle_inbound("qq", _make_event(), provider)
+    assert provider.sent == []
+    assert provider.api.request.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_qq_cancel_does_not_flush_queued_normal_body(
+    router: IMRouter,
+    session_bridge: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from agent_bridge.protocols.im import router as router_module
+
+    in_flight = threading.Event()
+    release_receipt = asyncio.Event()
+    original_finish = router_module._finish_relay
+
+    async def finish_after_cancel(*args: Any) -> str:
+        release_receipt.set()
+        return await original_finish(*args)
+
+    monkeypatch.setattr(router_module, "_finish_relay", finish_after_cancel)
+
+    def generate(_text: str, **_kwargs: Any) -> Any:
+        yield TextDelta(text="已发出正文")
+        assert in_flight.wait(timeout=3)
+        yield TextDelta(text="不可发送的尾部")
+        raise _IMRunCancelled()
+
+    session_bridge.bind_persistent.return_value.stream.side_effect = generate
+    provider = ReceiptStreamingProvider([])
+
+    async def request(_method: str, _path: str, payload: dict[str, object]) -> dict[str, str]:
+        if payload["index"] == 0:
+            in_flight.set()
+            await asyncio.wait_for(release_receipt.wait(), timeout=3)
+        return {"id": "native-message"}
+
+    provider.api.request.side_effect = request
+    await router.handle_inbound("qq", _make_event(), provider)
+    assert provider.api.request.await_count == 2
+    final_payload = provider.api.request.await_args_list[-1].args[2]
+    assert final_payload["content_raw"] == "已发出正文\n\n本轮已取消。"
+    assert final_payload["input_state"] == 10
+    assert provider.sent == []
+
+
+@pytest.mark.asyncio
+async def test_qq_outbound_alias_failure_does_not_break_delivery(
+    router: IMRouter,
+    session_bridge: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("agent_bridge.protocols.im.router._STREAM_MENU_DELAY_SECONDS", 0)
+    session_bridge.bind_persistent.return_value = _make_conv([TextDelta(text="回答"), TurnDone()])
+    provider = ReceiptStreamingProvider([{"id": "native-message"}, {"id": "native-message"}])
+    aliases = MagicMock()
+    aliases.put.side_effect = OSError("disk full")
+    router._reference_aliases = aliases
+    monkeypatch.setattr(router, "_register_user_alias", lambda *_args, **_kwargs: None)
+    await router.handle_inbound("qq", _make_event(), provider)
+    assert provider.stream is not None and provider.stream.is_completed
+    aliases.put.assert_called_once()
+
+
 @pytest.mark.asyncio
 async def test_native_stream_sends_body_once_then_separate_menu(
     router: IMRouter, session_bridge: MagicMock, monkeypatch: pytest.MonkeyPatch
@@ -697,7 +903,7 @@ async def test_native_stream_sends_body_once_then_separate_menu(
 
 
 @pytest.mark.asyncio
-async def test_native_stream_replaces_compaction_progress_with_answer(
+async def test_native_stream_separates_compaction_progress_from_answer(
     router: IMRouter, session_bridge: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     session_bridge.bind_persistent.return_value = _make_conv(
@@ -718,12 +924,9 @@ async def test_native_stream_replaces_compaction_progress_with_answer(
 
     await router.handle_inbound("qq", _make_event(), provider)
 
-    assert stream.updates == [
-        "正在整理较长对话…",
-        "已整理好，正在准备回复…",
-        "最终回答",
-    ]
+    assert stream.updates == ["最终回答"]
     assert stream.finishes == ["最终回答"]
+    assert provider.sent[0].text == "正在整理较长对话，稍后继续回复。"
     assert all(item.text != "最终回答" for item in provider.sent)
 
 
