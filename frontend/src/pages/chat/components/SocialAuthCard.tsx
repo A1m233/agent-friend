@@ -75,12 +75,20 @@ const STATUS_META: Record<
 
 export function SocialAuthCard({
   block,
+  historySummary,
   isPrimaryActivity = true,
 }: {
-  block: ToolBlock;
+  block?: ToolBlock;
+  historySummary?: { request: Record<string, unknown>; result: Record<string, unknown> };
   isPrimaryActivity?: boolean;
 }) {
-  const initial = useMemo(() => parseToolBlock(block), [block]);
+  const initial = useMemo(() => historySummary ? {
+    requestId: asString(historySummary.result.request_id),
+    platform: asString(historySummary.result.platform) || asString(historySummary.request.platform),
+    reason: asString(historySummary.request.reason),
+    originSurface: asString(historySummary.result.origin_surface),
+  } : block ? parseToolBlock(block) : { requestId: "", platform: "", reason: "", originSurface: "" },
+  [block, historySummary]);
   const entry = useSocialAuthRequestsStore((state) => (
     initial.requestId ? state.entries[initial.requestId] : undefined
   ));

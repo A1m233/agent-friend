@@ -236,6 +236,7 @@ class SessionManager:
                 recorder._pending_witness,
                 recorder._pending_cache_diagnostics,
                 recorder.restored,
+                recorder.latest_commit,
                 vars(recorder._encoder),
                 getattr(state.context_manager, "__dict__", {}),
                 getattr(state.prompt_cache_trace_tracker, "__dict__", {}),
@@ -776,7 +777,11 @@ class SessionManager:
         if context_manager_factory is None:  # guarded by start_conversation
             raise AgentError("context_manager_factory 未配置")
         can_reuse = getattr(self._store, "can_reuse_loaded", None)
-        if callable(can_reuse) and not can_reuse(session):
+        revalidate_snapshot = getattr(self._store, "revalidate_execution_snapshot", None)
+        source_unchanged = not callable(can_reuse) or can_reuse(session)
+        if source_unchanged and callable(revalidate_snapshot):
+            source_unchanged = revalidate_snapshot(session, cancel_check=cancel_check)
+        if not source_unchanged:
             # Opening may precede the writer lease. Revalidate every cold source,
             # including conversations with no tool transactions to reconcile.
             session = self.open_for_execution(session.session_id, cancel_check=cancel_check)

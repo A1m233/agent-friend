@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import atexit
+import dataclasses
+import gc
 import hashlib
 import json
 import logging
@@ -14,6 +16,7 @@ import runpy
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 from contextlib import suppress
@@ -62,6 +65,26 @@ def copy_fixture(source: Path, target: Path) -> dict[str, Any]:
     ):
         raise ValueError("fixture_changed_during_copy")
     return {"session_id": session_id, "bytes": after.st_size, "sha256": digest}
+
+
+def derived_storage(directory: Path) -> dict[str, dict[str, int]]:
+    result = {}
+    for kind in ("business", "execution", "recall"):
+        files = tuple(path for path in (directory / f".{kind}").rglob("*") if path.is_file())
+        result[kind] = {
+            "file_count": len(files),
+            "bytes": sum(path.stat().st_size for path in files),
+            "temporary_bytes": sum(path.stat().st_size for path in files if path.suffix == ".tmp"),
+        }
+    return result
+
+
+def cache_observation(store: Any, session_id: str) -> dict[str, Any] | None:
+    observer = getattr(store, "execution_cache_observation", None)
+    if not callable(observer):
+        return None
+    observation = observer(session_id)
+    return dataclasses.asdict(observation) if dataclasses.is_dataclass(observation) else observation
 
 
 class Measurements(logging.Handler):
@@ -190,6 +213,7 @@ def measure(
             current["provider_calls"] += 1
             if current["provider_calls"] == 1:
                 current["first_fake_request_ms"] = monotonic_ms() - current["started_ms"]
+                current["memory_at_fake_entry"] = memory_metrics()
                 # Measure wire-like JSON separately; this is not an SDK transport.
                 encoding_started = time.perf_counter()
                 body = json.dumps(
@@ -228,8 +252,13 @@ def measure(
 
     manager: Any = None
     runtime: Any = None
+    store: Any = None
+    conv: Any = None
+    loaded: Any = None
+    handle: Any = None
+    released_memory: dict[str, Any] | None = None
 
-    def build() -> tuple[Any, Any]:
+    def build() -> tuple[Any, Any, Any]:
         store = JsonlSessionStore(directory / "sessions")
         catalog = PersonaCatalog(external_dir=directory / "personas")
         manager = SessionManager(
@@ -248,29 +277,50 @@ def measure(
             max_workers=1,
         )
         runtime.start()
-        return manager, runtime
+        return manager, runtime, store
 
     try:
-        manager, runtime = build()
+        manager, runtime, store = build()
         for index, alias in enumerate(sequence):
             if reload_each and index:
                 runtime.stop()
                 manager.close()
-                manager, runtime = build()
+                manager, runtime, store = build()
             sid = fixture_ids[alias]
             collector.run_id = f"load-{index + 1}"
             # Preload execution state to separate first load from hot send. Query
             # caches remain naturally shared and can still evict one another.
+            resident_before_open = manager.runtime_state_diagnostics(sid) is not None
+            memory_before_open = memory_metrics()
             load_started = time.perf_counter()
-            conv = manager.start_conversation(
-                manager.open_for_execution(sid), post_turn_external=True
+            loaded = manager.open_for_execution(sid)
+            open_ms = (time.perf_counter() - load_started) * 1000
+            memory_after_open = memory_metrics()
+            start_began = time.perf_counter()
+            conv = manager.start_conversation(loaded, post_turn_external=True)
+            start_ms = (time.perf_counter() - start_began) * 1000
+            # Do not charge memory observation between open/start to recovery.
+            load_ms = open_ms + start_ms
+            memory_after_start = memory_metrics()
+            recovery_observation = (
+                {"status": "resident_reuse", "source_bytes": 0, "lease_source_bytes": 0}
+                if resident_before_open
+                else cache_observation(store, sid)
             )
-            load_ms = (time.perf_counter() - load_started) * 1000
+            load_storage = derived_storage(directory / "sessions")
             collector.run_id = f"offline-{index + 1}"
             current = {
                 "run_id": collector.run_id,
                 "sample": alias,
                 "load_ms": load_ms,
+                "open_ms": open_ms,
+                "start_ms": start_ms,
+                "resident_before_open": resident_before_open,
+                "memory_before_open": memory_before_open,
+                "memory_after_open": memory_after_open,
+                "memory_after_start": memory_after_start,
+                "recovery_cache_observation": recovery_observation,
+                "derived_storage_after_load": load_storage,
                 "started_ms": monotonic_ms(),
                 "provider_calls": 0,
             }
@@ -287,6 +337,12 @@ def measure(
                 handle.cancel()
                 raise TimeoutError("offline_send_timeout")
             current["outcome"] = terminal.outcome.value
+            current["send_terminal_ms"] = monotonic_ms() - current["started_ms"]
+            current["open_start_and_prepare_ms"] = (
+                load_ms + current["first_fake_request_ms"]
+                if "first_fake_request_ms" in current
+                else None
+            )
             current["error_type"] = (
                 type(terminal.error).__name__ if terminal.error is not None else None
             )
@@ -296,8 +352,15 @@ def measure(
                 "database_count": len(projection_files),
                 "database_bytes": sum(path.stat().st_size for path in projection_files),
             }
+            current["completion_cache_observation"] = cache_observation(store, sid)
+            recorder = getattr(conv, "_rollout_recorder", None)
+            current["candidate_capture_ms"] = getattr(recorder, "latest_commit_capture_ms", None)
+            current["derived_storage_after_send"] = derived_storage(directory / "sessions")
             current.pop("started_ms")
             runs.append(current)
+            # A previous loop's diagnostic locals must not retain an obsolete
+            # Conversation while --reload-each builds the next runtime.
+            conv = loaded = handle = None
             if current["outcome"] != "completed" or current["provider_calls"] != 1:
                 break
     finally:
@@ -305,6 +368,9 @@ def measure(
             runtime.stop()
         if manager is not None:
             manager.close()
+        manager = runtime = store = conv = loaded = handle = None
+        gc.collect()
+        released_memory = memory_metrics()
         root_logger.removeHandler(collector)
         for logger, level in previous_levels.items():
             logger.setLevel(level)
@@ -312,6 +378,7 @@ def measure(
         "runs": runs,
         "observations": collector.rows,
         "observations_truncated": collector.truncated,
+        "memory_after_runtime_release": released_memory,
     }
 
 
@@ -329,6 +396,9 @@ def main() -> int:
         "--reload-each",
         action="store_true",
         help="Recreate runtime and stores per send; does not clear OS cache",
+    )
+    parser.add_argument(
+        "--source-ref", help="Trusted repository commit; omit for a frozen current source overlay"
     )
     parser.add_argument(
         "--output", type=Path, required=True, help="New numeric report file; never overwritten"
@@ -355,7 +425,7 @@ def main() -> int:
     socket.create_connection = deny_network
     os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
     report: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 3,
         "kind": "offline_send_baseline",
         "python": platform.python_version(),
         "platform": platform.platform(),
@@ -369,23 +439,47 @@ def main() -> int:
             "tools": False,
             "logging": "INFO, with file/query observation DEBUG only",
         },
-        "production_head": subprocess.check_output(
+        "workspace_head_at_start": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
         ).strip(),
         "sequence": sequence,
         "reload_each": args.reload_each,
         "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "harness_dependencies_sha256": {
+            name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
+            for name in (
+                "scripts/session-latency/cold_cache_probe.py",
+                "scripts/session-memory/run.py",
+                "uv.lock",
+            )
+        },
         "limits": [
             "fake provider: first request is not upstream receipt",
             "real history source and scope; no structured memory database or extraction",
             "default builtin persona, NaiveContextManager and no active Skill service/tools/attachments",
             "no UI, HTTP/IPC, real provider adapter, or OS cold-cache measurement",
             "execution preload reported separately; sends mutate disposable copies",
+            "reload_each rebuilds runtime/manager/store in the same interpreter, not a new process",
+            "cold snapshot load and writer-lease validation are separate full source byte reads",
+            "derived storage is measured after load and after terminal persistence",
+            "candidate capture and snapshot publication costs are separate; both count as maintenance",
+            "memory peak counters are process-lifetime high-water marks, not resettable phase peaks",
+            "memory sampled at open/start/fake-entry/terminal boundaries; samples do not capture all transient phases",
+            "load_ms sums open_ms and start_ms, excluding the intervening memory observation",
+            "fake-entry memory observation occurs after first_fake_request_ms and adds small overhead to send_terminal_ms",
+            "probe locals released between sends; forced GC only after all runtimes stop, outside measured operations",
         ],
     }
     # A newly owned TemporaryDirectory is the only recursive cleanup target.
     with tempfile.TemporaryDirectory(prefix="af-offline-send-") as temporary:
         directory = Path(temporary).resolve()
+        source_tools = runpy.run_path(str(ROOT / "scripts/session-latency/cold_cache_probe.py"))
+        sources = directory / "sources"
+        sources.mkdir()
+        report["source"] = source_tools["snapshot_sources"](sources, args.source_ref)
+        report["source_fingerprint"] = source_tools["digest_value"](report["source"]["files"])
+        for package in source_tools["PACKAGES"]:
+            sys.path.insert(0, str(sources / package / "src"))
         os.environ["AGENT_FRIEND_DATA_DIR"] = str(directory)
         os.environ["AGENT_FRIEND_LOG_DIR"] = str(directory / "logs")
         sessions = directory / "sessions"
@@ -400,22 +494,18 @@ def main() -> int:
         # allowlisted collector is retained; ordinary logs are not persisted.
         logging.getLogger().addHandler(logging.NullHandler())
         report.update(measure(directory, fixture_ids, sequence, reload_each=args.reload_each))
-    changed = subprocess.check_output(
-        ["git", "diff", "--name-only", "HEAD"], cwd=ROOT, text=True
-    ).splitlines()
-    report["tracked_overlay_sha256"] = {
-        name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-        for name in changed
-        if (ROOT / name).is_file()
-    }
-    untracked = subprocess.check_output(
-        ["git", "ls-files", "--others", "--exclude-standard"], cwd=ROOT, text=True
-    ).splitlines()
-    report["untracked_overlay_sha256"] = {
-        name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-        for name in untracked
-        if (ROOT / name).is_file()
-    }
+        measured_modules = {}
+        for package in source_tools["PACKAGES"]:
+            module = sys.modules.get(package)
+            module_file = getattr(module, "__file__", None)
+            if module_file is None or not Path(module_file).resolve().is_relative_to(sources):
+                raise ValueError(f"measurement_imported_unfrozen_source:{package}")
+            measured_modules[package] = Path(module_file).resolve().relative_to(sources).as_posix()
+        report["measured_modules"] = measured_modules
+        for alias, source in fixtures.items():
+            if source_tools["digest_file"](source) != copies[alias]["sha256"]:
+                raise ValueError("original_fixture_changed_during_measurement")
+        report["original_unchanged"] = True
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("x", encoding="utf-8", newline="\n") as handle:
         json.dump(report, handle, ensure_ascii=False, indent=2)

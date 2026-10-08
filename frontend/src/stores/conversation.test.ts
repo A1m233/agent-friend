@@ -36,6 +36,7 @@ vi.mock("@/services", () => ({
     get: vi.fn(),
     getFull: vi.fn(),
     getOlder: vi.fn(),
+    history: vi.fn(),
     getApprovalMode: vi.fn(),
     switchModel: vi.fn(),
     updateRuntimeConfig: vi.fn(),
@@ -59,6 +60,7 @@ import {
   StreamAdmissionError,
 } from "@/services";
 import type { SessionDetail } from "@/types/meta";
+import type { HistoryPage } from "@/types/history";
 import type { SessionApprovalModeState } from "@/services/api/sessions";
 import type { CancelRunResponse, RunSnapshot } from "@/types/run";
 import type { SessionMessageSearchResult } from "@/types/search";
@@ -71,6 +73,7 @@ import { HOME_DRAFT_KEY, useDraftStore } from "./drafts";
 import { useRuntimeCredentialStore } from "./runtimeCredentials";
 import { emptySnapshotFence } from "./snapshotFence";
 import { isSessionBusy, sessionActiveRun } from "./runPresentation";
+import { historySignal, renewHistoryView } from "./historyLifecycle";
 
 const mockStream = vi.mocked(runAgentStream);
 const mockRunGet = vi.mocked(runsApi.get);
@@ -208,6 +211,33 @@ it("preserves server recovery eligibility while loading older history", async ()
 });
 
 describe("shared message navigation", () => {
+  it("keeps the visible history lease when an in-flight edit rejects navigation", async () => {
+    const signal = renewHistoryView();
+    useConversationStore.setState({ editingMessage: { sessionId: "paged", messageId: "user",
+      draftKey: "paged", originalText: "text", originalAttachments: [], phase: "submitting" } });
+    expect(await useConversationStore.getState().openSession("other")).toBe(false);
+    useConversationStore.getState().newSession();
+    expect(historySignal()).toBe(signal);
+    expect(signal.aborted).toBe(false);
+  });
+
+  it("locates a bounded historical anchor directly and keeps both navigation directions", async () => {
+    const page = (id: string): HistoryPage => ({ session_id: "paged", title: "p", model: "test", persona: "p",
+      history_epoch: "e", content_version: "v", before_cursor: id, after_cursor: id,
+      has_before: true, has_after: id === "old", history_cursor: id,
+      history_items: [{ uuid: id, type: "assistant_message", ts: "2026-10-08", payload: { content: id },
+        message_id: id, body: { state: "inline" } }] });
+    mockGet.mockResolvedValueOnce(page("new"));
+    await useConversationStore.getState().openSession("paged");
+    vi.mocked(sessionsApi.history).mockResolvedValueOnce(page("old"));
+    expect(await useConversationStore.getState().openMessage("paged", "old")).toBe(true);
+    expect(sessionsApi.history).toHaveBeenCalledWith("paged", expect.objectContaining({ around: "old", signal: expect.any(AbortSignal) }));
+    expect(sessionsApi.getOlder).not.toHaveBeenCalled();
+    expect(sessionsApi.getFull).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().messages.map((message) => message.id)).toEqual(["old"]);
+    expect(useConversationStore.getState().hasNewerHistory()).toBe(true);
+  });
+
   it("uses the same paged navigation for a search hit outside the current loaded window", async () => {
     mockGet.mockResolvedValueOnce(historyPage(["new"], "new:user"));
     await useConversationStore.getState().openSession("paged");
@@ -262,7 +292,7 @@ describe("shared message navigation", () => {
     expect(useConversationStore.getState().searchTarget?.loading).toBe(true);
     older.resolve(historyPage(["old"], "old:user"));
     expect(await opening).toBe(true);
-    expect(sessionsApi.getOlder).toHaveBeenCalledExactlyOnceWith("paged", "new:user", "initial");
+    expect(sessionsApi.getOlder).toHaveBeenCalledExactlyOnceWith("paged", "new:user", "initial", expect.any(AbortSignal));
     expect(sessionsApi.getFull).not.toHaveBeenCalled();
     expect(useConversationStore.getState().hasOlderHistory()).toBe(true);
     expect(useConversationStore.getState().messages.map((m) => m.id)).toEqual([
@@ -2059,7 +2089,7 @@ describe("conversation store · background detail refresh", () => {
     await vi.waitFor(() => expect(firstText()).toBe("recovered"));
   });
 
-  it("同会话 refresh 合并读取，内容失效后只应用尾随的新结果", async () => {
+  it("同会话 refresh 先呈现有效页，再后台刷新失效内容", async () => {
     mockGet.mockResolvedValueOnce(sessionDetail("sid-1", "initial"));
     await useConversationStore.getState().openSession("sid-1");
 
@@ -2071,12 +2101,12 @@ describe("conversation store · background detail refresh", () => {
     const newerRun = useConversationStore.getState().refreshCurrentSession("sid-1");
     expect(mockGet).toHaveBeenCalledTimes(2);
     older.resolve(sessionDetail("sid-1", "old"));
-    await Promise.resolve();
-    newer.resolve(sessionDetail("sid-1", "newest"));
     expect(await newerRun).toBe("applied");
     expect(await olderRun).toBe("stale");
-    expect(mockGet).toHaveBeenCalledTimes(3);
-    expect(firstText()).toBe("newest");
+    expect(firstText()).toBe("old");
+    await vi.waitFor(() => expect(mockGet).toHaveBeenCalledTimes(3));
+    newer.resolve(sessionDetail("sid-1", "newest"));
+    await vi.waitFor(() => expect(firstText()).toBe("newest"));
   });
 
   it("切换 session 后旧 refresh 返回不会污染新会话", async () => {

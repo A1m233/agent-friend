@@ -52,7 +52,14 @@ def test_query_logs_cold_hit_and_external_invalidation_without_counting_file_rea
     assert store.query(sid).active_events[-1].uuid == "new"
 
     records = _records(caplog)
-    assert [record.cache_action for record in records] == ["rebuilt", "hit", "rebuilt"]  # type: ignore[attr-defined]
+    # Another writer advances the shared disk projection, so invalidating this
+    # store's memory entry now reuses persistent data instead of rebuilding JSONL.
+    assert [record.cache_action for record in records] == ["rebuilt", "hit", "hit"]  # type: ignore[attr-defined]
+    assert [record.__dict__["cache_source"] for record in records] == [
+        "journal",
+        "memory",
+        "persistent",
+    ]
     assert [record.cache_miss_reason for record in records] == ["absent", None, "source_changed"]  # type: ignore[attr-defined]
     assert [record.cache_published for record in records] == [True, None, True]  # type: ignore[attr-defined]
     for record in records:
@@ -145,6 +152,9 @@ def test_capacity_and_source_race_explain_why_a_build_was_not_published(
     caplog.set_level(logging.DEBUG, logger=query_observation.__name__)
     store, sid = _store(tmp_path)
     JsonlSessionStore(tmp_path, query_cache_bytes=0).query(sid)
+    # Exercise the raw-build race explicitly; persistent-hit races have their own
+    # test below and need not trigger a new journal build.
+    store.discard_business_index(sid)
     build = SessionQuerySnapshot.build
 
     def append_during_projection(*args: Any, **kwargs: Any) -> SessionQuerySnapshot:
@@ -160,6 +170,30 @@ def test_capacity_and_source_race_explain_why_a_build_was_not_published(
         "capacity",
         "source_changed",
     ]
+
+
+def test_persistent_hit_records_rejected_memory_publish_after_external_append(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger=query_observation.__name__)
+    store, sid = _store(tmp_path)
+    store.query(sid)
+    fresh = JsonlSessionStore(tmp_path)
+    read = fresh._business_index.read
+
+    def racing_read(*args: Any, **kwargs: Any) -> SessionQuerySnapshot | None:
+        snapshot = read(*args, **kwargs)
+        store.append_event(sid, _message("racing"))
+        return snapshot
+
+    caplog.clear()
+    monkeypatch.setattr(fresh._business_index, "read", racing_read)
+    assert fresh.query(sid).raw_event_count == 1
+    record = _records(caplog)[-1]
+    assert record.__dict__["cache_action"] == "hit"
+    assert record.__dict__["cache_source"] == "persistent"
+    assert record.__dict__["cache_published"] is False
+    assert record.__dict__["cache_publish_reason"] == "source_changed"
 
 
 def test_maintenance_failure_log_does_not_change_durable_write_success(

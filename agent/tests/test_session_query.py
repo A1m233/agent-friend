@@ -255,7 +255,9 @@ def test_builders_are_per_session_and_append_can_progress_during_parse(
         finally:
             release.set()
         old = first.result(timeout=5)
-    assert old.raw_event_count == 1
+    # A known append is captured without another raw scan and can advance the
+    # consistent snapshot before it is first published.
+    assert old.raw_event_count == 2
     assert query_session(store, sid).raw_event_count == 2
 
 

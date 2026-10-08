@@ -169,9 +169,13 @@ export function findReferenceMessageIndex(
 ): number {
   const anchor = reference.source.messageEventUuid;
   const blockId = reference.source.textBlockId;
+  const exact = messages.findIndex((message) => message.history?.event.uuid === blockId
+    || message.blocks.some((block) => block.kind === "text" && block.mid === blockId));
+  if (exact >= 0) return exact;
   return messages.findIndex(
     (message) =>
       message.id === anchor
+      || message.history?.messageId === anchor
       || message.blocks.some((block) => block.kind === "text" && block.mid === blockId),
   );
 }

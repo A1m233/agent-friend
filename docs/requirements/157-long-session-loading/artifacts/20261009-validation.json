@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "kind": "feature_157_validation_record",
+  "base_commit": "d1068625d81d380c464355ad139c028600a0dbc9",
+  "branch": "feature/157-long-session-loading",
+  "uncommitted_overlay": true,
+  "changed_code_and_harness_sha256": {
+    "agent/src/agent/conversation.py": "bc4fda1e68e2334c498f829a8da8f7ca3820d18280cfa1ec7a6a84c6e3ea26b6",
+    "agent/src/agent/sessions/business_index/__init__.py": "9a93bd2710315fa393b61a71e6dfee5bb5cc0bc01b9a05e81c901bace0176f9e",
+    "agent/src/agent/sessions/business_index/builds.py": "fee998764093041ae8be7c2fcc27bf63c96c882423ed98602c004af3a2bb5898",
+    "agent/src/agent/sessions/business_index/cancellation.py": "bc134ca31c9d39ce0248686a8f0b29f993b83793fea99166373d89ad5e947b33",
+    "agent/src/agent/sessions/business_index/index.py": "e1512214004276a4d22318375b5e560d7ecfbb33a1d9cb4f41819ca20192d827",
+    "agent/src/agent/sessions/business_index/pages.py": "080823c421027636865d3a07aeec08b113be26d226365d312f1828bf1b4b3949",
+    "agent/src/agent/sessions/business_index/presentation.py": "84ec46bc22dfc3c7e76915a94aca1136f9f49dd8e7e726fc0b4602edad7ebf04",
+    "agent/src/agent/sessions/execution_cache/__init__.py": "3c2afd650d78b092fc9d8bd97c736f113488b5e02fe0424fba82725841c76ead",
+    "agent/src/agent/sessions/execution_cache/codec.py": "4b60e8b8399f8cd4abef91c596fdd256704265608b91fac6c111853d123f5380",
+    "agent/src/agent/sessions/execution_cache/digests.py": "d91171ddb7b293c68ed74958709ed1c5e2a1c237843f85df1559b3cf44acfc75",
+    "agent/src/agent/sessions/manager.py": "2d0788216cd58a86428e5df2528487f514b7435ad9eba413fa937a59501572b2",
+    "agent/src/agent/sessions/query_observation.py": "67a29dbc9077b74dd1027b6da3cec266435b2ab59c9e05112020d82e853048ea",
+    "agent/src/agent/sessions/rollout.py": "7f0e6d08c0d65387015a689fc17527981efc8a0c935c8cb16ae9b7ae4b5610b5",
+    "agent/src/agent/sessions/rollout_encoding.py": "efd133c9b3bb8fb5f08607d2048b74331e3fd1b10debe1a8555737403d5f2524",
+    "agent/src/agent/sessions/session.py": "101a96ede5391498be0d7c943e635202988d2d5afd57b8b35efb71576bac997e",
+    "agent/src/agent/sessions/store.py": "502647acf4fc915ee6e7cf825cf62b4957e0d6272ac2e020c2129b953855dacc",
+    "agent/tests/test_execution_snapshot_cache.py": "744c6f4eda27b6273bbd73abf0a77d4aa76fc18dbac261122ff9b611f78c3d2c",
+    "agent/tests/test_execution_snapshot_dynamic.py": "1aa3f8cb23b85d22568e8b561c827671ebe91f237c0eef0b1bc4349d363cb6b0",
+    "agent/tests/test_session_business_index.py": "a6c0967e74f07e5b5629defd606a36b5846ed10f6c5bfea60d71ea345db16066",
+    "agent/tests/test_session_query.py": "194b29c32788703c4e4e4678b0169ccde84e11a5395fb57952ce8a646c86661a",
+    "agent/tests/test_session_query_observation.py": "eaa0daa2cd12760962ac2b64814029bec1363b667251a2e5190347c18fbfccd7",
+    "agent/tests/test_session_rollout.py": "3eba3347fd4205988984f887fcc899c40f138a9db92504a556096bfc189c12c7",
+    "agent_bridge/src/agent_bridge/app.py": "d181607a4ec5ff5fdf60afab16fbda8aa3ad30827cd8e49c8c7b5947c140b097",
+    "agent_bridge/src/agent_bridge/request_observation.py": "92d80719e99d491e2f9648f69e151ce9bf1a36cf8399ee6fc9a48f5c0962675c",
+    "agent_bridge/src/agent_bridge/routes/history.py": "5dd1bf25c8db0283ed0a8c68dbe11249d4865b780a483f7e3b23fce9319597d5",
+    "agent_bridge/src/agent_bridge/routes/meta.py": "80a0a23f530fa8378fa0f715559e0c7e718224622cc7b43b0acb5b811e146f09",
+    "agent_bridge/tests/test_history_routes.py": "9d78a58b37f37b27894ac819da561ffe22d2232013985a56f5b6ad3eec12cd9e",
+    "agent_bridge/tests/test_request_observation.py": "80a99667d3626edc7d043b61d38aed1233fc69922cceda0955ca23dc57aae65b",
+    "frontend/src-tauri/src/lib.rs": "ce7e3dc8cb3398972933d9f0741f97204f60fc6c606b27f317a4fee314111916",
+    "frontend/src-tauri/src/runtime_observability.rs": "0162e247eeb670e2abf214002d13849c01321919be30c5307d6be5ea608c3f6b",
+    "frontend/src-tauri/src/runtime_observability/history.rs": "2f66a1f3f9a4d30f384d2ded7815496a5676c789381bf69369bc776602eb0793",
+    "frontend/src/pages/chat/App.tsx": "bdb882a9b66c5c4f5e340adf7b4db6ffa05378cda7587f7cb5fa956ef9c3bf21",
+    "frontend/src/pages/chat/components/CopyMessageButton.test.ts": "43bf213c58d95fc4f69166287c11d643b56635aaa780b45122b877adffd8689f",
+    "frontend/src/pages/chat/components/CopyMessageButton.tsx": "79bf5d4667ad6e0e5a8844d5c6da426f4764f1cb78a35b05c00b26160ebd377b",
+    "frontend/src/pages/chat/components/DeferredHistoryMessage.tsx": "4fed0a36cf761d4f49b5c957714907dc9b9c2e6b44ed6c4dea9194eace71df1d",
+    "frontend/src/pages/chat/components/ExecutionDisclosure.tsx": "2e17b8461fabae9bb6a937ff04ad062dd64ff12b802b95cb62e84bb1328cc7c4",
+    "frontend/src/pages/chat/components/MessageActionBar.tsx": "a0492ba13307a213e7c918107e5da46392fb6159f539bda6ad58c01ea9dc62ca",
+    "frontend/src/pages/chat/components/MessageList.tsx": "77cda491b9e59e353015c0134b2135aff4be11592c59e497793e1009f388137d",
+    "frontend/src/pages/chat/components/RunExecutionDisclosure.tsx": "7b9dae4691d31ba21d27e825c298af9340b283e54259726243794b7dd95b9616",
+    "frontend/src/pages/chat/components/SocialAuthCard.tsx": "6fbb5226f076051a31877714acd2d3648f8bf82cd2cf9934b76847e145c659b6",
+    "frontend/src/pages/chat/components/activity/primaryActivity.ts": "e317fc7bbba52930a92fd32032ff2c5832ffb685815dd7bbfec9a3ebec279683",
+    "frontend/src/pages/chat/components/executionDisclosurePolicy.ts": "a3645276923213ac8073de7bc0f783b590cd3b61c478efa34677b3ccd5a170ba",
+    "frontend/src/pages/chat/components/messageQuoteSelection.ts": "de0db93c2032d4d3a3840ee72ba9f161425b8a1fbeb88a322e95f4336c99ce74",
+    "frontend/src/services/api/sessions.test.ts": "c429dd7c919d33aadcb7f1e93196907a1316081393c49499eb764cb4bba97e6d",
+    "frontend/src/services/api/sessions.ts": "b10906d4ced241637beb8e2f61015ec686f37b765d4f0409e577c8e5098ed642",
+    "frontend/src/services/historyContent.test.ts": "7d254358442cd6695d4c85db68aaa04b756d3a90c685fcc423a98a99ec792dec",
+    "frontend/src/services/historyContent.ts": "65c8ba6bf0e606588b7b9b24e45c73fe603246d05e4e2f7f36052584da13aef7",
+    "frontend/src/services/historyHttpObservation.test.ts": "faea51452c0be1a87e7ed43339e0d168dc5bfe48b4eebfaead4a437ed9e0ad68",
+    "frontend/src/services/historyObservation.test.ts": "2bec1a04aada1e1b5a4c272672759cc612a9888fb22b782761e0fb8dd6698be7",
+    "frontend/src/services/historyObservation.ts": "c54bb6d19ef650aeeb3fd1e90df3a4941f7a6a6366d0feee770fdda02d2b8f57",
+    "frontend/src/services/http.ts": "83aa168d5c645774dd3a2ec64034481a96c74c93d50ca422d7c82262485533d3",
+    "frontend/src/stores/conversation.test.ts": "ba2bb5c804c42e8a2d5c9ada8068f5226ca738588dd9f707f51cda33d0bed928",
+    "frontend/src/stores/conversation.ts": "52f681f7e0c89522c6cce3218acad8fb757e8d96b8528c1bb092b49db48d9fbb",
+    "frontend/src/stores/historyLifecycle.ts": "d4e451cf19d36b52cfa492cad1168a63f9cf73da78f2bd4b04b719a942aa8360",
+    "frontend/src/stores/historyLiveEvents.test.ts": "a9761b22dbfd40595543313fb08850e072e2ab47f1266e6e8c711fe5789682ab",
+    "frontend/src/stores/historyLiveEvents.ts": "2a4624772f44e64452feb44401a2232ed69229f1dff5de7b3c4d0ded21d04762",
+    "frontend/src/stores/historyProjection.test.ts": "92f0aee1aeb1aa42a5344c42c734e3a30f9d3b9cc06a55931274d7175753f4dd",
+    "frontend/src/stores/historyProjection.ts": "a94cffb3c4c85fc2f139eb1ee2f5a77e5d4adfb46d52235917af21e06a9f8bdf",
+    "frontend/src/stores/messageNavigation.ts": "c1acc5ec3936c394b2b3c32a306975b857690a8e8bd6c012896423c42d51e179",
+    "frontend/src/stores/runPresentation.ts": "becd49be1e108f44b4ebc1ff2b0b53c485e651e82698ba4a25c13c042ff1ce54",
+    "frontend/src/stores/sessionDetailReads.test.ts": "0b77d81ec53ce90e6b1909f400072242db739fd48bc84396c661258f46538a0a",
+    "frontend/src/stores/sessionDetailReads.ts": "677fc11b743aaeaf85f7962d160b9b005815fdaedab17eea9b1d5a0fbfca4e3c",
+    "frontend/src/stores/sessionHistoryPages.ts": "0e790267d6a1037121f883fdb1b6302e44a2443956e841e135bf63ccdd88cad0",
+    "frontend/src/stores/taskRecovery.ts": "62364b374b24eb1c1eaa36febbdf70c4144682cf4f32c71ec5e7078df4a5b15d",
+    "frontend/src/types/chat.ts": "e2ffbf3df6e013bd96c9891286d94d583c297fede344c1fd015bce0602b3faf4",
+    "frontend/src/types/history.ts": "c45688030059f437a571578be72bb0f6bb578946f76573e91bf6ee8ee38ff73d",
+    "frontend/src/types/meta.ts": "65aaaccfe56a82f7cb56ce896c4b1dc3cb70e056ca830a95014af9181eae96c8",
+    "scripts/README.md": "af3c6fc2f85f0cbe0044aebcad0b85ffec3ee2e48177c30712fd0ae52ca698af",
+    "scripts/session-latency/cold_cache_probe.py": "0f348e88a7ad7600bf2d7b6f6b24046e3ef365889bd01cffcb270d272add7943",
+    "scripts/session-latency/desktop_fixture.py": "dd1e6603b0fd98dcfe8297d2ae7bfb4263c3817d09f4aff18ef39c2f0b251d97",
+    "scripts/session-latency/history_desktop_probe.mjs": "96725008b60355d4898987091ba98219e9865b1eab076444f342be2abcaea220",
+    "scripts/session-latency/offline_probe.py": "86966f077807b7040c44b7212221cbb7baf6d2426977fca8b77ba2efa0cdc1dc",
+    "scripts/session-latency/run.ps1": "a1e3027e68a2181495b1a9de470be701b8830e474039f8d513134743386b0f2c",
+    "scripts/session-latency/run.py": "16347728908d6228a97fa26837461d7ca77ea1d0acc820206509a9ecdea46082",
+    "scripts/session-latency/run.sh": "f79c0ed9074e3edb8fd582d831b5962bfbfe6c6ea2156ab69a9a05712bcc7daa",
+    "scripts/session-latency/test_cold_cache_probe.py": "a7d149c81dc035b319d9d8f86b80b22ef09b13fa613bf511ac7c14271261991c"
+  },
+  "checks": [
+    {
+      "command": "scripts/check/run.ps1 --stage backend -p no_external_http",
+      "environment": "PYTHONPATH=scripts/test",
+      "status": "passed",
+      "pytest_passed": 3964,
+      "pytest_skipped": 5,
+      "ruff_files": 954,
+      "mypy_files": 808
+    },
+    {
+      "command": "scripts/check/run.ps1 --stage frontend",
+      "status": "passed",
+      "tests_passed": 1471,
+      "test_files": 183,
+      "scope": "lint guards, typecheck, tests, production build"
+    },
+    {
+      "command": "scripts/check/run.ps1 --stage rust",
+      "status": "passed",
+      "tests_passed": 313,
+      "tests_ignored": 1,
+      "scope": "fmt, lib/launcher/installer helper tests, release check",
+      "cargo_target": "external governed build-cache"
+    },
+    {
+      "command": "scripts/test/run.ps1 agent/tests/test_session_rollout.py",
+      "status": "passed",
+      "tests_passed": 42,
+      "scope": "cache-hit dynamic paths added after full gate"
+    },
+    {
+      "command": "scripts/test/run.ps1 agent/tests/test_execution_snapshot_dynamic.py",
+      "status": "passed",
+      "tests_passed": 3
+    },
+    {
+      "command": "scripts/test/run.ps1 scripts/session-latency/test_cold_cache_probe.py -q",
+      "status": "passed",
+      "tests_passed": 8,
+      "scope": "not included in default pytest testpaths"
+    },
+    {
+      "command": "scripts/session-latency/run.ps1 desktop-history --self-test-url-classification",
+      "status": "passed",
+      "assertions": 17
+    },
+    {
+      "command": "scripts/typecheck/run.ps1",
+      "status": "passed",
+      "files": 809,
+      "scope": "after dynamic tests added"
+    },
+    {
+      "command": "scripts/lint/run.ps1",
+      "status": "passed",
+      "formatted_files": 955,
+      "scope": "final harness and tests"
+    },
+    {
+      "command": "git diff --check",
+      "status": "passed"
+    }
+  ],
+  "limits": [
+    "Full backend gate preceded three added dynamic tests and cache-hit upgrades to existing rollout tests; both affected files were rerun afterward.",
+    "No product changes after full gates or fresh desktop startup; subsequent edits were tests, harness and records.",
+    "Existing warnings include third-party coroutine/atexit cleanup, duplicate zip fixture, frontend chunk/CSS and Rust dead-code warnings.",
+    "No installed/frozen build claim; package impact classified standard.",
+    "User acceptance pending; no commit, merge or release."
+  ],
+  "runtime_cleanup": {
+    "owned_dev_stopped": true,
+    "lease_released": true,
+    "ports_free": true,
+    "desktop_settings_files_restored_by_sha256": 5
+  },
+  "real_llm_calls": 0
+}

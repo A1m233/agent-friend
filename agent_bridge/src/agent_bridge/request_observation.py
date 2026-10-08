@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import suppress
 from time import perf_counter
 from uuid import uuid4
@@ -22,6 +23,15 @@ class RequestObservationMiddleware:
             await self.app(scope, receive, send)
             return
         request_id = uuid4().hex
+        navigation_id = next(
+            (
+                value.decode("ascii")
+                for key, value in scope.get("headers", [])
+                if key == b"x-agent-friend-navigation-id"
+                and re.fullmatch(rb"[a-zA-Z0-9_-]{1,64}", value)
+            ),
+            None,
+        )
         token = session_request_id.set(request_id)
         started = perf_counter()
         response_started: float | None = None
@@ -58,11 +68,14 @@ class RequestObservationMiddleware:
                 route = getattr(scope.get("route"), "path", "unmatched")
                 logger.log(
                     logging.INFO
-                    if finished - started >= 0.1 or outcome != "success"
+                    if navigation_id is not None
+                    or finished - started >= 0.1
+                    or outcome != "success"
                     else logging.DEBUG,
-                    "http_request request_id=%s method=%s route=%s status=%s started=%.6f "
+                    "http_request request_id=%s navigation_id=%s method=%s route=%s status=%s started=%.6f "
                     "response_started=%s finished=%.6f total_ms=%.3f bytes=%s outcome=%s",
                     request_id,
+                    navigation_id,
                     scope.get("method"),
                     route,
                     status,
