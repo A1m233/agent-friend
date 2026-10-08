@@ -164,6 +164,7 @@ class Session:
     load_diagnostics: SessionLoadDiagnostics = field(default_factory=SessionLoadDiagnostics)
     # Transient read identity, never exported or persisted. append invalidates it.
     loaded_source_version: SourceVersion | None = field(default=None, repr=False, compare=False)
+    execution_snapshot_digest: str | None = field(default=None, repr=False, compare=False)
     # Execution projections keep business facts in events; raw journal access is
     # explicit and on demand. Ordinary load() continues to expose full history.
     journal_reader: Callable[[], Iterator[Event]] | None = field(
@@ -1019,6 +1020,7 @@ class Session:
         """
         self.events.append(event)
         self.loaded_source_version = None
+        self.execution_snapshot_digest = None
 
     def to_dict(self) -> dict[str, Any]:
         """完整快照导出。

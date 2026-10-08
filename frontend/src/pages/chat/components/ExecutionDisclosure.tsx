@@ -3,11 +3,15 @@ import { ChevronRight } from "lucide-react";
 import { Button, Separator } from "@/components/ui";
 import { cn } from "@/utils/cn";
 
-const DisclosureState = createContext<Map<string, boolean> | null>(null);
+const DisclosureState = createContext<{ values: Map<string, boolean>; set: (id: string, open: boolean | undefined) => void } | null>(null);
 
 export function ExecutionDisclosureStateProvider({ children }: { children: ReactNode }) {
   const [state] = useState(() => new Map<string, boolean>());
-  return <DisclosureState.Provider value={state}>{children}</DisclosureState.Provider>;
+  const [revision, setRevision] = useState(0);
+  return <DisclosureState.Provider value={{ values: state, set: (id, open) => {
+    if (open === undefined) state.delete(id); else state.set(id, open);
+    setRevision(revision + 1);
+  } }}>{children}</DisclosureState.Provider>;
 }
 
 export function ExecutionDisclosure({ children, label, enabled, collapse, revealTarget, onDisclosureChange, disclosureId = "local", showHeader = true, interactive = true }: {
@@ -22,8 +26,16 @@ export function ExecutionDisclosure({ children, label, enabled, collapse, reveal
   disclosureId?: string;
 }) {
   const viewState = useContext(DisclosureState);
-  const [manualOpen, setManualOpen] = useState<boolean | undefined>(() => viewState?.get(disclosureId));
-  if (!interactive && manualOpen !== undefined) setManualOpen(undefined);
+  const [localOpen, setLocalOpen] = useState<boolean | undefined>();
+  const manualOpen = interactive ? viewState?.values.get(disclosureId) ?? localOpen : undefined;
+  const setManualOpen = (open: boolean) => {
+    if (viewState) viewState.set(disclosureId, open);
+    else setLocalOpen(open);
+  };
+  useLayoutEffect(() => {
+    if (!interactive && viewState?.values.has(disclosureId)) viewState.set(disclosureId, undefined);
+    if (!interactive && localOpen !== undefined) setLocalOpen(undefined);
+  }, [interactive, viewState, disclosureId, localOpen]);
   const [dismissedReveal, setDismissedReveal] = useState<string | undefined>();
   const [previousReveal, setPreviousReveal] = useState(revealTarget);
   if (previousReveal !== revealTarget) {
@@ -32,10 +44,6 @@ export function ExecutionDisclosure({ children, label, enabled, collapse, reveal
   }
   const searchOpen = !!revealTarget && revealTarget !== dismissedReveal;
   const open = !enabled || !interactive || searchOpen || (manualOpen ?? !collapse);
-  useLayoutEffect(() => {
-    if (!interactive) viewState?.delete(disclosureId);
-    else if (manualOpen !== undefined) viewState?.set(disclosureId, manualOpen);
-  }, [manualOpen, viewState, disclosureId, interactive]);
   return (
     <>
       {showHeader && <>{enabled && interactive ? <Button variant="ghost" size="sm" aria-expanded={open}

@@ -10,6 +10,21 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "desktop-history":
+        return subprocess.call(
+            ["node", str(Path(__file__).with_name("history_desktop_probe.mjs")), *sys.argv[2:]],
+            cwd=ROOT,
+        )
+    if len(sys.argv) > 1 and sys.argv[1] == "desktop-fixture":
+        return subprocess.call(
+            [sys.executable, str(Path(__file__).with_name("desktop_fixture.py")), *sys.argv[2:]],
+            cwd=ROOT,
+        )
+    if len(sys.argv) > 1 and sys.argv[1] == "cold-cache":
+        return subprocess.call(
+            [sys.executable, str(Path(__file__).with_name("cold_cache_probe.py")), *sys.argv[2:]],
+            cwd=ROOT,
+        )
     if len(sys.argv) > 1 and sys.argv[1] == "offline":
         return subprocess.call(
             [sys.executable, str(Path(__file__).with_name("offline_probe.py")), *sys.argv[2:]],

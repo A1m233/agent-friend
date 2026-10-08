@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -22,7 +23,7 @@ from agent.sessions import (
     SessionWriterConflictError,
     restore_rollout,
 )
-from agent.system_prompt import DESKTOP_CHAT_SURFACE
+from agent.system_prompt import DESKTOP_CHAT_SURFACE, IM_QQ_SURFACE
 from llm_providers.request_witness import witness_from_body
 
 from agent import (
@@ -162,6 +163,7 @@ def _manager(
     registry: ToolRegistry | None = None,
     store: JsonlSessionStore | None = None,
     message_renderer: Any = None,
+    **manager_kwargs: Any,
 ) -> SessionManager:
     catalog = PersonaCatalog(external_dir=root / "personas")
     return SessionManager(
@@ -175,6 +177,7 @@ def _manager(
         memory=cast(Any, memory),
         tool_registry=registry,
         message_renderer=message_renderer,
+        **manager_kwargs,
     )
 
 
@@ -190,6 +193,12 @@ def _create(manager: SessionManager, *, title: str = "rollout") -> str:
 def _run(manager: SessionManager, session_id: str, text: str) -> None:
     conversation = manager.start_conversation(manager.open(session_id))
     list(conversation.stream(text, surface=DESKTOP_CHAT_SURFACE))
+
+
+def _open_cached(manager: SessionManager, session_id: str) -> Session:
+    loaded = manager.open_for_execution(session_id)
+    assert loaded.execution_snapshot_digest is not None
+    return loaded
 
 
 def test_execution_load_keeps_business_events_and_verified_current_context(tmp_path: Path) -> None:
@@ -228,6 +237,194 @@ def test_execution_load_keeps_business_events_and_verified_current_context(tmp_p
         "second",
         "third",
     ]
+
+
+def test_persistent_execution_hit_skips_jsonl_replay_and_keeps_exact_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    manager = _manager(tmp_path, _RecordingLLM(), store=store)
+    sid = _create(manager)
+    _run(manager, sid, "first")
+    manager.close()
+    expected = restore_rollout(store.load(sid))
+    cold = JsonlSessionStore(store.base_dir)
+
+    def no_replay(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("verified persisted snapshot should skip JSONL decoding")
+
+    monkeypatch.setattr(cold, "iter_events", no_replay)
+    loaded = cold.load_execution(sid)
+    actual = loaded.restored_rollout
+    assert actual is not None and actual.disposition == "exact"
+    assert actual.commit == expected.commit
+    assert actual.history.items == expected.history.items
+    observation = cold.execution_cache_observation(sid)
+    assert observation is not None and observation.status == "hit"
+    assert observation.source_bytes == (store.base_dir / f"{sid}.jsonl").stat().st_size
+
+
+def test_cache_is_published_after_run_terminal_and_write_failure_cannot_fail_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    manager = _manager(tmp_path, _RecordingLLM(), store=store)
+    sid = _create(manager)
+    conversation = manager.start_conversation(
+        manager.open_for_execution(sid), post_turn_external=True
+    )
+    list(conversation.stream("first"))
+    assert not list((store.base_dir / ".execution").glob("*.json"))
+    assert conversation.append_run_terminal_event(
+        run_id="run-1", status="completed", reason_code="completed", owner_runtime_instance_id="rt"
+    )
+    cache_files = list((store.base_dir / ".execution").glob("*.json"))
+    assert len(cache_files) == 1
+    envelope = json.loads(cache_files[0].read_bytes())
+    assert envelope["body"]["state"]["events"][-1]["type"] == "run_terminal"
+
+    def failed_publish(*args: Any, **kwargs: Any) -> None:
+        raise OSError("cache disk unavailable")
+
+    monkeypatch.setattr(store, "publish_execution_snapshot", failed_publish)
+    assert conversation.append_run_terminal_event(
+        run_id="run-2", status="completed", reason_code="completed", owner_runtime_instance_id="rt"
+    )
+    assert conversation.session.events[-1].payload["status"] == "completed"
+    manager.close()
+
+
+def test_cold_cache_keeps_current_memory_and_surface_preparation(
+    tmp_path: Path,
+) -> None:
+    first = _manager(
+        tmp_path,
+        _RecordingLLM(),
+        memory=_SequencedMemory([MemoryContext(rendered="old-memory-recall", items=[])]),
+    )
+    sid = _create(first)
+    _run(first, sid, "first")
+    first.close()
+    cold_store = JsonlSessionStore(tmp_path / "sessions")
+    llm = _RecordingLLM()
+    second = _manager(
+        tmp_path,
+        llm,
+        store=cold_store,
+        memory=_SequencedMemory([MemoryContext(rendered="new-memory-recall", items=[])]),
+    )
+    conversation = second.start_conversation(second.open_for_execution(sid))
+    observation = cold_store.execution_cache_observation(sid)
+    assert observation is not None and observation.status == "hit"
+    list(conversation.stream("second", surface=IM_QQ_SURFACE))
+    wire = str(llm.received[-1])
+    assert "old-memory-recall" in wire and "new-memory-recall" in wire
+    assert conversation._session_model_context.snapshot.surface == IM_QQ_SURFACE
+    second.close()
+
+
+def test_append_invalidates_execution_snapshot_and_delete_cleans_cache(tmp_path: Path) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    manager = _manager(tmp_path, _RecordingLLM(), store=store)
+    sid = _create(manager)
+    _run(manager, sid, "first")
+    manager.close()
+    cold = JsonlSessionStore(store.base_dir)
+    event = Event(
+        type="user_message", uuid="late-input", ts=datetime.now(UTC), payload={"content": "later"}
+    )
+    cold.append_event(sid, event)
+    loaded = cold.load_execution(sid)
+    assert loaded.restored_rollout is not None
+    assert loaded.restored_rollout.disposition == "interrupted"
+    assert loaded.events[-1] == event
+    cold.delete(sid)
+    assert not list((store.base_dir / ".execution").glob("*.json"))
+
+
+def test_cache_revalidates_under_writer_lease_and_releases_it_on_source_corruption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_store = JsonlSessionStore(tmp_path / "sessions")
+    manager = _manager(tmp_path, _RecordingLLM(), store=original_store)
+    sid = _create(manager)
+    _run(manager, sid, "first")
+    manager.close()
+    cold = JsonlSessionStore(original_store.base_dir)
+    restarted = _manager(tmp_path, _RecordingLLM(), store=cold)
+    loaded = restarted.open_for_execution(sid)
+    version = loaded.loaded_source_version
+    assert version is not None and loaded.execution_snapshot_digest is not None
+    path = cold.base_dir / f"{sid}.jsonl"
+    info = path.stat()
+    source = path.read_bytes()
+    altered = source.replace(b'"session_meta"', b'"session_fail"', 1)
+    assert altered != source and len(altered) == len(source)
+    path.write_bytes(altered)
+    os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns))
+    # Also mask change-time differences on platforms that expose ctime rather
+    # than birthtime, so this regression specifically exercises full byte proof.
+    monkeypatch.setattr(cold, "_source_version", lambda _path: version)
+    monkeypatch.setattr(cold, "_handle_version", lambda _handle, _path: version)
+    with pytest.raises(SessionCorruptError):
+        restarted.start_conversation(loaded)
+    lease = JsonlSessionStore(cold.base_dir).acquire_writer_lease(sid)
+    lease.release()
+    assert restarted.resident_states() == {}
+
+
+def test_warm_turn_maintains_source_hash_without_reading_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hashlib import sha256
+
+    store = JsonlSessionStore(tmp_path / "sessions")
+    manager = _manager(tmp_path, _RecordingLLM(), store=store)
+    sid = _create(manager)
+    _run(manager, sid, "first")
+
+    def no_read(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("warm cache maintenance must hash appended bytes only")
+
+    monkeypatch.setattr(store, "iter_events", no_read)
+    monkeypatch.setattr(store, "_hash_source", no_read)
+    conversation = manager.start_conversation(manager.open_for_execution(sid))
+    list(conversation.stream("second", surface=DESKTOP_CHAT_SURFACE))
+    manager.close()
+    source = (store.base_dir / f"{sid}.jsonl").read_bytes()
+    cache_file = next((store.base_dir / ".execution").glob("*.json"))
+    envelope = json.loads(cache_file.read_bytes())
+    assert envelope["body"]["source_sha256"] == sha256(source).hexdigest()
+    fresh = JsonlSessionStore(store.base_dir)
+    loaded = fresh.load_execution(sid)
+    assert loaded.restored_rollout is not None and loaded.restored_rollout.disposition == "exact"
+    observation = fresh.execution_cache_observation(sid)
+    assert observation is not None and observation.status == "hit"
+
+
+@pytest.mark.parametrize("silent", [False, True])
+def test_direct_system_turn_publishes_only_after_generator_completion(
+    tmp_path: Path, silent: bool
+) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    manager = _manager(tmp_path, _RecordingLLM(), store=store)
+    sid = _create(manager)
+    conversation = manager.start_conversation(manager.open_for_execution(sid))
+    list(
+        conversation.dispatch_system_turn(
+            source_kind="test",
+            system_prompt_addendum="test input",
+            output_visibility="memory_only" if silent else "user",
+        )
+    )
+    manager.close()
+    cold = JsonlSessionStore(store.base_dir)
+    cached = cold.load_execution(sid)
+    expected = restore_rollout(cold.load(sid))
+    assert cached.restored_rollout is not None
+    assert cached.restored_rollout.commit == expected.commit
+    observation = cold.execution_cache_observation(sid)
+    assert observation is not None and observation.status == "hit"
 
 
 def test_compact_history_rewrite_recovers_same_verified_prefix(tmp_path: Path) -> None:
@@ -555,7 +752,7 @@ def test_tool_transaction_restores_in_order_without_reinvoking_tool(tmp_path: Pa
 
     restarted_llm = _RecordingLLM(["after restart"])
     restarted = _manager(tmp_path, restarted_llm, registry=registry)
-    conversation = restarted.start_conversation(restarted.open(session_id))
+    conversation = restarted.start_conversation(_open_cached(restarted, session_id))
     assert tool.invocations == 1
     list(conversation.stream("continue", surface=DESKTOP_CHAT_SURFACE))
     assert tool.invocations == 1
@@ -874,7 +1071,7 @@ def test_global_new_chat_default_does_not_replace_restored_session_model(tmp_pat
     first.close()
 
     restarted = _manager(tmp_path, _RecordingLLM())
-    existing = restarted.start_conversation(restarted.open(existing_id))
+    existing = restarted.start_conversation(_open_cached(restarted, existing_id))
     new_id = restarted.create(
         persona="default",
         persona_id=BUILTIN_DEFAULT_PERSONA_ID,
@@ -994,7 +1191,13 @@ def test_restored_epoch_detects_each_incompatible_identity(
         boundary="assistant_completed",
         turn_terminal=True,
     )
-    restored = restore_rollout(store.load(session.session_id))
+    # Seed from the full trusted path, then explicitly exercise a fresh store's
+    # persisted snapshot before testing changed provider/tool identities.
+    store.load_execution(session.session_id)
+    loaded = JsonlSessionStore(store.base_dir).load_execution(session.session_id)
+    assert loaded.execution_snapshot_digest is not None
+    restored = loaded.restored_rollout
+    assert restored is not None
     previous_epoch_id = restored.cache_epoch.epoch_id
 
     update = restored.cache_epoch.observe(**{**baseline, **change})
@@ -1063,7 +1266,7 @@ def test_image_tool_result_survives_rollout_restart_and_route_change(tmp_path: P
         registry=ToolRegistry([tool]),
         message_renderer=lambda m, _c: adapter.render_message(m, unsupported),
     )
-    conversation = second.start_conversation(second.open(session_id))
+    conversation = second.start_conversation(_open_cached(second, session_id))
     assert any(item.images == (image,) for item in conversation._session_model_history.items)
     list(conversation.stream("continue", surface=DESKTOP_CHAT_SURFACE))
     old_result = next(item for item in second_llm.received[-1] if item["role"] == "tool")

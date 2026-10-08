@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from hashlib import sha256
+from time import perf_counter
 from typing import Any, Literal, cast
 from uuid import uuid4
 
@@ -613,6 +615,16 @@ def _restore_rollout(
     return finish_rollout_restore(session, committed, cancel_check=cancel_check)
 
 
+def is_exact_rollout_candidate(session: Session, committed: RolloutCommitState) -> bool:
+    """Check source/commit eligibility without allocating recovered runtime state."""
+    return (
+        committed.turn_terminal
+        and committed.exact_eligible
+        and not session.load_diagnostics.unhandled_tail_corruption
+        and committed.active_event_uuids == model_relevant_event_uuids(session)
+    )
+
+
 def finish_rollout_restore(
     session: Session, committed: RolloutCommitState | None, *, cancel_check: CancelCheck = None
 ) -> RolloutRestoreResult:
@@ -631,15 +643,7 @@ def finish_rollout_restore(
         provider_request_count=committed.provider_request_count,
         reason="rollout_restored",
     )
-    business_history_matches = committed.active_event_uuids == model_relevant_event_uuids(session)
-    tail_is_clean = not session.load_diagnostics.unhandled_tail_corruption
-    exact = (
-        committed.turn_terminal
-        and committed.exact_eligible
-        and business_history_matches
-        and tail_is_clean
-    )
-    if exact:
+    if is_exact_rollout_candidate(session, committed):
         return RolloutRestoreResult(
             disposition="exact",
             reason=committed.cache_epoch.reason,
@@ -650,6 +654,8 @@ def finish_rollout_restore(
             exact_continuation_candidate=True,
         )
 
+    business_history_matches = committed.active_event_uuids == model_relevant_event_uuids(session)
+    tail_is_clean = not session.load_diagnostics.unhandled_tail_corruption
     if (
         committed.exact_ineligibility_reason == "legacy_migration"
         and business_history_matches
@@ -712,6 +718,8 @@ class SessionRolloutRecorder:
     rollout_id: str = field(init=False)
     segment_id: str = field(init=False)
     commit_id: str | None = field(init=False)
+    latest_commit: RolloutCommitState | None = field(default=None, init=False, repr=False)
+    latest_commit_capture_ms: float = field(default=0.0, init=False, repr=False)
     _committed_serialized: list[dict[str, Any]] = field(init=False, repr=False)
     _pending: _PendingSnapshot | None = field(default=None, init=False, repr=False)
     _pending_witness: ProviderRequestWitness | None = field(default=None, init=False, repr=False)
@@ -720,6 +728,7 @@ class SessionRolloutRecorder:
     _encoder: RolloutEncoder = field(default_factory=RolloutEncoder, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self.latest_commit = self.restored
         self.rollout_id = self.restored.rollout_id if self.restored is not None else str(uuid4())
         self.segment_id = self.restored.segment_id if self.restored is not None else ""
         self.commit_id = self.restored.commit_id if self.restored is not None else None
@@ -933,10 +942,52 @@ class SessionRolloutRecorder:
             self.segment_id = pending.segment_id
             self.commit_id = new_commit_id
             self._committed_serialized = copy.deepcopy(pending.serialized)
+            # A terminal commit is a pure recovery DTO. Retain only its current
+            # state so the final run_terminal append can publish a cache without
+            # replaying the complete journal. Derive from the persisted payload,
+            # never from later-mutated runtime context or unredacted messages.
+            self.latest_commit = None
+            self.latest_commit_capture_ms = 0.0
+            if turn_terminal:
+                capture_started = perf_counter()
+                try:
+                    self.latest_commit = self._terminal_commit_state(commit.payload)
+                except Exception:
+                    # Capturing a disposable optimization cannot undo a durable
+                    # commit or change its successful completion semantics.
+                    logging.getLogger(__name__).warning(
+                        "execution snapshot candidate capture failed", exc_info=True
+                    )
+                finally:
+                    self.latest_commit_capture_ms = (perf_counter() - capture_started) * 1000
+                    logging.getLogger(__name__).debug(
+                        "execution_snapshot_candidate_capture duration_ms=%.3f",
+                        self.latest_commit_capture_ms,
+                    )
             self._pending = None
             if turn_terminal:
                 self._pending_witness = None
                 self._pending_cache_diagnostics = None
+
+    def _terminal_commit_state(self, payload: dict[str, Any]) -> RolloutCommitState:
+        return RolloutCommitState(
+            rollout_id=payload["rollout_id"],
+            segment_id=payload["segment_id"],
+            commit_id=payload["commit_id"],
+            messages=tuple(deserialize_message(raw) for raw in self._committed_serialized),
+            serialized_messages=tuple(self._committed_serialized),
+            active_event_uuids=tuple(payload["active_event_uuids"]),
+            history_generation=payload["history_generation"],
+            provider_request_count=payload["provider_request_count"],
+            model_context=deserialize_model_context(payload["model_context"]),
+            cache_epoch=deserialize_epoch(payload["epoch_manifest"]),
+            boundary=payload["boundary"],
+            turn_terminal=True,
+            final_wire_witness=deserialize_witness(payload["final_wire_witness"]),
+            cache_diagnostics=copy.deepcopy(payload["cache_diagnostics"]),
+            exact_eligible=payload["exact_eligible"],
+            exact_ineligibility_reason=payload["exact_ineligibility_reason"],
+        )
 
     def commit_legacy_migration(
         self,

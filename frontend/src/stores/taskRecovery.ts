@@ -34,7 +34,7 @@ export function groupRecoveryMessages(input: ChatMessage[]): ChatMessage[] {
   const output: ChatMessage[] = [];
   for (const message of input) {
     const previous = output.at(-1);
-    if (message.role !== "assistant" || previous?.role !== "assistant"
+    if (message.history || previous?.history || message.role !== "assistant" || previous?.role !== "assistant"
       || !message.sourceRunId || previous.runId !== message.sourceRunId) {
       output.push(message);
       continue;
