@@ -559,6 +559,7 @@ class IMRouter:
                         chat_scope=event.chat_scope,
                         reply_to_message_id=event.message_id,
                         text=_STREAM_MENU_TEXT,
+                        text_format="markdown",
                         controls=menu_controls(),
                     ),
                 )

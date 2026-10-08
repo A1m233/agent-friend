@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock
@@ -25,14 +26,17 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 import pytest
 from agent.runtime import AgentRuntime, RunOutcome
 from agent.system_prompt import IM_QQ_SURFACE
+from agent_bridge.protocols.im.adapters.qq import QQAdapter
 from agent_bridge.protocols.im.adapters.qq_streaming import QQC2CStreamSession
 from agent_bridge.protocols.im.content import OutboundContent
+from agent_bridge.protocols.im.credentials import ImCredential
 from agent_bridge.protocols.im.event import InboundEvent
 from agent_bridge.protocols.im.media import InboundMedia
 from agent_bridge.protocols.im.provider import OutboundSendResult
 from agent_bridge.protocols.im.router import FALLBACK_TEXT, IMRouter, _IMRunCancelled
 from agent_bridge.protocols.im.streaming import OutboundStreamContext
 from agent_bridge.session_bridge import PersistentBootstrap
+from qqbot_agent_sdk.dto import QQMessageType
 
 from agent import (
     AssistantMessageMetadata,
@@ -874,6 +878,58 @@ async def test_qq_outbound_alias_failure_does_not_break_delivery(
 
 
 @pytest.mark.asyncio
+async def test_qq_native_stream_sends_body_once_then_markdown_menu(
+    router: IMRouter,
+    session_bridge: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    session_bridge.bind_persistent.return_value = _make_conv(
+        [TextDelta(text="hello"), TextDelta(text=" world"), TurnDone()]
+    )
+    provider = QQAdapter(
+        cred=ImCredential(
+            im_type="qq",
+            bind_id="OPENID-USER-A",
+            app_id="APPID-1",
+            client_secret="test-secret",
+            user_openid="OPENID-USER-A",
+        ),
+        resume_base_dir=tmp_path / "im_resume",
+    )
+    api = MagicMock()
+    api.request = AsyncMock(return_value={"id": "native-message"})
+    api.post_c2c_message = AsyncMock(return_value={"id": "menu-message"})
+    provider._api = api
+    send = AsyncMock(wraps=provider.send)
+    monkeypatch.setattr(provider, "send", send)
+    monkeypatch.setattr("agent_bridge.protocols.im.router._STREAM_MENU_DELAY_SECONDS", 0)
+
+    await router.handle_inbound("qq", _make_event(), provider)
+
+    final_stream_payload = api.request.await_args_list[-1].args[2]
+    assert final_stream_payload["content_raw"] == "hello world"
+    assert final_stream_payload["input_state"] == 10
+    send.assert_awaited_once()
+    assert send.await_args is not None
+    menu = send.await_args.args[0]
+    assert menu.text == "操作"
+    assert menu.text_format == "markdown"
+    assert menu.controls is not None
+    assert menu.controls.rows[0][0].label == "☰ 菜单"
+    api.post_c2c_message.assert_awaited_once()
+    message = api.post_c2c_message.await_args.args[1]
+    assert message.msg_type == QQMessageType.MARKDOWN
+    assert message.markdown is not None
+    assert message.markdown.content == "操作"
+    keyboard = api.post_c2c_message.await_args.kwargs["keyboard"]
+    assert keyboard is not None
+    buttons = keyboard.to_dict()["content"]["rows"][0]["buttons"]
+    assert buttons[0]["render_data"]["label"] == "☰ 菜单"
+    assert buttons[0]["action"]["data"] == menu.controls.rows[0][0].payload
+
+
+@pytest.mark.asyncio
 async def test_native_stream_sends_body_once_then_separate_menu(
     router: IMRouter, session_bridge: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -895,6 +951,7 @@ async def test_native_stream_sends_body_once_then_separate_menu(
     assert stream.updates[-1] == "hello world"
     assert stream.finishes == ["hello world"]
     assert [item.text for item in provider.sent] == ["操作"]
+    assert provider.sent[0].text_format == "markdown"
     assert provider.sent[0].controls is not None
     assert all(item.text != "hello world" for item in provider.sent)
     assert sleep_delays[-1] == pytest.approx(0.8)
