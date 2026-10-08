@@ -54,6 +54,8 @@ COMPLETED
 | 2026-10-09 | 最终记录检查 | 增强存储 harness 8 tests、URL 分类 17 checks；最终 Ruff 与 955 文件 format 检查通过；git diff --check 通过；未提交、未合入、未打包 |
 | 2026-10-09 | 用户授权合入主干并推送，进入 Git 交付 | 86 个变更路径全部属于 157；76 个代码/测试/harness 文件及 431 个冻结产品文件逐字节匹配原验证；5 个归档 JSON 校验通过。fetch 后 origin/main 仍为 d1068625，无新增集成差异，可沿用既有门禁 |
 | 2026-10-09 | 保护证据文件的提交字节身份 | 暂存核验发现 autocrlf 会规范化 4 个报告的换行，导致仓库内容与原 SHA 清单不符；增加本需求 artifacts 的 -text 属性，保留原始报告字节和 MANIFEST，不改写历史证据或产品代码 |
+| 2026-10-09 | 实现提交与公开指南发布完成 | 产品 P=`e0940807de06401e34487c0a2abc1f099e0b6426`；指南 G=`46c7592bf67d60a64575fd496337a01b17d0e87a` 已推送，发布 [r84](https://github.com/A1m233/agent-friend-guide/releases/tag/agent-friend-guide-r84)。系统 Skill validator 与项目 verify 通过；远端 tag 精确指向 G，immutable=true，ZIP/manifest 摘要一致；未同步 builtin 或构建安装包 |
+| 2026-10-09 | 指南兼容与最终合入核对 | 延续 r83 的 `[0.3.0, 0.5.0)` 宿主范围，当前 P 的产品版本为 0.3.0；新入口按“提供此能力的版本”描述，不声明所有历史 0.3.0 构建均支持。发布后只追加本交付记录，不改变产品代码或指南知识；76 个代码/测试/harness 文件与验证状态一致，提交内 5 个报告的原始 blob 摘要通过，main 仍为 P 的祖先 d1068625 |
 
 ## 当前验证边界
 
