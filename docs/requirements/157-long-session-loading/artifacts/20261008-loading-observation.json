@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "recordType": "retrospective-sanitized-observation-summary",
+  "observedDate": "2026-10-08",
+  "timezone": "+08:00",
+  "scope": "one installed Windows process and one existing long session",
+  "sampleAlias": "long-history-A",
+  "build": {
+    "productVersion": "0.4.0",
+    "buildId": "20261007T163032Z-8eeb988f6591-878a2034",
+    "sourceCommit": "8eeb988f65910d18ced4a16a2b409d0fc2cc1d71",
+    "sourceTreeSha256": "7b96919a58e484188a74a6c80e0e48f4ed408980dfe5cdbe0ec341f1522f9bf4",
+    "profileId": "production",
+    "buildMode": "formal",
+    "dirty": false
+  },
+  "process": {
+    "shellPid": 34344,
+    "shellStartedAt": "2026-10-08T22:01:19+08:00",
+    "bridgePid": 33068,
+    "bridgeStartedAt": "2026-10-08T22:02:46+08:00"
+  },
+  "sourceFile": {
+    "bytes": 1223014741,
+    "modifiedAt": "2026-10-08T22:03:47.3100288+08:00",
+    "physicalLines": 51684,
+    "sizeAndMtimeUnchangedDuringCount": true,
+    "sha256": null,
+    "countMethod": "Read-only StreamReader; event type matched in first 1024 characters; UTF-8 line byte counts exclude line endings; not a full JSON or rollout validity check",
+    "largestEventTypes": [
+      {"type": "rollout_commit", "count": 3721, "bytesWithoutLineEndings": 799396899},
+      {"type": "model_transcript_item", "count": 39250, "bytesWithoutLineEndings": 250222981},
+      {"type": "rollout_request_prepared", "count": 1071, "bytesWithoutLineEndings": 114101103},
+      {"type": "tool_call_request", "count": 1748, "bytesWithoutLineEndings": 26269983},
+      {"type": "assistant_message", "count": 579, "bytesWithoutLineEndings": 14937698},
+      {"type": "tool_call_result", "count": 1748, "bytesWithoutLineEndings": 11669350},
+      {"type": "provider_reasoning_state", "count": 917, "bytesWithoutLineEndings": 2786314},
+      {"type": "rollout_value", "count": 73, "bytesWithoutLineEndings": 2306396}
+    ]
+  },
+  "targetQueries": [
+    {"finishedAt": "2026-10-08T22:03:15.901+08:00", "totalMs": 10034.658, "waitMs": 0.012, "action": "rebuilt", "published": true, "publishReason": "stored", "phaseContext": "before service readiness"},
+    {"finishedAt": "2026-10-08T22:03:49.205+08:00", "totalMs": 18010.5, "waitMs": 0.009, "action": "rebuilt", "published": false, "publishReason": "source_changed"},
+    {"finishedAt": "2026-10-08T22:04:07.723+08:00", "totalMs": 18470.364, "waitMs": 0.012, "action": "rebuilt", "published": true, "publishReason": "stored"}
+  ],
+  "recovery": {
+    "recordedAt": "2026-10-08T22:03:47.842+08:00",
+    "appendedRunTerminals": 1,
+    "interruptedToolCalls": 0,
+    "recoveredToolCalls": 0,
+    "reattachableToolCalls": 0,
+    "unknownToolCalls": 0
+  },
+  "originalDetailRequest": {
+    "requestId": "08c6de2843dd4ca6a6367a7f31030df1",
+    "finishedAt": "2026-10-08T22:04:08.645+08:00",
+    "status": 200,
+    "totalMs": 37508.127,
+    "serverResponseBytes": 7184444,
+    "responseStartedToFinishedMs": 0.995,
+    "clientFirstContentAt": null
+  },
+  "laterReadOnlyProbe": {
+    "requestId": "e05d7c6732ca4f208a0815c885bc9452",
+    "finishedAt": "2026-10-08T22:09:05.255+08:00",
+    "route": "GET /v1/sessions/<sample>?view=active&turn_limit=30",
+    "status": 200,
+    "serverTotalMs": 10718.821,
+    "serverResponseBytes": 7184444,
+    "queryBuildMs": 9933.032,
+    "queryMissReason": "absent",
+    "activeEventCount": 2271,
+    "hasOlderPage": true,
+    "clientRevision": 12346,
+    "purpose": "read availability only",
+    "confounders": ["Concurrent read-only file composition count", "Uncontrolled OS and application cache"],
+    "discardedMetric": "PowerShell client re-encoded response size was 19361429; it disagrees with server bytes and is not used as wire size"
+  },
+  "separateStartupObservations": {
+    "payloadVerificationMs": 85621.4465,
+    "payloadReadMs": 84473.15160000027,
+    "payloadBytesRead": 1245859630,
+    "payloadFilesVerified": 7530,
+    "bridgeReadinessMs": 42767.580500000004,
+    "bridgeReadyElapsedMs": 130044.73569999999,
+    "restoreReadyAt": "2026-10-08T22:05:42.103+08:00",
+    "restoreReadyBelongsToTarget": null,
+    "restoreReadyLimitation": "Global milestone has no session id; another session detail finished immediately before it and the user confirmed switching away"
+  },
+  "limitations": [
+    "No exact target frontend request, parse, projection or paint trace",
+    "Usage request duration 123977.547 ms is SSE connection lifetime, not history loading time",
+    "No controlled performance baseline or candidate comparison",
+    "No original session hash or frozen reproduction fixture",
+    "Raw logs and user history were not archived; they remain local and may change or rotate",
+    "This JSON is a retrospective summary of observed tool results, not a raw incident export"
+  ],
+  "actions": {
+    "productCodeChanged": false,
+    "userHistoryModifiedByInvestigation": false,
+    "applicationRestartedByInvestigation": false,
+    "modelCallsInitiatedByInvestigation": false
+  }
+}

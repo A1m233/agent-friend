@@ -94,7 +94,7 @@ class RolloutDecoder:
         self._active: list[str] = []
         self._commit: str | None = None
 
-    def decode(self, event: Event) -> Event:
+    def decode(self, event: Event, *, materialize: bool = True) -> Event:
         payload = event.payload
         if event.type == "rollout_value":
             kind, digest = payload.get("kind"), payload.get("sha256")
@@ -122,7 +122,9 @@ class RolloutDecoder:
                 current = self._values.get(kind)
                 if current is None or current[0] != digest:
                     raise SessionCorruptError("unresolved rollout storage reference")
-                value = copy.deepcopy(current[1])
+                # Business readers need the same integrity checks, but discard
+                # internal events immediately. Avoid copying large model state.
+                value = copy.deepcopy(current[1]) if materialize else current[1]
                 if kind == "model_context":
                     payload[kind] = value
                 else:

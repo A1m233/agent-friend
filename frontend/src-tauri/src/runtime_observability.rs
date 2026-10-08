@@ -16,6 +16,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+pub(crate) mod history;
 pub(crate) mod startup;
 
 const ACTIVE_FILE_NAME: &str = "tauri.log.runtime";

@@ -9,6 +9,7 @@ interface MessageActionBarProps {
   role: ChatRole;
   createdAt: string;
   copyText: string;
+  loadCopyText?: () => Promise<string>;
   canEdit?: boolean;
   onEdit?: () => void;
 }
@@ -17,6 +18,7 @@ export function MessageActionBar({
   role,
   createdAt,
   copyText,
+  loadCopyText,
   canEdit = false,
   onEdit,
 }: MessageActionBarProps) {
@@ -32,7 +34,7 @@ export function MessageActionBar({
       <div className={cn("flex items-center gap-2", role === "user" && "flex-row-reverse")}>
         <div className="flex items-center gap-1">
           <TooltipProvider>
-            <CopyMessageButton copyText={copyText} />
+            <CopyMessageButton copyText={copyText} loadCopyText={loadCopyText} />
             {canEdit && role === "user" && (
               <TooltipButton
                 type="button"

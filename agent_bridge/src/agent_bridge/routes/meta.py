@@ -930,6 +930,9 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         return [_dataclass_to_dict(p) for p in runtime.catalog.list()]
 
     app.include_router(router)
+    from .history import register_routes as register_history_routes
+
+    register_history_routes(app, runtime)
 
 
 def _dataclass_to_dict(obj: Any) -> dict[str, Any]:

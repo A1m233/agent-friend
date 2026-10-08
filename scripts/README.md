@@ -1,5 +1,28 @@
 # scripts/
 
+`session-latency/run.* cold-cache --fixture EXPLICIT_JSONL --operation query|history|execution --repeat 3 --output NEW_JSON`
+在私有临时副本中分别测量无派生缓存、跨进程保留缓存及同 Store 重读，阻断网络且不构建 provider。
+`--source-ref COMMIT` 测量冻结的可信 Git 源码；默认冻结当前源码并记录逐文件指纹，避免并发编辑污染实验。
+原始文件全程只读，副本测量前后核验 SHA-256；OS 缓存未受控，同 Store 重读不等于执行态驻留，
+发送前动态准备继续由 `offline` 探针测量。两个平台入口一致，不覆盖报告。
+
+`session-latency/run.* desktop-fixture --fixture EXPLICIT_JSONL --output NEW_DIR` 准备真实历史的只读
+副本及合成短会话、96 工具长回合，在独立 `data/sessions` 下生成验收数据和带源 hash 的身份清单。
+不启动应用、不调用模型或工具、不修改原始历史。之后由 desktop-visual 使用该隔离数据目录验收。
+
+`session-latency/run.* desktop-history --cdp URL --identity FIXTURE_IDENTITY --output NEW_DIR` 只附着
+已获授权的真实 Tauri chat WebView，先核对 lease、worktree、分支、源码新鲜度及隔离会话集合，
+再做加载/切换/分页/正文/导航验收，保存完整 WebView 截图和无正文计数。它不启动/关闭应用，
+不发送消息，不调用模型；截图不含原生标题栏，不能冒充整个原生桌面截图。
+探针附着期间仅阻断无关的语音输入预热请求；复制前要求能够完整保全和恢复剪贴板，否则跳过。
+`desktop-history --self-test-url-classification` 只做离线请求分类断言，不连接桌面。报告区分真实
+bridge 历史请求与 Vite 模块读取，搜索命中已加载目标时不自动算作跨页 around 验收。
+
+`session-latency/run.* offline --source-ref COMMIT ...` 可固定可信 Git 基线，省略则冻结当前四个
+产品 Python 包；报告以实际冻结 source fingerprint 为准。报告分别记录 open/start、来源验证、
+执行所有权取得后验证、发送准备和终态缓存维护，以及三类派生缓存体积。`--reload-each` 仅
+重建 manager/store，不能称为完整 Python 冷启动；真实供应商调用仍为零。
+
 `session-latency/run.* offline` 的报告另含每轮召回派生库数量/总字节、查询投影类型及未跟踪源码摘要，便于比较持久投影候选；派生库只在临时副本中创建并随副本清理。
 
 `session-latency/run.* offline --fixture A=/explicit/session.jsonl --sequence 'A,A' --output /private/new-report.json` 在临时副本上运行真实 SessionManager/Conversation 和历史召回，用 fake provider 完成轮次；阻断网络、不读取用户配置、不改原始会话。多样本可重复 `--fixture B=...` 并使用 `--sequence 'B,B,A,B,A,B'`（PowerShell 中必须保留引号）；`--reload-each` 每轮重建 runtime/store，不表示 OS 冷缓存。报告将首次加载与发送至 fake 请求边界分开，保留阶段、查询和文件观测；没有真实结构化记忆库、Skill、附件、桌面 IPC 或供应商 SDK，不能当作安装版完整 E2E。输出文件必须不存在。Windows：`./scripts/session-latency/run.ps1 offline ...`；mac/linux：`./scripts/session-latency/run.sh offline ...`。

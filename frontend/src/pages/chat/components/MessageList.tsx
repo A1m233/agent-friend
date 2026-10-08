@@ -83,6 +83,11 @@ import {
   type MessageScrollFollowEvent,
 } from "./messageScrollFollow";
 import { ReminderCard } from "./ReminderCard";
+import { DeferredHistoryMessage } from "./DeferredHistoryMessage";
+import { readHistoryCopy } from "@/services/historyContent";
+import { finishHistoryRead, historyNavigation, historySignal } from "@/stores/historyLifecycle";
+import { hasDeferredBody } from "@/stores/historyProjection";
+import { recordHistoryPhase } from "@/services/historyObservation";
 import { ToolActivity } from "./ToolActivity";
 import { ToolCard } from "./ToolCard";
 import { buildMessagePresentationSegments } from "./toolActivityPresentation";
@@ -465,7 +470,7 @@ function MessageContent({
               role="assistant"
               text={b.text}
               quoteSource={{
-                messageEventUuid: message.id,
+                messageEventUuid: message.history?.messageId ?? message.id,
                 textBlockId: b.mid,
                 role: "assistant",
               }}
@@ -515,6 +520,7 @@ function MessageContent({
   return (
     <div className="flex flex-col gap-2" data-execution-disclosure-source={disclosurePolicy.source}>
       <RunExecutionDisclosure key={message.runId ?? message.id} message={message} enabled={hasProcess}
+        hideHeader={!!message.history}
         collapse={disclosurePolicy.collapse} disclosureId={message.runId ?? message.id}
         revealTarget={revealTarget} onDisclosureChange={onToolDisclosureChange}>
         {rendered}
@@ -586,7 +592,8 @@ const MessageItem = memo(function MessageItem({
         role={message.role}
         createdAt={message.createdAt}
         copyText={messageCopyText(message)}
-        canEdit={canEdit}
+        loadCopyText={message.history ? () => readHistoryCopy(message.history!, historySignal()) : undefined}
+        canEdit={canEdit && !(message.history && hasDeferredBody(message.history.event))}
         onEdit={onEdit}
       />
     );
@@ -604,8 +611,15 @@ const MessageItem = memo(function MessageItem({
           由 <Button variant="link" size="sm" className="h-auto p-0 text-xs text-accent" onClick={() => openScheduledTask(message.requestSource!.taskId)}>{message.requestSource.taskName}</Button> 定时任务发起
         </div>
       )}
-      <MessageContent
-        message={message}
+      {message.history && message.role === "assistant" && message.history.first && message.runId &&
+        <RunExecutionDisclosure message={message} enabled collapse={message.runOutcome === "completed"}
+          disclosureId={message.runId} onDisclosureChange={() => onToolDisclosureChange(message.id)}>
+          {() => message.history?.event.message_start === false
+            ? <div className="text-xs text-muted">更早的执行过程可向上查看</div> : null}
+        </RunExecutionDisclosure>}
+      <DeferredHistoryMessage message={message} reveal={!!searchAnchorEventUuid} footer={actionBar}>
+      {(displayMessage) => <MessageContent
+        message={displayMessage}
         actionBar={actionBar}
         primaryActivity={primaryActivity}
         editing={editing}
@@ -614,7 +628,8 @@ const MessageItem = memo(function MessageItem({
         searchAnchorEventUuid={searchAnchorEventUuid}
         onReferenceSelect={onReferenceSelect}
         onToolDisclosureChange={() => onToolDisclosureChange(message.id)}
-      />
+      />}
+      </DeferredHistoryMessage>
     </div>
   );
 }, areMessageItemsEqual);
@@ -687,6 +702,7 @@ interface MessageTimelineProps {
   primaryActivity?: PrimaryActivityPresentation;
   streaming?: boolean;
   historyLoading?: boolean;
+  historyNavigationId?: string;
   historyLoadSeq?: number;
   syncRefreshSeq?: number;
   composerHeight?: number;
@@ -700,7 +716,7 @@ interface MessageTimelineProps {
   onSearchTargetHandled?: (token: number, found: boolean) => void;
   hasOlderHistory?: boolean;
   onLoadOlderHistory?: () => Promise<boolean>;
-  onLoadReferenceHistory?: () => Promise<boolean>;
+  onLoadReferenceHistory?: (anchorEventUuid?: string) => Promise<boolean>;
   referenceTarget?: ChatTextReference | null;
   onReferenceTargetHandled?: () => void;
 }
@@ -715,6 +731,7 @@ export function MessageTimeline({
   primaryActivity,
   streaming = false,
   historyLoading = false,
+  historyNavigationId,
   historyLoadSeq = 0,
   syncRefreshSeq = 0,
   composerHeight = CHAT_COMPOSER_FALLBACK_HEIGHT_PX,
@@ -808,6 +825,21 @@ export function MessageTimeline({
     : undefined;
   const virtualItems = virtualizer.getVirtualItems();
   const virtualTotalSize = virtualizer.getTotalSize();
+  const visibleNavigationIds = [...new Set(virtualItems.flatMap((item) => {
+    const id = messages[item.index]?.history?.navigationId;
+    return id ? [id] : [];
+  }).concat(!historyLoading && messages.length === 0 && historyNavigationId ? [historyNavigationId] : []))].join(",");
+  useEffect(() => {
+    const ids = visibleNavigationIds.split(",").filter(Boolean);
+    for (const id of ids) recordHistoryPhase(id, "react-committed");
+    const frame = window.requestAnimationFrame(() => {
+      for (const id of ids) {
+        recordHistoryPhase(id, "frame-ready");
+        finishHistoryRead(id, "success");
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [visibleNavigationIds]);
 
   const clearSearchFeedback = useCallback(() => {
     if (searchScrollRafRef.current) {
@@ -849,10 +881,10 @@ export function MessageTimeline({
     }
     const index = findReferenceMessageIndex(messages, reference);
     if (index < 0) {
-      if (hasOlderHistory && onLoadReferenceHistory) {
+      if (onLoadReferenceHistory) {
         followingRef.current = false;
         prependingRef.current = true;
-        void onLoadReferenceHistory().then((loaded) => {
+        void onLoadReferenceHistory(reference.source.textBlockId ?? reference.source.messageEventUuid ?? undefined).then((loaded) => {
           if (loaded) setPendingReference(reference);
           else { prependingRef.current = false; toast.error("引用来源暂时无法加载"); }
         });
@@ -1486,6 +1518,9 @@ export function MessageList({
   const hasOlderHistory = useConversationStore((s) => s.hasOlderHistory());
   const loadOlderHistory = useConversationStore((s) => s.loadOlderHistory);
   const loadReferenceHistory = useConversationStore((s) => s.loadReferenceHistory);
+  const hasNewerHistory = useConversationStore((s) => s.hasNewerHistory?.() ?? false);
+  const loadNewerHistory = useConversationStore((s) => s.loadNewerHistory);
+  const [loadingNewer, setLoadingNewer] = useState(false);
   const runPresentation = useConversationStore(useShallow((s) => (
     sessionRunPresentation(s, s.currentSessionId)
   )));
@@ -1551,6 +1586,7 @@ export function MessageList({
         primaryActivity={primaryActivity}
         streaming={streaming}
         historyLoading={historyLoading}
+        historyNavigationId={historyNavigation(currentSessionId)}
         historyLoadSeq={historyLoadSeq}
         syncRefreshSeq={syncRefreshSeq}
         composerHeight={composerHeight}
@@ -1568,6 +1604,12 @@ export function MessageList({
         onFocusComposer={onFocusComposer}
         disabled={historyLoading || editingMessage?.phase === "submitting"}
       />
+      {hasNewerHistory && <Button variant="outline" size="sm" disabled={loadingNewer || historyLoading}
+        onClick={() => {
+          setLoadingNewer(true);
+          void loadNewerHistory().then((loaded) => { if (!loaded) toast.error("较新的消息尚未加载，请重试。"); })
+            .finally(() => setLoadingNewer(false));
+        }}>{loadingNewer ? "正在加载…" : "加载较新的消息"}</Button>}
     </ExecutionDisclosureStateProvider>
   );
 }

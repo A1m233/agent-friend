@@ -25,6 +25,11 @@ export interface ExecutionDisclosurePolicy {
 
 export function executionDisclosurePolicy(message: ChatMessage): ExecutionDisclosurePolicy {
   const unavailable: ExecutionDisclosurePolicy = { source: "none", processTextIds: [], collapse: false };
+  if (message.history && message.role === "assistant" && message.runId) {
+    return { source: "mixed", collapse: message.runOutcome === "completed",
+      processTextIds: message.blocks.filter((block): block is TextBlock =>
+        block.kind === "text" && block.phase === "commentary").map((block) => block.mid) };
+  }
   // Unsuccessful runs remain expanded by default. Only known progress text and
   // tools are foldable; keep the last text and all unclassified output visible.
   if (message.role === "assistant" && message.runId

@@ -1476,6 +1476,7 @@ pub fn run() {
     #[cfg(debug_assertions)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         runtime_observability::startup::record_startup_milestone,
+        runtime_observability::history::record_history_observation,
         open_chat,
         open_chat_session,
         notification_sound::play_notification_sound,
@@ -1580,6 +1581,7 @@ pub fn run() {
     #[cfg(not(debug_assertions))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         runtime_observability::startup::record_startup_milestone,
+        runtime_observability::history::record_history_observation,
         open_chat,
         open_chat_session,
         notification_sound::play_notification_sound,

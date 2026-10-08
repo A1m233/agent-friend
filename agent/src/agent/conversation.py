@@ -1181,6 +1181,8 @@ class Conversation:
                 # Runtime owns observation when installed. Direct/CLI callers
                 # also retain failed-turn facts without triggering extraction.
                 self._observe_turn(turn_start_idx, defer_extraction=interrupted)
+                if not interrupted:
+                    self.publish_execution_snapshot()
             self._prompt_channel_override = previous_prompt_channel
             self._prompt_surface_override = previous_prompt_surface
             self._interaction_destination_id_override = previous_interaction_destination_id
@@ -1405,6 +1407,8 @@ class Conversation:
                 )
             if not self._post_turn_external:
                 self._observe_turn(turn_start_idx, defer_extraction=interrupted)
+                if not interrupted:
+                    self.publish_execution_snapshot()
             self._prompt_channel_override = previous_prompt_channel
             self._prompt_surface_override = previous_prompt_surface
             self._interaction_destination_id_override = previous_interaction_destination_id
@@ -1471,6 +1475,8 @@ class Conversation:
                 run_id=run_id,
                 cancel_check=cancel_check,
             )
+            if not self._post_turn_external:
+                self.publish_execution_snapshot()
         finally:
             self._restore_run_model_snapshot(previous_run_model_snapshot)
             self._run_id_override = previous_run_id
@@ -2664,7 +2670,22 @@ class Conversation:
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
+        if status == "completed":
+            self.publish_execution_snapshot()
         return True
+
+    def publish_execution_snapshot(self) -> None:
+        """Maintain a disposable snapshot only after the final durable boundary."""
+        recorder = self._rollout_recorder
+        publish = getattr(self._store, "publish_execution_snapshot", None)
+        if recorder is None or not callable(publish):
+            return
+        try:
+            publish(self._session, recorder.latest_commit)
+        except Exception:
+            # In particular this must never reach the runtime's terminal-event
+            # persistence error handler and turn a completed run into a failure.
+            logger.warning("execution snapshot maintenance failed", exc_info=True)
 
     @staticmethod
     def _drain_assembled_messages(
