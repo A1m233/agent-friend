@@ -27,6 +27,7 @@ class SessionQueryObservation:
     publish_reason: Literal["stored", "source_changed", "capacity"] | None = None
     outcome: Literal["success", "cancelled", "error"] = "success"
     error_type: str | None = None
+    cache_source: Literal["memory", "persistent", "journal"] | None = None
     started: float = field(default_factory=perf_counter)
 
     def emit(self) -> None:
@@ -51,12 +52,13 @@ class SessionQueryObservation:
             "outcome": self.outcome,
             "error_type": self.error_type,
             "projection_kind": self.projection_kind,
+            "cache_source": self.cache_source,
         }
         logger.log(
             level,
             "session_query session_key=%s pid=%s thread=%s action=%s miss_reason=%s "
             "wait_ms=%s total_ms=%s published=%s publish_reason=%s outcome=%s error_type=%s "
-            "projection=%s",
+            "projection=%s cache_source=%s",
             *fields.values(),
             extra=fields,
         )

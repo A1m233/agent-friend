@@ -1,0 +1,2 @@
+*.json -text whitespace=cr-at-eol
+MANIFEST.sha256 -text whitespace=cr-at-eol

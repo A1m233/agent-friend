@@ -18,10 +18,11 @@ from collections.abc import Callable, Iterable, Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
 from threading import Lock
-from time import monotonic
-from typing import BinaryIO, Protocol, cast
+from time import monotonic, perf_counter
+from typing import TYPE_CHECKING, Any, BinaryIO, Protocol, cast
 
 import portalocker
 from portalocker.exceptions import LockException
@@ -32,6 +33,9 @@ from llm_providers import (
     validate_model_runtime_config,
 )
 
+from .business_index import BusinessIndex
+from .business_index.builds import BusinessBuilds
+from .business_index.cancellation import sticky_cancellation
 from .changes import SessionChangeBroker
 from .errors import (
     SessionCorruptError,
@@ -40,6 +44,7 @@ from .errors import (
     SessionWriterConflictError,
 )
 from .events import ROLLOUT_EVENT_TYPES, Event
+from .execution_cache import ExecutionSnapshotCache, SourceDigestTracker, SourceHasher
 from .file_observation import observe_session_file
 from .query import (
     CancelCheck,
@@ -63,6 +68,9 @@ from .recall.index import RecallIndex
 from .rollout_encoding import RolloutDecoder
 from .session import Session
 from .store_types import SessionLoadDiagnostics, SessionReadState
+
+if TYPE_CHECKING:
+    from .rollout import RolloutCommitState
 
 _LOCK_TIMEOUT_SECONDS = 10.0
 """Maximum wait for a session file lock; timeout alone does not identify its owner."""
@@ -281,6 +289,12 @@ class JsonlSessionStore:
             max_entries=query_cache_entries, max_bytes=query_cache_bytes
         )
         self._recall_index = RecallIndex(self._base_dir)
+        self._business_index = BusinessIndex(self._base_dir)
+        self._business_builds = BusinessBuilds()
+        self._source_digests = SourceDigestTracker()
+        self._execution_cache = ExecutionSnapshotCache(
+            self._base_dir, self._source_digests, maintenance_guard=self.maintenance_guard
+        )
         self._summary_cache: OrderedDict[Path, tuple[SourceVersion, SessionSummary]] = OrderedDict()
         self._activity_cache: OrderedDict[Path, tuple[SourceVersion, SessionActivity]] = (
             OrderedDict()
@@ -358,6 +372,7 @@ class JsonlSessionStore:
             raise SessionPersistError(
                 "Session 必须以 session_meta 事件开头（请用 Session.new 构造）"
             )
+        digest = sha256()
         try:
             with (
                 observe_session_file("create", session.session_id) as observation,
@@ -367,16 +382,22 @@ class JsonlSessionStore:
             ):
                 binary = cast(BinaryIO, f)
                 for ev in session.events:
-                    observation.byte_count += binary.write(ev.to_jsonl().encode("utf-8"))
-                    observation.byte_count += binary.write(b"\n")
+                    data = ev.to_jsonl().encode("utf-8") + b"\n"
+                    observation.byte_count += binary.write(data)
+                    digest.update(data)
                 binary.flush()
                 os.fsync(binary.fileno())
+                created_version = self._handle_version(binary, path)
         except LockException as e:
             raise SessionPersistError(
                 f"获取会话文件写锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {path}: {e}"
             ) from e
         except OSError as e:
             raise SessionPersistError(f"写入会话文件失败: {path}: {e}") from e
+        try:
+            self._source_digests.accept(session.session_id, created_version, digest)
+        except Exception as exc:
+            observe_query_maintenance_failure(session.session_id, exc)
 
     def append_event(self, session_id: str, event: Event) -> None:
         self.append_events(session_id, [event])
@@ -435,11 +456,29 @@ class JsonlSessionStore:
                     after = self._handle_version(binary, path)
                     if session_id in self._writer_versions:
                         self._writer_versions[session_id] = after
+                    # Capture durable bytes before another local append can overtake them.
+                    try:
+                        self._source_digests.advance(
+                            session_id,
+                            before,
+                            after,
+                            encoded,
+                            clean_boundary=clean_boundary
+                            and not any(e.type == "turn_rewrite" for e in events),
+                        )
+                        self._business_builds.appended(
+                            session_id, before, after, events, encoded, clean_boundary
+                        )
+                    except Exception as exc:
+                        self._source_digests.discard(session_id)
+                        observe_query_maintenance_failure(session_id, exc)
         except LockException as e:
+            self._source_digests.discard(session_id)
             raise SessionPersistError(
                 f"获取会话文件写锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {session_id}: {e}"
             ) from e
         except OSError as e:
+            self._source_digests.discard(session_id)
             raise SessionPersistError(f"追加事件失败: {path}: {e}") from e
         try:
             self._advance_read_caches(path, session_id, before, after, events, clean_boundary)
@@ -452,6 +491,16 @@ class JsonlSessionStore:
                 self._activity_cache.pop(path, None)
             observe_query_maintenance_failure(session_id, exc)
         if clean_boundary:
+            try:
+                self._business_index.advance(
+                    session_id,
+                    before,
+                    after,
+                    events,
+                    is_current=lambda: self._source_version(path) == after,
+                )
+            except Exception as exc:
+                observe_query_maintenance_failure(session_id, exc)
             try:
                 self._recall_index.advance(
                     session_id,
@@ -575,23 +624,103 @@ class JsonlSessionStore:
         )
 
     def load_business(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
-        records, diagnostics, version, _count = self._read_records(
-            session_id, query_only=True, cancel_check=cancel_check
+        snapshot = self.query(session_id, cancel_check=cancel_check)
+        # Return owned mutable events, never the immutable shared query objects.
+        session = Session.from_events(
+            [Event.from_jsonl(event.to_jsonl()) for event in snapshot.events]
         )
-        session = Session.from_events([event for _, event in records])
-        session.load_diagnostics = diagnostics
-        session.loaded_source_version = version
+        session.load_diagnostics = snapshot.load_diagnostics
+        session.loaded_source_version = snapshot.source_version
         return session
 
     def load_execution(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
         from .execution_loading import load_execution_session
 
+        path = self._existing_path(session_id)
+        if path is None:
+            raise SessionNotFoundError(f"会话不存在: {session_id}")
+        version = self._source_version(path)
+        cached = self._execution_cache.try_load(
+            session_id,
+            source_version=version,
+            read_source=lambda: self._hash_source(path, cancel_check),
+            is_current=lambda: self._source_version(path) == version,
+            cancel_check=cancel_check,
+        )
+        if cached is not None:
+            self.bind_execution_projection(cached)
+            return cached
         session = load_execution_session(
             lambda state: self.iter_events(session_id, state, cancel_check=cancel_check),
             cancel_check=cancel_check,
         )
         self.bind_execution_projection(session)
+        if session.restored_rollout is not None and session.restored_rollout.disposition == "exact":
+            self.publish_execution_snapshot(session, session.restored_rollout.commit)
         return session
+
+    def _hash_source(
+        self, path: Path, cancel_check: CancelCheck
+    ) -> tuple[SourceVersion, SourceHasher]:
+        with self._read_lock(path, cancel_check) as locked:
+            version = self._handle_version(locked, path)
+            descriptor = os.dup(locked.fileno())
+        digest = sha256()
+        with os.fdopen(descriptor, "rb") as source:
+            for chunk in self._read_snapshot_bytes(source, version[2], cancel_check):
+                digest.update(chunk)
+        check_cancel(cancel_check)
+        return version, digest
+
+    def publish_execution_snapshot(
+        self, session: Session, commit: RolloutCommitState | None
+    ) -> bool:
+        try:
+            path = self._existing_path(session.session_id)
+            if path is None:
+                return False
+            version = self._source_version(path)
+            self._validate_writer_version(session.session_id, version)
+            return self._execution_cache.publish(
+                session,
+                commit,
+                source_version=version,
+                is_current=lambda: self._source_version(path) == version,
+            )
+        except Exception as exc:
+            observe_query_maintenance_failure(session.session_id, exc)
+            return False
+
+    def execution_cache_observation(self, session_id: str) -> Any:
+        return self._execution_cache.observation(session_id)
+
+    def revalidate_execution_snapshot(
+        self, session: Session, *, cancel_check: CancelCheck = None
+    ) -> bool:
+        expected = getattr(session, "execution_snapshot_digest", None)
+        if expected is None:
+            return True
+        path = self._existing_path(session.session_id)
+        if path is None:
+            return False
+        started = perf_counter()
+        version, digest = self._hash_source(path, cancel_check)
+        valid = (
+            version == session.loaded_source_version
+            and digest.hexdigest() == expected
+            and self._source_version(path) == version
+        )
+        if valid:
+            self._source_digests.accept(session.session_id, version, digest)
+        else:
+            self._source_digests.discard(session.session_id)
+        self._execution_cache.note_lease_verification(
+            session.session_id,
+            (perf_counter() - started) * 1000,
+            version[2],
+            valid,
+        )
+        return valid
 
     def bind_execution_projection(self, session: Session) -> None:
         session_id = session.session_id
@@ -680,7 +809,12 @@ class JsonlSessionStore:
         records = [
             (index, event)
             for index, event in enumerate(
-                self.iter_events(session_id, state, cancel_check=cancel_check)
+                self.iter_events(
+                    session_id,
+                    state,
+                    cancel_check=cancel_check,
+                    materialize_rollout=not query_only,
+                )
             )
             if not query_only or event.type not in ROLLOUT_EVENT_TYPES
         ]
@@ -693,8 +827,10 @@ class JsonlSessionStore:
         state: SessionReadState,
         *,
         cancel_check: CancelCheck = None,
+        materialize_rollout: bool = True,
     ) -> Iterator[Event]:
         """Read a pinned prefix; consumers must exhaust it to validate corruption."""
+        cancel_check = sticky_cancellation(cancel_check)
         path = self._existing_path(session_id)
         if path is None:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
@@ -702,6 +838,7 @@ class JsonlSessionStore:
         parse_errors: list[tuple[int, int]] = []
         event_count = 0
         decoder = RolloutDecoder()
+        digest = sha256()
         try:
             with (
                 observe_session_file("load", session_id) as observation,
@@ -733,6 +870,7 @@ class JsonlSessionStore:
                 with observation.parsing(), observation.phase("stream_read_parse"):
                     for lineno, line in enumerate(self._snapshot_lines(chunks), start=1):
                         check_cancel(cancel_check)
+                        digest.update(line)
                         observation.byte_count += len(line)
                         if not line.strip():
                             continue
@@ -741,7 +879,7 @@ class JsonlSessionStore:
                         except (UnicodeDecodeError, SessionCorruptError):
                             parse_errors.append((lineno, len(line)))
                             continue
-                        event = decoder.decode(event)
+                        event = decoder.decode(event, materialize=materialize_rollout)
                         parsed_records.append(
                             (
                                 lineno,
@@ -767,14 +905,18 @@ class JsonlSessionStore:
                     if not event_count:
                         Session.from_events([])
         except LockException as e:
+            check_cancel(cancel_check)
             raise SessionPersistError(
                 f"获取会话文件读锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {path}: {e}"
             ) from e
         except OSError as e:
+            check_cancel(cancel_check)
             raise SessionPersistError(f"读取会话文件失败: {path}: {e}") from e
         check_cancel(cancel_check)
         state.diagnostics = diagnostics
         state.event_count = event_count
+        if self._source_version(path) == state.source_version:
+            self._source_digests.accept(session_id, state.source_version, digest)
 
     @staticmethod
     def _read_snapshot_bytes(
@@ -804,7 +946,7 @@ class JsonlSessionStore:
 
     def query(self, session_id: str, *, cancel_check: CancelCheck = None) -> SessionQuerySnapshot:
         with observe_session_query(session_id) as observation:
-            return self._query_snapshot(session_id, cancel_check, observation)
+            return self._query_snapshot(session_id, sticky_cancellation(cancel_check), observation)
 
     def query_recall(
         self,
@@ -911,6 +1053,7 @@ class JsonlSessionStore:
         )
         if cached is not None:
             observation.action = "hit"
+            observation.cache_source = "memory"
             check_cancel(cancel_check)
             return cached
         observation.action = "waiting"
@@ -920,28 +1063,152 @@ class JsonlSessionStore:
             )
             if cached is not None:
                 observation.action = "coalesced"
+                observation.cache_source = "memory"
                 check_cancel(cancel_check)
                 return cached
-            observation.action = "rebuilt"
-            records, diagnostics, version, count = self._read_records(
-                session_id, query_only=True, cancel_check=cancel_check
-            )
-            snapshot = SessionQuerySnapshot.build(
-                records,
-                raw_event_count=count,
-                diagnostics=diagnostics,
-                source_version=version,
-                cancel_check=cancel_check,
-            )
+            with self._business_index.building(session_id, cancel_check):
+                try:
+                    disk = self._business_index.read(
+                        session_id, self._source_version(path), cancel_check
+                    )
+                except (
+                    sqlite3.Error,
+                    OSError,
+                    LockException,
+                    ValueError,
+                    SessionCorruptError,
+                ) as exc:
+                    check_cancel(cancel_check)
+                    observe_query_maintenance_failure(session_id, exc)
+                    disk = None
+                if disk is not None:
+                    observation.action = "hit"
+                    observation.cache_source = "persistent"
+                    self._query_cache.put(
+                        disk,
+                        is_current=lambda: self._source_version(path) == disk.source_version,
+                        observation=observation,
+                    )
+                    return disk
+                observation.action = "rebuilt"
+                observation.cache_source = "journal"
+                with self._business_builds.capture(session_id) as tail:
+                    records, diagnostics, version, count = self._read_records(
+                        session_id, query_only=True, cancel_check=cancel_check
+                    )
+                    snapshot = SessionQuerySnapshot.build(
+                        records,
+                        raw_event_count=count,
+                        diagnostics=diagnostics,
+                        source_version=version,
+                        cancel_check=cancel_check,
+                    )
+                    # At most one catch-up retry; source churn must never cause
+                    # unbounded full JSONL rescans in a single read.
+                    for _ in range(2):
+                        check_cancel(cancel_check)
+                        snapshot = self._business_builds.catch_up(tail, snapshot)
+
+                        def still_current(current: SessionQuerySnapshot = snapshot) -> bool:
+                            return self._source_version(path) == current.source_version
+
+                        try:
+                            if self._business_index.publish(
+                                snapshot,
+                                still_current,
+                                cancel_check,
+                            ):
+                                break
+                        except (sqlite3.Error, OSError, LockException) as exc:
+                            check_cancel(cancel_check)
+                            observe_query_maintenance_failure(session_id, exc)
+                            break
+                    self._query_cache.put(
+                        snapshot,
+                        is_current=lambda: self._source_version(path) == snapshot.source_version,
+                        observation=observation,
+                    )
+                    return snapshot
+
+    def discard_business_index(self, session_id: str) -> None:
+        """Discard disposable data only; never change the authoritative journal."""
+        self._query_cache.discard(session_id)
+        self._business_index.delete(session_id)
+
+    def _history_version(self, session_id: str, cancel_check: CancelCheck) -> SourceVersion:
+        path = self._existing_path(session_id)
+        if path is None:
+            raise SessionNotFoundError(f"会话不存在: {session_id}")
+        version = self._source_version(path)
+        try:
+            if self._business_index.matches(session_id, version, cancel_check):
+                return version
+        except (sqlite3.Error, OSError, LockException) as exc:
             check_cancel(cancel_check)
-            self._query_cache.put(
+            observe_query_maintenance_failure(session_id, exc)
+        snapshot = self.query(session_id, cancel_check=cancel_check)
+        if snapshot.source_version is not None and not self._business_index.matches(
+            session_id, snapshot.source_version, cancel_check
+        ):
+            self._business_index.publish(
                 snapshot,
-                is_current=lambda: self._source_version(path) == version,
-                observation=observation,
+                lambda: self._source_version(path) == snapshot.source_version,
+                cancel_check,
             )
-            # The caller receives one consistent version even when an append won
-            # the race. The next query validates the source and reads the new one.
-            return snapshot
+        if snapshot.source_version is None or not self._business_index.matches(
+            session_id, snapshot.source_version, cancel_check
+        ):
+            raise SessionPersistError("会话历史索引暂不可用，请重试")
+        return snapshot.source_version
+
+    def history_page(
+        self,
+        session_id: str,
+        *,
+        before: str | None = None,
+        after: str | None = None,
+        around: str | None = None,
+        epoch: str | None = None,
+        message_id: str | None = None,
+        item_limit: int = 80,
+        byte_limit: int = 262144,
+        cancel_check: CancelCheck = None,
+    ) -> dict[str, Any]:
+        cancel_check = sticky_cancellation(cancel_check)
+        version = self._history_version(session_id, cancel_check)
+        return self._business_index.page(
+            session_id,
+            version,
+            before=before,
+            after=after,
+            around=around,
+            epoch=epoch,
+            message_id=message_id,
+            item_limit=item_limit,
+            byte_limit=byte_limit,
+            cancel_check=cancel_check,
+        )
+
+    def history_content(
+        self,
+        session_id: str,
+        ref: str,
+        *,
+        version: str,
+        offset: int = 0,
+        limit: int = 65536,
+        cancel_check: CancelCheck = None,
+    ) -> dict[str, Any]:
+        cancel_check = sticky_cancellation(cancel_check)
+        self._history_version(session_id, cancel_check)
+        return self._business_index.content(
+            session_id,
+            ref,
+            version=version,
+            offset=offset,
+            limit=limit,
+            cancel_check=cancel_check,
+        )
 
     @staticmethod
     def _validate_recoverable_errors(
@@ -1009,10 +1276,11 @@ class JsonlSessionStore:
                 self._activity_cache.pop(path, None)
         except OSError as e:
             raise SessionPersistError(f"删除会话文件失败: {path}: {e}") from e
-        try:
-            self._recall_index.delete(session_id)
-        except Exception as exc:
-            observe_query_maintenance_failure(session_id, exc)
+        for projection in (self._recall_index, self._business_index, self._execution_cache):
+            try:
+                projection.delete(session_id)
+            except Exception as exc:
+                observe_query_maintenance_failure(session_id, exc)
 
     def latest(self) -> SessionSummary | None:
         summaries = self.list()
@@ -1376,6 +1644,34 @@ class NotifyingSessionStore:
         method = getattr(self._inner, "bind_execution_projection", None)
         if callable(method):
             method(session)
+
+    def publish_execution_snapshot(
+        self, session: Session, commit: RolloutCommitState | None
+    ) -> bool:
+        method = getattr(self._inner, "publish_execution_snapshot", None)
+        return bool(method(session, commit)) if callable(method) else False
+
+    def revalidate_execution_snapshot(
+        self, session: Session, *, cancel_check: CancelCheck = None
+    ) -> bool:
+        method = getattr(self._inner, "revalidate_execution_snapshot", None)
+        return bool(method(session, cancel_check=cancel_check)) if callable(method) else True
+
+    def execution_cache_observation(self, session_id: str) -> Any:
+        method = getattr(self._inner, "execution_cache_observation", None)
+        return method(session_id) if callable(method) else None
+
+    def history_page(self, session_id: str, **kwargs: Any) -> dict[str, Any]:
+        method = getattr(self._inner, "history_page", None)
+        if method is None:
+            raise NotImplementedError("store does not support bounded history")
+        return cast(dict[str, Any], method(session_id, **kwargs))
+
+    def history_content(self, session_id: str, ref: str, **kwargs: Any) -> dict[str, Any]:
+        method = getattr(self._inner, "history_content", None)
+        if method is None:
+            raise NotImplementedError("store does not support bounded history content")
+        return cast(dict[str, Any], method(session_id, ref, **kwargs))
 
     def can_reuse_loaded(self, session: Session) -> bool:
         method = getattr(self._inner, "can_reuse_loaded", None)

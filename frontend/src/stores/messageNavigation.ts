@@ -6,5 +6,6 @@ export function findMessageAnchorIndex(
   anchorEventUuid: string,
 ): number {
   return messages.findIndex((message) => message.id === anchorEventUuid
+    || message.history?.event.result_event?.uuid === anchorEventUuid
     || message.blocks.some((block) => block.kind === "text" && block.mid === anchorEventUuid));
 }
