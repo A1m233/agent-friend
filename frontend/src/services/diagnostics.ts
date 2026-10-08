@@ -19,6 +19,7 @@ export interface GenerateDiagnosticBundleInput {
   sessionTurnLimit?: number | null;
   includeAttachmentOriginals?: boolean;
   includeRenderEvidence?: boolean;
+  includeCrashDumps?: boolean;
 }
 
 export interface RenderEvidencePendingSummary {
@@ -54,6 +55,7 @@ export function generateDiagnosticBundle(
       timezone: resolved.timeZone || null,
       includeAttachmentOriginals: input.includeAttachmentOriginals ?? false,
       includeRenderEvidence: input.includeRenderEvidence ?? false,
+      includeCrashDumps: input.includeCrashDumps ?? false,
     },
   });
 }

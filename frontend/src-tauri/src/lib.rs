@@ -19,6 +19,7 @@ mod diagnostics;
 pub mod install_contract;
 mod link_navigation;
 mod model_connections;
+pub mod native_crash;
 mod notification_sound;
 mod owner_capabilities;
 mod paths;
@@ -1137,6 +1138,7 @@ pub fn run() {
     // crash-safe journal first, using a path that remains available even for an invalid profile.
     let runtime_observer =
         runtime_observability::RuntimeObserver::start(paths::bootstrap_log_dir());
+    native_crash::start(runtime_observer.process_session_id());
     runtime_observability::install_panic_hook(runtime_observer.clone());
     let attempt_id = format!(
         "{}-{:016x}",
@@ -1170,6 +1172,7 @@ pub fn run() {
             desktop_instance::report_startup_rejection(
                     "当前程序的实例身份无效。为避免启动出错或污染现有数据，本次启动已停止。请查看诊断日志。",
                 );
+            native_crash::orderly_exit("startup-rejected");
             return;
         }
     };
@@ -1201,6 +1204,7 @@ pub fn run() {
             desktop_instance::report_startup_rejection(
                 "无法确认当前运行实例。为避免同时启动多个副本，本次启动已停止。请查看诊断日志。",
             );
+            native_crash::orderly_exit("startup-rejected");
             return;
         }
     };
@@ -1230,6 +1234,7 @@ pub fn run() {
                     desktop_instance::report_startup_rejection(
                         "无法验证当前进程身份。为避免多实例冲突，本次启动已停止。请查看诊断日志。",
                     );
+                    native_crash::orderly_exit("startup-rejected");
                     return;
                 }
             }
@@ -1258,6 +1263,7 @@ pub fn run() {
                     desktop_instance::report_startup_rejection(
                         "无法验证当前进程身份。为避免多实例冲突，本次启动已停止。请查看诊断日志。",
                     );
+                    native_crash::orderly_exit("startup-rejected");
                     return;
                 }
             }
@@ -1283,6 +1289,7 @@ pub fn run() {
                     desktop_instance::report_startup_rejection(
                         "无法安全转发本次启动。为避免多实例冲突，本次启动已停止。请查看诊断日志。",
                     );
+                    native_crash::orderly_exit("startup-rejected");
                     return;
                 }
             }
@@ -1304,6 +1311,7 @@ pub fn run() {
                 owner.runtime_kind.as_str(),
                 owner.pid
             ));
+            native_crash::orderly_exit("startup-rejected");
             return;
         }
         desktop_instance::OwnerInspection::Invalid(error) => {
@@ -1315,9 +1323,13 @@ pub fn run() {
             desktop_instance::report_startup_rejection(
                 "现有实例的归属信息无法安全确认。为避免误开或误停，本次启动已停止。请查看诊断日志。",
             );
+            native_crash::orderly_exit("startup-rejected");
             return;
         }
     };
+    if owner_to_publish.is_none() {
+        native_crash::orderly_exit("second-instance");
+    }
     let desktop_owner = Arc::new(Mutex::new(None));
 
     // 028 · 启动期同步读盘，拼 js_init_script；所有 webview 加载前注入，保证首帧主题正确。
@@ -2088,6 +2100,7 @@ pub fn run() {
                     "process-exit-completed",
                     serde_json::json!({}),
                 );
+                native_crash::orderly_exit("tauri-exit");
             }
         });
 }

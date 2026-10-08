@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "agent-friend",
   "mainBinaryName": "agent-friend",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "identifier": "com.agentfriend.desktop",
   "build": {
     "frontendDist": "../dist",

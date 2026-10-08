@@ -13,3 +13,12 @@ it("defaults to all history while preserving an explicit recent range", async ()
   await generateDiagnosticBundle({ sessionIds: ["a"], sessionTurnLimit: 3 });
   expect(invoke.mock.calls[2][1].request.sessionTurnLimit).toBe(3);
 });
+
+it("requires a separate opt-in for crash dumps even without selected conversations", async () => {
+  await generateDiagnosticBundle({ sessionIds: [] });
+  expect(invoke.mock.calls[0][1].request.includeCrashDumps).toBe(false);
+  await generateDiagnosticBundle({ sessionIds: [], includeCrashDumps: true });
+  expect(invoke.mock.calls[1][1].request.includeCrashDumps).toBe(true);
+  await generateDiagnosticBundle({ sessionIds: ["a"], includeAttachmentOriginals: true });
+  expect(invoke.mock.calls[2][1].request.includeCrashDumps).toBe(false);
+});

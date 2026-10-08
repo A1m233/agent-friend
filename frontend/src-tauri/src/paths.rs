@@ -233,6 +233,11 @@ pub fn shell_diagnostics_dir() -> PathBuf {
     log_dir().join(SHELL_DIAGNOSTICS_DIR)
 }
 
+/// Native crash evidence belongs to logs, never user assets or the system CrashDumps folder.
+pub fn native_crash_dir() -> PathBuf {
+    bootstrap_log_dir().join("native-crashes")
+}
+
 /// Bounded input facts, separate from ordinary log rotation and user assets.
 pub fn pet_input_evidence_dir() -> PathBuf {
     log_dir().join(PET_INPUT_EVIDENCE_DIR)

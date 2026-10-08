@@ -10,7 +10,7 @@ Interpret an agent-friend diagnostic bundle as a versioned runtime evidence snap
 ## Start Safely
 
 1. Confirm the current repository is agent-friend using its git remote, falling back to the repository root name only when no remote is configured. Stop applying this project skill when the repository does not match.
-2. Treat the ZIP as private user data. It may contain complete selected conversations, tool arguments/results, user-written problem text, and attachment originals.
+2. Treat the ZIP as private user data. It may contain complete selected conversations, tool arguments/results, user-written problem text, attachment originals, and explicitly included native crash dumps. Raw dumps can contain credentials and private memory and cannot be automatically redacted.
 3. Do not bulk-print session bodies, logs, or attachment contents. Do not extract the archive into the repository.
 4. Run the bundled inspector before manually reading entries:
 
@@ -52,6 +52,7 @@ Before diagnosing, establish:
 - pet input evidence coverage, retained occurrence identities, independent incident retention and durability gaps; never print coordinate samples or input-event bodies in an inventory;
 - WebView2 render-evidence consent, manual/display/GPU recovery trigger and timing, internal-versus-desktop black/white pixel metrics, included/missing screenshot artifacts, and capture/recovery errors;
 - pet render evidence coverage, independent incident retention, per-record process/build identity and CPU-render versus actual-presentation limits; see the v1 reference;
+- native crash coverage, capture degradation, event/exit distinctions, historical build identity, raw-dump consent and integrity; inventory only metadata and counts, never panic payloads or memory;
 - explicit exclusions.
 - managed execution environment provider status, runtime/version identity, overlay/cache size buckets, payload validation and recent stable error codes; never expect session ids, paths, package names, scripts or command output in this evidence family.
 - command-runtime health, bounded setup/proxy event counts, native error codes and retention gaps; treat hashed runtime/operation identities as correlation keys, not session IDs. A ready export snapshot does not invalidate an earlier helper failure.
@@ -67,8 +68,9 @@ Before diagnosing, establish:
 4. Route evidence to the correct log family using the v1 reference. Compare application-owned logs with packaged stdout/stderr capture when both exist.
 5. For Windows taskbar, fullscreen, focus, or overlay symptoms, start with the summarized Windows Shell journal. Correlate foreground/move-size/minimize/reorder events with snapshots, and treat nonzero dropped/truncated counts as explicit timeline gaps. Read individual journal records only within the smallest relevant time window.
    For pet hover/click/drag passthrough symptoms, start with `petInputEvidence` and the v1 reference's Pet Input Evidence section. Bind historical records to their own process/page/build identities, not the export-time application snapshot. Correlate request, sample, DPR revision and actual apply identifiers before reading the smallest relevant event slice; a missing acknowledgement is not a failed native operation.
-6. Use the source tree at the recorded build commit to explain the first known-wrong boundary. Treat the current checkout as comparison evidence only.
-7. Stop expanding when the evidence distinguishes the live hypotheses. Preserve disconfirming evidence and coverage gaps.
+6. For desktop process exits, use the native crash section of the v1 reference. Bind each historical incident to its own build and process creation identity; a panic is not proof of process death, and exit-only evidence is not an exception stack. Only extract the specifically referenced, explicitly included dump when needed for the diagnosis. Use the repository's `scripts/crash-diagnostics/run.*` offline entry point with matching private symbols; never bypass a mismatch or automatically fetch symbols from a remote server.
+7. Use the source tree at the recorded build commit to explain the first known-wrong boundary. Treat the current checkout as comparison evidence only.
+8. Stop expanding when the evidence distinguishes the live hypotheses. Preserve disconfirming evidence and coverage gaps.
 
 Open an attachment original only when its content is necessary to evaluate the symptom. Extract only the referenced entry to an agent-created temporary directory, inspect it, and remove that temporary directory afterward. Never treat `processingStatus: notRecorded` as proof that downstream processing succeeded or failed.
 

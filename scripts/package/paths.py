@@ -130,6 +130,24 @@ def new_build_id(commit: str, *, now: datetime | None = None, suffix: str | None
     return f"{timestamp}-{short_commit}-{random_suffix}"
 
 
+def native_symbols_dir(releases_root: Path, *, profile: str, build_id: str) -> Path:
+    """Private, immutable evidence; deliberately outside work/cache GC roots."""
+    for value in (profile, build_id):
+        if (
+            not value
+            or value in {".", ".."}
+            or any(
+                c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
+                for c in value
+            )
+        ):
+            raise RuntimeError("invalid native symbol archive component")
+    path = releases_root / "_symbols" / "windows-x64" / profile / build_id
+    if not _is_within(path.resolve(), releases_root.resolve()):
+        raise RuntimeError("native symbol archive escaped releases root")
+    return path
+
+
 def create_build_paths(roots: PackageRoots, *, build_id: str) -> BuildPaths:
     if not build_id or any(character in build_id for character in "\\/:"):
         raise RuntimeError(f"invalid build id: {build_id!r}")

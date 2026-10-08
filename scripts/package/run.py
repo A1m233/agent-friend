@@ -69,6 +69,7 @@ from installer_smoke import (
 from installer_smoke import (
     write_build_report as write_installer_smoke_build_report,
 )
+from native_symbols import archive_native_symbols
 from paths import (
     BuildPaths,
     PackageRoots,
@@ -1453,6 +1454,13 @@ def _build_installer(
             parsed_version = SemVer.parse(version)
             manifest["target_release_version"] = (
                 f"{parsed_version.major}.{parsed_version.minor}.{parsed_version.patch}"
+            )
+        with _timed_step("native-symbols", build_paths):
+            manifest["native_symbols"] = archive_native_symbols(
+                build_paths.cargo_target_dir / "release" / f"{profile.main_binary_name}.exe",
+                releases_root=build_paths.roots.releases_root,
+                build_identity=identity.to_json_dict(),
+                sensitive=trusted_beta,
             )
         with _timed_step("publish", build_paths):
             return publish_installer(

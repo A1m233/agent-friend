@@ -103,6 +103,13 @@ pub(super) struct ServiceProcess {
 }
 
 impl ServiceProcess {
+    pub(super) fn register_crash_observer(&self, role: &str, generation: u64) {
+        #[cfg(windows)]
+        crate::native_crash::register_service(&self.child, role, generation);
+        #[cfg(not(windows))]
+        let _ = (role, generation);
+    }
+
     pub(super) fn spawn(
         command: &mut Command,
         parent_job: Option<&ProcessJob>,

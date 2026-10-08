@@ -52,6 +52,7 @@ export function FeedbackDiagnosticsPanel({
   const validTurnLimit = /^\d+$/.test(turnLimit) && Number(turnLimit) >= 1 && Number(turnLimit) <= 100;
   const [includeAttachmentOriginals, setIncludeAttachmentOriginals] = useState(false);
   const [includeRenderEvidence, setIncludeRenderEvidence] = useState(false);
+  const [includeCrashDumps, setIncludeCrashDumps] = useState(false);
   const [renderEvidenceStatus, setRenderEvidenceStatus] =
     useState<RenderEvidenceStatus | null>(null);
   const [renderEvidenceUpdating, setRenderEvidenceUpdating] = useState(false);
@@ -129,6 +130,7 @@ export function FeedbackDiagnosticsPanel({
         sessionTurnLimit: allTurns ? null : selectedIds.size === 0 ? 10 : Number(turnLimit),
         includeAttachmentOriginals,
         includeRenderEvidence,
+        includeCrashDumps,
       });
       setResult(next);
       const partial = next.outcome === "partial";
@@ -144,6 +146,7 @@ export function FeedbackDiagnosticsPanel({
       toast.error("无法生成诊断包", { description: message });
     } finally {
       setGenerating(false);
+      setIncludeCrashDumps(false);
     }
   };
 
@@ -447,6 +450,21 @@ export function FeedbackDiagnosticsPanel({
             </span>
           </label>
         ) : null}
+        <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border p-3">
+          <Checkbox
+            className="mt-0.5"
+            checked={includeCrashDumps}
+            disabled={generating}
+            onCheckedChange={(checked) => setIncludeCrashDumps(checked === true)}
+            aria-label="包含原始崩溃转储"
+          />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium text-fg">包含原始崩溃转储</span>
+            <span className="mt-1 block text-xs text-muted">
+              默认只导出崩溃摘要、记录覆盖情况和采集错误。原始转储可能包含聊天、凭据等内存内容，无法自动脱敏；仅在需要进一步定位时选择，发送前请按私人文件处理。
+            </span>
+          </span>
+        </label>
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm text-muted">
             <FileArchive className="size-4" />
