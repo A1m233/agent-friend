@@ -6,6 +6,7 @@ import contextlib
 import dataclasses
 import hashlib
 import json
+import logging
 import os
 import platform
 import shutil
@@ -18,6 +19,7 @@ from email.parser import Parser
 from pathlib import Path
 from uuid import uuid4
 
+from .filesystem import filesystem_path, remove_tree
 from .manager import environment_root_layout
 from .models import (
     EnvironmentStatus,
@@ -27,6 +29,8 @@ from .models import (
     ProviderIdentity,
     ResolvedManagedCommand,
 )
+
+logger = logging.getLogger(__name__)
 
 EXECUTION_ENVIRONMENT_ROOT_ENV = "AGENT_FRIEND_EXECUTION_ENVIRONMENT_ROOT"
 UV_EXECUTABLE_ENV = "AGENT_FRIEND_UV_EXECUTABLE"
@@ -323,29 +327,14 @@ class PythonEnvironmentProvider:
                     },
                 )
                 session_root.parent.mkdir(parents=True, exist_ok=True)
-                if session_root.exists():
-                    shutil.rmtree(session_root)
-                os.replace(staging, session_root)
-                _atomic_json_write(
-                    session_root.parent / "current.json",
-                    {
-                        "schemaVersion": 1,
-                        "provider": PROVIDER_NAME,
-                        "providerIdentity": self.identity.identity,
-                        "revision": revision,
-                    },
+                prepared = self._publish_session_environment(
+                    session_key, staging, session_root, revision
                 )
                 if rebuild_status is EnvironmentStatus.READY:
                     rebuild_lock.unlink(missing_ok=True)
             finally:
-                if staging.exists():
-                    shutil.rmtree(staging, ignore_errors=True)
-        prepared = self._load_valid_session_environment(session_key, session_root)
-        if prepared is None:
-            raise ManagedEnvironmentError(
-                "managed_environment_prepare_failed",
-                "Python session environment 原子发布后校验失败。",
-            )
+                if filesystem_path(staging).exists():
+                    self._discard_environment(staging)
         result = dataclasses.replace(
             prepared,
             prepare_duration_seconds=time.monotonic() - started,
@@ -353,6 +342,73 @@ class PythonEnvironmentProvider:
         with self._session_cache_lock:
             self._session_cache[session_key] = result
         return result
+
+    def _publish_session_environment(
+        self, session_key: str, staging: Path, session_root: Path, revision: int
+    ) -> PreparedProviderEnvironment:
+        # Keep the old tree intact until the replacement works at its final path.
+        # Recovery trees are excluded from staging GC if rollback itself fails.
+        backup: Path | None = None
+        if filesystem_path(session_root).exists():
+            backup = self._layout["staging"] / f".recovery-{uuid4().hex}"
+            os.replace(filesystem_path(session_root), filesystem_path(backup))
+        published = False
+        try:
+            os.replace(filesystem_path(staging), filesystem_path(session_root))
+            published = True
+            prepared = self._load_valid_session_environment(session_key, session_root)
+            if prepared is None:
+                raise ManagedEnvironmentError(
+                    "managed_environment_prepare_failed",
+                    "Python session environment 发布后校验失败，已尝试恢复旧环境。",
+                )
+            _atomic_json_write(
+                session_root.parent / "current.json",
+                {
+                    "schemaVersion": 1,
+                    "provider": PROVIDER_NAME,
+                    "providerIdentity": self.identity.identity,
+                    "revision": revision,
+                },
+            )
+        except Exception:
+            try:
+                if published:
+                    os.replace(filesystem_path(session_root), filesystem_path(staging))
+                if backup is not None:
+                    os.replace(filesystem_path(backup), filesystem_path(session_root))
+            except OSError:
+                logger.exception(
+                    "session execution environment rollback failed session=%s backup=%s",
+                    session_key,
+                    backup.name if backup is not None else "none",
+                )
+            raise
+        if backup is not None:
+            # Only committed replacements become disposable. A crash or failed
+            # rollback must not let the normal 24-hour staging GC erase evidence.
+            retired = self._layout["staging"] / f"retired-{uuid4().hex}"
+            try:
+                os.replace(filesystem_path(backup), filesystem_path(retired))
+                os.utime(filesystem_path(retired), None)
+            except OSError:
+                logger.exception(
+                    "session execution environment backup retained session=%s backup=%s",
+                    session_key,
+                    backup.name,
+                )
+            else:
+                self._discard_environment(retired)
+        return prepared
+
+    @staticmethod
+    def _discard_environment(path: Path) -> None:
+        try:
+            remove_tree(path)
+        except OSError:
+            logger.warning(
+                "execution environment cleanup deferred entry=%s", path.name, exc_info=True
+            )
 
     def resolve_command(
         self,
@@ -464,7 +520,7 @@ class PythonEnvironmentProvider:
             self._session_cache.pop(session_key, None)
         root = self._layout["sessions"] / f"session-{session_key}"
         if root.exists():
-            shutil.rmtree(root)
+            remove_tree(root)
 
     def collect_health(self) -> ProviderHealth:
         return self._global_health or ProviderHealth(
@@ -526,7 +582,7 @@ class PythonEnvironmentProvider:
                 and cache_bytes > self._shared_cache_high_bytes
                 and self._shared_cache_target_bytes < cache_bytes
             ):
-                shutil.rmtree(self._shared_cache_root)
+                remove_tree(self._shared_cache_root)
                 self._shared_cache_root.mkdir(parents=True, exist_ok=True)
                 cache_pruned = cache_bytes
                 cache_bytes = 0
@@ -552,7 +608,7 @@ class PythonEnvironmentProvider:
                     if desired_lock is not None and desired_lock.stat().st_size <= 1024 * 1024
                     else None
                 )
-                shutil.rmtree(candidate)
+                remove_tree(candidate)
                 candidate.mkdir(parents=True)
                 if lock_bytes is not None:
                     (candidate / "rebuild-packages.lock").write_bytes(lock_bytes)
@@ -715,19 +771,47 @@ class PythonEnvironmentProvider:
         session_key: str,
         root: Path,
     ) -> PreparedProviderEnvironment | None:
+        if not filesystem_path(root).exists():
+            return None
+        phase = "manifest_read"
         try:
-            manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
-            if (
-                manifest.get("schemaVersion") != SESSION_MANIFEST_SCHEMA_VERSION
-                or manifest.get("providerIdentity") != self.identity.identity
-                or not isinstance(manifest.get("revision"), int)
-                or manifest.get("invalidReason") is not None
-            ):
+            manifest = json.loads(
+                filesystem_path(root / "manifest.json").read_text(encoding="utf-8")
+            )
+            reason = None
+            if not isinstance(manifest, dict):
+                reason = "manifest_not_object"
+            elif manifest.get("schemaVersion") != SESSION_MANIFEST_SCHEMA_VERSION:
+                reason = "manifest_schema_mismatch"
+            elif manifest.get("providerIdentity") != self.identity.identity:
+                reason = "provider_identity_mismatch"
+            elif not isinstance(manifest.get("revision"), int):
+                reason = "manifest_revision_invalid"
+            elif manifest.get("invalidReason") is not None:
+                reason = "manifest_marked_invalid"
+            if reason is not None:
+                logger.warning(
+                    "session execution environment invalid session=%s reason=%s",
+                    session_key,
+                    reason,
+                )
                 return None
             venv_root = root / "venv"
             venv_python = _venv_python(venv_root)
+            phase = "python_probe"
             self._run_python_probe(venv_python, expect_venv=True)
-        except (OSError, ValueError, subprocess.SubprocessError):
+        except (OSError, ValueError, subprocess.SubprocessError, ManagedEnvironmentError) as exc:
+            logger.warning(
+                "session execution environment invalid session=%s phase=%s "
+                "error_type=%s errno=%s winerror=%s returncode=%s code=%s",
+                session_key,
+                phase,
+                type(exc).__name__,
+                getattr(exc, "errno", None),
+                getattr(exc, "winerror", None),
+                getattr(exc, "returncode", None),
+                getattr(exc, "code", None),
+            )
             return None
         aliases = {name: venv_python for name in _PYTHON_ALIASES}
         return PreparedProviderEnvironment(
@@ -954,13 +1038,16 @@ class PythonEnvironmentProvider:
         cutoff = time.time() - STAGING_MAX_AGE_SECONDS
         removed = 0
         for candidate in staging_root.iterdir():
+            if candidate.name.startswith(".recovery-"):
+                continue
             try:
-                if candidate.stat().st_mtime >= cutoff:
+                native = filesystem_path(candidate)
+                if native.stat().st_mtime >= cutoff:
                     continue
-                if candidate.is_dir():
-                    shutil.rmtree(candidate)
+                if native.is_dir():
+                    remove_tree(candidate)
                 else:
-                    candidate.unlink()
+                    native.unlink()
                 removed += 1
             except OSError:
                 continue
@@ -1120,6 +1207,7 @@ def _venv_python(venv_root: Path) -> Path:
 
 
 def _tree_usage(root: Path) -> tuple[int, int]:
+    root = filesystem_path(root)
     if not root.exists():
         return 0, 0
     files = 0
@@ -1227,6 +1315,7 @@ def _exclusive_file_lock(path: Path) -> Iterator[None]:
 
 
 def _atomic_json_write(path: Path, payload: Mapping[str, object]) -> None:
+    path = filesystem_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     data = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
