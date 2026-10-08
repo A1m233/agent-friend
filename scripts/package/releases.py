@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from native_symbols import validate_release_symbols
 from versioning import SemVer
 
 FORMAL_DISTRIBUTIONS = {"ordinary", "trusted-beta"}
@@ -67,7 +68,9 @@ def _load_manifest(directory: Path) -> dict[str, Any]:
     return value
 
 
-def validate_release_directory(directory: Path, *, formal: bool) -> dict[str, Any]:
+def validate_release_directory(
+    directory: Path, *, formal: bool, releases_root: Path | None = None
+) -> dict[str, Any]:
     manifest = _load_manifest(directory)
     required = {
         "schema_version",
@@ -135,6 +138,8 @@ def validate_release_directory(directory: Path, *, formal: bool) -> dict[str, An
         raise RuntimeError(f"installer size mismatch: {setup}")
     if sha256(setup) != installer.get("sha256"):
         raise RuntimeError(f"installer sha256 mismatch: {setup}")
+    if releases_root is not None and "native_symbols" in manifest:
+        validate_release_symbols(releases_root, manifest)
     return manifest
 
 
@@ -147,7 +152,9 @@ def discover_formal_releases(releases_root: Path) -> tuple[list[ReleaseRecord], 
     for manifest_path in sorted(base.glob("*/windows-x64/*/release.json")):
         directory = manifest_path.parent
         try:
-            manifest = validate_release_directory(directory, formal=True)
+            manifest = validate_release_directory(
+                directory, formal=True, releases_root=releases_root
+            )
             version = SemVer.parse(str(manifest["version"]))
             if directory.parents[1].name != str(version):
                 raise RuntimeError("manifest version does not match release directory")
@@ -159,6 +166,8 @@ def discover_formal_releases(releases_root: Path) -> tuple[list[ReleaseRecord], 
                     manifest=manifest,
                 )
             )
+            if "native_symbols" not in manifest:
+                warnings.append(f"legacy release has no archived native symbols: {directory}")
         except Exception as exc:
             warnings.append(f"{directory}: {exc}")
     return records, warnings
@@ -184,6 +193,7 @@ def publish_installer(
     manifest: dict[str, Any],
     local_test: bool,
 ) -> Path:
+    validate_release_symbols(releases_root, manifest)
     version = str(manifest["version"])
     distribution = str(manifest["distribution"])
     build_id = str(manifest["build_id"])
@@ -223,7 +233,7 @@ def publish_installer(
                 "provider credentials and rebuild.\n",
                 encoding="utf-8",
             )
-        validate_release_directory(temporary, formal=not local_test)
+        validate_release_directory(temporary, formal=not local_test, releases_root=releases_root)
         temporary.rename(final_dir)
         return final_dir / name
     except Exception:

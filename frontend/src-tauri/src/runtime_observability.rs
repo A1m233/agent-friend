@@ -232,6 +232,8 @@ impl RuntimeObserver {
 pub(crate) fn install_panic_hook(observer: Arc<RuntimeObserver>) {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        // Capture before allocating a backtrace or acquiring the ordinary journal lock.
+        crate::native_crash::panic_observed();
         observer.record_panic(info);
         previous(info);
     }));

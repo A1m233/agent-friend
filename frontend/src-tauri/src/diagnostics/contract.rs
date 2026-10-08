@@ -275,6 +275,7 @@ mod tests {
                     "diagnostics/windows-shell/events-001.jsonl",
                     "diagnostics/pet-input/coverage.json",
                     "diagnostics/pet-render/coverage.json",
+                    "diagnostics/native-crash/coverage.json",
                     "render-evidence/webview2-pet.png",
                     "render-evidence/windows-desktop.png",
                 ],

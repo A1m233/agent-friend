@@ -510,6 +510,7 @@ impl RuntimeServiceSupervisor {
         }
         match spawned {
             Ok(child) => {
+                child.register_crash_observer(service.command(), generation);
                 slot.child = Some(child);
                 slot.token = Some(token.clone());
             }

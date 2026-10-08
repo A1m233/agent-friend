@@ -70,6 +70,8 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
 
 ## 打包工作区治理
 
+- 发布前必须成功生成私有 native symbols 归档（桌面 EXE、匹配 GUID/age 的 PDB、代码段身份及构建元数据），release manifest 绑定归档 SHA。入口自动校验；失败不可绕过。归档位于 releases 根的 `_symbols/windows-x64/<profile>/<build-id>/`，独立于 workspace GC，不能随缓存删除或公开。trusted-beta 归档含敏感 EXE；诊断包永不附带符号。离线定位使用 `scripts/crash-diagnostics/run.* symbolize --dump <PATH> --symbols <ARCHIVE_DIR> --output <NEW_JSON>`，不自动下载符号。
+
 - 所有 worktree 的 package build 使用仓库级互斥锁；锁冲突时报告占用，不绕过或手工删除 lock。
 - `workspace-status` 只读输出全部 worktree 的 build-id、共享增量 cache、注册状态、保留策略和预计可回收字节。
 - `workspace-gc` 默认 dry-run；只有用户明确要求执行清理后才加 `--apply`。默认回收超过 48 小时的 build-id，以及超过 7 天未使用的 per-worktree Cargo/PyInstaller cache。

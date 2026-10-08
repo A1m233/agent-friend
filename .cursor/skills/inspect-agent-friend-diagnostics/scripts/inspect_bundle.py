@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -24,6 +25,7 @@ CORE_ENTRIES = (
     "diagnostics/runtime-config.json",
 )
 CAPABILITY_HANDLERS = {
+    "native-crash-evidence-v1": "nativeCrashEvidence",
     "startup-timeline-v1": "startupTimeline",
     "desktop-application-launch-v1": "desktopApplications",
     "selected-sessions-v1": "sessions",
@@ -1978,8 +1980,305 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             ),
             "petInputEvidence": summarize_pet_input(archive, manifest, warnings),
             "petRenderEvidence": summarize_pet_render(archive, manifest, warnings),
+            "nativeCrashEvidence": summarize_native_crash(archive, manifest, warnings),
             "warnings": warnings,
         }
+
+
+def summarize_native_crash(
+    archive: zipfile.ZipFile, manifest: dict[str, Any], warnings: list[str]
+) -> dict[str, Any]:
+    """Validate crash evidence and raw-dump consent without printing memory or payloads."""
+    prefix = "diagnostics/native-crash/"
+    coverage_entry = prefix + "coverage.json"
+    names = set(archive.namelist())
+    family_names = {name for name in names if name.startswith(prefix)}
+    declared = "native-crash-evidence-v1" in (manifest.get("capabilities") or [])
+    if not declared and not family_names:
+        return {"evidence": "not-collected"}
+    result: dict[str, Any] = {
+        "evidence": "collected",
+        "incidentCount": 0,
+        "rawDumpCount": 0,
+        "verifiedDumpCount": 0,
+        "rawDumpsRequested": False,
+        "processCount": 0,
+        "kinds": {},
+        "exceptionCodes": {},
+        "exitCodes": {},
+        "orderlyExitReasons": {},
+        "dumpStatuses": {},
+        "serviceExitOrders": {},
+        "sessionCaptureStatuses": {},
+        "builds": [],
+        "failureCount": 0,
+        "gaps": [],
+    }
+    gaps: set[str] = set()
+
+    def finish() -> dict[str, Any]:
+        result["gaps"] = sorted(gaps)
+        if gaps:
+            result["evidence"] = "partial"
+            warnings.extend(f"native crash: {gap}" for gap in sorted(gaps))
+        return result
+
+    def bounded_json(name: str) -> dict[str, Any]:
+        if archive.getinfo(name).file_size > 64 * 1024:
+            raise BundleError("native crash metadata limit exceeded")
+        value = read_json(archive, name)
+        if not isinstance(value, dict) or value.get("schemaVersion") != 1:
+            raise BundleError("native crash invalid metadata")
+        return value
+
+    def identity(value: Any) -> bool:
+        return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9-]{1,96}", value) is not None
+
+    def unsigned(value: Any, maximum: int = 0xFFFFFFFFFFFFFFFF) -> bool:
+        return type(value) is int and 0 <= value <= maximum
+
+    raw_entries = {name for name in family_names if name.startswith(prefix + "dumps/")}
+    result["rawDumpCount"] = len(raw_entries)
+    if coverage_entry not in names:
+        gaps.add("missing-coverage")
+        if raw_entries:
+            gaps.add("privacy-contract-violation")
+        return finish()
+    try:
+        coverage = bounded_json(coverage_entry)
+        if type(coverage.get("rawDumpsRequested")) is not bool:
+            raise BundleError("native crash missing consent state")
+        result["rawDumpsRequested"] = coverage["rawDumpsRequested"]
+        if not coverage["rawDumpsRequested"] and raw_entries:
+            gaps.add("privacy-contract-violation")
+        capture_status = coverage.get("captureStatus")
+        if capture_status not in {"per-session", "unsupported-platform", "unavailable"}:
+            raise BundleError("native crash invalid capture status")
+        result["captureStatus"] = capture_status
+        capture_modes = {
+            "nativeExceptionCapture": {
+                "unhandled-filter-and-stack-overflow-observer",
+                "unsupported-platform",
+            },
+            "panicCapture": {"preallocated-context-handoff", "unsupported-platform"},
+            "fastFailCapture": {"exit-only", "unsupported-platform"},
+            "forcedTerminationCapture": {"exit-only", "unsupported-platform"},
+        }
+        for field, allowed in capture_modes.items():
+            mode = coverage.get(field)
+            result[field] = mode if isinstance(mode, str) and mode in allowed else "unknown"
+        failures = coverage.get("failures")
+        if not isinstance(failures, list):
+            raise BundleError("native crash invalid failure collection")
+        result["failureCount"] = len(failures)
+        if failures:
+            gaps.add("collection-failures")
+        sessions = coverage.get("sessions", [])
+        if not isinstance(sessions, list) or len(sessions) > 2048:
+            raise BundleError("native crash invalid session collection")
+        statuses: Counter[str] = Counter()
+        for session in sessions:
+            status = session.get("captureStatus") if isinstance(session, dict) else None
+            if status in {"ready", "starting", "unavailable", "degraded", "unsupported-platform"}:
+                statuses[status] += 1
+                if status in {"unavailable", "degraded"}:
+                    gaps.add("capture-degraded")
+            else:
+                statuses["unknown"] += 1
+        result["sessionCaptureStatuses"] = dict(statuses)
+    except (BundleError, KeyError, TypeError, ValueError):
+        gaps.add("invalid-coverage")
+        if raw_entries:
+            gaps.add("privacy-contract-violation")
+        return finish()
+
+    incident_entries = sorted(
+        name for name in family_names if name.startswith(prefix + "incidents/")
+    )
+    if len(incident_entries) > 100 or len(raw_entries) > 5:
+        gaps.add("retention-limit-exceeded")
+    known = {coverage_entry, *incident_entries, *raw_entries}
+    if family_names - known:
+        gaps.add("unrecognized-artifact")
+    kinds: Counter[str] = Counter()
+    exceptions: Counter[str] = Counter()
+    exits: Counter[str] = Counter()
+    orderly_reasons: Counter[str] = Counter()
+    dump_statuses: Counter[str] = Counter()
+    orders: Counter[str] = Counter()
+    processes: set[tuple[int, int]] = set()
+    builds: dict[tuple[str, str], dict[str, Any]] = {}
+    referenced_dumps: set[str] = set()
+    verified_bytes = 0
+    for entry in incident_entries[:100]:
+        try:
+            value = bounded_json(entry)
+            incident_id = value.get("incidentId")
+            if not identity(incident_id) or entry != prefix + f"incidents/{incident_id}.json":
+                raise BundleError("native crash invalid incident identity")
+            if not identity(value.get("sessionId")):
+                raise BundleError("native crash invalid session identity")
+            pid, created = value.get("processId"), value.get("processCreatedTicks")
+            if not unsigned(pid, 0xFFFFFFFF) or not unsigned(created):
+                raise BundleError("native crash invalid process identity")
+            kind = value.get("kind")
+            if kind not in {
+                "native-exception",
+                "stack-overflow-observed",
+                "rust-panic",
+                "process-exit",
+                "service-exit",
+                "unexpected-end-unknown",
+            }:
+                raise BundleError("native crash invalid event kind")
+            kinds[kind] += 1
+            processes.add((pid, created))
+            result["incidentCount"] += 1
+            code = value.get("exceptionCode")
+            if code is not None:
+                if not isinstance(code, str) or not re.fullmatch(r"0x[0-9A-Fa-f]{8}", code):
+                    raise BundleError("native crash invalid exception code")
+                exceptions[code.lower()] += 1
+            exit_code = value.get("exitCode")
+            if exit_code is not None:
+                if not unsigned(exit_code, 0xFFFFFFFF):
+                    raise BundleError("native crash invalid exit code")
+                exits[f"0x{exit_code:08x}"] += 1
+            reason = value.get("orderlyReason")
+            if isinstance(reason, str) and reason in {
+                "normal-return",
+                "tauri-exit",
+                "second-instance",
+                "startup-rejected",
+            }:
+                orderly_reasons[reason] += 1
+            build = value.get("buildIdentity")
+            if isinstance(build, dict):
+                build_id, commit = build.get("buildId"), build.get("sourceCommit")
+                if (
+                    identity(build_id)
+                    and isinstance(commit, str)
+                    and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit)
+                ):
+                    item: dict[str, Any] = {"buildId": build_id, "sourceCommit": commit}
+                    if type(build.get("dirty")) is bool:
+                        item["dirty"] = build["dirty"]
+                    mode = build.get("buildMode")
+                    if isinstance(mode, str) and mode in {
+                        "formal",
+                        "local-test",
+                        "debug",
+                        "release",
+                    }:
+                        item["buildMode"] = mode
+                    tree = build.get("sourceTreeSha256")
+                    if isinstance(tree, str) and re.fullmatch(r"[0-9a-f]{64}", tree):
+                        item["sourceTreeSha256"] = tree
+                    profile = build.get("profileId")
+                    if profile in {"production", "installer-smoke"}:
+                        item["profileId"] = profile
+                    key = (build_id, commit)
+                    if key in builds and builds[key] != item:
+                        gaps.add("build-identity-conflict")
+                    else:
+                        builds[key] = item
+            services = value.get("services", [])
+            if not isinstance(services, list) or len(services) > 100:
+                raise BundleError("native crash invalid service collection")
+            for service in services:
+                order = service.get("order") if isinstance(service, dict) else None
+                if order not in {"service-first", "shell-first", "simultaneous", "order-unknown"}:
+                    order = "order-unknown"
+                orders[order] += 1
+            dump = value.get("dump")
+            if not isinstance(dump, dict) or dump.get("status") not in {
+                "included",
+                "excluded",
+                "missing",
+                "corrupt",
+                "pending",
+                "not-captured",
+                "failed",
+                "expired",
+            }:
+                raise BundleError("native crash invalid dump status")
+            status = dump["status"]
+            dump_statuses[status] += 1
+            if dump.get("errorCode") == "export-budget-exceeded":
+                gaps.add("export-budget-exceeded")
+            if status in {"missing", "corrupt", "failed"}:
+                gaps.add("dump-unavailable")
+            dump_entry = dump.get("archiveEntry")
+            if status != "included":
+                if dump_entry is not None:
+                    gaps.add("invalid-dump-reference")
+                continue
+            if not result["rawDumpsRequested"]:
+                gaps.add("privacy-contract-violation")
+            expected_entry = prefix + f"dumps/{incident_id}.dmp"
+            if dump_entry != expected_entry or expected_entry in referenced_dumps:
+                gaps.add("invalid-dump-reference")
+                continue
+            referenced_dumps.add(expected_entry)
+            if expected_entry not in names:
+                gaps.add("missing-dump")
+                continue
+            size, digest = dump.get("sizeBytes"), dump.get("sha256")
+            if not unsigned(size, 128 * 1024 * 1024) or size < 4:
+                gaps.add("invalid-dump-size")
+                continue
+            if archive.getinfo(expected_entry).file_size != size:
+                gaps.add("dump-size-mismatch")
+                continue
+            if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                gaps.add("invalid-dump-hash")
+                continue
+            verified_bytes += size
+            if verified_bytes > 256 * 1024 * 1024:
+                gaps.add("retention-limit-exceeded")
+                continue
+            hasher = hashlib.sha256()
+            with archive.open(expected_entry) as stream:
+                magic = stream.read(4)
+                hasher.update(magic)
+                for chunk in iter(lambda: stream.read(64 * 1024), b""):
+                    hasher.update(chunk)
+            if magic != b"MDMP":
+                gaps.add("invalid-dump-format")
+            elif hasher.hexdigest() != digest:
+                gaps.add("dump-hash-mismatch")
+            else:
+                result["verifiedDumpCount"] += 1
+        except (
+            BundleError,
+            OSError,
+            RuntimeError,
+            zipfile.BadZipFile,
+            ValueError,
+            TypeError,
+            KeyError,
+        ):
+            # Exception bodies and malformed values may contain private memory or payload text.
+            gaps.add("invalid-incident")
+    if raw_entries - referenced_dumps:
+        gaps.add("unreferenced-dump")
+    if coverage.get("incidentCount") != len(incident_entries):
+        gaps.add("incident-count-mismatch")
+    if coverage.get("rawDumpCount") != len(raw_entries):
+        gaps.add("dump-count-mismatch")
+    result.update(
+        {
+            "kinds": dict(kinds),
+            "exceptionCodes": dict(exceptions),
+            "exitCodes": dict(exits),
+            "orderlyExitReasons": dict(orderly_reasons),
+            "dumpStatuses": dict(dump_statuses),
+            "serviceExitOrders": dict(orders),
+            "processCount": len(processes),
+            "builds": [builds[key] for key in sorted(builds)],
+        }
+    )
+    return finish()
 
 
 def summarize_desktop_applications(value: Any, *, collected: bool) -> dict[str, Any]:
@@ -2329,6 +2628,13 @@ def print_human(summary: dict[str, Any]) -> None:
     )
     print("Command runtime: " + json.dumps(summary["commandRuntime"], ensure_ascii=False))
     print("Sandbox incidents: " + json.dumps(summary["sandboxIncidents"], ensure_ascii=False))
+    crash = summary["nativeCrashEvidence"]
+    print(
+        f"Native crash evidence: evidence={crash.get('evidence')} "
+        f"incidents={crash.get('incidentCount')} dumps={crash.get('rawDumpCount')} "
+        f"verifiedDumps={crash.get('verifiedDumpCount')} "
+        f"requested={crash.get('rawDumpsRequested')} gaps={len(crash.get('gaps', []))}"
+    )
     render = summary["petRenderEvidence"]
     print(
         f"Pet render evidence: evidence={render.get('evidence')} "

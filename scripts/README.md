@@ -8,6 +8,9 @@
 
 | 脚本 | 用途 | mac/linux | Windows |
 |---|---|---|---|
+| `crash-diagnostics/` | 私有本地转储元数据与离线栈还原；只读指定 dump 和不可变符号归档，校验 PE/PDB GUID-age、代码段及构建身份，拒绝错配；新建报告，不联网或自动上传。`inspect` 跨平台，`symbolize` 当前使用 Windows DbgHelp | `./scripts/crash-diagnostics/run.sh inspect --dump FILE` | `.\scripts\crash-diagnostics\run.ps1 inspect --dump FILE` 或 `symbolize --dump FILE --symbols ARCHIVE_DIR [--incident-image EXE] --output NEW_JSON` |
+| `native-crash-smoke/` | Windows 原生异常与留证失败夹具；只接受 debug 桌面 EXE 的专用模式，使用独立临时目录，不启动真实桌面或调用模型；输出私有 dump/报告 | `./scripts/native-crash-smoke/run.sh --exe EXE`（非 Windows 明确不支持） | `.\scripts\native-crash-smoke\run.ps1 --exe EXE [--modes MODE ...]` |
+| `tauri-runtime-regression/` | 校验固定 Tauri 补丁来源、默认/tracing 线程所有权单测和独立 Windows runtime clone/drop、关闭回归；无 provider 调用，构建目录必须在仓库外 | `./scripts/tauri-runtime-regression/run.sh check\|unit\|stress [--release] [--target-dir PATH]` | `.\scripts\tauri-runtime-regression\run.ps1 check\|unit\|stress [--release] [--target-dir PATH]` |
 | link-navigation-desktop | 创建 152 合成持久会话、附件和链接文件用于真实桌面验收；输出目录须不存在，不调用模型。文件与会话保留供复验，截图和报告存输出目录；人工核对 runtime 身份后使用 CDP 与原生文件管理器验证 | `./scripts/link-navigation-desktop/run.sh NEW_OUTPUT_DIR` | `.\scripts\link-navigation-desktop\run.ps1 NEW_OUTPUT_DIR` |
 | startup-profile | 149 启动测量：`build-helper --target-dir <仓库外目录> --output <新JSON>` 只编译 release 校验助手；`verify --helper <exe> --install-root <目录> [--helper-build-report <JSON>] --output <新JSON>` 只读采样（默认5次，首轮单列，缓存未知，不安装/重启/调用模型）；`report --log <runtime日志> --process-session-id <ID> --output <新JSON>` 输出阶段、嵌套关系所需起止值与缺口，不把窗口可见当作可交互。helper 构建依赖已生成的 frontend/dist；旧 helper 没有分段统计时明确标为 unavailable。Windows 专用 `installed-evidence --installer <受治理 installer-smoke 包> --artifacts <新目录> --output <新JSON>` 执行隔离安装、中断/正常启动、真实 WebView 输入与诊断导出后清理；拒绝已有隔离状态，绝不接受 production 制品，不调用模型。检查 native bootstrap、实际请求 origin、空会话、ZIP readiness 身份和启动 NetLog；不允许观察到生产端口请求。NetLog 强制结束的尾部缺口单独标记。 | `./scripts/startup-profile/run.sh build-helper\|verify\|report\|installed-evidence ...` | `.\scripts\startup-profile\run.ps1 build-helper\|verify\|report\|installed-evidence ...` |
 | voice-input-desktop | 向已核对身份的真实 Tauri 聊天 WebView 注入模拟转写，验证改字、光标与合成 IME 事件；恢复内存草稿、不发消息、不调用 ASR。先经 desktop-visual 启动并打开聊天窗口；需 CDP，当前主要用于 Windows/WebView2 | `./scripts/voice-input-desktop/run.sh NEW_OUTPUT_DIR [CDP_URL]` | `.\scripts\voice-input-desktop\run.ps1 NEW_OUTPUT_DIR [CDP_URL]` |
@@ -15,6 +18,8 @@
 | execution-environment | 准备、校验及离线 PDF/PowerShell、表格/Word 基础读写 smoke；自带 PowerShell 7、Poppler、PDF 与 openpyxl/pandas/python-docx wheel 基线，不含 Office 渲染或公式重算；工作树外缓存，发行包当前限 Windows x64，其他平台明确报告不支持 | `./scripts/execution-environment/run.sh prepare\|verify\|smoke [--offline]` | `.\scripts\execution-environment\run.ps1 prepare\|verify\|smoke [--offline]` |
 | desktop-application | 原生桌面启动助手构建、测试与 Job 隔离 smoke；smoke 只启动自有夹具，非 Windows 明确不支持 | `./scripts/desktop-application/run.sh build\|test\|smoke` | `.\scripts\desktop-application\run.ps1 build\|test\|smoke` |
 | diagnostics-smoke | 合成长会话最近 10 轮读取／ZIP 体积对照和事故修复留存，无网络、不读客户数据 | `./scripts/diagnostics-smoke/run.sh` | `.\scripts\diagnostics-smoke\run.ps1` |
+
+`tauri-runtime-regression/run.* desktop-stress --installer <精确 installer-smoke 包> --candidate-build-id <ID> --artifacts <新目录> [--duration-seconds 1800]` 在受治理的隔离安装身份下执行有界真实 WebView 光标、monitor/window 请求、reload 与穿透状态回归，保存证据并清理自有运行态；仅 Windows。复用 package 生命周期锁，不能与 installer matrix 同时操作该 profile。物理鼠标穿透点击、实际 mixed-DPI 跨屏拖动和用户托盘 Quit 需另行核验，不以 IPC 成功冒充体验通过。
 
 `session-memory/run.* --directory DATA_DIR --session-id ID --compact` 只验证增量编码维护候选；加 `--apply` 才替换原文件，并保留同目录 `*.backup` 原件。维护取得会话写者和文件维护锁，拒绝损坏历史或不等价结果。中断前未发布则原件仍有效；发布后保留新版文件与原件备份。对真实用户数据操作须单独授权并关闭使用该数据的应用；本需求验证只使用隔离副本，不自动删除备份。不要求旧版本读取维护后的格式。
 
@@ -197,6 +202,8 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 之后所有 `.ps1` 都能正常跑。
 
 ## 跨平台约定
+
+Windows 安装包发布前会把桌面 EXE、匹配的 PDB 和 `symbols.json` 保存到 releases 根的私有 `_symbols/windows-x64/<profile>/<build-id>/`。该归档独立于工作区/增量缓存清理，不可覆盖；release manifest 绑定归档 hash。匹配失败或归档失败会拒绝发布。符号不进入安装包和诊断 ZIP；trusted-beta 的归档包含敏感 EXE，同样不得公开。
 
 每个脚本同时提供 `run.sh`（mac/linux）和 `run.ps1`（windows）两个版本，**两端语义一致、输出格式尽量一致**。新增脚本必须遵循同样规范，详见 `.cursor/rules/cross-platform-dev.mdc`。
 

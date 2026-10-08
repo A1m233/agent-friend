@@ -1593,7 +1593,7 @@ def _release_manifest(*, version: str, build_id: str, local_test: bool) -> dict[
         "sensitive": False,
         "created_at": datetime.now(UTC).isoformat(),
         "build_id": build_id,
-        "source": {"commit": "a" * 40, "dirty": local_test},
+        "source": {"commit": "a" * 40, "dirty": local_test, "tree_sha256": "b" * 64},
         "toolchain": {"python": "3.12", "tauri_cli": "2.11.2"},
         "installer": {},
         "upgrade_mode": "manual-installer",
@@ -1602,11 +1602,15 @@ def _release_manifest(*, version: str, build_id: str, local_test: bool) -> dict[
 
 
 def test_formal_releases_are_immutable_and_local_test_is_not_latest(tmp_path) -> None:
+    from test_native_symbols import attach_symbols, sample_binaries
+
     releases = _load("package_releases_publish", PACKAGE_DIR / "releases.py")
     candidate = tmp_path / "candidate.exe"
     candidate.write_bytes(b"installer")
     root = tmp_path / "release-root"
     formal_manifest = _release_manifest(version="1.2.3", build_id="formal-one", local_test=False)
+    native_image = sample_binaries(tmp_path / "native-build")
+    attach_symbols(root, formal_manifest, native_image)
     setup = releases.publish_installer(
         candidate,
         releases_root=root,
@@ -1627,6 +1631,7 @@ def test_formal_releases_are_immutable_and_local_test_is_not_latest(tmp_path) ->
         raise AssertionError("formal release overwrite must fail closed")
 
     local_manifest = _release_manifest(version="9.0.0", build_id="local-one", local_test=True)
+    attach_symbols(root, local_manifest, native_image)
     local_setup = releases.publish_installer(
         candidate,
         releases_root=root,
@@ -1773,6 +1778,11 @@ def test_installer_build_uses_external_cargo_target_and_generated_resource_confi
 
     monkeypatch.setattr(package, "_run", fake_run)
     monkeypatch.setattr(package, "publish_installer", fake_publish)
+    monkeypatch.setattr(
+        package,
+        "archive_native_symbols",
+        lambda *args, **kwargs: {"path": "_symbols/test/symbols.json", "sha256": "e" * 64},
+    )
 
     identity = package.build_identity(
         product_version="1.2.3",

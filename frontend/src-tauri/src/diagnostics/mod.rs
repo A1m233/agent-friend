@@ -18,6 +18,7 @@ use tauri::{AppHandle, Manager, State};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 mod contract;
+mod native_crash_export;
 mod sandbox_incidents;
 mod staged_log;
 
@@ -37,6 +38,8 @@ pub struct GenerateDiagnosticBundleRequest {
     include_attachment_originals: bool,
     #[serde(default)]
     include_render_evidence: bool,
+    #[serde(default)]
+    include_crash_dumps: bool,
 }
 
 fn default_session_turn_limit() -> Option<u32> {
@@ -69,6 +72,7 @@ enum ArchiveEntrySource {
     Bytes(Vec<u8>),
     File(PathBuf),
     StagedLog(staged_log::StagedLog),
+    NativeCrashDump(crate::native_crash::ExportDump),
 }
 
 #[derive(Clone)]
@@ -500,6 +504,18 @@ pub async fn generate_diagnostic_bundle(
             message,
         });
     }
+
+    let include_crash_dumps = request.include_crash_dumps;
+    let crash_export = tauri::async_runtime::spawn_blocking(move || {
+        crate::native_crash::export_for_bundle(include_crash_dumps)
+    })
+    .await;
+    native_crash_export::append(
+        crash_export.map_err(|_| ()),
+        include_crash_dumps,
+        &mut entries,
+        &mut failures,
+    )?;
 
     let outcome = if failures.is_empty() {
         "complete"
@@ -1356,6 +1372,9 @@ fn write_archive_atomically(
                     std::io::copy(&mut input, &mut writer)
                         .map_err(|e| format!("copy ZIP source failed: {e}"))?;
                 }
+                ArchiveEntrySource::NativeCrashDump(dump) => {
+                    native_crash_export::write_dump(dump, &mut writer)?;
+                }
             }
         }
         let file = writer
@@ -1434,6 +1453,7 @@ mod tests {
                     "diagnostics/windows-shell/current.json",
                     "diagnostics/pet-input/coverage.json",
                     "diagnostics/pet-render/coverage.json",
+                    "diagnostics/native-crash/coverage.json",
                 ],
             )
             .expect("current manifest should satisfy bundle contract");

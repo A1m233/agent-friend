@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import importlib.util
 import json
 import zipfile
@@ -32,6 +33,229 @@ def _load_inspector() -> ModuleType:
 
 
 INSPECTOR = _load_inspector()
+
+
+def _native_crash_entries(*, include_raw: bool) -> dict[str, object]:
+    prefix = "diagnostics/native-crash/"
+    content = b"MDMPprivate-memory-DO-NOT-PRINT"
+    incident = {
+        "schemaVersion": 1,
+        "incidentId": "12-123-abc-000001",
+        "sessionId": "12-123-abc",
+        "processId": 12,
+        "processCreatedTicks": 123,
+        "kind": "native-exception",
+        "exceptionCode": "0xc000001d",
+        "exitCode": 3221225501,
+        "buildIdentity": {
+            "buildId": "old-build-123",
+            "sourceCommit": "a" * 40,
+            "dirty": True,
+            "sourceTreeSha256": "b" * 64,
+            "profileId": "production",
+        },
+        "services": [{"role": "bridge", "order": "shell-first"}],
+        "dump": {
+            "status": "included" if include_raw else "excluded",
+            "archiveEntry": prefix + "dumps/12-123-abc-000001.dmp" if include_raw else None,
+            "sizeBytes": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+        },
+        "unknownPrivatePayload": "DO-NOT-PRINT",
+    }
+    entries: dict[str, object] = {
+        prefix + "coverage.json": {
+            "schemaVersion": 1,
+            "captureStatus": "per-session",
+            "rawDumpsRequested": include_raw,
+            "incidentCount": 1,
+            "rawDumpCount": int(include_raw),
+            "sessions": [{"captureStatus": "ready"}],
+            "failures": [],
+        },
+        prefix + "incidents/12-123-abc-000001.json": incident,
+    }
+    if include_raw:
+        entries[prefix + "dumps/12-123-abc-000001.dmp"] = content
+    return entries
+
+
+def _inspect_native_crash(
+    path: Path, entries: dict[str, object], *, declared: bool = True
+) -> tuple[dict[str, object], list[str]]:
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, value in entries.items():
+            archive.writestr(name, value if isinstance(value, bytes) else json.dumps(value))
+    manifest = {"capabilities": ["native-crash-evidence-v1"] if declared else []}
+    warnings: list[str] = []
+    with zipfile.ZipFile(path) as archive:
+        summary = INSPECTOR.summarize_native_crash(archive, manifest, warnings)
+    return summary, warnings
+
+
+def test_native_crash_default_inventory_is_content_free_and_keeps_historical_build(
+    tmp_path: Path,
+) -> None:
+    summary, warnings = _inspect_native_crash(
+        tmp_path / "native.zip", _native_crash_entries(include_raw=False)
+    )
+    assert warnings == []
+    assert summary["evidence"] == "collected"
+    assert summary["rawDumpsRequested"] is False
+    assert summary["rawDumpCount"] == 0
+    assert summary["dumpStatuses"] == {"excluded": 1}
+    assert summary["exceptionCodes"] == {"0xc000001d": 1}
+    assert summary["serviceExitOrders"] == {"shell-first": 1}
+    assert summary["builds"] == [
+        {
+            "buildId": "old-build-123",
+            "sourceCommit": "a" * 40,
+            "dirty": True,
+            "sourceTreeSha256": "b" * 64,
+            "profileId": "production",
+        }
+    ]
+    assert "DO-NOT-PRINT" not in json.dumps(summary)
+
+
+def test_native_crash_opt_in_verifies_streamed_dump_hash_and_size(tmp_path: Path) -> None:
+    summary, warnings = _inspect_native_crash(
+        tmp_path / "native.zip", _native_crash_entries(include_raw=True)
+    )
+    assert warnings == []
+    assert summary["rawDumpCount"] == summary["verifiedDumpCount"] == 1
+    assert "private-memory" not in json.dumps(summary)
+
+
+@pytest.mark.parametrize("mode", ["formal", "local-test"])
+def test_native_crash_preserves_real_installed_build_modes(tmp_path: Path, mode: str) -> None:
+    entries = _native_crash_entries(include_raw=False)
+    incident = entries["diagnostics/native-crash/incidents/12-123-abc-000001.json"]
+    assert isinstance(incident, dict)
+    incident["buildIdentity"]["buildMode"] = mode
+    summary, warnings = _inspect_native_crash(tmp_path / "native.zip", entries)
+    assert warnings == []
+    assert summary["builds"][0]["buildMode"] == mode
+
+
+def test_native_crash_service_exit_and_panic_are_separate_observations(tmp_path: Path) -> None:
+    entries = _native_crash_entries(include_raw=False)
+    name = "diagnostics/native-crash/incidents/12-123-abc-000001.json"
+    event = entries[name]
+    assert isinstance(event, dict)
+    event["kind"] = "service-exit"
+    event["exceptionCode"] = None
+    event["exitCode"] = None
+    event["services"] = [{"role": "bridge", "order": "service-first"}]
+    summary, warnings = _inspect_native_crash(tmp_path / "native.zip", entries)
+    assert warnings == []
+    assert summary["kinds"] == {"service-exit": 1}
+    assert summary["exitCodes"] == {}
+    assert summary["serviceExitOrders"] == {"service-first": 1}
+    event["kind"] = "rust-panic"
+    summary, warnings = _inspect_native_crash(tmp_path / "panic.zip", entries)
+    assert warnings == []
+    assert summary["kinds"] == {"rust-panic": 1}
+    assert summary["exitCodes"] == {}
+
+
+def test_native_crash_normal_exit_remains_explicit_and_preserves_exit_only_coverage(
+    tmp_path: Path,
+) -> None:
+    entries = _native_crash_entries(include_raw=False)
+    coverage = entries["diagnostics/native-crash/coverage.json"]
+    event = entries["diagnostics/native-crash/incidents/12-123-abc-000001.json"]
+    assert isinstance(coverage, dict) and isinstance(event, dict)
+    coverage["fastFailCapture"] = "exit-only"
+    coverage["forcedTerminationCapture"] = "exit-only"
+    event["kind"] = "process-exit"
+    event["exceptionCode"] = None
+    event["exitCode"] = 0
+    event["orderlyReason"] = "normal-return"
+    event["services"] = [{"order": "shell-first", "generation": n} for n in range(20)]
+    summary, warnings = _inspect_native_crash(tmp_path / "normal.zip", entries)
+    assert warnings == []
+    assert summary["kinds"] == {"process-exit": 1}
+    assert summary["orderlyExitReasons"] == {"normal-return": 1}
+    assert summary["serviceExitOrders"] == {"shell-first": 20}
+    assert summary["fastFailCapture"] == summary["forcedTerminationCapture"] == "exit-only"
+
+
+@pytest.mark.parametrize("fault", ["missing", "size", "hash", "reference", "format", "consent"])
+def test_native_crash_reports_raw_artifact_contract_failures(tmp_path: Path, fault: str) -> None:
+    entries = _native_crash_entries(include_raw=True)
+    dump_name = "diagnostics/native-crash/dumps/12-123-abc-000001.dmp"
+    coverage = entries["diagnostics/native-crash/coverage.json"]
+    incident = entries["diagnostics/native-crash/incidents/12-123-abc-000001.json"]
+    assert isinstance(coverage, dict) and isinstance(incident, dict)
+    if fault == "missing":
+        entries.pop(dump_name)
+    elif fault == "size":
+        incident["dump"]["sizeBytes"] = 100
+    elif fault == "hash":
+        incident["dump"]["sha256"] = "f" * 64
+    elif fault == "reference":
+        incident["dump"]["archiveEntry"] = "logs/private-memory.txt"
+    elif fault == "format":
+        entries[dump_name] = b"FAILprivate-memory-DO-NOT-PRINT"
+    elif fault == "consent":
+        coverage["rawDumpsRequested"] = False
+    summary, warnings = _inspect_native_crash(tmp_path / "native.zip", entries)
+    assert summary["evidence"] == "partial"
+    assert warnings
+    if fault == "consent":
+        assert "privacy-contract-violation" in summary["gaps"]
+    else:
+        assert summary["verifiedDumpCount"] == 0
+    assert "DO-NOT-PRINT" not in json.dumps((summary, warnings))
+
+
+def test_native_crash_legacy_missing_coverage_and_invalid_values_are_distinct(
+    tmp_path: Path,
+) -> None:
+    old, warnings = _inspect_native_crash(tmp_path / "old.zip", {}, declared=False)
+    assert old == {"evidence": "not-collected"}
+    assert warnings == []
+    missing, warnings = _inspect_native_crash(tmp_path / "missing.zip", {})
+    assert missing["gaps"] == ["missing-coverage"]
+    entries = _native_crash_entries(include_raw=False)
+    incident = entries["diagnostics/native-crash/incidents/12-123-abc-000001.json"]
+    assert isinstance(incident, dict)
+    incident["exceptionCode"] = {"private": "DO-NOT-PRINT"}
+    invalid, warnings = _inspect_native_crash(tmp_path / "invalid.zip", entries)
+    assert "invalid-incident" in invalid["gaps"]
+    assert "DO-NOT-PRINT" not in json.dumps((invalid, warnings))
+
+
+def test_native_crash_retention_and_collection_gaps_do_not_leak_error_text(tmp_path: Path) -> None:
+    entries = _native_crash_entries(include_raw=False)
+    coverage = entries["diagnostics/native-crash/coverage.json"]
+    incident = entries["diagnostics/native-crash/incidents/12-123-abc-000001.json"]
+    assert isinstance(coverage, dict) and isinstance(incident, dict)
+    coverage["failures"] = ["private-path-DO-NOT-PRINT"]
+    coverage["sessions"] = [{"captureStatus": "degraded", "failures": ["DO-NOT-PRINT"]}]
+    incident["dump"]["status"] = "expired"
+    summary, warnings = _inspect_native_crash(tmp_path / "native.zip", entries)
+    assert summary["failureCount"] == 1
+    assert summary["dumpStatuses"] == {"expired": 1}
+    assert summary["sessionCaptureStatuses"] == {"degraded": 1}
+    assert set(summary["gaps"]) == {"capture-degraded", "collection-failures"}
+    assert "DO-NOT-PRINT" not in json.dumps((summary, warnings))
+
+
+def test_native_crash_export_budget_exclusion_is_not_claimed_as_verified(tmp_path: Path) -> None:
+    entries = _native_crash_entries(include_raw=False)
+    coverage = entries["diagnostics/native-crash/coverage.json"]
+    incident = entries["diagnostics/native-crash/incidents/12-123-abc-000001.json"]
+    assert isinstance(coverage, dict) and isinstance(incident, dict)
+    coverage["failures"] = ["export-budget-exceeded"]
+    incident["dump"]["errorCode"] = "export-budget-exceeded"
+    summary, warnings = _inspect_native_crash(tmp_path / "native.zip", entries)
+    assert summary["evidence"] == "partial"
+    assert summary["verifiedDumpCount"] == 0
+    assert summary["dumpStatuses"] == {"excluded": 1}
+    assert "export-budget-exceeded" in summary["gaps"]
+    assert warnings
 
 
 def test_startup_timeline_retains_failed_and_interrupted_processes(tmp_path: Path) -> None:
@@ -397,6 +621,15 @@ def _build_bundle(
     assert set(manifest) == _contract_manifest_fields(contract)
 
     json_entries = {
+        "diagnostics/native-crash/coverage.json": {
+            "schemaVersion": 1,
+            "captureStatus": "per-session",
+            "rawDumpsRequested": False,
+            "incidentCount": 0,
+            "rawDumpCount": 0,
+            "sessions": [],
+            "failures": [],
+        },
         "diagnostics/desktop-applications.json": {
             "schemaVersion": 1,
             "status": "available",

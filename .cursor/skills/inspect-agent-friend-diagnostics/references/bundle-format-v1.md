@@ -323,6 +323,31 @@ The producer constructs diagnostic JSON from allowlisted fields, recursively rep
 
 This is credential protection, not general content review. `selected-sessions-v2` additionally strips provider reasoning continuation bodies even when they are not credentials; the inspector reports only event/redaction counts. Selected sessions, problem text, ordinary assistant/user content, tool arguments/results, log messages, filenames, attachment originals, and render screenshots may still contain private or unknown-sensitive data. The full-desktop render artifact is especially sensitive because it can contain every visible monitor and other applications. Do not display, extract, or inspect either PNG unless its pixels are necessary to distinguish the rendering hypotheses; extract only the named artifact to an agent-created temporary directory and remove it afterward.
 
+Native crash summaries use structured metadata rather than raw panic messages, command lines, environment values or memory. Raw crash dumps are a separate opt-in and are not redacted: they may contain credentials, conversation text and other private process memory. An opted-in ZIP is not safe for public sharing merely because ordinary logs were redacted. Inventory streams raw entries only to verify integrity; it never prints their bytes. Extract only the incident's named dump into an agent-owned temporary directory when needed for a bounded diagnosis, then remove that temporary copy.
+
+## Native Crash Evidence
+
+`native-crash-evidence-v1` introduces required crash coverage and retained incident metadata. Use the producer-owned machine contract for exact archive entry patterns. Older bundles without this capability and without its entries are `not-collected`; absence is neither corruption nor proof that the application did not crash. A declared capability with missing coverage is a collection gap.
+
+The coverage snapshot records the export's `rawDumpsRequested`, retained incident/raw-dump counts, per-session capture availability, failures and retention limits. `captureStatus: per-session` requires reading the retained sessions' actual state; it does not promise that every incident was captured. `unsupported-platform` does not establish Windows-style capture on macOS or Linux. Historical incidents retain their own `buildIdentity`, `sessionId`, `processId` and operating-system `processCreatedTicks`; never replace them with `diagnostics/application.json` from a later restart or upgrade.
+
+Interpret events separately from process death:
+
+- `native-exception` records an unhandled native exception; `exceptionCode` and `exitCode` have separate meanings.
+- `rust-panic` records a panic observation. A caught panic may leave the application running; correlate a separate process-exit event before claiming death.
+- `stack-overflow-observed` only proves the covered exception observer ran. Its dump result determines whether usable context was retained.
+- `process-exit` records the observed process termination and an optional orderly reason. Native evidence is not overwritten by a later normal marker.
+- `service-exit` preserves a product-owned service termination observed while the shell was still alive; it does not assert that the desktop also exited.
+- `unexpected-end-unknown` records an incomplete previous lifecycle without inventing an exception code or stack.
+
+Service entries bind a role/generation to a process creation identity. Their `order` distinguishes `service-first`, `shell-first`, `simultaneous` and `order-unknown`; temporal order alone does not prove causation. `fastFailCapture` and `forcedTerminationCapture` are exit-only coverage and do not promise an exception stack.
+
+Each incident's `dump` declares status and, when included, `archiveEntry`, `sizeBytes` and `sha256`. `excluded` normally means retained and integrity-checked but not requested; with `errorCode: export-budget-exceeded`, the export did not finish verifying that dump and reports a collection failure. `included` means raw bytes were explicitly requested and exported. `pending`, `not-captured`, `failed`, `missing`, `corrupt` and `expired` each limit available evidence. Expiry does not invalidate a retained incident summary. A complete ZIP does not prove every prior crash had a dump or that a small dump contains every earlier heap write.
+
+The inspector validates incident-to-entry identity, raw consent, size/hash and minidump magic without extracting memory. Missing references, unexpected raw entries, malformed metadata and wrong hashes are explicit gaps; raw data without consent is a privacy-contract violation. Integrity verification remains active when ordinary ZIP CRC checking is skipped. Bounds mirror the producer's current 100 incident metadata records, 5 dumps, 128 MiB per dump and 256 MiB total raw dump budget; metadata is read with a separate small limit.
+
+For offline diagnosis, use `scripts/crash-diagnostics/run.*` with the exact private symbol archive for the incident build. PDB GUID/Age is the symbol binding key; archive file hashes establish archive integrity. Installer resource changes can change the whole EXE hash without changing code, so follow the tool's explicit code-section and binding checks. Missing symbols or mismatch are unresolved attribution, never permission to force-load an unrelated PDB. Product symbols/EXEs are developer-private release artifacts and are not expected inside a user diagnostic bundle. Do not fetch remote symbols automatically or display debugger memory/locals as part of inventory.
+
 ## Pet Render Evidence
 
 `pet-render-evidence-v1` adds required `diagnostics/pet-render/coverage.json` and bounded `history-*.jsonl` / `incident-*.json`. Inventory reports counts, stable signals and gaps only; do not print event bodies. The default observer records structured runtime data, not pixels or chat. Histories and incidents have independent budgets; the latter preserve a bounded before/after window. Each record carries its own process session and build identity, so records retained across restart must not be rebound to the export-time process.
