@@ -37,7 +37,7 @@ from agent.runtime.cancellation import CancellationToken
 from agent.runtime.errors import SessionBusyError
 from agent.runtime.models import RunRequest
 from agent.sessions.continuation import continuation_target
-from agent.sessions.query import SessionQuerySnapshot
+from agent.sessions.query import CancelCheck, SessionHistoryPage, SessionQuerySnapshot
 from agent.system_prompt import DESKTOP_CHAT_SURFACE
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -50,6 +50,7 @@ from agent import (
     PersonaAmbiguousError,
     PersonaNotFoundError,
     QuotedTextReference,
+    Session,
     SessionNotFoundError,
     SessionPersistError,
     parse_quoted_text_references,
@@ -67,6 +68,7 @@ from ..attachment_reconciliation import reconcile_attachments
 from ..errors import build_openai_error_envelope, map_exception
 from ..protocols.ag_ui.encoders import encode_stream
 from .runs import DESKTOP_TEXT_CONTROL_SCOPE
+from .session_reads import read_session
 
 logger = logging.getLogger(__name__)
 
@@ -287,8 +289,9 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             raise HTTPException(status_code=503, detail="bounded export unavailable") from exc
 
     @router.get("/sessions/{session_id}")
-    def get_session(
+    async def get_session(
         session_id: str,
+        request: Request,
         view: Literal["full", "active"] = Query(
             "full",
             description="full 保留原始事件；active 只返回当前有效事件",
@@ -302,36 +305,55 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         ``full`` 是向后兼容的默认响应；桌面聊天只需要 ``active`` 投影视图，
         可避免把原始事件与有效事件同时传到前端。
         """
-        try:
+        if turn_limit is not None and view != "active":
+            raise HTTPException(status_code=400, detail="Pagination requires view=active")
+
+        def load(
+            cancel_check: CancelCheck,
+        ) -> tuple[Session | SessionQuerySnapshot | SessionHistoryPage, int]:
+            def current() -> Session | SessionQuerySnapshot | SessionHistoryPage:
+                if turn_limit is not None:
+                    return mgr.query_page(
+                        session_id,
+                        turn_limit=turn_limit,
+                        before=before,
+                        history_epoch=history_epoch,
+                        cancel_check=cancel_check,
+                    )
+                return (
+                    mgr.query(session_id, cancel_check=cancel_check)
+                    if view == "active"
+                    else mgr.open(session_id, cancel_check=cancel_check)
+                )
+
             revision_before = mgr.current_revision(session_id)
-            session = mgr.query(session_id) if view == "active" else mgr.open(session_id)
+            session = current()
             revision = mgr.current_revision(session_id)
             if revision != revision_before:
-                session = mgr.query(session_id) if view == "active" else mgr.open(session_id)
+                session = current()
                 revision = mgr.current_revision(session_id)
-        except SessionNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
+            return session, revision
+
+        session, revision = await read_session(request, load)
         page_info: dict[str, Any] = {}
-        if isinstance(session, SessionQuerySnapshot):
-            page_info = {"history_cursor": None, "history_epoch": session.history_epoch}
+        if isinstance(session, (SessionQuerySnapshot, SessionHistoryPage)):
+            page_info = {
+                "history_cursor": session.history_cursor
+                if isinstance(session, SessionHistoryPage)
+                else None,
+                "history_epoch": session.history_epoch,
+            }
         visible = session.active_events
-        if turn_limit is not None:
-            if not isinstance(session, SessionQuerySnapshot):
-                raise HTTPException(status_code=400, detail="Pagination requires view=active")
-            if history_epoch is not None and history_epoch != session.history_epoch:
-                raise HTTPException(
-                    status_code=409, detail="History changed; reload the latest page"
-                )
-            try:
-                visible, next_cursor = session.page_events(turn_limit=turn_limit, before=before)
-            except ValueError as exc:
-                raise HTTPException(status_code=409, detail=str(exc)) from exc
-            page_info = {"history_cursor": next_cursor, "history_epoch": session.history_epoch}
         active_events = [_public_event_dict(ev) for ev in visible]
         recovery = None
         try:
-            target = continuation_target(session.active_events)
-            recovery = {"sourceRunId": target.source_run_id, "rootRunId": target.root_run_id}
+            target = (
+                session.recovery
+                if isinstance(session, SessionHistoryPage)
+                else continuation_target(session.active_events)
+            )
+            if target is not None:
+                recovery = {"sourceRunId": target.source_run_id, "rootRunId": target.root_run_id}
         except AgentError:
             pass
         detail = {
@@ -346,6 +368,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         }
         if view == "active":
             return {**detail, "active_events": active_events, **page_info}
+        assert not isinstance(session, SessionHistoryPage)
         return {
             **detail,
             "events": [_public_event_dict(ev) for ev in session.events],
@@ -930,9 +953,6 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         return [_dataclass_to_dict(p) for p in runtime.catalog.list()]
 
     app.include_router(router)
-    from .history import register_routes as register_history_routes
-
-    register_history_routes(app, runtime)
 
 
 def _dataclass_to_dict(obj: Any) -> dict[str, Any]:

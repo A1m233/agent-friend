@@ -138,68 +138,49 @@ def validate_repeat(operation: str, conditions: list[dict[str, Any]]) -> list[st
     return fields
 
 
-def history_measurements(
-    payload: dict[str, Any], *, item_limit: int = 80, byte_limit: int = 262144
-) -> dict[str, Any]:
-    """Content-free page checks; pending requests are valid unpaired history."""
-    items = payload["events"]
+def history_measurements(payload: dict[str, Any], *, turn_limit: int = 30) -> dict[str, Any]:
+    """Measure complete user/system turns; event bytes are deliberately not truncated."""
+    items = payload["active_events"]
     compact_bytes = len(
         json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode(
             "utf-8"
         )
     )
-    if len(items) > item_limit or compact_bytes > byte_limit:
-        raise ValueError("bounded_history_exceeds_response_limit")
+    turns = sum(item["type"] in {"user_message", "system_trigger"} for item in items)
+    if turns > turn_limit:
+        raise ValueError("history_page_exceeds_turn_limit")
     if len({item["uuid"] for item in items}) != len(items):
-        raise ValueError("bounded_history_duplicate_items")
-    requests = paired = deferred = 0
-
-    def correlation(item: dict[str, Any]) -> str | None:
-        data = item.get("payload", {})
-        return data.get("event_tool_call_id") or data.get("tool_call_id")
-
-    def run_id(item: dict[str, Any]) -> str | None:
-        return (
-            item.get("run", {}).get("run_id")
-            or item.get("meta", {}).get("run_id")
-            or item.get("payload", {}).get("run_id")
-        )
-
+        raise ValueError("history_page_duplicate_events")
+    requests: dict[tuple[str | None, str], dict[str, Any]] = {}
+    paired: set[tuple[str | None, str]] = set()
     for item in items:
-        deferred += item.get("body", {}).get("state") == "deferred"
-        if item["type"] == "tool_call_result":
-            raise ValueError("bounded_history_has_standalone_tool_result")
-        if item["type"] != "tool_call_request":
-            continue
-        requests += 1
-        result = item.get("result_event")
-        if result is None:
-            continue
-        if (
-            result.get("type") != "tool_call_result"
-            or not correlation(item)
-            or correlation(item) != correlation(result)
-            or run_id(item) != run_id(result)
-        ):
-            raise ValueError("bounded_history_tool_pair_mismatch")
-        paired += 1
-        deferred += result.get("body", {}).get("state") == "deferred"
+        if "body" in item or "result_event" in item:
+            raise ValueError("history_page_contains_fragment_protocol")
+        data = item.get("payload", {})
+        correlation = data.get("event_tool_call_id") or data.get("tool_call_id")
+        key = (item.get("meta", {}).get("run_id") or data.get("run_id"), correlation)
+        if item["type"] == "tool_call_request":
+            if not correlation or key in requests:
+                raise ValueError("history_page_tool_request_identity_invalid")
+            requests[key] = item
+        elif item["type"] == "tool_call_result":
+            if key not in requests or key in paired:
+                raise ValueError("history_page_tool_pair_mismatch")
+            paired.add(key)
     return {
-        "read_kind": "bounded_history",
+        "read_kind": "complete_turn_page",
         "history_page_sha256": digest_value(payload),
-        # Retain the original pilot field/serialization for comparisons.
         "response_bytes": len(json.dumps(payload, ensure_ascii=False).encode("utf-8")),
         "response_bytes_encoding": "json_default_separators_with_spaces",
         "compact_response_bytes": compact_bytes,
         "compact_response_encoding": "utf8_json_no_ascii_escape_compact_separators",
-        "bridge_metadata_headroom_bytes": byte_limit - compact_bytes,
-        "display_items": len(items),
-        "tool_requests": requests,
-        "paired_results": paired,
-        "pending_tool_requests": requests - paired,
-        "deferred_bodies": deferred,
-        "item_limit": item_limit,
-        "byte_limit": byte_limit,
+        "page_events": len(items),
+        "turns": turns,
+        "turn_limit": turn_limit,
+        "has_older": payload.get("history_cursor") is not None,
+        "tool_requests": len(requests),
+        "paired_results": len(paired),
+        "pending_tool_requests": len(requests) - len(paired),
         "tool_pair_validation": "passed",
     }
 
@@ -236,8 +217,8 @@ def child(directory: Path, sources: Path, session_id: str, operation: str) -> di
         started = time.perf_counter()
         if operation == "execution":
             value = store.load_execution(session_id)
-        elif operation == "history" and hasattr(store, "history_page"):
-            value = store.history_page(session_id)
+        elif operation == "history" and hasattr(store, "query_page"):
+            value = store.query_page(session_id, turn_limit=30)
         else:
             value = store.query(session_id)
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -271,8 +252,12 @@ def child(directory: Path, sources: Path, session_id: str, operation: str) -> di
                     if dataclasses.is_dataclass(observation)
                     else observation
                 )
-        elif operation == "history" and hasattr(store, "history_page"):
-            payload = dataclasses.asdict(value) if dataclasses.is_dataclass(value) else value
+        elif operation == "history" and hasattr(store, "query_page"):
+            payload = {
+                "active_events": [json.loads(event.to_jsonl()) for event in value.active_events],
+                "history_cursor": value.history_cursor,
+                "history_epoch": value.history_epoch,
+            }
             row.update(history_measurements(payload))
         else:
             events, before_cursor = value.page_events(turn_limit=30)

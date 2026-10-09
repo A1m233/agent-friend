@@ -7,37 +7,6 @@ import { http } from "../http";
 import type { SessionDetail, SessionSummary } from "@/types/meta";
 import type { SessionSearchResponse } from "@/types/search";
 import type { ModelRuntimeConfig } from "@/lib/model-config";
-import type { HistoryContent, HistoryPage } from "@/types/history";
-import { startHistoryObservation } from "../historyObservation";
-import { finishHistoryRead, trackHistoryRead } from "@/stores/historyLifecycle";
-
-export interface HistoryReadOptions {
-  signal?: AbortSignal;
-  before?: string;
-  after?: string;
-  around?: string;
-  epoch?: string;
-  messageId?: string;
-}
-
-function readHistory(sessionId: string, options: HistoryReadOptions = {}): Promise<HistoryPage> {
-  const observation = startHistoryObservation(sessionId, options.messageId ? "content" : options.around ? "around"
-    : options.after ? "after" : options.before ? "before" : "latest");
-  if (!options.messageId) trackHistoryRead(observation.navigationId, options.signal);
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries({ before: options.before, after: options.after,
-    around: options.around, epoch: options.epoch, message_id: options.messageId })) {
-    if (value !== undefined) query.set(key, value);
-  }
-  const suffix = query.size ? `?${query}` : "";
-  return http.get<unknown, HistoryPage>(`/v1/sessions/${encodeURIComponent(sessionId)}/history${suffix}`,
-    { signal: options.signal, headers: { "x-agent-friend-navigation-id": observation.navigationId } })
-    .then((page) => ({ ...page, navigation_id: observation.navigationId }))
-    .catch((error: unknown) => {
-      finishHistoryRead(observation.navigationId, options.signal?.aborted ? "cancelled" : "error");
-      throw error;
-    });
-}
 
 interface ListSessionsOptions {
   archived?: boolean;
@@ -124,26 +93,19 @@ export const sessionsApi = {
   },
 
   /** 单个会话详情只取当前有效事件，避免重复传输原始事件流。 */
-  get(sessionId: string, signal?: AbortSignal): Promise<SessionDetail> {
-    return readHistory(sessionId, { signal });
+  get(sessionId: string): Promise<SessionDetail> {
+    return http.get<unknown, SessionDetail>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}?view=active&turn_limit=30`,
+    );
   },
 
   getFull(sessionId: string): Promise<SessionDetail> {
     return http.get<unknown, SessionDetail>(`/v1/sessions/${encodeURIComponent(sessionId)}?view=active`);
   },
 
-  getOlder(sessionId: string, before: string, epoch: string, signal?: AbortSignal): Promise<SessionDetail> {
-    return readHistory(sessionId, { before, epoch, signal });
-  },
-
-  history: readHistory,
-
-  historyContent(sessionId: string, ref: string, version: string, offset: number,
-    signal?: AbortSignal, navigationId?: string): Promise<HistoryContent> {
-    const query = new URLSearchParams({ ref, version, offset: String(offset) });
-    return http.get<unknown, HistoryContent>(
-      `/v1/sessions/${encodeURIComponent(sessionId)}/history/content?${query}`,
-      { signal, ...(navigationId ? { headers: { "x-agent-friend-navigation-id": navigationId } } : {}) });
+  getOlder(sessionId: string, before: string, epoch: string): Promise<SessionDetail> {
+    const query = new URLSearchParams({ view: "active", turn_limit: "30", before, history_epoch: epoch });
+    return http.get<unknown, SessionDetail>(`/v1/sessions/${encodeURIComponent(sessionId)}?${query}`);
   },
 
   getApprovalMode(sessionId: string): Promise<SessionApprovalModeState> {

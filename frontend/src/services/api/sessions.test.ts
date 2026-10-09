@@ -11,15 +11,22 @@ import { sessionsApi } from "./sessions";
 
 describe("sessionsApi.get", () => {
   beforeEach(() => {
-    vi.mocked(http.get).mockReset().mockResolvedValue({});
+    vi.mocked(http.get).mockReset();
   });
 
-  it("requests bounded history and encodes the session id", () => {
+  it("requests only active events and encodes the session id", () => {
     sessionsApi.get("im:qq/group 1");
 
     expect(http.get).toHaveBeenCalledWith(
-      "/v1/sessions/im%3Aqq%2Fgroup%201/history",
-      expect.objectContaining({ headers: { "x-agent-friend-navigation-id": expect.any(String) } }),
+      "/v1/sessions/im%3Aqq%2Fgroup%201?view=active&turn_limit=30",
+    );
+  });
+
+  it("requests the preceding complete-turn page with its original epoch", () => {
+    sessionsApi.getOlder("im:qq/group 1", "turn:31/user", "epoch 1");
+
+    expect(http.get).toHaveBeenCalledWith(
+      "/v1/sessions/im%3Aqq%2Fgroup%201?view=active&turn_limit=30&before=turn%3A31%2Fuser&history_epoch=epoch+1",
     );
   });
 });

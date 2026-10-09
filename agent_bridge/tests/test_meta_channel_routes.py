@@ -13,6 +13,7 @@ from typing import Any, ClassVar
 import pytest
 from agent.scheduled_tasks import ScheduledTaskService, ScheduledTaskStatus, ScheduledTaskStore
 from agent.scheduling import OnceSchedule
+from agent.sessions.query import CancelCheck
 from agent_bridge.app import create_app_with_runtime
 from agent_bridge.assembly import BridgeRuntime
 from agent_bridge.settings import BridgeSettings
@@ -200,10 +201,10 @@ class TestGetSessionEndpoint:
         reads = 0
         revision = 0
 
-        def read(session_id: str) -> object:
+        def read(session_id: str, *, cancel_check: CancelCheck = None) -> object:
             nonlocal reads, revision
             reads += 1
-            snapshot = original_read(session_id)
+            snapshot = original_read(session_id, cancel_check=cancel_check)
             if changed_during_read and reads == 1:
                 runtime.persistent_store.append_event(
                     session_id,

@@ -47,11 +47,6 @@ import type { RunOutcome, RunSnapshot } from "@/types/run";
 import type { SearchNavigationTarget, SessionSearchResult } from "@/types/search";
 import { applyAguiEvent, applyPushConversationEvent } from "./conversationReducer";
 import { projectSessionEvents } from "./sessionProjection";
-import { createHistoryProjection, hasDeferredBody, isHistoryPage } from "./historyProjection";
-import { acceptHistoryNavigation, historySignal, renewHistoryView } from "./historyLifecycle";
-import { readHistoryEvent } from "@/services/historyContent";
-import { recordHistoryPhase } from "@/services/historyObservation";
-import { applyHistoryRunEvents } from "./historyLiveEvents";
 import { continuationRecoveryMode } from "./taskRecovery";
 import { useSessionsStore } from "./sessions";
 import {
@@ -133,10 +128,9 @@ let openSessionToken = 0;
 let detailRefreshSeq = 0;
 let runtimeGeneration = 0;
 const historyPages = createSessionHistoryPages();
-const historyProjection = createHistoryProjection();
 const olderReads = new Map<string, Promise<boolean>>();
 const detailReads = createSessionDetailReads(
-  (sessionId, signal) => sessionsApi.get(sessionId, signal),
+  (sessionId) => sessionsApi.get(sessionId),
   (sessionId) => { void useConversationStore.getState().refreshCurrentSession(sessionId); },
 );
 let appliedDetails = new WeakSet<SessionDetail>();
@@ -219,9 +213,7 @@ export interface ConversationState {
     options?: { query?: string; detached?: boolean; remember?: boolean }) => Promise<boolean>;
   hasOlderHistory: () => boolean;
   loadOlderHistory: () => Promise<boolean>;
-  loadReferenceHistory: (anchorEventUuid?: string) => Promise<boolean>;
-  loadNewerHistory: () => Promise<boolean>;
-  hasNewerHistory: () => boolean;
+  loadReferenceHistory: () => Promise<boolean>;
   openSearchResult: (result: SessionSearchResult, query: string) => Promise<boolean>;
   clearSearchTarget: (token: number) => void;
   refreshCurrentSession: (sessionId: string) => Promise<"applied" | "stale" | "failed">;
@@ -398,18 +390,6 @@ function messageText(message: ChatMessage): string {
 
 function projectSessionDetail(detail: SessionDetail) {
   detail = historyPages.accept(detail);
-  if (isHistoryPage(detail)) {
-    acceptHistoryNavigation(detail.session_id, detail.navigation_id);
-    const started = performance.now();
-    const messages = historyProjection.project(detail);
-    if (detail.navigation_id) {
-      const navigationId = detail.navigation_id;
-      recordHistoryPhase(navigationId, "projection-ready", { durationMs: performance.now() - started,
-        eventCount: detail.history_items.length, messageCount: messages.length });
-      queueMicrotask(() => recordHistoryPhase(navigationId, "state-published", { messageCount: messages.length }));
-    }
-    return messages;
-  }
   const events = detail.active_events ?? detail.events;
   if (!events) throw new Error("session detail is missing events");
   return projectSessionEvents(events).map((message) => ({
@@ -419,7 +399,6 @@ function projectSessionDetail(detail: SessionDetail) {
 }
 
 export function messageHasConversationContent(message: ChatMessage): boolean {
-  if (message.history && message.history.event.type !== "run_started") return true;
   return Boolean(message.error) || message.blocks.some((block) => {
     if (block.kind === "text" || block.kind === "thinking") return Boolean(block.text.trim());
     return true;
@@ -767,7 +746,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   newSession() {
     if (get().editingMessage?.phase === "submitting") return;
-    renewHistoryView();
     get().cancelEditing();
     openSessionToken += 1;
     detailReads.invalidateLifecycle();
@@ -826,7 +804,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   async openSession(sessionId, options) {
     if (get().editingMessage?.phase === "submitting") return false;
-    const viewSignal = renewHistoryView();
     if (!options?.searchTarget) searchNavigationToken += 1;
     get().cancelEditing();
     const failureMode = options?.failureMode ?? "message";
@@ -875,7 +852,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       return true;
     }
     try {
-      const detail = await detailReads.read(sessionId, viewSignal);
+      const detail = await detailReads.read(sessionId);
       if (detail.session_id !== sessionId) throw new Error("Session detail identity mismatch");
       if (token !== openSessionToken || get().currentSessionId !== sessionId || epoch !== runtimeGeneration) return false;
       if ((get().sessionViews[sessionId]?.revision ?? 0) > (detail.revision ?? 0)) {
@@ -992,19 +969,29 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       && epoch === runtimeGeneration && get().currentSessionId === sessionId;
     try {
       // Preserve contiguous complete turns and stop as soon as the anchor is found.
-      const currentPage = historyPages.get(sessionId);
-      if (currentPage && isHistoryPage(currentPage)
-        && (findMessageAnchorIndex(get().messages, anchorEventUuid) < 0
-          || currentPage.history_items.some((event) => event.uuid === anchorEventUuid && hasDeferredBody(event)))) {
-        await get().loadReferenceHistory(anchorEventUuid);
-      }
       const visited = new Set<string>();
-      while ((!currentPage || !isHistoryPage(currentPage)) && isCurrentTarget()
-        && findMessageAnchorIndex(get().messages, anchorEventUuid) < 0) {
+      while (isCurrentTarget() && findMessageAnchorIndex(get().messages, anchorEventUuid) < 0) {
+        // Session reattachment can still be calibrating after its latest page
+        // arrives. Keep navigation pending until run ownership is known.
+        if (get().runCalibrationPhase === "calibrating") {
+          await new Promise<void>((resolve) => {
+            const stop = useConversationStore.subscribe((state) => {
+              if (isCurrentTarget() && state.runCalibrationPhase === "calibrating") return;
+              stop();
+              resolve();
+            });
+          });
+        }
+        if (!isCurrentTarget()) break;
         const cursor = historyPages.get(sessionId)?.history_cursor;
         if (!cursor || visited.has(cursor)) break;
+        if (!await get().loadOlderHistory()) {
+          // Calibration may also begin while this page is in flight. The
+          // busy guard withheld it; retry after calibration, without dropping it.
+          if (isCurrentTarget() && get().runCalibrationPhase === "calibrating") continue;
+          break;
+        }
         visited.add(cursor);
-        if (!await get().loadOlderHistory()) break;
       }
       if (!isCurrentTarget()) return false;
       // The renderer reports a missing/deleted anchor using its existing feedback.
@@ -1051,7 +1038,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const epoch = runtimeGeneration;
     if (get().currentSessionId !== sessionId || isSessionBusy(get(), sessionId)) return "stale";
     try {
-      const detail = await detailReads.read(sessionId, historySignal());
+      const detail = await detailReads.read(sessionId);
       if (
         seq !== detailRefreshSeq ||
         openToken !== openSessionToken ||
@@ -1103,10 +1090,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (previous === runtimeId) return;
     if (previous !== null) {
       runtimeGeneration += 1;
-      renewHistoryView();
       detailReads.invalidateLifecycle();
       historyPages.clear();
-      historyProjection.clear();
       olderReads.clear();
       appliedDetails = new WeakSet();
     }
@@ -1163,14 +1148,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       const existingView = state.sessionViews[sessionId];
       const view = existingView ?? (isCurrent ? currentViewSnapshot(state) : undefined);
       if (!view) return state;
-
-      const historyMessages = applyHistoryRunEvents(view.messages, runId,
-        events.map(withObservedPushTerminalTimestamp));
-      if (historyMessages) {
-        const nextView: SessionConversationView = { ...view, messages: historyMessages };
-        return { sessionViews: { ...state.sessionViews, [sessionId]: nextView },
-          ...(isCurrent ? { messages: historyMessages } : {}) };
-      }
 
       const existingIndex = findRunAssistantIndex(view.messages, runId);
       const assistantId = existingIndex >= 0
@@ -1370,7 +1347,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         Object.entries(state.sessionViews).filter(([key]) => !evicted.has(key)),
       );
       historyPages.prune(new Set(Object.keys(sessionViews)));
-      historyProjection.prune(new Set(Object.keys(sessionViews)));
       const viewAccessedAt = Object.fromEntries(
         Object.entries(state.viewAccessedAt).filter(([key]) => !evicted.has(key)),
       );
@@ -1383,45 +1359,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     return Boolean(id && historyPages.get(id)?.history_cursor);
   },
 
-  async loadReferenceHistory(anchorEventUuid) {
-    const id = get().currentSessionId;
-    if (!id) return false;
-    const epoch = runtimeGeneration;
-    const openToken = openSessionToken;
-    try {
-      const page = historyPages.get(id);
-      if (page && isHistoryPage(page)) {
-        if (!anchorEventUuid) return false;
-        if (isSessionBusy(get(), id)) return false;
-        const signal = historySignal();
-        const detail = page.history_items.some((event) => event.uuid === anchorEventUuid) ? page
-          : await sessionsApi.history(id, { around: anchorEventUuid, signal });
-        const target = detail.history_items.find((event) => event.uuid === anchorEventUuid);
-        if (target && hasDeferredBody(target)) {
-          const hydrated = await readHistoryEvent(id, detail.content_version, target, signal);
-          detail.history_items = detail.history_items.map((event) => event === target ? hydrated : event);
-        }
-        signal.throwIfAborted();
-        if (get().currentSessionId !== id || runtimeGeneration !== epoch || openSessionToken !== openToken) return false;
-        historyPages.replace(detail);
-        const messages = projectSessionDetail(detail);
-        set((state) => ({ messages, sessionViews: { ...state.sessionViews,
-          [id]: { ...state.sessionViews[id]!, messages } } }));
-        return true;
-      }
-      const detail = await sessionsApi.getFull(id);
-      if (detail.session_id !== id) return false;
-      if (get().currentSessionId !== id || runtimeGeneration !== epoch) return false;
-      const current = get().messages;
-      const historical = projectSessionEvents(detail.active_events ?? detail.events ?? []);
-      const boundary = historical.findIndex((message) => message.id === current[0]?.id);
-      if (boundary < 0) return false;
-      const messages = [...historical.slice(0, boundary), ...current];
-      historyPages.accept(detail);
-      set((state) => ({ messages, sessionViews: { ...state.sessionViews,
-        [id]: { ...state.sessionViews[id]!, messages } } }));
-      return true;
-    } catch { return false; }
+  async loadReferenceHistory() {
+    // The timeline retries lookup after each complete page, stopping at the source.
+    return get().loadOlderHistory();
   },
 
   async loadOlderHistory() {
@@ -1437,15 +1377,19 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const openToken = openSessionToken;
     const read = (async () => {
       try {
-        const detail = await sessionsApi.getOlder(id, cursor, historyEpoch, historySignal());
+        const detail = await sessionsApi.getOlder(id, cursor, historyEpoch);
         if (detail.session_id !== id) return false;
         if (get().currentSessionId !== id || runtimeGeneration !== epoch
           || openSessionToken !== openToken || isSessionBusy(get(), id)) return false;
+        if (detail.history_epoch !== historyEpoch || detail.history_cursor === cursor) return false;
         if ((detail.revision ?? 0) !== (previous.revision ?? 0)) {
           await get().refreshCurrentSession(id);
           return false;
         }
         if (historyPages.get(id)?.history_epoch !== historyEpoch) return false;
+        const known = new Set((previous.active_events ?? previous.events ?? []).map((event) => event.uuid));
+        const incoming = detail.active_events ?? detail.events ?? [];
+        if (detail.history_cursor && !incoming.some((event) => !known.has(event.uuid))) return false;
         const merged = historyPages.accept(detail, true);
         const messages = projectSessionDetail(merged);
         set((state) => ({ messages, sessionViews: { ...state.sessionViews,
@@ -1460,27 +1404,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     })();
     olderReads.set(id, read);
     return read;
-  },
-
-  hasNewerHistory() {
-    const page = historyPages.get(get().currentSessionId ?? "");
-    return !!page && isHistoryPage(page) && page.has_after;
-  },
-
-  async loadNewerHistory() {
-    const id = get().currentSessionId;
-    const page = id ? historyPages.get(id) : undefined;
-    if (!id || !page || !isHistoryPage(page) || !page.after_cursor || !page.has_after) return false;
-    const token = openSessionToken;
-    try {
-      const detail = await sessionsApi.history(id, { after: page.after_cursor, epoch: page.history_epoch,
-        signal: historySignal() });
-      if (token !== openSessionToken || get().currentSessionId !== id) return false;
-      const messages = projectSessionDetail(detail);
-      set((state) => ({ messages, sessionViews: { ...state.sessionViews,
-        [id]: { ...state.sessionViews[id]!, messages } } }));
-      return true;
-    } catch { return false; }
   },
 
   async selectModel(modelId) {

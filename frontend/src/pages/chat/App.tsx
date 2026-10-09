@@ -30,7 +30,6 @@ import { GlobalConversationSearchProvider } from "./components/GlobalConversatio
 import { useModelCatalogStore } from "@/lib/model-config";
 import { startDesktopPresenceReporter } from "@/lib/desktop-presence";
 import { retainSessionUsage } from "@/services/sessionUsage";
-import { releaseHistoryView } from "@/stores/historyLifecycle";
 import {
   startWorkspaceNavigationSync,
   useWorkspaceNavigationStore,
@@ -60,7 +59,6 @@ const MemoryInspectorApp = lazy(() =>
  * 093 · 统一主窗口：左侧工作区导航 + 右侧平级内容 surface。
  */
 export function ChatApp() {
-  useEffect(() => releaseHistoryView, []);
   useEffect(() => recordStartupMilestone("root-committed"), []);
   const status = useConnectionStore((s) => s.status);
   const ping = useConnectionStore((s) => s.ping);

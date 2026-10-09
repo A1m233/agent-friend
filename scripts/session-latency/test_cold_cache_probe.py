@@ -1,4 +1,4 @@
-"""The offline history probe checks its byte and association measurements."""
+"""The offline history probe checks complete turns and full tool results."""
 
 from __future__ import annotations
 
@@ -20,25 +20,28 @@ def item(uuid: str, kind: str, correlation: str, *, run: str = "run") -> dict[st
         "type": kind,
         "uuid": uuid,
         "payload": {"event_tool_call_id": correlation, "label": "汉字😀"},
-        "run": {"run_id": run},
-        "body": {"state": "deferred"},
+        "meta": {"run_id": run},
     }
 
 
 def test_compact_measurement_matches_http_json_and_allows_pending_request() -> None:
     request = item("request", "tool_call_request", "call")
-    request["result_event"] = item("result", "tool_call_result", "call")
-    payload = {"events": [request, item("pending", "tool_call_request", "pending")]}
+    payload = {
+        "active_events": [
+            request,
+            item("result", "tool_call_result", "call"),
+            item("pending", "tool_call_request", "pending"),
+        ]
+    }
     result = measure(payload)
     assert result["compact_response_bytes"] == len(JSONResponse(payload).body)
     assert result["response_bytes"] > result["compact_response_bytes"]
     assert result["tool_requests"] == 2
     assert result["paired_results"] == 1
     assert result["pending_tool_requests"] == 1
-    assert result["deferred_bodies"] == 3
     reordered = json.loads(json.dumps(payload, sort_keys=True))
     assert measure(reordered)["history_page_sha256"] == result["history_page_sha256"]
-    reordered["events"][0]["payload"]["label"] = "别字😀"
+    reordered["active_events"][0]["payload"]["label"] = "别字😀"
     changed = measure(reordered)
     assert changed["compact_response_bytes"] == result["compact_response_bytes"]
     assert changed["history_page_sha256"] != result["history_page_sha256"]
@@ -47,23 +50,39 @@ def test_compact_measurement_matches_http_json_and_allows_pending_request() -> N
 @pytest.mark.parametrize("mismatch", ["correlation", "run"])
 def test_pair_checks_require_matching_request_and_run(mismatch: str) -> None:
     request = item("request", "tool_call_request", "call")
-    request["result_event"] = item(
+    result = item(
         "result",
         "tool_call_result",
         "other" if mismatch == "correlation" else "call",
         run="other" if mismatch == "run" else "run",
     )
     with pytest.raises(ValueError, match="pair_mismatch"):
-        measure({"events": [request]})
+        measure({"active_events": [request, result]})
 
 
-def test_response_limits_measure_encoded_bytes_and_item_count() -> None:
+def test_complete_turns_keep_large_bodies_and_many_events() -> None:
     large = item("large", "assistant_message", "")
     large["payload"]["content"] = "😀" * 70000
-    with pytest.raises(ValueError, match="response_limit"):
-        measure({"events": [large]})
-    with pytest.raises(ValueError, match="response_limit"):
-        measure({"events": [item(str(n), "assistant_message", "") for n in range(81)]})
+    result = measure({"active_events": [item("user", "user_message", ""), large]})
+    assert result["compact_response_bytes"] > 262144
+    assert result["turns"] == 1
+    assert (
+        measure({"active_events": [item(str(n), "assistant_message", "") for n in range(81)]})[
+            "page_events"
+        ]
+        == 81
+    )
+    with pytest.raises(ValueError, match="turn_limit"):
+        measure({"active_events": [item(str(n), "user_message", "") for n in range(31)]})
+
+
+def test_rejects_fragment_contract_and_duplicate_events() -> None:
+    message = item("a", "assistant_message", "")
+    with pytest.raises(ValueError, match="duplicate_events"):
+        measure({"active_events": [message, message]})
+    message["body"] = {"state": "deferred"}
+    with pytest.raises(ValueError, match="fragment_protocol"):
+        measure({"active_events": [message]})
 
 
 def test_canonical_business_digest_ignores_dict_order_but_keeps_event_order() -> None:

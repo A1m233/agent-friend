@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event as Signal
@@ -50,153 +50,20 @@ def test_persistent_projection_survives_new_store_and_memory_eviction(
     assert fresh.load_business("one").active_events == list(original.active_events)
     # Page reads do not hydrate the full business projection either.
     monkeypatch.setattr(fresh, "query", forbid)
-    assert fresh.history_page("one")["events"][-1]["uuid"] == "answer"
-
-
-def test_large_tool_body_is_deferred_and_exactly_retrievable(tmp_path: Path) -> None:
-    store = make_store(tmp_path)
-    content = "汉字😀\n" * 20000
-    store.append_events(
-        "one",
-        [
-            event("user_message", "user", content="do it"),
-            event(
-                "tool_call_request",
-                "call",
-                event_tool_call_id="tool1",
-                tool_name="exec_command",
-                arguments_json='{"cmd":"ok"}',
-            ),
-            event(
-                "tool_call_result",
-                "result",
-                event_tool_call_id="tool1",
-                content=content,
-                is_error=False,
-            ),
-            event("assistant_message", "answer", content="done"),
-            event("run_terminal", "terminal", run_id="run", status="completed"),
-        ],
-    )
-    page = store.history_page("one", item_limit=2, byte_limit=8192)
-    assert len(json.dumps(page, ensure_ascii=False).encode()) <= 8192
-    assert [item["uuid"] for item in page["events"]] == ["call", "answer"]
-    tool = page["events"][0]
-    assert tool["message_start"] and page["events"][-1]["message_end"]
-    assert tool["result_event"]["body"]["state"] == "deferred"
-    assert tool["run"]["status"] == "completed"
-    text, offset = "", 0
-    while True:
-        chunk = store.history_content(
-            "one", "result", version=page["content_version"], offset=offset, limit=65536
-        )
-        assert len(chunk["text"].encode()) <= 65536
-        text += chunk["text"]
-        offset = chunk["next_offset"]
-        if chunk["complete"]:
-            break
-    assert json.loads(text)["payload"]["content"] == content
-    around = store.history_page("one", around="result", item_limit=1)
-    assert around["events"][0]["uuid"] == "call"
-    copy_page = store.history_page("one", message_id=tool["message_id"])
-    assert [item["uuid"] for item in copy_page["events"]] == ["call", "answer"]
-
-
-def test_known_appends_and_rewrite_preserve_navigation_or_reject_stale_epoch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    store = make_store(tmp_path)
-    store.append_event("one", event("user_message", "old", content="old"))
-    first = store.history_page("one")
-    monkeypatch.setattr(store, "_read_records", forbid)
-    store.append_events(
-        "one", [event("rollout_commit", "internal"), event("assistant_message", "a", content="yes")]
-    )
-    second = store.history_page("one", epoch=first["history_epoch"])
-    assert first["content_version"] == second["content_version"]
-    body = store.history_content("one", "old", version=first["content_version"])
-    assert json.loads(body["text"])["payload"]["content"] == "old"
-    store.append_event("one", event("turn_rewrite", "rewrite", inactive_event_uuids=["old", "a"]))
-    with pytest.raises(ValueError, match="changed"):
-        store.history_page("one", epoch=first["history_epoch"])
-    with pytest.raises(ValueError, match="changed"):
-        store.history_content("one", "old", version=first["content_version"])
-    assert not store.history_page("one")["events"]
-
-
-def test_deferred_chunks_remain_consistent_across_known_appends(tmp_path: Path) -> None:
-    store = make_store(tmp_path)
-    content = "汉字😀" * 10000
-    store.append_event("one", event("assistant_message", "large", content=content))
-    page = store.history_page("one")
-    first = store.history_content("one", "large", version=page["content_version"], limit=4096)
-    store.append_event("one", event("assistant_message", "later", content="next"))
-    chunks = [first["text"]]
-    offset = first["next_offset"]
-    while True:
-        chunk = store.history_content(
-            "one", "large", version=page["content_version"], offset=offset, limit=4096
-        )
-        chunks.append(chunk["text"])
-        offset = chunk["next_offset"]
-        if chunk["complete"]:
-            break
-    assert json.loads("".join(chunks))["payload"]["content"] == content
-
-
-def test_deferred_run_error_preserves_production_recovery_fields(tmp_path: Path) -> None:
-    store = make_store(tmp_path)
-    message = "上游错误😀: provider failed\n" * 2000
-    store.append_events(
-        "one",
-        [
-            event("user_message", "user", content="continue"),
-            event(
-                "run_error",
-                "failure",
-                run_id="run",
-                code="provider_error",
-                message=message,
-                reason="provider_unavailable",
-                recovery_action="retry",
-                recoverable=True,
-            ),
-        ],
-    )
-    page = store.history_page("one", byte_limit=8192)
-    failure = page["events"][-1]
-    assert failure["body"]["state"] == "deferred"
-    assert failure["run"]["error_code"] == "provider_error"
-    assert failure["run"]["error_reason"] == "provider_unavailable"
-    assert failure["run"]["recovery_action"] == "retry"
-    assert failure["run"]["can_continue"]
-    assert len(json.dumps(page, ensure_ascii=False).encode("utf-8")) <= 8192
-    assert failure["run"]["error_truncated"]
-    assert failure["run"]["error_event_uuid"] == "failure"
-    assert len(failure["run"]["error"].encode("utf-8")) <= 1024
-    text, offset = "", 0
-    while True:
-        chunk = store.history_content(
-            "one", "failure", version=page["content_version"], offset=offset, limit=4096
-        )
-        text += chunk["text"]
-        offset = chunk["next_offset"]
-        if chunk["complete"]:
-            break
-    assert json.loads(text)["payload"]["message"] == message
+    assert fresh.query_page("one", turn_limit=30).active_events[-1].uuid == "answer"
 
 
 def test_damaged_database_rebuilds_and_source_corruption_remains_an_error(tmp_path: Path) -> None:
     store = make_store(tmp_path)
     store.append_event("one", event("user_message", "u", content="ok"))
-    expected = store.history_page("one")["events"]
+    expected = store.query_page("one", turn_limit=30).active_events
     store._business_index.path("one").write_bytes(b"not sqlite")
     fresh = JsonlSessionStore(tmp_path)
-    assert fresh.history_page("one")["events"] == expected
+    assert fresh.query_page("one", turn_limit=30).active_events == expected
     path = tmp_path / "one.jsonl"
     path.write_bytes(path.read_bytes() + b"not JSON\n")
     with pytest.raises(SessionCorruptError):
-        JsonlSessionStore(tmp_path).history_page("one")
+        JsonlSessionStore(tmp_path).query_page("one", turn_limit=30)
 
 
 def test_business_decode_validates_references_without_copying_model_state(
@@ -214,7 +81,9 @@ def test_business_decode_validates_references_without_copying_model_state(
     )
     store.append_events("one", encoded)
     monkeypatch.setattr(rollout_encoding, "copy", SimpleNamespace(deepcopy=forbid))
-    assert store.history_page("one")["events"] == []
+    assert store.query_page("one", turn_limit=30).active_events == (
+        store.query("one").active_events[0],
+    )
     store.discard_business_index("one")
     # The same optimized reader still checks the internal value's digest.
     store.append_event(
@@ -229,7 +98,7 @@ def test_business_decode_validates_references_without_copying_model_state(
         ),
     )
     with pytest.raises(SessionCorruptError, match="digest"):
-        store.history_page("one")
+        store.query_page("one", turn_limit=30)
 
 
 def test_append_during_initial_build_publishes_caught_up_index_without_rescan(
@@ -250,50 +119,32 @@ def test_append_during_initial_build_publishes_caught_up_index_without_rescan(
 
     monkeypatch.setattr(store, "_read_records", scan)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        future = pool.submit(store.history_page, "one")
+        future = pool.submit(store.query_page, "one", turn_limit=30)
         assert entered.wait(5)
         try:
             store.append_event("one", event("user_message", "added", content="new"))
         finally:
             release.set()
-        assert future.result(5)["events"][-1]["uuid"] == "added"
+        assert future.result(5).active_events[-1].uuid == "added"
     assert calls == 1
     monkeypatch.setattr(store, "_read_records", forbid)
-    assert store.history_page("one")["events"][-1]["uuid"] == "added"
+    assert store.query_page("one", turn_limit=30).active_events[-1].uuid == "added"
 
 
 def test_delete_removes_derived_bodies(tmp_path: Path) -> None:
     store = make_store(tmp_path)
-    store.history_page("one")
+    store.query_page("one", turn_limit=30)
     path = store._business_index.path("one")
     assert path.exists()
     store.delete("one")
     assert not path.exists()
 
 
-def test_empty_run_header_follows_user_and_disappears_when_body_arrives(tmp_path: Path) -> None:
-    store = make_store(tmp_path)
-    store.append_events(
-        "one",
-        [
-            event("run_started", "started", run_id="run", started_at="2026-01-01T00:00:00Z"),
-            event("user_message", "user", content="hello"),
-            event("run_terminal", "terminal", run_id="run", status="interrupted"),
-        ],
-    )
-    page = store.history_page("one")
-    assert [item["uuid"] for item in page["events"]] == ["user", "started"]
-    assert page["events"][-1]["message_id"] == "run:run"
-    assert page["events"][-1]["run"]["can_continue"]
-    store.append_event("one", event("assistant_message", "answer", content="partial"))
-    assert [item["uuid"] for item in store.history_page("one")["events"]] == ["user", "answer"]
-
-
 def test_index_maintenance_failure_does_not_fail_durable_append_and_can_recover(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = make_store(tmp_path)
-    store.history_page("one")
+    store.query_page("one", turn_limit=30)
     with monkeypatch.context() as patch:
         patch.setattr(
             store._business_index,
@@ -302,7 +153,7 @@ def test_index_maintenance_failure_does_not_fail_durable_append_and_can_recover(
         )
         store.append_event("one", event("user_message", "saved", content="once"))
     # A valid warm in-memory snapshot repairs a missed disk-index update.
-    assert store.history_page("one")["events"][-1]["uuid"] == "saved"
+    assert store.query_page("one", turn_limit=30).active_events[-1].uuid == "saved"
     assert sum(e.uuid == "saved" for e in store.load("one").events) == 1
 
 
@@ -320,19 +171,9 @@ def test_cancelled_build_is_not_published_and_other_sessions_remain_available(
             raise InterruptedError("navigation left")
 
     with pytest.raises(InterruptedError, match="navigation left"):
-        store.history_page("one", cancel_check=cancel)
+        store.query_page("one", turn_limit=30, cancel_check=cancel)
     assert not store._business_index.matches("one", store._source_version(tmp_path / "one.jsonl"))
-    assert len(store.history_page("one")["events"]) == 20
-
-
-def test_around_large_anchor_is_included_under_byte_bound(tmp_path: Path) -> None:
-    store = make_store(tmp_path)
-    store.append_events(
-        "one", [event("user_message", f"u{i}", content="x" * 16000) for i in range(20)]
-    )
-    page = store.history_page("one", around="u10", byte_limit=8192)
-    assert page["events"][0]["uuid"] == "u10"
-    assert page["has_before"] and len(json.dumps(page).encode()) < 8192
+    assert len(store.query_page("one", turn_limit=30).active_events) == 21
 
 
 def test_new_process_reads_persistent_page_without_raw_or_full_business_loading(
@@ -340,7 +181,7 @@ def test_new_process_reads_persistent_page_without_raw_or_full_business_loading(
 ) -> None:
     store = make_store(tmp_path)
     store.append_event("one", event("user_message", "u", content="hello"))
-    store.history_page("one")
+    store.query_page("one", turn_limit=30)
     program = """
 import sys
 from agent import JsonlSessionStore
@@ -349,7 +190,7 @@ def forbidden(*args, **kwargs):
     raise AssertionError('persistent page must not scan or hydrate full history')
 store._read_records = forbidden
 store.query = forbidden
-assert store.history_page('one')['events'][0]['uuid'] == 'u'
+assert store.query_page('one', turn_limit=30).active_events[-1].uuid == 'u'
 """
     result = subprocess.run(
         [sys.executable, "-c", program, str(tmp_path)], capture_output=True, text=True, timeout=20
@@ -361,7 +202,7 @@ def test_one_shot_io_shaped_cancel_is_not_reclassified_as_cache_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = make_store(tmp_path)
-    store.history_page("one")
+    store.query_page("one", turn_limit=30)
     fresh = JsonlSessionStore(tmp_path)
     original = fresh._business_index.read
     reached = False
@@ -381,4 +222,197 @@ def test_one_shot_io_shaped_cancel_is_not_reclassified_as_cache_failure(
     monkeypatch.setattr(fresh._business_index, "read", entering)
     with pytest.raises(InterruptedError, match="one cancellation"):
         fresh.query("one", cancel_check=cancel_once)
-    assert fresh.history_page("one")["events"] == []
+    assert fresh.query_page("one", turn_limit=30).active_events == (
+        store.query("one").active_events[0],
+    )
+
+
+@pytest.mark.parametrize("turn_limit", [1, 2, 3, 30])
+def test_native_pages_equal_legacy_complete_turn_projection(
+    tmp_path: Path, turn_limit: int
+) -> None:
+    store = make_store(tmp_path)
+    events = [event("run_started", "started0", run_id="run", root_run_id="root")]
+    for index in range(7):
+        events += [
+            event(
+                "system_trigger" if index == 3 else "user_message",
+                f"u{index}",
+                content=f"input {index}",
+                presentation="none" if index == 3 else "conversation",
+            ),
+            event(
+                "tool_call_request",
+                f"call{index}",
+                tool_call_id=f"call{index}",
+                tool_name="exec_command",
+                arguments_json='{"cmd":"echo test"}',
+            ),
+            event(
+                "tool_call_result",
+                f"result{index}",
+                tool_call_id=f"call{index}",
+                content="结果😀" * 12000,
+            ),
+            event("assistant_message", f"a{index}", content=f"answer {index}"),
+            event("run_terminal", f"terminal{index}", run_id="run", status="interrupted"),
+        ]
+    store.append_events("one", events)
+    expected = store.query("one")
+    fresh = JsonlSessionStore(tmp_path)
+    before = None
+    collected: list[Event] = []
+    while True:
+        want, cursor = expected.page_events(turn_limit=turn_limit, before=before)
+        page = fresh.query_page(
+            "one", turn_limit=turn_limit, before=before, history_epoch=expected.history_epoch
+        )
+        assert page.active_events == want
+        assert page.history_cursor == cursor
+        assert page.recovery is not None and page.recovery.source_run_id == "run"
+        collected[:0] = page.active_events
+        if cursor is None:
+            break
+        before = cursor
+    assert tuple(collected) == expected.active_events
+
+
+def test_persistent_page_only_decodes_requested_body_range(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = make_store(tmp_path)
+    store.append_events(
+        "one",
+        [
+            item
+            for i in range(60)
+            for item in (
+                event("user_message", f"u{i}", content=f"body-marker-{i}"),
+                event("assistant_message", f"a{i}", content=f"body-marker-{i}" + "x" * 20000),
+            )
+        ],
+    )
+    store.query_page("one", turn_limit=2)
+    fresh = JsonlSessionStore(tmp_path)
+    monkeypatch.setattr(fresh, "query", forbid)
+    monkeypatch.setattr(fresh, "_read_records", forbid)
+    original = Event.from_jsonl
+    decoded = []
+
+    def decode(raw: str) -> Event:
+        result = original(raw)
+        if "content" in result.payload:
+            decoded.append(result.uuid)
+        return result
+
+    monkeypatch.setattr(Event, "from_jsonl", decode)
+    page = fresh.query_page("one", turn_limit=2)
+    assert decoded == ["u58", "a58", "u59", "a59"]
+    decoded.clear()
+    older = fresh.query_page(
+        "one", turn_limit=2, before=page.history_cursor, history_epoch=page.history_epoch
+    )
+    assert decoded == ["u56", "a56", "u57", "a57"]
+    assert len(older.active_events[-1].payload["content"]) > 20000
+
+
+def test_append_retains_epoch_rewrite_invalidates_it_and_removed_cursor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = make_store(tmp_path)
+    store.append_events("one", [event("user_message", f"u{i}", content="hi") for i in range(4)])
+    first = store.query_page("one", turn_limit=2)
+    monkeypatch.setattr(store, "_read_records", forbid)
+    store.append_event("one", event("assistant_message", "a", content="yes"))
+    assert (
+        store.query_page("one", turn_limit=2, history_epoch=first.history_epoch).history_epoch
+        == first.history_epoch
+    )
+    store.append_event(
+        "one", event("turn_rewrite", "rewrite", inactive_event_uuids=["u2", "u3", "a"])
+    )
+    with pytest.raises(ValueError, match="changed"):
+        store.query_page(
+            "one", turn_limit=2, before=first.history_cursor, history_epoch=first.history_epoch
+        )
+    with pytest.raises(ValueError, match="no longer available"):
+        store.query_page("one", turn_limit=2, before="u2")
+    latest = store.query_page("one", turn_limit=2)
+    assert [e.uuid for e in latest.active_events][1:] == ["u0", "u1"]
+    with pytest.raises(ValueError, match="complete turn boundary"):
+        store.query_page("one", turn_limit=2, before="u0")
+
+
+def test_recovery_and_current_metadata_stay_current_on_older_page(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    store.append_events("one", [event("user_message", f"u{i}", content="hi") for i in range(3)])
+    store.append_events(
+        "one",
+        [
+            event("run_started", "start", run_id="run", root_run_id="root"),
+            event("tool_call_request", "tool", tool_call_id="tool"),
+            event("run_terminal", "stop", run_id="run", status="interrupted"),
+            event("persona_change", "persona", to="new-persona"),
+        ],
+    )
+    latest = store.query_page("one", turn_limit=1)
+    assert latest.recovery is None
+    store.append_event(
+        "one", event("tool_call_result", "result", tool_call_id="tool", content="ok")
+    )
+    older = store.query_page("one", turn_limit=1, before=latest.history_cursor)
+    assert older.recovery is not None and older.recovery.root_run_id == "root"
+    assert older.current_persona == store.query("one").current_persona == "new-persona"
+    assert [e.uuid for e in older.active_events] == ["u1"]
+    store.append_event("one", event("system_trigger", "silent", presentation="none"))
+    assert store.query_page("one", turn_limit=1).recovery is None
+
+
+def test_old_index_schema_rebuilds_without_changing_original(tmp_path: Path) -> None:
+    import sqlite3
+
+    store = make_store(tmp_path)
+    store.append_event("one", event("user_message", "u", content="hello"))
+    expected = store.query_page("one", turn_limit=1).active_events
+    source = (tmp_path / "one.jsonl").read_bytes()
+    with closing(sqlite3.connect(store._business_index.path("one"))) as db, db:
+        db.execute("PRAGMA user_version=3")
+        db.execute("CREATE TABLE runs (id TEXT)")
+    fresh = JsonlSessionStore(tmp_path)
+    assert fresh.query_page("one", turn_limit=1).active_events == expected
+    with closing(sqlite3.connect(fresh._business_index.path("one"))) as db, db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert not db.execute("SELECT name FROM sqlite_master WHERE name='runs'").fetchone()
+        columns = {r[1] for r in db.execute("PRAGMA table_info(events)")}
+        assert columns == {"position", "uuid", "kind", "body", "active", "recovery"}
+    assert (tmp_path / "one.jsonl").read_bytes() == source
+
+
+def test_source_change_during_page_read_is_not_published_as_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = make_store(tmp_path)
+    store.query_page("one", turn_limit=1)
+    original = store._business_index.page
+
+    def racing(*args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        result = original(*args, **kwargs)  # type: ignore[arg-type]
+        store.append_event("one", event("user_message", "new", content="changed"))
+        return result
+
+    monkeypatch.setattr(store._business_index, "page", racing)
+    with pytest.raises(ValueError, match="changed"):
+        store.query_page("one", turn_limit=1)
+
+
+def test_corrupted_index_body_rebuilds_from_original(tmp_path: Path) -> None:
+    import sqlite3
+
+    store = make_store(tmp_path)
+    store.append_event("one", event("user_message", "u", content="intact"))
+    expected = store.query_page("one", turn_limit=1).active_events
+    source = (tmp_path / "one.jsonl").read_bytes()
+    with closing(sqlite3.connect(store._business_index.path("one"))) as db, db:
+        db.execute("UPDATE events SET body='not-json' WHERE uuid='u'")
+    assert JsonlSessionStore(tmp_path).query_page("one", turn_limit=1).active_events == expected
+    assert (tmp_path / "one.jsonl").read_bytes() == source

@@ -7,6 +7,7 @@ import { useConversationStore } from "@/stores";
 import { useSocialAuthRequestsStore } from "@/stores/socialAuthRequests";
 import type { SocialAuthRequestSnapshot, SocialAuthRequestStatus } from "@/services";
 import type { ChatMessage, ChatTextReference } from "@/types/chat";
+import { projectSessionEvents } from "@/stores/sessionProjection";
 import { MessageList, MessageTimeline } from "./MessageList";
 
 // Rendering Markdown in a custom element is unrelated to scroll ownership.
@@ -247,6 +248,46 @@ describe("MessageTimeline disclosure scrolling", () => {
     expect(element.scrollTop).toBe(element.scrollHeight - element.clientHeight);
   }
 
+  it("renders a restored turn with one disclosure, grouped tools and directly copyable full text", async () => {
+    const finalText = `full reply ${"正文".repeat(20_000)}`;
+    const meta = { run_id: "restored-run" };
+    const ts = "2026-09-10T00:00:00Z";
+    const items = projectSessionEvents([
+      { type: "assistant_message", uuid: "progress", ts, meta, payload: { content: "progress", phase: "commentary" } },
+      ...[1, 2].flatMap((index) => [
+        { type: "tool_call_request", uuid: `request:${index}`, ts, meta,
+          payload: { event_tool_call_id: `tool:${index}`, tool_name: "recall_past_chats", args: { query: `query ${index}` } } },
+        { type: "tool_call_result", uuid: `result:${index}`, ts, meta,
+          payload: { event_tool_call_id: `tool:${index}`, content: `result ${index}` } },
+      ]),
+      { type: "assistant_message", uuid: "final", ts, meta, payload: { content: finalText, phase: "final_answer" } },
+      { type: "run_terminal", uuid: "terminal", ts, meta, payload: { status: "completed" } },
+    ]);
+    expect(items).toHaveLength(1);
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    try {
+      await renderTimeline(items);
+      await measureMountedRows();
+      await flushFrames();
+      expect(container.querySelectorAll("[data-message-id]")).toHaveLength(1);
+      expect(container.querySelectorAll("[data-run-separator]")).toHaveLength(1);
+      expect(container.textContent).toContain(finalText);
+      expect(container.textContent).not.toContain("加载完整内容");
+      expect(container.textContent).not.toContain("加载较新的消息");
+      await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="展开执行过程"]')!.click());
+      expect(container.textContent).toContain("执行了 2 个步骤：读取内容");
+      const copyButtons = container.querySelectorAll<HTMLButtonElement>('button[aria-label="复制消息"]');
+      expect(copyButtons).toHaveLength(1);
+      await act(async () => copyButtons[0].click());
+      expect(writeText).toHaveBeenCalledExactlyOnceWith(`progress\n\n${finalText}`);
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
   it("reveals a composer reference with the existing exact-range highlight and consumes it once", async () => {
     const items = messages();
     items[0] = { ...items[0], blocks: [{ kind: "text", mid: "source-block", text: "before quoted text after" }] };
@@ -290,6 +331,33 @@ describe("MessageTimeline disclosure scrolling", () => {
     });
     await flushFrames();
     expect(handled).toHaveBeenCalledExactlyOnceWith(91, false);
+  });
+
+  it("looks for a reference after each older page and stops once its source is present", async () => {
+    let finish!: (success: boolean) => void;
+    const load = vi.fn(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    const reference: ChatTextReference = {
+      referenceId: "older-reference", quotedText: "quoted text", sourceRole: "assistant", availability: "available",
+      source: { kind: "session_message", messageEventUuid: "older-source", textBlockId: "older-block", externalSourceKey: null },
+      locator: { kind: "text_range", coordinateSpace: "rendered_text_utf16_v1", start: 0, end: 11 },
+    };
+    const options = { referenceTarget: reference, hasOlderHistory: true, onLoadReferenceHistory: load };
+    const latest = messages();
+    await renderTimeline(latest, false, false, options);
+    expect(load).toHaveBeenCalledTimes(1);
+    const middle = [...messages("middle"), ...latest];
+    await renderTimeline(middle, false, false, options);
+    await act(async () => finish(true));
+    expect(load).toHaveBeenCalledTimes(2);
+    const source: ChatMessage = { id: "older-source", role: "assistant", status: "complete",
+      createdAt: "2026-09-01T00:00:00Z", blocks: [{ kind: "text", mid: "older-block", text: "quoted text" }] };
+    vi.stubGlobal("CSS", { highlights: { set: vi.fn(), delete: vi.fn() } });
+    vi.stubGlobal("Highlight", class { constructor(public range: Range) {} });
+    overrideProperty("scrollBy", { value: vi.fn() });
+    await renderTimeline([source, ...middle], false, false, options);
+    await act(async () => finish(true));
+    await flushFrames();
+    expect(load).toHaveBeenCalledTimes(2);
   });
 
   it("loads one older page near the top and preserves the visible message through prepend", async () => {

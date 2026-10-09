@@ -49,6 +49,7 @@ from .file_observation import observe_session_file
 from .query import (
     CancelCheck,
     SessionActivity,
+    SessionHistoryPage,
     SessionQueryCache,
     SessionQuerySnapshot,
     SourceVersion,
@@ -1161,54 +1162,41 @@ class JsonlSessionStore:
             raise SessionPersistError("会话历史索引暂不可用，请重试")
         return snapshot.source_version
 
-    def history_page(
+    def query_page(
         self,
         session_id: str,
         *,
+        turn_limit: int,
         before: str | None = None,
-        after: str | None = None,
-        around: str | None = None,
-        epoch: str | None = None,
-        message_id: str | None = None,
-        item_limit: int = 80,
-        byte_limit: int = 262144,
+        history_epoch: str | None = None,
         cancel_check: CancelCheck = None,
-    ) -> dict[str, Any]:
+    ) -> SessionHistoryPage:
         cancel_check = sticky_cancellation(cancel_check)
         version = self._history_version(session_id, cancel_check)
-        return self._business_index.page(
-            session_id,
-            version,
-            before=before,
-            after=after,
-            around=around,
-            epoch=epoch,
-            message_id=message_id,
-            item_limit=item_limit,
-            byte_limit=byte_limit,
-            cancel_check=cancel_check,
-        )
-
-    def history_content(
-        self,
-        session_id: str,
-        ref: str,
-        *,
-        version: str,
-        offset: int = 0,
-        limit: int = 65536,
-        cancel_check: CancelCheck = None,
-    ) -> dict[str, Any]:
-        cancel_check = sticky_cancellation(cancel_check)
-        self._history_version(session_id, cancel_check)
-        return self._business_index.content(
-            session_id,
-            ref,
-            version=version,
-            offset=offset,
-            limit=limit,
-            cancel_check=cancel_check,
-        )
+        for attempt in range(2):
+            try:
+                result = self._business_index.page(
+                    session_id,
+                    version,
+                    turn_limit=turn_limit,
+                    before=before,
+                    history_epoch=history_epoch,
+                    cancel_check=cancel_check,
+                )
+                break
+            except (sqlite3.Error, OSError, LockException, SessionCorruptError) as exc:
+                check_cancel(cancel_check)
+                if attempt:
+                    raise
+                observe_query_maintenance_failure(session_id, exc)
+                self.discard_business_index(session_id)
+                version = self._history_version(session_id, cancel_check)
+        path = self._existing_path(session_id)
+        if path is None:
+            raise SessionNotFoundError(f"会话不存在: {session_id}")
+        if self._source_version(path) != version:
+            raise ValueError("History changed; reload the latest page")
+        return result
 
     @staticmethod
     def _validate_recoverable_errors(
@@ -1661,17 +1649,10 @@ class NotifyingSessionStore:
         method = getattr(self._inner, "execution_cache_observation", None)
         return method(session_id) if callable(method) else None
 
-    def history_page(self, session_id: str, **kwargs: Any) -> dict[str, Any]:
-        method = getattr(self._inner, "history_page", None)
-        if method is None:
-            raise NotImplementedError("store does not support bounded history")
-        return cast(dict[str, Any], method(session_id, **kwargs))
+    def query_page(self, session_id: str, **kwargs: Any) -> SessionHistoryPage:
+        from .query import query_session_page
 
-    def history_content(self, session_id: str, ref: str, **kwargs: Any) -> dict[str, Any]:
-        method = getattr(self._inner, "history_content", None)
-        if method is None:
-            raise NotImplementedError("store does not support bounded history content")
-        return cast(dict[str, Any], method(session_id, ref, **kwargs))
+        return query_session_page(self._inner, session_id, **kwargs)
 
     def can_reuse_loaded(self, session: Session) -> bool:
         method = getattr(self._inner, "can_reuse_loaded", None)
