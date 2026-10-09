@@ -1602,7 +1602,22 @@ def test_responses_protocol_failure_never_executes_partial_or_repeats_tools(
     assert echo.call_count == (1 if completed_first_call else 0)
 
 
-def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "request_source",
+    [
+        None,
+        {
+            "kind": "scheduled_task",
+            "task_id": "daily-task",
+            "occurrence_id": "daily-occurrence",
+            "task_name": "Daily task",
+        },
+    ],
+    ids=["manual", "scheduled"],
+)
+def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(
+    tmp_path: Path, request_source: dict[str, Any] | None
+) -> None:
     echo = EchoTool()
 
     @dataclass
@@ -1670,6 +1685,7 @@ def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(tmp_pat
                 "please use the tool",
                 attachments=[image],
                 run_id="failed-run",
+                request_source=request_source,
             )
         )
     conv.append_run_error_event(
@@ -1684,7 +1700,9 @@ def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(tmp_pat
 
     assert echo.call_count == 2  # saved action once, new action once
     assert fake.received_tools[-1]
-    assert len([e for e in conv.session.events if e.type == "user_message"]) == 1
+    user_events = [e for e in conv.session.events if e.type == "user_message"]
+    assert len(user_events) == 1
+    assert user_events[0].payload.get("request_source") == request_source
     assert [
         e.payload["tool_call_id"] for e in conv.session.events if e.type == "tool_call_request"
     ] == ["call-recover", "call-next"]

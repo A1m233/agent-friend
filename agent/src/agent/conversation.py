@@ -1277,6 +1277,7 @@ class Conversation:
             ],
             references=parse_quoted_text_references(user.payload.get("references", [])),
             skill_selections=self._persisted_skill_selections(user),
+            request_source=user.payload.get("request_source"),
             channel=channel,
             surface=surface,
             run_id=run_id,
