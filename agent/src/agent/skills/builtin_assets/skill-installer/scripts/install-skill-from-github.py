@@ -20,7 +20,7 @@ import zipfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from github_utils import github_request
+from github_utils import GitHubTransportError, github_request
 from managed_install import (
     InstallRecord,
     ManagedInstallError,
@@ -117,7 +117,7 @@ def _download_repo_zip(owner: str, repo: str, ref: str, dest_dir: str) -> str:
         payload = _request(zip_url)
     except urllib.error.HTTPError as exc:
         raise InstallError(f"Download failed: HTTP {exc.code}", code="download_failed") from exc
-    except (urllib.error.URLError, OSError) as exc:
+    except GitHubTransportError as exc:
         raise InstallError(f"Download failed: {exc}", code="download_failed") from exc
     try:
         with open(zip_path, "wb") as file_handle:
@@ -251,7 +251,7 @@ def _api_commit(source: Source, ref: str, kind: str) -> str:
     url = f"https://api.github.com/repos/{source.owner}/{source.repo}/commits/{urllib.parse.quote(ref, safe='')}"
     try:
         payload = json.loads(_request(url))
-    except (urllib.error.URLError, OSError) as exc:
+    except (GitHubTransportError, urllib.error.HTTPError) as exc:
         raise InstallError(f"Cannot resolve Git ref: {exc}", code="resolve_failed") from exc
     except (ValueError, UnicodeError) as exc:
         raise InstallError("Invalid commit response.", code="invalid_commit") from exc
