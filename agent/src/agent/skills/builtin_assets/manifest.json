@@ -22,7 +22,7 @@
       "source_commit": "9ded177ce7c1c0bd2047f902936c177612ab3434",
       "source_path": "codex-rs/skills/src/assets/samples/skill-installer",
       "license": "Apache-2.0",
-      "snapshot_sha256": "80e8d2f634f35b68a9c7e2c095bc3e62a433915594942cd852f6150d0ad7fddb",
+      "snapshot_sha256": "d774af2702ed38048d42e6dcaa14673f8af9fe5b93dd646a0a9fc7f8cbe13aef",
       "retrieved_at": "2026-08-17",
       "compatibility_patches": [
         "Added agent-friend runtime capability and governed command instructions to SKILL.md.",
@@ -38,7 +38,8 @@
         "Omitted optional icon assets while retaining the upstream Apache-2.0 license.",
         "Added run-owned structured update receipts and same-turn automatic reactivation instructions.",
         "Separated branch sources, explicit pins, one-time revisions and commit verification; added legacy-aware v2 records, metadata-only transactions, and policy-aware update receipts.",
-        "Flattened the validated GitHub archive wrapper inside short authorized temp directories; distinguished archive I/O failures, retained API/ZIP transport errors, and added one process-local verified OpenSSL retry for Schannel credential initialization failure."
+        "Flattened the validated GitHub archive wrapper inside short authorized temp directories; distinguished archive I/O failures, retained API/ZIP transport errors, and added one process-local verified OpenSSL retry for Schannel credential initialization failure.",
+        "Normalized GitHub open/read transport failures across install, update, and listing; preserved HTTP status diagnostics and existing bounded Git fallback without accepting partial responses."
       ]
     },
     "agent-friend-guide": {
