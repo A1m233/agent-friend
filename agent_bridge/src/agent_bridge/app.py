@@ -84,13 +84,7 @@ def _add_tauri_production_cors(app: FastAPI) -> None:
         allow_origins=TAURI_PRODUCTION_ORIGINS,
         allow_origin_regex=r"http://(127\.0\.0\.1|localhost):\d+",
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=[
-            "Accept",
-            "Content-Type",
-            "X-Attachment-Filename",
-            "X-Agent-Friend-Navigation-Id",
-        ],
-        expose_headers=["X-Agent-Friend-Request-Id"],
+        allow_headers=["Accept", "Content-Type", "X-Attachment-Filename"],
     )
 
 

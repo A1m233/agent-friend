@@ -92,12 +92,6 @@ export function socialAuthRequestRefs(
   const refs: SocialAuthRequestRef[] = [];
   for (const message of messages) {
     if (message.role !== "assistant") continue;
-    const event = message.history?.event;
-    if (event?.payload?.tool_name === "request_social_auth") {
-      const requestId = (event.result_event?.summary ?? event.result_event?.payload)?.request_id;
-      if (typeof requestId === "string" && requestId) refs.push({ messageId: message.id,
-        toolCallId: String(event.payload.event_tool_call_id ?? event.uuid), requestId });
-    }
     for (const block of message.blocks) {
       if (block.kind !== "tool" || block.name !== "request_social_auth" || !block.result) continue;
       const requestId = parseObject(block.result).request_id;

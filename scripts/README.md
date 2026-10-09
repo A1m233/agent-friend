@@ -6,9 +6,14 @@
 原始文件全程只读，副本测量前后核验 SHA-256；OS 缓存未受控，同 Store 重读不等于执行态驻留，
 发送前动态准备继续由 `offline` 探针测量。两个平台入口一致，不覆盖报告。
 
-`session-latency/run.* desktop-fixture --fixture EXPLICIT_JSONL --output NEW_DIR` 准备真实历史的只读
-副本及合成短会话、96 工具长回合，在独立 `data/sessions` 下生成验收数据和带源 hash 的身份清单。
-不启动应用、不调用模型或工具、不修改原始历史。之后由 desktop-visual 使用该隔离数据目录验收。
+`session-latency/run.* desktop-fixture --synthetic-only --output NEW_DIR` 不读取用户数据，生成 2 轮
+短会话和 65 轮长会话；最新一轮含 10 个同类工具、超过 8192 字节的完整正文，以及指向最早用户与
+助手消息的两条持久文本引用。自检最新页及续页为 30/30/5 轮、工具配对同页、正文 hash 不变、引用
+来源不在最新页但真实存在于旧页，并删除派生索引。旧的 `--fixture EXPLICIT_JSONL`
+复制模式保留，但须另有明确读取授权；下面的桌面探针只接受 synthetic-only 身份清单。
+不启动应用，不调用模型或工具。`cold-cache --operation history` 使用 `query_page(turn_limit=30)`
+测量完整 `active_events/history_cursor/history_epoch`；旧基线没有该入口时明确标记 query 后切页。
+按完整轮分页不承诺固定响应字节上限，也不截断同轮工具结果或大正文。
 
 `session-latency/run.* desktop-history --cdp URL --identity FIXTURE_IDENTITY --output NEW_DIR` 只附着
 已获授权的真实 Tauri chat WebView，先核对 lease、worktree、分支、源码新鲜度及隔离会话集合，
@@ -16,7 +21,19 @@
 不发送消息，不调用模型；截图不含原生标题栏，不能冒充整个原生桌面截图。
 探针附着期间仅阻断无关的语音输入预热请求；复制前要求能够完整保全和恢复剪贴板，否则跳过。
 `desktop-history --self-test-url-classification` 只做离线请求分类断言，不连接桌面。报告区分真实
-bridge 历史请求与 Vite 模块读取，搜索命中已加载目标时不自动算作跨页 around 验收。
+bridge 历史请求与 Vite 模块读取。探针要求原界面完整正文、10 工具聚合、30 轮首屏、滚动至
+65 轮；重新加载清除缓存后搜索最早一轮，核对续页请求。出现逐条加载按钮、`history/content`
+接口或无 `turn_limit=30` 的全量详情请求会失败；不调用 `getFull`。`--focus long-tools` 可只观察长会话，
+`--focus search` 单独观察跨页搜索，并在点击到完成期间记录无正文的导航/校准状态序列后解除订阅。
+`--focus references` 分别从清空缓存后的最新 30 轮点击两条历史引用，要求真实续页依次为 30/5 轮、
+来源自动定位可见且没有全量详情请求；探针不会代替产品滚动到来源。旧版无持久引用的夹具需重新生成。
+
+Windows 隔离准备：identity 中的 `settings_backup.directory` 只是新建空目录，`files_copied=0`，
+夹具脚本不读取实际 settings。`AGENT_FRIEND_DATA_DIR` 只隔离数据，不改变 Tauri settings 位置。
+启动者应先按当前 install profile 的 `settings_namespace` 确认 `%APPDATA%/<namespace>/settings.json`
+及 `ui-state.json`（以 `frontend/src-tauri/src/paths.rs` 为准），在该私有备份目录记录原文件是否存在并
+原样备份；结束自己管理的 runtime 后恢复原文件，原先不存在而本次生成的文件按记录移除。
+不要从窗口标题或仅凭 bundle ID 猜测 namespace，也不要覆盖用户仍在运行的实例设置。
 
 `session-latency/run.* offline --source-ref COMMIT ...` 可固定可信 Git 基线，省略则冻结当前四个
 产品 Python 包；报告以实际冻结 source fingerprint 为准。报告分别记录 open/start、来源验证、

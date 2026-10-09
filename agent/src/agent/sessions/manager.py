@@ -46,7 +46,15 @@ from .events import Event
 from .metadata import SessionMetadataStore
 from .model_context import SessionModelContext
 from .model_history import SessionModelHistory
-from .query import CancelCheck, SessionQuerySnapshot, check_cancel, load_session, query_session
+from .query import (
+    CancelCheck,
+    SessionHistoryPage,
+    SessionQuerySnapshot,
+    check_cancel,
+    load_session,
+    query_session,
+    query_session_page,
+)
 from .recovery import ToolTransactionReconciler
 from .residency import retained_bytes
 from .rollout import SessionRolloutRecorder, finish_rollout_restore, restore_rollout
@@ -262,7 +270,7 @@ class SessionManager:
         return self._session_change_broker.current_revision(session_id)
 
     def approval_mode_state(
-        self, session: Session | SessionQuerySnapshot
+        self, session: Session | SessionQuerySnapshot | SessionHistoryPage
     ) -> SessionApprovalModeState:
         """Read optional metadata for an already-bound persistent or transient session."""
 
@@ -364,6 +372,24 @@ class SessionManager:
             SessionCorruptError: 文件损坏。
         """
         return load_session(self._store, session_id, cancel_check=cancel_check)
+
+    def query_page(
+        self,
+        session_id: str,
+        *,
+        turn_limit: int,
+        before: str | None = None,
+        history_epoch: str | None = None,
+        cancel_check: CancelCheck = None,
+    ) -> SessionHistoryPage:
+        return query_session_page(
+            self._store,
+            session_id,
+            turn_limit=turn_limit,
+            before=before,
+            history_epoch=history_epoch,
+            cancel_check=cancel_check,
+        )
 
     def query(self, session_id: str, *, cancel_check: CancelCheck = None) -> SessionQuerySnapshot:
         return query_session(self._store, session_id, cancel_check=cancel_check)

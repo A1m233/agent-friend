@@ -1,0 +1,305 @@
+{
+  "schema_version": 1,
+  "kind": "session_history_pagination_fix_verification",
+  "date": "2026-10-09",
+  "scope": "Complete rollback of event-fragment UI, indexed complete-turn pagination and original message projection.",
+  "base_commit": "733b2831c16b22fccc2092df0eafd2c278ab6e65",
+  "original_ui_commit": "d1068625d81d380c464355ad139c028600a0dbc9",
+  "historical_provenance": "Uncommitted fix/session-history-pagination overlay; no post-hoc clean commit claimed.",
+  "runtime_source_overlay_sha256": {
+    "agent/src/agent/sessions/business_index/index.py": "67a934c09bb542665a68f9622e77325b501c338dc4d42f3c084eb682f3f02338",
+    "agent/src/agent/sessions/business_index/pages.py": "4715ad481630b96f44e3f1fdc79c542197f5aec2985c5ec51b94e44aac84daa4",
+    "agent/src/agent/sessions/business_index/presentation.py": null,
+    "agent/src/agent/sessions/manager.py": "1aa0a441189682646102c27145eba5591d1e83ab4a9ea4173692a64a70d62ea9",
+    "agent/src/agent/sessions/query.py": "c750481bd0a5ed025ec8c8039a08c72eb6979f3de40f9e85022d8765dc2f032e",
+    "agent/src/agent/sessions/store.py": "060c607359ccf494cec0777a08176a6b4d047cf5867da574ae7df66add5c3ae0",
+    "agent_bridge/src/agent_bridge/app.py": "7f8bd91e0870e2179e304cba27957296b74f9d4702f67ff65ac6c84e657f4789",
+    "agent_bridge/src/agent_bridge/request_observation.py": "a81285f63b5074e00bdc9e134e7739e16bbddc2c9250c80c7cb43d5c8404a209",
+    "agent_bridge/src/agent_bridge/routes/history.py": null,
+    "agent_bridge/src/agent_bridge/routes/meta.py": "3a30c76211a4d6591a572047c923d315f152e9086a9645eb56a47f596872d409",
+    "agent_bridge/src/agent_bridge/routes/session_reads.py": "dbd9f5c080c0c5f1f6d73aef3aff6f6c1e0b189cdf235dfa1d7ae9d802afbd79",
+    "frontend/src-tauri/src/lib.rs": "587b8ba32f4df7c2aa4df3dabf29145cbb4ef8ebdbcb16e354742450123e5052",
+    "frontend/src-tauri/src/runtime_observability.rs": "95e0291e3d1ad7f3b1fda48296622091d55e3c2e060b026bf410b7a5d7e073bc",
+    "frontend/src-tauri/src/runtime_observability/history.rs": null,
+    "frontend/src/pages/chat/App.tsx": "8635d824a949fcd653ec35ce7c50048aa456a1796aa1a001e7a0e134e58e6c17",
+    "frontend/src/pages/chat/components/CopyMessageButton.tsx": "296b24ae9747960d6826c3e7ceff018c3284e828eb23dd9ac44a6fc3d8d39e6a",
+    "frontend/src/pages/chat/components/DeferredHistoryMessage.tsx": null,
+    "frontend/src/pages/chat/components/ExecutionDisclosure.tsx": "5400644806bc34534c637b9a6e14479bf8b53f04650c66b6bf005807a299b8f3",
+    "frontend/src/pages/chat/components/MessageActionBar.tsx": "8565309901e4101825d8abce3ca6efcb4d0bd5e25af73fd292f8ffe3b56e4fdb",
+    "frontend/src/pages/chat/components/MessageList.tsx": "a384fd9b5c0b5eb929f1f79b92b950e85e8db357cea2fb2658eff3b2e038a455",
+    "frontend/src/pages/chat/components/RunExecutionDisclosure.tsx": "6fb88541a213adb3d75d1c32db8a0257add48cbbef29de4a98e71c66a6f0bbaf",
+    "frontend/src/pages/chat/components/SocialAuthCard.tsx": "ec2d1dfd4088b785f3015b675476ae7325f328c34bb4d105e4f64c2d861cbb9d",
+    "frontend/src/pages/chat/components/activity/primaryActivity.ts": "cca5424de46dce0d127bf15540aaa50739bad3add4cc68f4dd61a962c93fc240",
+    "frontend/src/pages/chat/components/executionDisclosurePolicy.ts": "2a07e9df52d03455fe7c144ab4f93cb5d0bdc566af9f4f7499b8a60de3cad0ce",
+    "frontend/src/pages/chat/components/messageQuoteSelection.ts": "a58aaee0849ee0e226e70e23aab037bf8da1e2c0334e899b529a3b97f345eec4",
+    "frontend/src/services/api/sessions.ts": "0f67a61b842f389db1e7b21b32ede0f9d417324acf13002132019159932dbd17",
+    "frontend/src/services/historyContent.ts": null,
+    "frontend/src/services/historyObservation.ts": null,
+    "frontend/src/services/http.ts": "0a282df981c93b72074e387dd9f3fa43fc26330d8dc13289aa7c0b96b5ba6012",
+    "frontend/src/stores/conversation.ts": "d70f1172ea967aa6d423c71091def7c626fa2429fd1e4c5aa506d84c690911db",
+    "frontend/src/stores/historyLifecycle.ts": null,
+    "frontend/src/stores/historyLiveEvents.ts": null,
+    "frontend/src/stores/historyProjection.ts": null,
+    "frontend/src/stores/messageNavigation.ts": "f8fe27deef5efeccd67568539b3a9d915b6aba65f5cea572797270375b53e360",
+    "frontend/src/stores/runPresentation.ts": "8a349dac756a495600f346db4333329723c4933244e98c1285f3383026e3a912",
+    "frontend/src/stores/sessionDetailReads.ts": "c4160ed4bad37803e8d3bc7f10ed5835d4acf7945127c81e76fd923cb28d4f05",
+    "frontend/src/stores/sessionHistoryPages.ts": "a1099dd52fdd7e65009456604848a3785abfd1a31138c961c7c523ae184befc6",
+    "frontend/src/stores/taskRecovery.ts": "803a8f7813bbdacfe90aa552409bfc6d730f4e2d4d9f2f992a19ebba9e23ab1f",
+    "frontend/src/types/chat.ts": "2df4aeeb6b78e4c3e199ad834031cce4179bbeb024a8ce25ad7e552471c8a14d",
+    "frontend/src/types/history.ts": null,
+    "frontend/src/types/meta.ts": "8baab8607bdcded1b10c122eaf5214b4e746e08116edf21e84b340e696abb16f"
+  },
+  "frontend_original_157_inventory": {
+    "paths": 36,
+    "exact_restored": 20,
+    "new_files_removed": 13,
+    "existing_test_files_extended": 2,
+    "production_delta_files": [
+      "frontend/src/stores/conversation.ts"
+    ],
+    "additional_existing_test_file": "frontend/src/pages/chat/components/MessageList.scroll.test.ts"
+  },
+  "automated": {
+    "date": "2026-10-09",
+    "branch": "fix/session-history-pagination",
+    "base": "733b2831c16b22fccc2092df0eafd2c278ab6e65",
+    "ui_baseline": "d1068625d81d380c464355ad139c028600a0dbc9",
+    "backend": {
+      "command": ".\\scripts\\check\\run.ps1 --stage backend",
+      "status": "passed",
+      "passed": 4017,
+      "skipped": 5,
+      "warnings": 8,
+      "typed_files": 811,
+      "formatted_files": 968
+    },
+    "frontend": {
+      "command": ".\\scripts\\check\\run.ps1 --stage frontend",
+      "status": "passed",
+      "passed": 1471,
+      "test_files": 178,
+      "lint": "passed",
+      "typecheck": "passed",
+      "build": "passed"
+    },
+    "rust": {
+      "command": ".\\scripts\\check\\run.ps1 --stage rust",
+      "status": "passed",
+      "fmt": "passed",
+      "tests": "passed",
+      "release_check": "passed"
+    },
+    "notes": [
+      "Four meta-route test failures were signature-only mocks; cancel_check forwarding restored and complete backend gate rerun passed.",
+      "Execution cache implementation unchanged.",
+      "Only synthetic data used for current fix runtime validation; no provider calls."
+    ]
+  },
+  "desktop": {
+    "status": "passed_with_gaps",
+    "started_at": "2026-10-09T13:37:52.205Z",
+    "finished_at": "2026-10-09T13:38:08.695Z",
+    "runtime": {
+      "worktree_sha256": "e0aa5efc0d989e75e094e0fd8881a3cf2d8c5517a92db510d010c70e6cbbe62f",
+      "branch_sha256": "c4f2ca23f3e95d62d46a1568460fa19f4ab1ef196a3596d3754e658d5158ac2c",
+      "owner_pid": 13936,
+      "started_at": "2026-10-09T13:37:08.284072+00:00",
+      "source_newest_at": "2026-10-09T13:28:16.178Z",
+      "cdp_port": 9222,
+      "freshness_scope": "runtime_source_excluding_frontend_test_and_spec_modules",
+      "page_url_sha256": "88fdb2121d08a6a4b40881a71be95e860c328e149a3948cf3be54cbe04e6f447",
+      "session_ids": [
+        "57d71044-87ad-59c0-bf1f-136655539e10",
+        "97b351fc-432a-5b8a-a1e9-c7e0aeb08cd7"
+      ]
+    },
+    "evidence": "real_tauri_webview_dom_and_interaction",
+    "screenshot_kind": "complete_webview_viewport_without_native_titlebar",
+    "steps": [
+      {
+        "name": "short_latest_visible",
+        "status": "passed"
+      },
+      {
+        "name": "short_copy",
+        "status": "not_verified",
+        "reason": "clipboard_preservation_unavailable"
+      },
+      {
+        "name": "restore_after_webview_reload",
+        "status": "passed"
+      },
+      {
+        "name": "long_latest_30_turns",
+        "status": "passed"
+      },
+      {
+        "name": "long_first_grouped_tool",
+        "status": "passed"
+      },
+      {
+        "name": "long_last_grouped_tool",
+        "status": "passed"
+      },
+      {
+        "name": "long_copy",
+        "status": "not_verified",
+        "reason": "clipboard_preservation_unavailable"
+      },
+      {
+        "name": "long_three_pages_by_scroll",
+        "status": "passed"
+      },
+      {
+        "name": "switch_to_short",
+        "status": "passed"
+      },
+      {
+        "name": "search_older_turn_uses_pagination",
+        "status": "passed"
+      },
+      {
+        "name": "quote_and_source_navigation",
+        "status": "passed"
+      },
+      {
+        "name": "reference_unloaded_user_uses_pagination",
+        "status": "passed"
+      },
+      {
+        "name": "reference_unloaded_assistant_uses_pagination",
+        "status": "passed"
+      }
+    ],
+    "request_count": 21,
+    "page_bound": {
+      "turn_limit": 30,
+      "checked_count": 20,
+      "largest_response_bytes": 186493,
+      "exceeded_count": 0,
+      "measurement": "complete_turns_with_unabridged_event_bodies_no_byte_truncation"
+    },
+    "page_turn_counts": [
+      2,
+      2,
+      30,
+      30,
+      5,
+      2,
+      2,
+      30,
+      30,
+      5,
+      2,
+      2,
+      30,
+      30,
+      5,
+      2,
+      2,
+      30,
+      30,
+      5
+    ],
+    "removed_or_unbounded_reads": 0,
+    "prohibited_product_requests": 0
+  },
+  "confirmed_navigation_race_before_fix": [
+    {
+      "elapsed_ms": 0.10000000894069672,
+      "calibration": "ready",
+      "history_loading": false,
+      "message_count": 4,
+      "has_older": false,
+      "search_loading": null
+    },
+    {
+      "elapsed_ms": 19.30000001192093,
+      "calibration": "ready",
+      "history_loading": true,
+      "message_count": 0,
+      "has_older": false,
+      "search_loading": true
+    },
+    {
+      "elapsed_ms": 90.40000000596046,
+      "calibration": "calibrating",
+      "history_loading": true,
+      "message_count": 0,
+      "has_older": false,
+      "search_loading": true
+    },
+    {
+      "elapsed_ms": 124.5,
+      "calibration": "calibrating",
+      "history_loading": false,
+      "message_count": 60,
+      "has_older": true,
+      "search_loading": true
+    },
+    {
+      "elapsed_ms": 286.90000000596046,
+      "calibration": "calibrating",
+      "history_loading": false,
+      "message_count": 60,
+      "has_older": true,
+      "search_loading": false
+    },
+    {
+      "elapsed_ms": 301.5,
+      "calibration": "calibrating",
+      "history_loading": false,
+      "message_count": 60,
+      "has_older": true,
+      "search_loading": null
+    },
+    {
+      "elapsed_ms": 371.6000000089407,
+      "calibration": "ready",
+      "history_loading": false,
+      "message_count": 60,
+      "has_older": true,
+      "search_loading": null
+    }
+  ],
+  "cleanup": {
+    "dev_lease": "released",
+    "dev_ports": "free",
+    "settings_restored_by_original_hash": 5
+  },
+  "raw_artifact_private_root": "agent-friend-dev/history-pagination-fix-20261009-211122 (local-only)",
+  "raw_artifact_sha256": {
+    "automated-validation.json": "9d3b47fc30cc20a5511575309194b4cfbe27383486a1c095af5d8a38fc89847c",
+    "runtime-source-checks.json": "0e3e2cf380f3e28995be3ec5633759100abbd6ec56f01afc4c4c48d5fb21077d",
+    "indexed-pages.json": "b7d26da0f49e99659977cd43d783e7c5c6965acd31004c9a4a4044979b8d0517",
+    "fixture-v2/identity.json": "fd8adc6e2ba3a19bf6a891bf10f10390ab4e0e3fbc3404994d24f585df17037c",
+    "desktop-check-1/report.json": "714bc7dc33ba326f3f7813216c94507fc5584dab620bcbf2c384f55db631c918",
+    "desktop-tools-20261009-212246/report.json": "99fc29d4cb5737c3d0669aafd078bafc259b3f4124afb0fabbab804e626959ef",
+    "desktop-search-trace-20261009-212645/report.json": "9330b1516576cdc8ab8f51131f04e2d347cc964e9f5eb208224095228ed393d4",
+    "desktop-final/report.json": "60c8ee7e53631133e8e92dd7c0c9a65427233c5d3c85a517bddbdeb5031405d7",
+    "desktop-settings-backup/restore-result.json": "fb713f47fce5a390cae8cadd3ef330d84efe1d700c496a1d24ed818092ceeda4",
+    "desktop-final/01-short.png": "81353b4df9bb0eafed2f854d9a16ad3a2654913061f7338968301d094731363d",
+    "desktop-final/02-restore.png": "65a88082ce1e36510eebbe64182bc7b468e9ff8421efdd7470e8ff00146c0c7e",
+    "desktop-final/03-long-answer-begin.png": "ce1384153a8b029a6341aff19fc7190364bd362761a5bcd3cfeb0f6f057adb15",
+    "desktop-final/04-long-answer-end.png": "18a2e61731a26151f306c01ab7696ae2a55a8d4707f7e5df218f5ed919f9d8b4",
+    "desktop-final/05-first-tool-begin.png": "4557ba656b0203c173dd386da2173e22bfc212f9192d280695f7786929ba13a1",
+    "desktop-final/05-first-tool-end.png": "00a0cd4005fbb61cb9db5dcc5ca0c6f4e6c7c4f3099113547a934ca2e28f049a",
+    "desktop-final/06-last-tool-begin.png": "2c8da8d41852370f413d52bc97878409765a813fc5c7826f9bb7f42087d5fbdc",
+    "desktop-final/06-last-tool-end.png": "938b8d359b674186f8da85a5068dc093e05d1632cfd4b7d47b8795701a242566",
+    "desktop-final/07-oldest-turn.png": "432e382a2b57c0461769e8e2324f04569004a2b8630a8966519278724fee3159",
+    "desktop-final/08-switched-short.png": "e9668999b796ead74639d84f3c3e8afba69ce79c0eadec19dba00a363897d0b7",
+    "desktop-final/09-search-oldest.png": "5bf7aed87ae6d4d53ddc30886357d5c0f3ad7853b5fe6c6dc984e24de36f2616",
+    "desktop-final/10-reference-source.png": "c4b093a2e3ac1b7462e3c28bcd7dd6cce29581fbc437e7375c3a763f130baa97",
+    "desktop-final/11-reference-unloaded-assistant.png": "f6937c2d5b803776b66dcca23dfcdb1440844ea86e1466391071b58b2888b129",
+    "desktop-final/11-reference-unloaded-user.png": "20e64617ad36dc4744856ccf2a0b49307754fcd650dbc9dc28ee22bc59a6a56e",
+    "desktop-final/failure-long_copy.png": "30c1b4e0fcbc5c92e43db621423cec361663182f3b47355ea1aaa09ab48c44aa",
+    "desktop-final/failure-short_copy.png": "e9668999b796ead74639d84f3c3e8afba69ce79c0eadec19dba00a363897d0b7"
+  },
+  "limitations": [
+    "Two real clipboard checks were not executed because clipboard preservation permission was unavailable; deterministic copy tests passed.",
+    "Single synthetic desktop scenario, not installed-build verification.",
+    "Missing, stale or corrupt indices need rebuild; complete large turns have no fixed byte ceiling.",
+    "Cold-cache fixture observation ran alongside checks/builds and is correctness evidence, not a controlled performance comparison.",
+    "No user acceptance, commit, main merge, guide publication or installer update is claimed for this fix."
+  ]
+}

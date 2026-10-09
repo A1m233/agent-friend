@@ -96,7 +96,6 @@ export function shouldShowMessageActionBar(
   editing = false,
 ): boolean {
   return message.status !== "streaming"
-    && message.history?.last !== false
     && !editing
     && !isActiveRunMessage(message, activeRunId);
 }

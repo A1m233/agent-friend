@@ -1,7 +1,6 @@
-import axios, { type AxiosInstance, type AxiosResponseTransformer } from "axios";
+import axios, { type AxiosInstance } from "axios";
 import { BRIDGE_BASE_URL, type LocalService } from "@/constants";
 import { ensureLocalServiceReady } from "@/services/runtime";
-import { recordHistoryPhase } from "@/services/historyObservation";
 
 /**
  * 基础请求层（REST 通道）。
@@ -68,12 +67,8 @@ function backendDetailOf(data: unknown): FriendlyError | null {
 }
 
 export function toFriendlyError(err: unknown): FriendlyError {
-  if (axios.isCancel(err)) return { friendly: "读取已结束。", code: "cancelled" };
   // 这里只做归一化兜底；具体技术细节（status / 异常栈）不外泄，可在此集中上报/日志。
   if (axios.isAxiosError(err)) {
-    if (err.code === "ECONNABORTED" || err.code === "ETIMEDOUT") {
-      return { friendly: "读取用时较长，请重试。", code: "timeout" };
-    }
     if (err.response) {
       const backendDetail = backendDetailOf(err.response.data);
       if (backendDetail) return backendDetail;
@@ -90,35 +85,7 @@ export function createHttp(
 ): AxiosInstance {
   const http = axios.create({ baseURL, timeout: 30_000 });
   http.interceptors.request.use(async (config) => {
-    const navigationId = config.headers.get("x-agent-friend-navigation-id");
-    const serviceStarted = performance.now();
-    recordHistoryPhase(navigationId, "service-wait");
     await ensureLocalServiceReady(service);
-    recordHistoryPhase(navigationId, "service-ready", { durationMs: performance.now() - serviceStarted });
-    if (typeof navigationId === "string") {
-      const transformers = config.transformResponse
-        ? Array.isArray(config.transformResponse) ? config.transformResponse : [config.transformResponse]
-        : [];
-      const requestStarted = performance.now();
-      const measured: AxiosResponseTransformer = function (data, headers, status) {
-        const received = performance.now();
-        const requestId = headers["x-agent-friend-request-id"];
-        const contentLength = Number(headers["content-length"]);
-        recordHistoryPhase(navigationId, "response-received", {
-          durationMs: received - requestStarted,
-          requestId: typeof requestId === "string" ? requestId : undefined,
-          responseBytes: Number.isSafeInteger(contentLength) && contentLength >= 0 ? contentLength : undefined,
-        });
-        let result = data;
-        try {
-          for (const transform of transformers) result = transform.call(this, result, headers, status);
-          return result;
-        } finally {
-          recordHistoryPhase(navigationId, "decode-finished", { durationMs: performance.now() - received });
-        }
-      };
-      config.transformResponse = [measured];
-    }
     return config;
   });
   http.interceptors.response.use(

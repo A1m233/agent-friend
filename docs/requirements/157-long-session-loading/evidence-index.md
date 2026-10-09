@@ -5,9 +5,16 @@
 - 档案归属：[requirement.md](./requirement.md)。
 - 记录本次真实安装版慢加载、执行冷恢复的源码机制、已有需求边界、后续方案和验证证据。
 - 仓库不保存会话正文、凭据或完整用户数据；固定源的隔离副本和桌面截图仅保留在本机私有证据目录。
-- 最近对账：2026-10-09。需求与方案均 CONFIRMED；实现与本轮验证完成。用户在获知取舍及缺口后要求合入主干并推送，按已披露边界接受交付；未执行项目不追认为验证通过。
+- 最近对账：2026-10-09。初次交付合入后，用户以实际截图否定事件碎片与逐条正文加载交互，要求普通 fix 完整撤回并恢复最新页/滚动续页。E-014 至 E-016 等原始材料保留为初版证据，不能证明本次修复已通过；当前状态见 [progress.md](./progress.md)。
 
 ## 当前综合判断
+
+- E-017 确认初版展示不符合用户目标；事件碎片与手动正文加载已整体撤回，采用原整轮投影和最近页/滚动续页。
+- E-018：原 157 前端 36 路径逐一核对，20 个文件完全恢复、13 个新增文件删除；2 个测试增补、1 个生产文件保留引用分页/游标/导航校准修复。后续主干诊断改动保留，执行恢复快照实现未变。
+- E-019：真实 Tauri 中 65 回合按 30/30/5 加载；工具聚合、正文、搜索最早消息、未加载的用户与助手引用均通过。11 项通过、2 项真实剪贴板因权限未验证；自动化复制验证通过。
+- 当前修复已通过技术验证和用户验收，用户已授权合入主干、推送远端。首次/失效索引重建仍可能扫描原文，大回合完整返回不承诺固定字节上限；本次不声称安装版已更新或取得新的 GB 性能结论。
+
+### 原始诊断事实（保留）
 
 1. 安装版目标会话的原始文件为 1,223,014,741 bytes。本次服务端详情请求在首响应前耗时约
    37.5 秒，期间两次 business 查询各约 18 秒；第一次因源文件变化未发布缓存。后台恢复
@@ -44,6 +51,9 @@
 | E-014 | 2026-10-09 | 真实桌面能否看到分页与延迟正文 | real-tauri-dom + interaction + runtime-observed | dev PID 49100、bridge PID 41168 均晚于源变更；固定副本；最终 run desktop-final-20261009-002617 | 13 项通过、2 项复制因权限未验证；长回合 80→98 片段、工具首尾完整、GB 47→101 片段；8 个真实历史页最大 261,786 B，导航与服务端请求关联 | confirmed（列明的桌面路径）；around 跨页、真实复制及安装态未覆盖 | active | [脱敏桌面记录](./artifacts/20261009-desktop-verification.json) |
 | E-015 | 2026-10-09 | 持久索引及执行快照的跨进程效果与资源成本 | serial-isolated-comparison | d1068625 与冻结 workspace 四包 overlay；五组各 3 重复；统一 harness `0f348e88…add7943` | 新进程 query 中位 8.257→0.961 s；bounded history 36.47 ms；execution 16.426→2.244 s；48 个业务摘要、24 个 exact 恢复摘要一致，15 组进程内外等价断言通过 | confirmed（同样本存储行为）；环境与样本范围内的时延观测 | active | [完整脱敏对照、源码清单与逐次结果](./artifacts/20261009-storage-comparison.json) |
 | E-016 | 2026-10-09 | 完整本地准备、驻留热复用与终态维护成本 | serial-isolated-comparison | E-015 同一产品源码树；schema 3 offline harness `86966f07…cdc1dc`；四组各一条 A,A 序列 | runtime 重建的第二次准备至 fake 14.244→4.382 s；驻留准备 1.451→1.493 s、含收尾 1.624→2.843 s；8 fake、0 real LLM，原件未改 | confirmed（路径与完成）；时延仅方向性，非统计稳定或真实供应商 E2E | active | [脱敏发送对照与阶段记录](./artifacts/20261009-local-send-comparison.json) |
+| E-017 | 2026-10-09 | 初版展示交互是否可接受 | human-reported + code-supported | 用户两张截图；e0940807 的逐事件投影与 DeferredHistoryMessage；回退基线 d1068625 | 用户明确否定逐条加载和原样式破坏，确认普通 fix 全面撤回并实现最新页/滚动续页 | confirmed | active；取代 E-014 的交付可用性判断 | requirement.md R-4、design.md 展示章节 |
+| E-018 | 2026-10-09 | 修复是否清理完整且自动化通过 | code-supported + deterministic-test | 733b2831 + 未提交 fix overlay；41 个生产路径内容 SHA/删除状态；36 个原前端路径对账 | backend 4017 passed/5 skipped、frontend 1471 passed、Rust gate passed；仅有效页正文解码、完整回合等价及旧接口 404；4 个旧测试夹具签名已修正并完整复验 | confirmed（当前源码）；非安装态 | active；补充/取代 E-013 展示部分 | [修复证据](./artifacts/20261009-pagination-fix.json) |
+| E-019 | 2026-10-09 | 真实分页、原展示、跨页搜索及引用 | real-tauri-dom + interaction + runtime-observed | 新鲜 fix runtime；纯合成 2/65 回合、10 工具、>8 KiB 正文；desktop-final，原报告与截图 SHA 已归档 | 20 个实际分页响应均不超过 30 回合；21 个观测请求无旧接口/全量详情；11 passed/2 clipboard not_verified。首次发现校准中搜索提前结束，真实状态序列与先红后绿测试确认，修复后跨页搜索通过 | confirmed（列明路径）；真实复制/安装态未验证 | active；supersedes E-014 展示验收 | [修复证据与前后状态](./artifacts/20261009-pagination-fix.json) |
 
 ## 源码锚点
 
@@ -148,6 +158,9 @@ open/start 内。候选首次建立时合计至 fake 为 22.066 s，基线首次
 
 ## 当前验证边界
 
+本节以下为初版观测边界。当前 fix 的证据是 E-018/E-019；初版分片页的时延、字节上限和
+渲染计数不外推为完整回合分页的性能结论。两次 agent 真实剪贴板检查仍为 not_verified；用户已在获知该边界后确认本次修复交付。
+
 E-014 来自真实 Tauri chat WebView，已用主进程和 bridge 启动时间确认源码新鲜度。最终 15 项
 中 13 项通过，短/长消息两项复制因剪贴板读取权限仍为 prompt 而跳过，未写入系统剪贴板。
 工具正文断言检查首尾 marker、逐层裁剪与实际命中，不能只凭请求成功或 DOM 有文字判定通过。
@@ -196,6 +209,7 @@ E-014 来自真实 Tauri chat WebView，已用主进程和 bridge 启动时间�
 | E-012 / E-015 | 本机私有 `agent-friend-dev/157-evidence/final-storage-*.json`；原源仅只读，临时副本已清理 | artifacts/20261009-storage-comparison.json | 原报告 SHA、五组同一 fixture/harness、两种源码逐文件清单、逐次计数与内存 | 无消息正文；最终固定桌面副本仍在私有 fixture 目录，不能当公开数据集 |
 | E-014 | 同私有根 `desktop-final-20261009-002617/`、隔离 runtime logs | artifacts/20261009-desktop-verification.json | 原 report、截图、原/修正 harness 与 correction SHA；导航及服务端字段脱敏提取 | PNG 和原日志不进仓库；仓库只存计数、随机请求标识、摘要与阶段时间 |
 | E-016 | 同私有根 `final-offline-*.json`，各组临时会话副本已清理 | artifacts/20261009-local-send-comparison.json | 四组原报告 SHA、统一 schema 3 harness、与 E-015 精确源码树一致 | 不含 prompt/模型输出/会话正文；fake 只是本地边界，不能外推真实模型质量与速度 |
+| E-018 / E-019 | 本机私有 `agent-friend-dev/history-pagination-fix-20261009-211122/`；desktop-final/report.json、失败运行、导航状态轨迹、纯合成 identity 与截图 | artifacts/20261009-pagination-fix.json | 新记录加入 MANIFEST.sha256；逐原报告/截图/设置恢复记录 SHA，生产 overlay 文件 SHA | 无真实用户会话；原 PNG/报告仅本机，仓库保存脱敏摘要；旧失败运行未删除 |
 
 2026-10-08 的诊断摘要是当时工具输出的派生记录，不是事发时冻结的原始日志，不能追认为
 拥有那次完整前端 trace 或原始 hash。E-012～E-016 是随后独立取得的固定输入和候选验证，
@@ -211,3 +225,5 @@ E-014 来自真实 Tauri chat WebView，已用主进程和 bridge 启动时间�
 | 2026-10-08 | 用户确认方案并授权开始实现 | 新增 E-011，进入并行实施；旧条目中的“方案待确认”为历史阶段记录，当前状态以本索引顶部及 design/progress 为准 |
 | 2026-10-09 | 实现、全量门禁、隔离桌面与正式冷热对照 | 新增 E-012～E-016；归档原报告 SHA 和源码清单，区分存储/本地发送/桌面/安装态；保留首次建立、内存峰值、热收尾回退及手验缺口；runtime 已停止，桌面设置已恢复，未提交/合入/打包 |
 | 2026-10-09 | 用户要求合入主干并推送 | 将本轮已披露边界视为用户接受的交付范围，progress 改为 COMPLETED；原始验证 JSON 中的“待验收/未提交”保留为采集当时的历史状态，不改写原始 artifact |
+| 2026-10-09 | 用户截图推翻展示交付判断，普通 fix 与再次验证 | E-017～E-019 取代初版展示可用性结论；恢复原 UI，索引完整回合分页，修复搜索校准竞态。全部代码门禁通过、真实桌面 11 passed/2 clipboard not_verified；runtime 已 stop/status，5 份设置按原 SHA 恢复。未提交/合入/打包，等待用户验收 |
+| 2026-10-09 | 用户在 dev 手验后确认修复交付，并要求合入主干、推送远端 | 更新验收状态；41 项生产文件/删除状态、6 项 MANIFEST、25 项私有证据 SHA 均一致，沿用既有验证。原始 JSON 不改写为已经提交或 agent 剪贴板检查通过；dev 按用户要求继续运行 |

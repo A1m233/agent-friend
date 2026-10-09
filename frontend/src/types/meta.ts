@@ -48,5 +48,4 @@ export type SessionDetail = SessionDetailBase &
   (
     | { events: SessionEvent[]; active_events?: SessionEvent[] }
     | { events?: never; active_events: SessionEvent[] }
-    | (import("./history").HistoryPage & { events?: never; active_events?: never })
   );
