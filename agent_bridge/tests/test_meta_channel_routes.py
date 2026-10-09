@@ -692,11 +692,13 @@ class TestContinueToolResultEndpoint:
         assert response.status_code == 404
         assert not _RouteLLM.seen_messages
 
+    @pytest.mark.parametrize("scheduled", [False, True], ids=["manual", "scheduled-task"])
     def test_runtime_continuation_survives_lifecycle_events_and_rejects_stale_requests(
         self,
         client: TestClient,
         runtime: BridgeRuntime,
         monkeypatch: pytest.MonkeyPatch,
+        scheduled: bool,
     ) -> None:
         from concurrent.futures import ThreadPoolExecutor
         from threading import Event as ThreadEvent
@@ -724,9 +726,17 @@ class TestContinueToolResultEndpoint:
         runtime = replace(runtime, agent_runtime=engine)
         client = TestClient(create_app_with_runtime(runtime))
         sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        user_payload: dict[str, Any] = {"content": "finish the remaining work"}
+        if scheduled:
+            user_payload["request_source"] = {
+                "kind": "scheduled_task",
+                "task_id": "daily-task",
+                "occurrence_id": "daily-occurrence",
+                "task_name": "daily routine",
+            }
         seed: list[tuple[EventType, dict[str, Any]]] = [
             ("run_started", {"run_id": "failed", "started_at": datetime.now(UTC).isoformat()}),
-            ("user_message", {"content": "finish the remaining work"}),
+            ("user_message", user_payload),
             ("run_error", {"run_id": "failed", "code": "upstream_transient", "recoverable": True}),
             ("run_terminal", {"run_id": "failed", "status": "failed"}),
         ]
@@ -769,7 +779,10 @@ class TestContinueToolResultEndpoint:
             assert snapshot["source_run_id"] == snapshot["root_run_id"] == "failed"
             after = client.get(f"/v1/sessions/{sid}?view=active").json()
             assert after["recovery"] is None
-            assert sum(e["type"] == "user_message" for e in after["active_events"]) == 1
+            users = [e for e in after["active_events"] if e["type"] == "user_message"]
+            assert len(users) == 1
+            assert users[0]["uuid"] == "old-user_message"
+            assert users[0]["payload"] == user_payload
             start = next(
                 e
                 for e in after["active_events"]
@@ -787,16 +800,25 @@ class TestContinueToolResultEndpoint:
         finally:
             engine.stop()
 
+    @pytest.mark.parametrize("scheduled", [False, True], ids=["manual", "scheduled-task"])
     def test_continues_from_saved_result_with_normal_tools(
-        self, client: TestClient, runtime: BridgeRuntime
+        self, client: TestClient, runtime: BridgeRuntime, scheduled: bool
     ) -> None:
         sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        user_payload: dict[str, Any] = {"content": "查一下"}
+        if scheduled:
+            user_payload["request_source"] = {
+                "kind": "scheduled_task",
+                "task_id": "daily-task",
+                "occurrence_id": "daily-occurrence",
+                "task_name": "daily routine",
+            }
         events = [
             Event(
                 type="user_message",
                 uuid="user-1",
                 ts=datetime.now(UTC),
-                payload={"content": "查一下"},
+                payload=user_payload,
             ),
             Event(
                 type="assistant_message",
@@ -852,7 +874,13 @@ class TestContinueToolResultEndpoint:
         assert resp.status_code == 200
         assert "new answer" in body
         assert "continue-client-run" in body
-        assert client.get(f"/v1/sessions/{sid}?view=active").json()["recovery"] is None
+        assert '"type":"RUN_ERROR"' not in body
+        after = client.get(f"/v1/sessions/{sid}?view=active").json()
+        assert after["recovery"] is None
+        users = [e for e in after["active_events"] if e["type"] == "user_message"]
+        assert len(users) == 1
+        assert users[0]["uuid"] == "user-1"
+        assert users[0]["payload"] == user_payload
         assert _RouteLLM.seen_tools[-1]
         assert any(
             message.get("role") == "tool" and message.get("content") == "saved result"
