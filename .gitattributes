@@ -20,3 +20,7 @@ agent/src/agent/skills/builtin_assets/pdf/assets/*.png -text
 agent/src/agent/skills/builtin_assets/screenshot/assets/*.png -text
 agent/src/agent/skills/builtin_assets/doc/assets/*.png -text
 agent/src/agent/skills/builtin_assets/spreadsheet/assets/*.png -text
+
+# Keep requirement 158 evidence digests identical across checkouts.
+docs/requirements/158-build-cache-and-packaging-governance/artifacts/*.json text eol=lf
+docs/requirements/158-build-cache-and-packaging-governance/artifacts/MANIFEST.sha256 text eol=lf

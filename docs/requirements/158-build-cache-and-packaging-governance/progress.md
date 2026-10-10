@@ -74,6 +74,11 @@ COMPLETED（用户已确认合入主干并推送）
 - AC-6～AC-7：无本地 .venv 的轻量查询、不可用 uv fixture、快速只读盘点、取消扫描测试与固定规模 benchmark。
 - AC-8～AC-9：卷需求合并与预留测试、真实 C 源码/D 构建及制品成功、跨 state root 锁冲突拒绝。
 - AC-10～AC-11：用途计划与指引校验、完整项目检查及后续 175 项受影响检查、冻结 doctor/服务 smoke、14 项安装矩阵与独立输入校验；详见 evidence-index E-009～E-021。
-- AC-12：证据及 SHA 清单已齐备，用户确认仍待完成。小型热缓存 benchmark 不外推大目录收益，不宣称 C 盘已回收多少物理空间。
+- AC-12：证据及 SHA 清单已齐备，用户已于 2026-10-10 确认合入与推送。小型热缓存 benchmark 不外推大目录收益，不宣称 C 盘已回收多少物理空间。
 
 | 2026-10-10 | 用户验收并授权交付 | 用户明确要求“合入主干推送远端”，AC-12 完成；进入最新 main 同步、Guide 复核与正常 merge/push，保留既有精确候选的验证范围 |
+
+| 2026-10-10 | 同步最新主干并完成集成检查 | 实现提交 ea2dd24c；无冲突合入 origin/main df78ccbe，集成点 5cb8d74c。主干增量为 Skill 传输修复；完整 backend lint/format 988 文件、mypy 812 文件通过，pytest 4085 passed / 5 skipped / 8 warnings，stage 479.6s，exit 0。前端/Rust 实现未变化，沿用此前检查 |
+| 2026-10-10 | merge-main-and-push Guide 复核无需更新 | 公开 checkout 8e74f247、reviewed_product_commit 85f4240b 均已核对，clean、origin exact、verify 通过；基线到集成代码仅新增开发构建治理，不改变公开产品使用、用户数据或安装后行为；无受影响 reference，不刷新 builtin 或发布新 Guide |
+| 2026-10-10 | 固定验收摘要的跨平台字节身份 | JSON 摘要固定 LF，并重算 MANIFEST.sha256，防止 Git 换行归一化使证据 hash 漂移；仅文档/属性变更。原始机器日志与制品 hash 保持不变 |
+| 2026-10-10 | 保留验证范围并准备主干交付 | 相对已验收实现，安装器、Tauri 和打包代码未改变；旧矩阵仍绑定原精确 candidate，不宣称其覆盖后续主干 Skill 内容。此次只做 Git 合入/推送，不因合并重新产包 |

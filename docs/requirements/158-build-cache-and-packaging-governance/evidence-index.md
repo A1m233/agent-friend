@@ -78,3 +78,9 @@
 截至本次收口，AC-1～AC-11 的机器证据已完成，AC-12 的用户验收仍未完成。实现未提交、未合入；没有自动启用 GC、迁移或接管历史目录。当前 Windows 真实验证及其他平台 wrapper 语法检查分别记录，不宣称已完成 macOS/Linux 实机验收。
 
 2026-10-10 后续交付：用户明确要求合入主干并推送，验收确认已取得。validation summary 保留机器验证结束时的原始状态，用户验收与 Git 交付的新状态由 progress.md 记录。
+
+## 主干集成检查
+
+- E-022（2026-10-10，confirmed）：实现提交 ea2dd24c 同步最新 origin/main df78ccbe 后，集成点为 5cb8d74c；标准 backend 检查 4085 passed / 5 skipped，lint/format 988 文件及 mypy 812 文件通过，stage 479.6s / exit 0。前端和 Rust 实现相对前次验证未变化。
+- E-023（2026-10-10，confirmed）：merge-main-and-push 复核使用 Guide commit 8e74f2479d7e07316c801baafb7114a8764b00d5、公开 reviewed_product_commit 85f4240bc0950ddb3d7a4925e12d7eb47571cc3a；祖先关系、两仓 clean、origin exact、公开内容 verify 通过。真实 diff 只增加开发构建管理，对照 data-and-privacy / troubleshooting 无需修改公开知识。
+- 证据摘要改为固定 LF，MANIFEST.sha256 绑定可跨平台检出的 JSON 字节；既有报告内部记载的外部原始文件 SHA 未改变。原矩阵保留原 candidate / input 绑定，不泛称后续主干全部 runtime 内容已用该包验证；合入本身不触发重打包。
