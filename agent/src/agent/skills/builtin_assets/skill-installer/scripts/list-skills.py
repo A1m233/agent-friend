@@ -10,7 +10,7 @@ import os
 import sys
 import urllib.error
 
-from github_utils import github_api_contents_url, github_request
+from github_utils import GitHubTransportError, github_api_contents_url, github_request
 
 DEFAULT_REPO = "openai/skills"
 DEFAULT_PATH = "skills/.curated"
@@ -57,7 +57,12 @@ def _list_skills(repo: str, path: str, ref: str) -> list[str]:
                 f"Skills path not found: https://github.com/{repo}/tree/{ref}/{path}"
             ) from exc
         raise ListError(f"Failed to fetch skills: HTTP {exc.code}") from exc
-    data = json.loads(payload.decode("utf-8"))
+    except GitHubTransportError as exc:
+        raise ListError(f"Failed to fetch skills: {exc}") from exc
+    try:
+        data = json.loads(payload.decode("utf-8"))
+    except (ValueError, UnicodeError) as exc:
+        raise ListError("Invalid skills listing response.") from exc
     if not isinstance(data, list):
         raise ListError("Unexpected skills listing response.")
     skills = [item["name"] for item in data if item.get("type") == "dir"]
