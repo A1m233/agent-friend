@@ -47,6 +47,13 @@ pub fn settings_store_path() -> Option<PathBuf> {
     dirs::config_dir().map(app_store_path)
 }
 
+/// Use the official plugin's configured filename and Tauri application namespace.
+pub fn window_state_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<PathBuf> {
+    use tauri::Manager;
+    use tauri_plugin_window_state::AppHandleExt;
+    Ok(app.path().app_config_dir()?.join(app.filename()))
+}
+
 pub fn owner_capabilities_path() -> Option<PathBuf> {
     dirs::config_dir().map(|base| {
         base.join(profile().settings_namespace)
