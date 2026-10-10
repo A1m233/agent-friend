@@ -198,7 +198,7 @@ function GlobalConversationSearch() {
                     onRender={({ item, active }) => {
                       if (typeof item === "string") {
                         return (
-                          <div className="px-4 pb-1 pt-3 text-xs font-medium text-muted">
+                          <div className="select-none px-4 pb-1 pt-3 text-xs font-medium text-muted">
                             {item}
                           </div>
                         );
@@ -331,6 +331,7 @@ export function SearchResultsList({ items, onRender }: SearchResultsListProps) {
             key={item.id}
             ref={active ? activeRef : null}
             role="option"
+            className="select-none"
             aria-selected={active}
             onPointerMove={() => {
               if (!active) query.setActiveIndex(index);

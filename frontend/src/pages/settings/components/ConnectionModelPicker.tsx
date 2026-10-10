@@ -139,7 +139,7 @@ export function ConnectionModelPicker({
               .map((m) => (
                 <label
                   key={m.id}
-                  className="flex cursor-pointer items-start gap-3 rounded-md p-2 hover:bg-surface"
+                  className="flex cursor-pointer select-none items-start gap-3 rounded-md p-2 hover:bg-surface"
                 >
                   <Checkbox
                     disabled={busy}

@@ -64,7 +64,7 @@ function ToolDisclosureRow({
     <Collapsible open={open} onOpenChange={onOpenChange}>
       <CollapsibleTrigger
         className={cn(
-          "group inline-flex max-w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs text-muted",
+          "group inline-flex max-w-full select-none items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs text-muted",
           "transition-colors hover:bg-surface/60 hover:text-fg",
           "focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:outline-hidden",
         )}

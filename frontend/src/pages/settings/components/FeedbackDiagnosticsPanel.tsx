@@ -244,7 +244,7 @@ export function FeedbackDiagnosticsPanel({
                 return (
                   <label
                     key={session.session_id}
-                    className="flex cursor-pointer items-start gap-3 rounded-md p-3 hover:bg-surface-hover"
+                    className="flex cursor-pointer select-none items-start gap-3 rounded-md p-3 hover:bg-surface-hover"
                   >
                     <Checkbox
                       className="mt-0.5"
@@ -294,7 +294,7 @@ export function FeedbackDiagnosticsPanel({
               </div>
             </div>
 
-            <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border bg-bg p-3">
+            <label className="flex cursor-pointer select-none items-start gap-3 rounded-md border border-border bg-bg p-3">
               <Checkbox
                 className="mt-0.5"
                 checked={renderEvidenceStatus.armed}
@@ -354,7 +354,7 @@ export function FeedbackDiagnosticsPanel({
                     </p>
                   </div>
                 </div>
-                <label className="flex cursor-pointer items-start gap-3">
+                <label className="flex cursor-pointer select-none items-start gap-3">
                   <Checkbox
                     className="mt-0.5"
                     checked={
@@ -420,7 +420,7 @@ export function FeedbackDiagnosticsPanel({
               />
               <span className="text-sm text-fg">轮</span>
             </label>
-            <label className="flex items-center gap-3">
+            <label className="flex select-none items-center gap-3">
               <Checkbox checked={allTurns} disabled={generating}
                 onCheckedChange={(checked) => setAllTurns(checked === true)}
                 aria-label="采集全部轮次" />
@@ -435,7 +435,7 @@ export function FeedbackDiagnosticsPanel({
           </div>
         ) : null}
         {selectedIds.size > 0 ? (
-          <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border p-3">
+          <label className="flex cursor-pointer select-none items-start gap-3 rounded-md border border-border p-3">
             <Checkbox
               className="mt-0.5"
               checked={includeAttachmentOriginals}
@@ -450,7 +450,7 @@ export function FeedbackDiagnosticsPanel({
             </span>
           </label>
         ) : null}
-        <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border p-3">
+        <label className="flex cursor-pointer select-none items-start gap-3 rounded-md border border-border p-3">
           <Checkbox
             className="mt-0.5"
             checked={includeCrashDumps}
