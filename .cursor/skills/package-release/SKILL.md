@@ -13,8 +13,9 @@ Windows 使用：
 
 ```powershell
 .\scripts\package\run.ps1 version-status
-.\scripts\package\run.ps1 workspace-status
-.\scripts\package\run.ps1 workspace-gc [--apply]
+.\scripts\package\run.ps1 workspace-status [--scan]
+.\scripts\package\run.ps1 workspace-gc [--scan] [--apply]
+.\scripts\package\run.ps1 plan [--purpose <STEP>] [--state-dir <PATH>] [--releases-dir <PATH>]
 .\scripts\package\run.ps1 version-set <semver>
 .\scripts\package\run.ps1 trusted-beta-configure <next-stable-semver>
 .\scripts\package\run.ps1 installer-contract
@@ -32,7 +33,7 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
 
 本节由 `runtime-only` 与安装包工作流共同使用；在第一次执行任何实际构建（包括 `installer-smoke-build`）前完成。`version-status`、`version-set`、`trusted-beta-configure`、`installer-contract`、`workspace-status` 和 `workspace-gc` 等只读/配置动作不触发。
 
-自动显式调用 `maintain-agent-friend-guide` 的 `package-baseline` 模式，完成只读知识检查并解析最新兼容、已发布且 immutable 的 Guide checkout、commit 与 snapshot；不要再询问用户是否进入该流程。把返回的 checkout 和 commit 作为 `--guide-repo`、`--guide-commit` 传给每次 `runtime`、`installer`、`all`、`installer-smoke-build`、`installer-smoke` 和 `installer-smoke-verify`；内部 candidate 子构建通过受校验 receipt 继承，不自行重新选择版本。自动入口不授权修改公开知识、创建 release 或提交产品仓库；发现公开内容需要更新时只报告。
+自动显式调用 `maintain-agent-friend-guide` 的 `package-baseline` 模式，完成只读知识检查并解析最新兼容、已发布且 immutable 的 Guide checkout、commit 与 snapshot；不要再询问用户是否进入该流程。把返回的 checkout 和 commit 作为 `--guide-repo`、`--guide-commit` 传给每次 `runtime-verify`、`runtime`、`installer`、`all`、`installer-smoke-build`、`installer-smoke` 和 `installer-smoke-verify`；内部 candidate 子构建通过受校验 receipt 继承，不自行重新选择版本。自动入口不授权修改公开知识、创建 release 或提交产品仓库；发现公开内容需要更新时只报告。
 
 - `local-test` 与 installer smoke 的 baseline 是临时打包输入。package runner 负责在同一事务内应用并在成功、失败或正常中断后恢复进入前 Git 状态；无关 dirty 必须原样保留，Guide 管理路径预先 dirty 时 fail closed。Agent 不直接运行持久化 `sync`，也不在收尾时留下 baseline overlay。
 - stable release 与可分发 trusted-beta 只接受已经提交的精确 baseline。package runner 发现不匹配时在构建前返回 `baseline-update-required` 且不修改工作树；随后只有在当前 Git 授权覆盖时，才在任务自有分支用 maintainer `sync` 生成独立 baseline changeset，完成提交后从 clean commit 重新构建。
@@ -47,10 +48,10 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
 2. 完成“首次实际构建的共同前置”，取得本次验证的精确 Guide 输入，再执行：
 
    ```powershell
-   .\scripts\package\run.ps1 runtime --local-test --verification-level package-sensitive --guide-repo <PATH> --guide-commit <SHA>
+   .\scripts\package\run.ps1 runtime-verify --local-test --verification-level package-sensitive --guide-repo <PATH> --guide-commit <SHA>
    ```
 
-3. 以 staging 后 doctor 和 frozen capability smoke 为结果，回报 build ID、runtime 路径、精确版本与验证状态，然后返回原任务；保留 build ID 的生命周期遵守下方“打包工作区治理”。若代码 floor 另要求 `full-matrix`，说明本次 runtime 证据只覆盖冻结能力，剩余安装器验收仍由原工作流按 `windows-installer-integrity` Rule 处理，不能把本路径当成完整验收。
+3. 以 staging 后 doctor 和 frozen capability smoke 为结果，回报 build ID、持久验证报告、精确版本与验证状态，然后返回原任务。纯验证成功后中间 runtime 会回收，不把已经删除的 runtime 路径作为交付物；需要稍后继续 installer 时明确使用保留型 `runtime`。若代码 floor 另要求 `full-matrix`，说明本次 runtime 证据只覆盖冻结能力，剩余安装器验收仍由原工作流按 `windows-installer-integrity` Rule 处理，不能把本路径当成完整验收。
 
 ## 安装包工作流
 
@@ -72,12 +73,16 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
 
 - 发布前必须成功生成私有 native symbols 归档（桌面 EXE、匹配 GUID/age 的 PDB、代码段身份及构建元数据），release manifest 绑定归档 SHA。入口自动校验；失败不可绕过。归档位于 releases 根的 `_symbols/windows-x64/<profile>/<build-id>/`，独立于 workspace GC，不能随缓存删除或公开。trusted-beta 归档含敏感 EXE；诊断包永不附带符号。离线定位使用 `scripts/crash-diagnostics/run.* symbolize --dump <PATH> --symbols <ARCHIVE_DIR> --output <NEW_JSON>`，不自动下载符号。
 
-- 所有 worktree 的 package build 使用仓库级互斥锁；锁冲突时报告占用，不绕过或手工删除 lock。
-- `workspace-status` 只读输出全部 worktree 的 build-id、共享增量 cache、注册状态、保留策略和预计可回收字节。
-- `workspace-gc` 默认 dry-run；只有用户明确要求执行清理后才加 `--apply`。默认回收超过 48 小时的 build-id，以及超过 7 天未使用的 per-worktree Cargo/PyInstaller cache。
-- GC 只处理脚本解析出的 `%LOCALAPPDATA%/agent-friend/packaging/work/<repo>/<worktree>/`；不删除 source worktree、正式或 local-test release、下载 cache、用户数据、设置或日志。
-- `runtime` 必须保留 build-id 供显式 `installer --reuse-build-id` 使用；成功完成 installer/all 后自动删除该 build-id。installer smoke 的 candidate 与可选历史 baseline 保留到 smoke 成功，之后自动回收。
-- package build 在创建工作区前要求 state 所在卷至少有 40 GiB 可用空间。空间不足时先运行 status/GC，或显式把 `--state-dir` 指向容量足够的其它卷；不得降低门禁伪造通过。
+- 先用 `package run.* plan` 查看实际目录、卷空间与受管缓存策略；计划不代表 Guide、smoke 或正式发布门禁已经通过，实际 runner 会重新核验。
+- `workspace-status` 是轻量只读查询，不初始化项目虚拟环境；默认展示已有统计及历史未接管目录。需要精确体积时显式加 `--scan`，关注完整性和统计时间，不把 unknown 当作零。
+- `workspace-gc` 默认只展示 package 类别的回收计划；用户明确要求清理后才加 `--apply`。不会删除源码、安装包（含 local-test）、manifest、native symbols、下载缓存或用户资产。
+- 开发、Rust 检查和专项回归缓存使用 `scripts/build-storage/run.*` 的统一管理入口；具体参数与范围以该入口和 `scripts/README.md` 为准，不自行拼接删除路径。
+- 自动回收默认关闭。用户明确配置并启用指定类别后，后续标准构建可按该持久策略执行；不因用户要求产包或实现需求就替其启用，也不重复索要仍有效的同范围授权。
+- 旧目录只能先盘点和识别；`workspace-adopt --path <精确目录>` 默认预览，显式 `--apply` 后登记并保护。确认旧消费者已停止后才按对象 ID 解除保护，不凭目录年龄推断空闲。
+- `runtime-verify` 用于纯冻结验证，成功后保留报告并回收本次中间目录；`runtime` 用于等待 `installer --reuse-build-id`，按脚本给出的期限保留。失败现场和显式 pin 也遵循同一可查询记录。
+- 构建与清理采用稳定控制目录中的互斥保护；更换 state root 不能绕过。锁冲突只报告，不删除 lock 或强杀未知进程。
+- 空间门槛、预算、保留期限及实际可回收量全部以脚本计划为准；多卷或并发预留可能使需要的空间高于原 state 单卷门槛。空间不足时报告缺口，未经授权不换盘或扩大回收范围。
+- 中断操作按 `build-storage status` 的对象和 reservation 记录定位；只有核实整棵子进程树停止后，才使用显式 reconcile 入口解除保护。不得把 PID 消失当作所有后代已经退出。
 
 ## 模式边界
 

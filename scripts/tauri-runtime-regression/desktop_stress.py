@@ -166,7 +166,7 @@ def run(installer: Path, build_id: str, artifacts: Path, duration: int) -> bool:
     sys.modules[spec.name] = package
     spec.loader.exec_module(package)
     roots = package.resolve_package_roots(ROOT)
-    with package._package_build_lock(package.package_workspace_lock_path(roots)):
+    with package.package_guard(roots, package._package_build_lock):
         return _run_locked(installer, build_id, artifacts, duration, roots)
 
 

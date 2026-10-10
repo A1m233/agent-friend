@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import subprocess
-import tempfile
+import sys
 from pathlib import Path
 
+sys.path.append(str(Path(__file__).resolve().parents[1] / "_lib"))
+from build_storage import Storage
+from build_storage.execution import admit, use_target
+from build_storage.files import GIB
+from build_storage.policy import maintain
+from build_storage.reservations import reserve
+
 ROOT = Path(__file__).resolve().parents[2]
+
 MANIFEST = ROOT / "frontend/src-tauri/Cargo.toml"
 VENDOR = ROOT / "frontend/src-tauri/vendor/tauri-runtime-wry/Cargo.toml"
 
@@ -65,42 +72,49 @@ def main() -> None:
     print("[ok] Cargo resolves local tauri-runtime-wry 2.11.2", flush=True)
     if args.mode == "check":
         return
-    root_key = hashlib.sha256(str(ROOT).encode()).hexdigest()[:12]
-    target = (
+    storage = Storage(ROOT)
+    target = storage.target(
+        "runtime-regression",
         args.target_dir
-        or Path(tempfile.gettempdir()) / "agent-friend-runtime-regression" / root_key
+        or (Path(os.environ["CARGO_TARGET_DIR"]) if os.environ.get("CARGO_TARGET_DIR") else None),
     )
-    target = target.resolve()
-    if target.is_relative_to(ROOT):
-        parser.error("--target-dir must be outside the repository")
-    common = [*base[1:], "-p", "tauri-runtime-wry", "--locked", "--target-dir", str(target)]
-    if args.mode == "unit":
-        for features in ([], ["--features", "tauri-runtime-wry/tracing"]):
-            subprocess.run(["cargo", "test", *common, "--lib", *features], cwd=ROOT, check=True)
-    else:
-        if os.name != "nt":
-            raise SystemExit(
-                "Native runtime stress is Windows-only; no desktop runtime was started"
+    admit(storage, [("runtime-regression", target, 12 * GIB)])
+    with (
+        reserve(storage, [("runtime-regression", target, 12 * GIB)]),
+        use_target(storage, target, "runtime-regression") as record,
+    ):
+        common = [*base[1:], "-p", "tauri-runtime-wry", "--locked", "--target-dir", str(target)]
+        if args.mode == "unit":
+            for features in ([], ["--features", "tauri-runtime-wry/tracing"]):
+                subprocess.run(["cargo", "test", *common, "--lib", *features], cwd=ROOT, check=True)
+        else:
+            if os.name != "nt":
+                raise SystemExit(
+                    "Native runtime stress is Windows-only; no desktop runtime was started"
+                )
+            command = ["cargo", "build", *common, "--example", "owner_thread_regression"]
+            if args.release:
+                command.append("--release")
+            subprocess.run(command, cwd=ROOT, check=True)
+            binary = (
+                target
+                / ("release" if args.release else "debug")
+                / "examples/owner_thread_regression.exe"
             )
-        command = ["cargo", "build", *common, "--example", "owner_thread_regression"]
-        if args.release:
-            command.append("--release")
-        subprocess.run(command, cwd=ROOT, check=True)
-        binary = (
-            target
-            / ("release" if args.release else "debug")
-            / "examples/owner_thread_regression.exe"
-        )
-        # Every native loop owns a fresh process; no application user data/LLM.
-        for scenario in (
-            "drop-before-run",
-            "iteration",
-            "run-return",
-            "close-with-pending",
-            "clone-stress",
-        ):
-            print(f"[run] isolated Windows runtime: {scenario}", flush=True)
-            subprocess.run([str(binary), scenario], cwd=ROOT, check=True, timeout=120)
+            # Every native loop owns a fresh process; no application user data/LLM.
+            for scenario in (
+                "drop-before-run",
+                "iteration",
+                "run-return",
+                "close-with-pending",
+                "clone-stress",
+            ):
+                print(f"[run] isolated Windows runtime: {scenario}", flush=True)
+                subprocess.run([str(binary), scenario], cwd=ROOT, check=True, timeout=120)
+
+        if record:
+            storage.archive(record, "passed", [])
+    maintain(storage)
 
 
 if __name__ == "__main__":

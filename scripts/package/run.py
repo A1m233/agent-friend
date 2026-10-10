@@ -17,7 +17,7 @@ import tempfile
 import time
 import urllib.request
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -88,6 +88,8 @@ from releases import (
     publish_installer,
     sha256,
 )
+from resource_view import resource_view
+from storage_governance import build_storage, finalize, package_guard, preflight
 from vendor.codex import load_lock as load_codex_lock
 from vendor.codex import stage_for_package as stage_codex_for_package
 from vendor.managed_python import load_lock as load_managed_python_lock
@@ -104,13 +106,9 @@ from versioning import (
     trusted_beta_channel_path,
 )
 from workspace_gc import (
-    apply_workspace_gc,
-    cleanup_build_after_success,
     cleanup_smoke_builds_after_success,
     ensure_package_disk_headroom,
     mark_workspace_used,
-    package_workspace_lock_path,
-    workspace_inventory,
 )
 
 from runtime_config import (
@@ -124,6 +122,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_DIR = Path(__file__).resolve().parent
 GUIDE_BASELINE_STEPS = {
     "runtime",
+    "runtime-verify",
     "installer",
     "all",
     "installer-smoke-build",
@@ -194,6 +193,7 @@ def _windows_xiaohongshu_contract() -> tuple[ModuleType, str, str, tuple[str, ..
 
 @contextmanager
 def _timed_step(name: str, build_paths: BuildPaths):  # type: ignore[no-untyped-def]
+    preflight(build_paths.roots, initial=False)
     started = time.monotonic()
     print(f"==> package step: {name}")
     try:
@@ -214,45 +214,11 @@ def _timed_step(name: str, build_paths: BuildPaths):  # type: ignore[no-untyped-
 
 @contextmanager
 def _package_build_lock(lock_path: Path):  # type: ignore[no-untyped-def]
-    """Serialize builds that share caches or formal release-version allocation."""
+    """Use the same reentrant process lock as object GC and package adapters."""
+    from build_storage.locks import lock
 
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    stream = lock_path.open("a+b")
-    acquired = False
-    try:
-        if stream.tell() == 0:
-            stream.write(b"0")
-            stream.flush()
-        stream.seek(0)
-        try:
-            if os.name == "nt":
-                import msvcrt
-
-                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            acquired = True
-        except OSError as error:
-            raise RuntimeError(
-                f"another package build already owns this governed build scope: {lock_path}"
-            ) from error
+    with lock(lock_path):
         yield
-    finally:
-        try:
-            if acquired:
-                stream.seek(0)
-                if os.name == "nt":
-                    import msvcrt
-
-                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-
-                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
-        finally:
-            stream.close()
 
 
 def _sha256(path: Path) -> str:
@@ -776,6 +742,16 @@ def _stage_runtime(
     _run([str(staged_launcher), "doctor"], env=doctor_env)
     _smoke_frozen_services(staged_launcher, doctor_env, expected_identity=identity)
     _write_runtime_inventory(stage_dir)
+    write_canonical_json(
+        build_paths.build_dir / "runtime-verification.json",
+        {
+            "schemaVersion": 1,
+            "identity": identity.to_json_dict(),
+            "doctor": "passed",
+            "frozenServices": {"bridge": "passed", "voice": "passed"},
+            "runtimeInventorySha256": _sha256(stage_dir / "runtime-inventory.json"),
+        },
+    )
 
 
 def _copy_runtime_supplements(frozen_root: Path) -> None:
@@ -905,16 +881,17 @@ def _stage_payload(build_paths: BuildPaths, identity: BuildIdentity) -> None:
     write_payload_manifest(stage, identity)
 
 
-def _tauri_relative_path(path: Path) -> str:
-    """Return a config path relative to src-tauri, as required by frontendDist/resources."""
-
+def _tauri_config_path(path: Path) -> str:
+    """Use a relative path when possible, otherwise an unambiguous filesystem path."""
+    resolved = path.resolve()
     try:
-        relative = Path(os.path.relpath(path.resolve(), TAURI_DIR.resolve()))
-    except ValueError as error:
-        raise RuntimeError(
-            f"package build directory must be on the same drive as the repository: {path}"
-        ) from error
-    return relative.as_posix()
+        return Path(os.path.relpath(resolved, TAURI_DIR.resolve())).as_posix()
+    except ValueError:
+        # FrontendDist deserializes URL before PathBuf. A bare D:/... is a URL;
+        # the Windows extended path is absolute but cannot be parsed as a URL.
+        if os.name == "nt" and not str(resolved).startswith("\\\\"):
+            return "\\\\?\\" + str(resolved)
+        return str(resolved)
 
 
 def _nsis_path(path: Path) -> str:
@@ -924,7 +901,7 @@ def _nsis_path(path: Path) -> str:
 def _nsis_resource_file_overlay(payload_root: Path) -> str:
     # Tauri also merges relative resource paths from the base config. Extended
     # paths do not resolve '..', so only prefix our canonical staged payload.
-    source = _nsis_path(payload_root).replace("/", "\\").rstrip("\\") + "\\"
+    source = os.path.abspath(payload_root).replace("/", "\\").rstrip("\\") + "\\"
     if source.startswith("\\\\?\\"):
         extended = source
     elif source.startswith("\\\\"):
@@ -1087,6 +1064,7 @@ def _generate_nsis_template(
     identity: BuildIdentity,
     profile: InstallProfile,
     trusted_resources: tuple[Path, Path] | None,
+    payload_root: Path | None = None,
 ) -> Path:
     cached = _download(
         url=TAURI_NSIS_TEMPLATE_URL,
@@ -1097,7 +1075,7 @@ def _generate_nsis_template(
     generated = _apply_nsis_template_overlay(
         cached.read_text(encoding="utf-8"),
         helper_path=helper_path,
-        payload_root=build_paths.payload_stage,
+        payload_root=payload_root or build_paths.payload_stage,
         identity=identity,
         profile=profile,
         trusted_resources=trusted_resources,
@@ -1195,6 +1173,7 @@ def _write_package_config(
     profile: InstallProfile,
     trusted_beta: bool,
     nsis_template: Path,
+    resource_root: Path | None = None,
 ) -> Path:
     config = _read_json(TAURI_CONFIG)
     bundle = config.setdefault("bundle", {})
@@ -1202,7 +1181,8 @@ def _write_package_config(
     if not isinstance(resources, dict):
         raise RuntimeError("package Tauri resources must be an object")
     resources.clear()
-    resources[build_paths.payload_stage.as_posix() + "/"] = payload_install_relative_path(
+    resource_root = resource_root or build_paths.build_dir
+    resources[(resource_root / "payload-stage").as_posix() + "/"] = payload_install_relative_path(
         identity.build_id
     )
     config["productName"] = profile.product_name
@@ -1212,12 +1192,12 @@ def _write_package_config(
     nsis = bundle.setdefault("windows", {}).setdefault("nsis", {})
     nsis["languages"] = ["SimpChinese", "English"]
     nsis["displayLanguageSelector"] = True
-    nsis["template"] = _tauri_relative_path(nsis_template)
+    nsis["template"] = _tauri_config_path(nsis_template)
     build = config.setdefault("build", {})
     if not isinstance(build, dict):
         raise RuntimeError("package Tauri build config must be an object")
     build["beforeBuildCommand"] = ""
-    build["frontendDist"] = _tauri_relative_path(build_paths.frontend_dist)
+    build["frontendDist"] = _tauri_config_path(build_paths.frontend_dist)
     build_paths.generated_config_dir.mkdir(parents=True, exist_ok=True)
     metadata_path = _package_metadata_path(build_paths)
     metadata_path.write_text(
@@ -1250,7 +1230,9 @@ def _write_package_config(
         + "\n",
         encoding="utf-8",
     )
-    resources[metadata_path.as_posix()] = PACKAGE_METADATA_RESOURCE
+    resources[(resource_root / "config" / metadata_path.name).as_posix()] = (
+        PACKAGE_METADATA_RESOURCE
+    )
     if trusted_beta:
         payload, key = _trusted_resource_paths(build_paths)
         if not payload.is_file() or not key.is_file():
@@ -1391,27 +1373,30 @@ def _build_installer(
             if trusted_beta
             else None
         )
-        nsis_template = _generate_nsis_template(
-            build_paths,
-            offline=offline,
-            helper_path=helper,
-            identity=identity,
-            profile=profile,
-            trusted_resources=trusted_resources,
-        )
-        config_path = _write_package_config(
-            build_paths,
-            identity=identity,
-            profile=profile,
-            trusted_beta=trusted_beta,
-            nsis_template=nsis_template,
-        )
-        with _timed_step("tauri-and-nsis", build_paths):
-            _run(
-                [pnpm, "tauri", "build", "--config", str(config_path), "--bundles", "nsis"],
-                cwd=REPO_ROOT / "frontend",
-                env=build_env,
+        with resource_view(build_paths) as resource_root:
+            nsis_template = _generate_nsis_template(
+                build_paths,
+                offline=offline,
+                helper_path=helper,
+                identity=identity,
+                profile=profile,
+                trusted_resources=trusted_resources,
+                payload_root=resource_root / "payload-stage",
             )
+            config_path = _write_package_config(
+                build_paths,
+                identity=identity,
+                profile=profile,
+                trusted_beta=trusted_beta,
+                nsis_template=nsis_template,
+                resource_root=resource_root,
+            )
+            with _timed_step("tauri-and-nsis", build_paths):
+                _run(
+                    [pnpm, "tauri", "build", "--config", str(config_path), "--bundles", "nsis"],
+                    cwd=REPO_ROOT / "frontend",
+                    env=build_env,
+                )
         _validate_embedded_frontend(
             build_paths.cargo_target_dir / "release" / f"{profile.main_binary_name}.exe",
             build_paths.frontend_dist,
@@ -1917,10 +1902,13 @@ def _child_smoke_build(roots: PackageRoots, *, offline: bool) -> tuple[str, Path
     ]
     if offline:
         command.append("--offline")
+    child_env = _sanitized_env()
+    child_env["PYTHONIOENCODING"] = "utf-8"
+    child_env["PYTHONUNBUFFERED"] = "1"
     process = subprocess.Popen(
         command,
         cwd=REPO_ROOT,
-        env=_sanitized_env(),
+        env=child_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -1962,14 +1950,10 @@ def _build_installer_smoke_pair(
         candidate_build_id, candidate_installer = _child_smoke_build(roots, offline=offline)
         baseline_build_id = candidate_build_id
         baseline_paths = create_build_paths(roots, build_id=baseline_build_id)
-        shared_shell = (
-            baseline_paths.cargo_target_dir
-            / "release"
-            / (f"{resolve_install_profile('installer-smoke').main_binary_name}.exe")
-        )
+        # The child snapshots its shell while it still owns the cache/build locks.
         baseline_shell = baseline_paths.build_dir / "smoke-baseline-shell.exe"
-        baseline_paths.build_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(shared_shell, baseline_shell)
+        if not baseline_shell.is_file():
+            raise RuntimeError("smoke child did not preserve its exact baseline shell")
     else:
         baseline_paths = create_build_paths(roots, build_id=baseline_build_id)
         baseline_shell = baseline_paths.build_dir / "smoke-baseline-shell.exe"
@@ -2084,6 +2068,7 @@ def _parse_args() -> argparse.Namespace:
         "step",
         choices=(
             "runtime",
+            "runtime-verify",
             "installer",
             "all",
             "installer-contract",
@@ -2235,7 +2220,7 @@ def _validate_package_build_intent(
     trusted_beta: bool,
     release: bool,
 ) -> None:
-    if step not in {"runtime", "installer", "all"}:
+    if step not in {"runtime", "runtime-verify", "installer", "all"}:
         raise RuntimeError(f"package intent validation is not valid for {step}")
     if release and (local_test or trusted_beta):
         raise RuntimeError("--release cannot be combined with --local-test or --trusted-beta")
@@ -2255,7 +2240,7 @@ def _validate_package_build_intent(
             "--trusted-beta for a sensitive trusted distribution, or --local-test for a "
             "non-distributable build"
         )
-    if trusted_beta and step == "runtime":
+    if trusted_beta and step in {"runtime", "runtime-verify"}:
         raise RuntimeError("--trusted-beta requires the installer or all step")
 
 
@@ -2268,7 +2253,12 @@ def _execute(args: argparse.Namespace) -> int:
         raise RuntimeError(
             "--for-current-install is only valid for production installer or all builds"
         )
-    if args.verification_level is not None and args.step not in {"runtime", "installer", "all"}:
+    if args.verification_level is not None and args.step not in {
+        "runtime",
+        "runtime-verify",
+        "installer",
+        "all",
+    }:
         raise RuntimeError("--verification-level is only valid for package build steps")
     if args.step == "version-set":
         if args.version is None:
@@ -2358,26 +2348,23 @@ def _execute(args: argparse.Namespace) -> int:
             or profile.profile_id != "production"
         ):
             raise RuntimeError(f"{args.step} does not accept package build mode options")
-        build_max_age = timedelta(hours=args.build_max_age_hours)
-        cache_max_age = timedelta(days=args.cache_max_age_days)
-        if args.step == "workspace-status" or not args.apply:
-            report = workspace_inventory(
-                roots,
-                build_max_age=build_max_age,
-                cache_max_age=cache_max_age,
-            )
-            report["mode"] = "status" if args.step == "workspace-status" else "dry-run"
-            print(json.dumps(report, indent=2))
-            return 0
-        with _package_build_lock(package_workspace_lock_path(roots)):
-            report = workspace_inventory(
-                roots,
-                build_max_age=build_max_age,
-                cache_max_age=cache_max_age,
-            )
-            result = apply_workspace_gc(roots, report)
-        print(json.dumps({"plan": report, "result": result, "mode": "applied"}, indent=2))
-        return 0
+        from build_storage import Storage
+        from build_storage.policy import collect, plan
+
+        storage = Storage(REPO_ROOT)
+        if args.build_max_age_hours != 48 or args.cache_max_age_days != 7:
+            raise RuntimeError("retention overrides moved to build-storage configuration")
+        if args.step == "workspace-status":
+            report = storage.inventory(categories=["package-cache", "package-build"])
+        elif args.apply:
+            with package_guard(roots, _package_build_lock):
+                report = collect(
+                    storage, plan(storage, scan=True, categories=["package-cache", "package-build"])
+                )
+        else:
+            report = plan(storage, categories=["package-cache", "package-build"])
+        print(json.dumps(report, indent=2))
+        return 1 if report.get("failed") else 0
     if args.step == "version-status":
         if (
             args.local_test
@@ -2445,7 +2432,7 @@ def _execute(args: argparse.Namespace) -> int:
         if args.smoke_build_report is None:
             raise RuntimeError("installer-smoke requires --smoke-build-report")
         verification_inputs = _installer_verification_inputs()
-        with _package_build_lock(package_workspace_lock_path(roots)):
+        with package_guard(roots, _package_build_lock):
             report = run_installer_smoke(
                 roots,
                 build_report_path=args.smoke_build_report,
@@ -2552,7 +2539,8 @@ def _execute(args: argparse.Namespace) -> int:
         install_plan = _production_install_plan(package_version)
         print("production_install_plan: " + json.dumps(install_plan, separators=(",", ":")))
         _require_install_candidate_allowed(install_plan)
-    with _package_build_lock(package_workspace_lock_path(roots)):
+    with package_guard(roots, _package_build_lock):
+        preflight(roots)
         disk = ensure_package_disk_headroom(roots)
         mark_workspace_used(roots)
         print(
@@ -2584,42 +2572,50 @@ def _execute(args: argparse.Namespace) -> int:
             build_paths.build_dir.mkdir(parents=True)
         roots.cache_dir.mkdir(parents=True, exist_ok=True)
         print(f"build_id: {build_paths.build_id}")
-        identity = _prepare_build_contract(
-            build_paths,
-            product_version=str(package_version),
-            source=source,
-            local_test=args.local_test,
-            trusted_beta=args.trusted_beta,
-            profile=profile,
-            reuse=bool(args.reuse_build_id),
-        )
-        print(f"install_profile: {profile.profile_id}")
-        if args.step in {"runtime", "all"}:
-            _build_runtime(
+        keep = args.step == "runtime" or args.retain_build_workspace
+        with build_storage(build_paths, purpose=args.step, retain=keep):
+            identity = _prepare_build_contract(
                 build_paths,
-                identity=identity,
-                offline=args.offline,
-                reuse_frozen=bool(args.reuse_build_id),
-            )
-        if args.step in {"installer", "all"}:
-            assert verification_inputs is not None
-            setup = _build_installer(
-                str(package_version),
-                build_paths=build_paths,
-                identity=identity,
-                profile=profile,
-                verification_inputs=verification_inputs,
+                product_version=str(package_version),
+                source=source,
                 local_test=args.local_test,
                 trusted_beta=args.trusted_beta,
-                offline=args.offline,
+                profile=profile,
+                reuse=bool(args.reuse_build_id),
             )
-            print(f"installer: {setup}")
-            if not args.retain_build_workspace:
-                try:
-                    cleanup_build_after_success(roots, build_paths.build_id)
-                    print(f"package_workspace_removed: {build_paths.build_dir}")
-                except (OSError, RuntimeError) as error:
-                    print(f"warning: package workspace cleanup failed: {error}")
+            write_canonical_json(
+                build_paths.generated_config_dir / "guide-baseline.json",
+                _active_guide_baseline_payload(),
+            )
+            print(f"install_profile: {profile.profile_id}")
+            if args.step in {"runtime", "runtime-verify", "all"}:
+                _build_runtime(
+                    build_paths,
+                    identity=identity,
+                    offline=args.offline,
+                    reuse_frozen=bool(args.reuse_build_id),
+                )
+            if args.step in {"installer", "all"}:
+                assert verification_inputs is not None
+                setup = _build_installer(
+                    str(package_version),
+                    build_paths=build_paths,
+                    identity=identity,
+                    profile=profile,
+                    verification_inputs=verification_inputs,
+                    local_test=args.local_test,
+                    trusted_beta=args.trusted_beta,
+                    offline=args.offline,
+                )
+                print(f"installer: {setup}")
+                if args.retain_build_workspace and profile.profile_id == "installer-smoke":
+                    shutil.copy2(
+                        build_paths.cargo_target_dir
+                        / "release"
+                        / f"{profile.main_binary_name}.exe",
+                        build_paths.build_dir / "smoke-baseline-shell.exe",
+                    )
+        finalize(build_paths, remove=not keep)
     return 0
 
 

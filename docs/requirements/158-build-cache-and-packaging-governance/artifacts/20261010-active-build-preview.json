@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "observedAt": 1791567859.002629,
+  "apply": false,
+  "complete": true,
+  "budgetSatisfied": false,
+  "unknownObjects": [
+    "71fcdaa0ee9ad3b391870522",
+    "b89ae19056230e9ed688bbe5"
+  ],
+  "candidates": 0,
+  "protected": [
+    {
+      "category": "package-build",
+      "state": "running",
+      "reason": "active-or-unresolved",
+      "sizeStatus": "unknown"
+    },
+    {
+      "category": "package-cache",
+      "state": "running",
+      "reason": "active-or-unresolved",
+      "sizeStatus": "unknown"
+    }
+  ]
+}

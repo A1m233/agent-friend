@@ -618,7 +618,7 @@ if ($mode -eq "tauri") {
     & uv run python $foregroundLogPath `
         --log $devTauriLog `
         --cwd (Join-Path $root "frontend") `
-        -- node (Join-Path $root "frontend\node_modules\@tauri-apps\cli\tauri.js") dev @rest
+        -- uv run python (Join-Path $root "scripts\build-storage\execute.py") --cwd (Join-Path $root "frontend") dev -- node (Join-Path $root "frontend\node_modules\@tauri-apps\cli\tauri.js") dev @rest
     $frontendExitCode = $LASTEXITCODE
     if ($frontendExitCode -ne 0) {
         Write-Error "Tauri dev 命令退出，exit code=$frontendExitCode。已进入收尾清理。"
@@ -687,7 +687,7 @@ else {
         & uv run python $foregroundLogPath `
             --log $devTauriLog `
             --cwd (Join-Path $root "frontend") `
-            -- node (Join-Path $root "frontend\node_modules\@tauri-apps\cli\tauri.js") dev @rest
+            -- uv run python (Join-Path $root "scripts\build-storage\execute.py") --cwd (Join-Path $root "frontend") dev -- node (Join-Path $root "frontend\node_modules\@tauri-apps\cli\tauri.js") dev @rest
         $frontendExitCode = $LASTEXITCODE
     }
     if ($frontendExitCode -ne 0) {

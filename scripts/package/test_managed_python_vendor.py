@@ -156,3 +156,26 @@ def test_managed_python_offline_download_fails_closed(tmp_path: Path) -> None:
             tmp_path / "python.tar.gz",
             offline=True,
         )
+
+
+@pytest.mark.skipif(managed_python.os.name != "nt", reason="Windows packaged Python")
+def test_managed_python_prepare_stages_on_destination_volume(tmp_path, monkeypatch):
+    cache = tmp_path / "separate-volume"
+    lock = managed_python.load_lock()
+    monkeypatch.setattr(managed_python, "_download_locked", lambda *a, **k: None)
+    monkeypatch.setattr(managed_python, "_verify_prepared", lambda *a, **k: False)
+    original = managed_python.tempfile.TemporaryDirectory
+
+    class ReachedSafeStaging(Exception):
+        pass
+
+    def staging(*args, **kwargs):
+        with original(*args, **kwargs) as directory:
+            # A system temp on another volume cannot be atomically renamed into this cache.
+            assert Path(directory).is_relative_to(cache)
+            assert lock["runtime_version"]
+            raise ReachedSafeStaging
+
+    monkeypatch.setattr(managed_python.tempfile, "TemporaryDirectory", staging)
+    with pytest.raises(ReachedSafeStaging):
+        managed_python.prepare(tmp_path / "repo", cache_base=cache)

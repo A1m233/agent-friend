@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "preparedOn": "2026-10-10",
+  "kind": "derived-historical-summary",
+  "codeInspectionCommit": "2de2b4bded82b88475992a4ceae00b738518fb99",
+  "historicalCleanup": {
+    "freeBytesAfter": 183412981760,
+    "packageDeletedItems": 19,
+    "packageLogicalReclaimedBytes": 119800183959,
+    "packageRetainedLogicalBytes": 79102416651,
+    "packagePathsStillPresentCount": 0,
+    "worktreeOperations": 17,
+    "worktreeFailures": 0
+  },
+  "sourceFiles": [
+    {
+      "name": "agent-friend-cleanup-20261006-summary.json",
+      "sha256": "6a9cf033665e1a5907c2d0b913ae5a8cd8774edd8c50b3aac3ea12b6931ffa3b",
+      "sizeBytes": 7103
+    },
+    {
+      "name": "agent-friend-cleanup-20261006-package-gc.json",
+      "sha256": "8c1f8bb9b6f85857b3f6ea6cb5c10279b25a43b7cf492b577902b3ba7ad2a286",
+      "sizeBytes": 33825
+    },
+    {
+      "name": "agent-friend-cleanup-20261006-worktree-results.json",
+      "sha256": "7605092675053dad146a5dc73ad17a8f74ea36346c1b883e3ca4d7e2b2935f32",
+      "sizeBytes": 5848
+    }
+  ],
+  "limitations": [
+    "Source files remain local and are not fully archived.",
+    "Logical file bytes are not physical disk allocation.",
+    "This file was prepared after the observation and is not a raw scan."
+  ]
+}
