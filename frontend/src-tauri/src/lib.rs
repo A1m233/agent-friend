@@ -657,7 +657,7 @@ fn show_and_focus(app: &tauri::AppHandle, label: &'static str) -> Result<(), Str
                 }
             }
             if reveal_plan.place_before_show {
-                if let Err(e) = window_placement::place_window_before_show(&app_clone, &w) {
+                if let Err(e) = window_placement::place_window_before_show(&w.as_ref().window()) {
                     log::warn!("show_and_focus: window={label} placement failed: {e}");
                 }
             }
@@ -1441,7 +1441,6 @@ pub fn run() {
         .manage(render_evidence)
         .manage(VoiceLaunchState::default())
         .manage(WorkspaceNavigationState::default())
-        .manage(window_placement::WindowPlacementState::default())
         .manage(shell_diagnostics_manager)
         .manage(webview_diagnostics_manager)
         .manage(settings_state.clone())
@@ -1463,6 +1462,8 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(window_placement::persistence_plugin())
+        .plugin(window_placement::policy_plugin())
         .plugin(settings::init::<tauri::Wry>(init_script));
 
     // 017 · 装 tauri-nspanel plugin（macOS only）；non-macOS 退化为
@@ -1718,31 +1719,11 @@ pub fn run() {
                     event,
                     tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
                 ) {
-                    if let Some(webview_window) =
-                        window.app_handle().get_webview_window(window.label())
-                    {
-                        if let Err(e) = window_placement::capture_window_placement(&webview_window)
-                        {
-                            log::warn!(
-                                "window placement: capture failed for {}: {e}",
-                                window.label()
-                            );
-                        }
-                    }
+                    window_placement::request_save(window.app_handle());
                 }
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
-                    if let Some(webview_window) =
-                        window.app_handle().get_webview_window(window.label())
-                    {
-                        if let Err(e) = window_placement::remember_window_placement(&webview_window)
-                        {
-                            log::warn!(
-                                "window placement: remember failed for {}: {e}",
-                                window.label()
-                            );
-                        }
-                    }
+                    window_placement::save_on_main_thread(window.app_handle());
                     let _ = window.hide();
                 }
             }
@@ -2054,17 +2035,6 @@ pub fn run() {
                     app_handle.try_state::<Arc<shell_diagnostics::ShellDiagnosticsManager>>()
                 {
                     manager.shutdown();
-                }
-                for window in app_handle.webview_windows().into_values() {
-                    if let Err(e) = window_placement::capture_window_placement(&window) {
-                        log::warn!(
-                            "window placement: exit capture failed for {}: {e}",
-                            window.label()
-                        );
-                    }
-                }
-                if let Err(e) = window_placement::persist_window_placements(app_handle) {
-                    log::warn!("window placement: exit persist failed: {e}");
                 }
                 tauri::async_runtime::block_on(async {
                     if let Some(manager) =

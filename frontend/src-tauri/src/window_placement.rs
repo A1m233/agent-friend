@@ -1,10 +1,14 @@
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use serde::Deserialize;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::{
-    AppHandle, Manager, PhysicalPosition, PhysicalSize, Position, Runtime, Size, WebviewWindow,
+    plugin::TauriPlugin, AppHandle, Manager, PhysicalPosition, PhysicalSize, Position, Runtime,
+    Size, Window,
 };
 use tauri_plugin_store::StoreExt;
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
+use tokio::sync::watch;
 
 use crate::paths;
 
@@ -12,8 +16,9 @@ const WINDOW_PLACEMENTS_KEY: &str = "windowPlacements";
 const MANAGED_WINDOW_LABELS: &[&str] = &["chat", "voice-call", "live2d-debugger"];
 const DEFAULT_WINDOW_WIDTH: u32 = 720;
 const DEFAULT_WINDOW_HEIGHT: u32 = 640;
+const SAVE_DELAY: Duration = Duration::from_millis(500);
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowBounds {
     pub x: i32,
@@ -32,9 +37,116 @@ struct MonitorRect {
 
 type WindowPlacementMap = BTreeMap<String, WindowBounds>;
 
-#[derive(Default)]
-pub struct WindowPlacementState {
-    latest_normal_bounds: Mutex<WindowPlacementMap>,
+struct WindowPlacementState {
+    initial: Mutex<BTreeMap<String, InitialPlacement>>,
+    center_on_first_show: Mutex<BTreeSet<String>>,
+    save_requests: watch::Sender<()>,
+    autosave: tauri::async_runtime::JoinHandle<()>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct InitialPlacement {
+    bounds: WindowBounds,
+    legacy_outer_size: bool,
+}
+
+fn state_flags() -> StateFlags {
+    StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED
+}
+
+pub fn persistence_plugin<R: Runtime>() -> TauriPlugin<R> {
+    tauri_plugin_window_state::Builder::default()
+        .with_state_flags(state_flags())
+        .with_filter(is_managed_window_label)
+        .build()
+}
+
+/// Product placement policy and legacy migration; the official plugin owns live geometry.
+/// Register after the store and window-state plugins, so their state is ready first.
+pub fn policy_plugin<R: Runtime>() -> TauriPlugin<R> {
+    tauri::plugin::Builder::new("window-placement")
+        .setup(|app, _| {
+            let initial = load_initial_placements(app).unwrap_or_else(|error| {
+                log::warn!("window placement: load initial placement failed: {error}");
+                BTreeMap::new()
+            });
+            let (save_requests, mut receiver) = watch::channel(());
+            let handle = app.clone();
+            let autosave = tauri::async_runtime::spawn(async move {
+                while wait_for_idle(&mut receiver).await {
+                    let main_handle = handle.clone();
+                    // Never acquire the plugin's cache lock on a worker while its window
+                    // getters wait for the event loop (plugins-workspace#3594).
+                    if let Err(error) = handle.run_on_main_thread(move || {
+                        save_on_main_thread(&main_handle);
+                    }) {
+                        log::warn!("window placement: schedule save failed: {error}");
+                        break;
+                    }
+                }
+            });
+            app.manage(WindowPlacementState {
+                initial: Mutex::new(initial),
+                center_on_first_show: Mutex::new(BTreeSet::new()),
+                save_requests,
+                autosave,
+            });
+            Ok(())
+        })
+        .on_window_ready(|window| {
+            if !is_managed_window_label(window.label()) {
+                return;
+            }
+            let state = window.state::<WindowPlacementState>();
+            let initial = state.initial.lock().unwrap().remove(window.label());
+            if initial.is_none() {
+                state
+                    .center_on_first_show
+                    .lock()
+                    .unwrap()
+                    .insert(window.label().to_string());
+            }
+            if let Err(error) = place_initial_window(&window, initial) {
+                log::warn!(
+                    "window placement: initialize {} failed: {error}",
+                    window.label()
+                );
+            }
+            request_save(window.app_handle());
+        })
+        .on_event(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<WindowPlacementState>().autosave.abort();
+                // The official plugin saves synchronously on Exit.
+            }
+        })
+        .build()
+}
+
+async fn wait_for_idle(receiver: &mut watch::Receiver<()>) -> bool {
+    if receiver.changed().await.is_err() {
+        return false;
+    }
+    loop {
+        match tokio::time::timeout(SAVE_DELAY, receiver.changed()).await {
+            Ok(Ok(())) => continue,
+            Ok(Err(_)) => return false,
+            Err(_) => return true,
+        }
+    }
+}
+
+pub fn request_save<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(state) = app.try_state::<WindowPlacementState>() {
+        state.save_requests.send_replace(());
+    }
+}
+
+/// Called only from native window callbacks or a run_on_main_thread closure.
+pub fn save_on_main_thread<R: Runtime>(app: &AppHandle<R>) {
+    if let Err(error) = app.save_window_state(state_flags()) {
+        log::warn!("window placement: save failed: {error}");
+    }
 }
 
 pub fn is_managed_window_label(label: &str) -> bool {
@@ -56,35 +168,39 @@ fn load_window_placements<R: Runtime>(app: &AppHandle<R>) -> Result<WindowPlacem
     parse_window_placements(store.get(WINDOW_PLACEMENTS_KEY))
 }
 
-fn effective_window_placements<R: Runtime>(
-    app: &AppHandle<R>,
-) -> Result<WindowPlacementMap, String> {
-    let mut placements = load_window_placements(app)?;
-    let state = app.state::<WindowPlacementState>();
-    let latest = state
-        .latest_normal_bounds
-        .lock()
-        .map_err(|_| "window placement: state lock poisoned".to_string())?;
-    placements.extend(
-        latest
-            .iter()
-            .map(|(label, bounds)| (label.clone(), *bounds)),
-    );
-    Ok(placements)
+fn initial_placements(
+    legacy: WindowPlacementMap,
+    current: WindowPlacementMap,
+) -> BTreeMap<String, InitialPlacement> {
+    let mut initial = BTreeMap::new();
+    for (placements, legacy_outer_size) in [(legacy, true), (current, false)] {
+        for (label, bounds) in placements {
+            if is_managed_window_label(&label) && bounds.width > 0 && bounds.height > 0 {
+                initial.insert(
+                    label,
+                    InitialPlacement {
+                        bounds,
+                        legacy_outer_size,
+                    },
+                );
+            }
+        }
+    }
+    initial
 }
 
-fn save_window_placements<R: Runtime>(
+fn load_initial_placements<R: Runtime>(
     app: &AppHandle<R>,
-    placements: WindowPlacementMap,
-) -> Result<(), String> {
-    let store = app
-        .store(paths::UI_STATE_STORE_PATH)
-        .map_err(|e| e.to_string())?;
-    store.set(
-        WINDOW_PLACEMENTS_KEY,
-        serde_json::to_value(placements).map_err(|e| e.to_string())?,
-    );
-    store.save().map_err(|e| e.to_string())
+) -> Result<BTreeMap<String, InitialPlacement>, String> {
+    let path = paths::window_state_path(app).map_err(|error| error.to_string())?;
+    // Read only geometry for placement policy/migration. Do not write the plugin's
+    // private file format or maintain a second live geometry cache.
+    let current = match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| error.to_string())?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
+        Err(error) => return Err(error.to_string()),
+    };
+    Ok(initial_placements(load_window_placements(app)?, current))
 }
 
 fn monitor_from_tauri(monitor: &tauri::Monitor) -> MonitorRect {
@@ -235,21 +351,21 @@ fn resolve_window_bounds(
         .map(|monitor| centered_bounds(window_size, monitor))
 }
 
-fn current_window_size<R: Runtime>(window: &WebviewWindow<R>) -> PhysicalSize<u32> {
+fn current_window_size<R: Runtime>(window: &Window<R>) -> PhysicalSize<u32> {
     window.outer_size().unwrap_or(PhysicalSize {
         width: DEFAULT_WINDOW_WIDTH,
         height: DEFAULT_WINDOW_HEIGHT,
     })
 }
 
-fn available_monitor_rects<R: Runtime>(window: &WebviewWindow<R>) -> Vec<MonitorRect> {
+fn available_monitor_rects<R: Runtime>(window: &Window<R>) -> Vec<MonitorRect> {
     window
         .available_monitors()
         .map(|monitors| monitors.iter().map(monitor_from_tauri).collect())
         .unwrap_or_default()
 }
 
-fn primary_monitor_rect<R: Runtime>(window: &WebviewWindow<R>) -> Option<MonitorRect> {
+fn primary_monitor_rect<R: Runtime>(window: &Window<R>) -> Option<MonitorRect> {
     window
         .primary_monitor()
         .ok()
@@ -257,97 +373,132 @@ fn primary_monitor_rect<R: Runtime>(window: &WebviewWindow<R>) -> Option<Monitor
         .map(|monitor| monitor_from_tauri(&monitor))
 }
 
-pub fn place_window_before_show<R: Runtime>(
-    app: &AppHandle<R>,
-    window: &WebviewWindow<R>,
+fn place_initial_window<R: Runtime>(
+    window: &Window<R>,
+    initial: Option<InitialPlacement>,
 ) -> Result<(), String> {
-    let label = window.label();
-    if !is_managed_window_label(label) {
-        return Ok(());
-    }
-
-    let placements = effective_window_placements(app)?;
-    let saved = placements.get(label).copied();
-    let monitors = available_monitor_rects(window);
-    let cursor = app.cursor_position().ok();
-    let primary = primary_monitor_rect(window);
-    let Some(bounds) = resolve_window_bounds(
-        saved,
-        current_window_size(window),
-        &monitors,
-        cursor,
-        primary,
-    ) else {
+    let Some(initial) = initial else {
         return Ok(());
     };
-
-    if let Err(e) = window.set_size(Size::Physical(PhysicalSize {
-        width: bounds.width,
-        height: bounds.height,
-    })) {
-        log::warn!("window placement: set_size failed for {label}: {e}");
+    if window.is_maximized().map_err(|error| error.to_string())? {
+        return Ok(());
     }
-    if let Err(e) = window.set_position(Position::Physical(PhysicalPosition {
-        x: bounds.x,
-        y: bounds.y,
-    })) {
-        log::warn!("window placement: set_position failed for {label}: {e}");
+    // Retain offscreen coordinates until reveal, when the cursor's current
+    // monitor is known. Move first so legacy frame conversion uses that DPI.
+    window
+        .set_position(PhysicalPosition::new(initial.bounds.x, initial.bounds.y))
+        .map_err(|error| error.to_string())?;
+    if initial.legacy_outer_size {
+        let outer = window.outer_size().map_err(|error| error.to_string())?;
+        let inner = window.inner_size().map_err(|error| error.to_string())?;
+        window
+            .set_size(client_size_for_outer_bounds(initial.bounds, outer, inner))
+            .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
 
-fn should_capture_normal_bounds(is_minimized: bool, is_maximized: bool) -> bool {
-    !is_minimized && !is_maximized
-}
-
-pub fn capture_window_placement<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
-    let label = window.label();
-    if !is_managed_window_label(label) {
+pub fn place_window_before_show<R: Runtime>(window: &Window<R>) -> Result<(), String> {
+    if !is_managed_window_label(window.label())
+        || window.is_maximized().map_err(|error| error.to_string())?
+    {
         return Ok(());
     }
-
-    let is_minimized = window.is_minimized().map_err(|e| e.to_string())?;
-    let is_maximized = window.is_maximized().map_err(|e| e.to_string())?;
-    if !should_capture_normal_bounds(is_minimized, is_maximized) {
-        return Ok(());
-    }
-
-    let position = window.outer_position().map_err(|e| e.to_string())?;
-    let size = window.outer_size().map_err(|e| e.to_string())?;
-    if size.width == 0 || size.height == 0 {
-        return Ok(());
-    }
-
-    let state = window.app_handle().state::<WindowPlacementState>();
-    let mut latest = state
-        .latest_normal_bounds
+    // Hidden windows retain their native geometry. Do not restore stale disk
+    // state or apply the title-bar thickness again on each reveal.
+    let position = window.outer_position().map_err(|error| error.to_string())?;
+    let size = current_window_size(window);
+    let center = window
+        .state::<WindowPlacementState>()
+        .center_on_first_show
         .lock()
-        .map_err(|_| "window placement: state lock poisoned".to_string())?;
-    latest.insert(
-        label.to_string(),
-        WindowBounds {
+        .unwrap()
+        .remove(window.label());
+    place_bounds(
+        window,
+        (!center).then_some(WindowBounds {
             x: position.x,
             y: position.y,
             width: size.width,
             height: size.height,
-        },
-    );
+        }),
+        size,
+    )
+}
+
+fn client_size_for_outer_bounds(
+    bounds: WindowBounds,
+    current_outer: PhysicalSize<u32>,
+    current_inner: PhysicalSize<u32>,
+) -> PhysicalSize<u32> {
+    PhysicalSize::new(
+        bounds
+            .width
+            .saturating_sub(current_outer.width.saturating_sub(current_inner.width))
+            .max(1),
+        bounds
+            .height
+            .saturating_sub(current_outer.height.saturating_sub(current_inner.height))
+            .max(1),
+    )
+}
+
+fn place_bounds<R: Runtime>(
+    window: &Window<R>,
+    saved: Option<WindowBounds>,
+    size: PhysicalSize<u32>,
+) -> Result<(), String> {
+    let monitors = available_monitor_rects(window);
+    let cursor = window.app_handle().cursor_position().ok();
+    let primary = primary_monitor_rect(window);
+    let Some(bounds) = resolve_window_bounds(saved, size, &monitors, cursor, primary) else {
+        return Ok(());
+    };
+
+    let outer = window.outer_size().map_err(|error| error.to_string())?;
+    if outer.width != bounds.width || outer.height != bounds.height {
+        let inner = window.inner_size().map_err(|error| error.to_string())?;
+        window
+            .set_size(Size::Physical(client_size_for_outer_bounds(
+                bounds, outer, inner,
+            )))
+            .map_err(|error| error.to_string())?;
+    }
+    window
+        .set_position(Position::Physical(PhysicalPosition {
+            x: bounds.x,
+            y: bounds.y,
+        }))
+        .map_err(|error| error.to_string())?;
     Ok(())
-}
-
-pub fn persist_window_placements<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    let placements = effective_window_placements(app)?;
-    save_window_placements(app, placements)
-}
-
-pub fn remember_window_placement<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
-    capture_window_placement(window)?;
-    persist_window_placements(window.app_handle())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn saves_only_after_the_latest_resize_has_settled() {
+        let (sender, mut receiver) = watch::channel(());
+        let waiting = tokio::spawn(async move { wait_for_idle(&mut receiver).await });
+        sender.send_replace(());
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_millis(400)).await;
+        sender.send_replace(());
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_millis(499)).await;
+        assert!(!waiting.is_finished());
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert!(waiting.await.unwrap());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn dropping_save_requests_stops_the_worker() {
+        let (sender, mut receiver) = watch::channel(());
+        sender.send_replace(());
+        drop(sender);
+        assert!(!wait_for_idle(&mut receiver).await);
+    }
 
     fn monitor(x: i32, y: i32, width: u32, height: u32) -> MonitorRect {
         MonitorRect {
@@ -359,11 +510,54 @@ mod tests {
     }
 
     #[test]
-    fn captures_bounds_only_for_normal_window_state() {
-        assert!(should_capture_normal_bounds(false, false));
-        assert!(!should_capture_normal_bounds(true, false));
-        assert!(!should_capture_normal_bounds(false, true));
-        assert!(!should_capture_normal_bounds(true, true));
+    fn converts_legacy_outer_size_to_client_size_without_growth() {
+        let bounds = WindowBounds {
+            x: 10,
+            y: 20,
+            width: 1216,
+            height: 839,
+        };
+        let inner = client_size_for_outer_bounds(
+            bounds,
+            PhysicalSize::new(1056, 759),
+            PhysicalSize::new(1040, 720),
+        );
+        assert_eq!(inner, PhysicalSize::new(1200, 800));
+        // A second hide/reveal with the same frame cannot add its thickness again.
+        assert_eq!(
+            client_size_for_outer_bounds(bounds, PhysicalSize::new(1216, 839), inner),
+            inner
+        );
+    }
+
+    #[test]
+    fn new_plugin_state_takes_precedence_over_legacy_and_ignores_special_windows() {
+        let legacy = parse_window_placements(Some(serde_json::json!({
+            "chat": {"x": 1, "y": 2, "width": 1000, "height": 700},
+            "voice-call": {"x": 3, "y": 4, "width": 400, "height": 600},
+            "pet": {"x": 0, "y": 0, "width": 200, "height": 300}
+        })))
+        .unwrap();
+        let current = parse_window_placements(Some(serde_json::json!({
+            "chat": {"x": 10, "y": 20, "width": 1200, "height": 800, "maximized": true}
+        })))
+        .unwrap();
+        let result = initial_placements(legacy, current);
+        assert_eq!(result.len(), 2);
+        assert!(!result["chat"].legacy_outer_size);
+        assert_eq!(result["chat"].bounds.width, 1200);
+        assert!(result["voice-call"].legacy_outer_size);
+    }
+
+    #[test]
+    fn plugin_does_not_own_visibility_or_decorations() {
+        assert!(
+            state_flags().contains(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED)
+        );
+        assert!(!state_flags()
+            .intersects(StateFlags::VISIBLE | StateFlags::DECORATIONS | StateFlags::FULLSCREEN));
+        assert!(!is_managed_window_label("pet"));
+        assert!(!is_managed_window_label("bubble"));
     }
 
     #[test]

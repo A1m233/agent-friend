@@ -25,6 +25,8 @@ log = "0.4"
 tauri = { version = "2.11.2", features = ["tray-icon", "macos-private-api", "protocol-asset"] }
 tauri-plugin-log = "2"
 tauri-plugin-store = "2"
+# 2.5 raises MSRV to 1.90; keep the existing desktop toolchain contract.
+tauri-plugin-window-state = "=2.4.1"
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 # 025 · 统一文件日志：跨平台 base dir helper + 自定义时间戳
 chrono = "0.4"
@@ -117,3 +119,6 @@ tauri-runtime-wry = { path = "vendor/tauri-runtime-wry" }
 members = ["vendor/tauri-runtime-wry"]
 default-members = ["."]
 resolver = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "test-util"] }
