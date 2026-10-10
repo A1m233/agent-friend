@@ -62,7 +62,9 @@ def prepare(
     uv_archive = download_root / str(lock["uv"]["filename"])
     _download_locked(lock["python"], python_archive, offline=offline)
     _download_locked(lock["uv"], uv_archive, offline=offline)
-    with tempfile.TemporaryDirectory(prefix="agent-friend-managed-python-vendor-") as value:
+    with tempfile.TemporaryDirectory(
+        prefix="agent-friend-managed-python-vendor-", dir=destination.parent
+    ) as value:
         temp = Path(value)
         extracted_python = temp / "extracted-python"
         extracted_uv = temp / "extracted-uv"

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-10",
+  "command": "scripts/build-storage/run.ps1 benchmark",
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.6"
+  },
+  "fixture": {
+    "objects": 4,
+    "files": 4000,
+    "logicalBytes": 4096000
+  },
+  "samplesSeconds": {
+    "recursive": [
+      0.010808099992573261,
+      0.012698499980615452,
+      0.013068500004010275,
+      0.0116631000128109,
+      0.009850200003711507,
+      0.01719819998834282,
+      0.011180600005900487
+    ],
+    "recorded": [
+      0.06907779999892227,
+      0.010318799992091954,
+      0.009275199990952387,
+      0.010090900002978742,
+      0.009795899997698143,
+      0.01119940000353381,
+      0.010182700003497303
+    ]
+  },
+  "medianSeconds": {
+    "recursive": 0.0116631000128109,
+    "recorded": 0.010182700003497303
+  },
+  "scope": "warm filesystem; excludes interpreter startup; no physical-space claim; synthetic before/after algorithm comparison, not historical whole-machine measurement"
+}

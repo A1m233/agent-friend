@@ -3,6 +3,11 @@ frontend/src-tauri/Cargo.toml text eol=lf
 
 # Shell scripts must stay LF even when Windows core.autocrlf is enabled.
 scripts/dev/run.sh text eol=lf
+scripts/_lib/python312.sh text eol=lf
+scripts/build-storage/run.sh text eol=lf
+scripts/package/run.sh text eol=lf
+scripts/rust-check/run.sh text eol=lf
+scripts/frontend/dev.sh text eol=lf
 scripts/session-memory/run.sh text eol=lf
 
 # Checksummed source patches must keep byte-identical LF content on Windows.

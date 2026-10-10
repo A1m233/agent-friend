@@ -6,11 +6,15 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parents[1] / "_lib"))
+from build_storage.config import control_root, load_config
 
 STATE_ENV = "AGENT_FRIEND_PACKAGE_STATE_DIR"
 RELEASES_ENV = "AGENT_FRIEND_RELEASES_DIR"
@@ -91,7 +95,11 @@ def resolve_package_roots(
     local = _resolved(
         local_appdata or Path(env.get("LOCALAPPDATA", user_home / "AppData" / "Local"))
     )
-    state = _resolved(state_dir or Path(env.get(STATE_ENV, local / "agent-friend" / "packaging")))
+    configured = load_config(control_root())["buildRoot"]
+    default_state = (
+        Path(configured) / "package" if configured else local / "agent-friend" / "packaging"
+    )
+    state = _resolved(state_dir or Path(env.get(STATE_ENV, default_state)))
     releases = _resolved(
         releases_dir or Path(env.get(RELEASES_ENV, user_home / "agent-friend-releases"))
     )

@@ -1,0 +1,244 @@
+{
+  "schemaVersion": 1,
+  "recordedDate": "2026-10-10",
+  "baseCommit": "2de2b4bded82b88475992a4ceae00b738518fb99",
+  "branch": "feature/158-build-cache-and-packaging-governance",
+  "sourceState": "uncommitted implementation; acceptance pending",
+  "candidate": {
+    "buildId": "20261010T043140Z-2de2b4bded82-ddade15c",
+    "installerName": "agent-friend_0.4.1_windows_x64-local-test-NOT-FOR-DISTRIBUTION-setup.exe",
+    "installerRelative": "_local-test/0.4.1/windows-x64/ordinary/20261010T043140Z-2de2b4bded82-ddade15c/agent-friend_0.4.1_windows_x64-local-test-NOT-FOR-DISTRIBUTION-setup.exe",
+    "installerSha256": "0d934d8ea7a9fbc2b06041dab01a3f84c44ca389fb7353c213d7f091600d60b1",
+    "version": "0.4.1"
+  },
+  "verificationInputs": {
+    "schemaVersion": 1,
+    "scope": "windows-installer-shared-behavior-v1",
+    "packageInputSha256": "1f46c87642997b6a0648070c7de29f5def0d4fc01567bf3355275ce204ca5bdb",
+    "fileCount": 1436,
+    "buildEnvironment": {
+      "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+      "node": "v22.15.0",
+      "platform_machine": "AMD64",
+      "platform_release": "11",
+      "platform_system": "Windows",
+      "platform_version": "10.0.26200",
+      "pnpm": "10.15.0",
+      "pyinstaller": "6.21.0",
+      "python": "3.12.6",
+      "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+      "source_content_identity": "git-clean-filter-v1",
+      "tauri_cli": "2.11.2"
+    }
+  },
+  "matrix": {
+    "command": "scripts/package/run.ps1 installer-smoke --smoke-build-report <exact candidate report>",
+    "exitCode": 0,
+    "scenarioCount": 14,
+    "scenarios": [
+      {
+        "name": "collision_preflight",
+        "result": "passed",
+        "startedAt": "2026-10-10T04:59:51.721485+00:00",
+        "endedAt": "2026-10-10T04:59:51.721485+00:00"
+      },
+      {
+        "name": "fresh_install",
+        "result": "passed",
+        "startedAt": "2026-10-10T04:59:51.721485+00:00",
+        "endedAt": "2026-10-10T05:02:00.335940+00:00"
+      },
+      {
+        "name": "preinstall_launch_failure_diagnostics",
+        "result": "passed",
+        "startedAt": "2026-10-10T05:02:00.335940+00:00",
+        "endedAt": "2026-10-10T05:02:06.399198+00:00"
+      },
+      {
+        "name": "legacy_fixed_layout_upgrade",
+        "result": "passed",
+        "startedAt": "2026-10-10T05:02:06.399198+00:00",
+        "endedAt": "2026-10-10T05:04:22.943500+00:00"
+      },
+      {
+        "name": "silent_success_exit_code",
+        "result": "passed",
+        "startedAt": "2026-10-10T05:04:22.943500+00:00",
+        "endedAt": "2026-10-10T05:04:22.943500+00:00"
+      },
+      {
+        "name": "same_version_repair",
+        "result": "passed",
+        "startedAt": "2026-10-10T05:04:22.943500+00:00",
+        "endedAt": "2026-10-10T05:06:48.964411+00:00"
+      },
+      {
+        "name": "newer_installed_version_rejected_without_mutation",
+        "result": "passed",
+        "startedAt": "2026-10-10T05:06:48.964411+00:00",
+        "endedAt": "2026-10-10T05:08:22.027505+00:00"
+      },
+      {
+        "name": "install_root_drift_rejected_without_move_intent",
+        "result": "passed",
+        "startedAt": "2026-10-10T05:08:22.027505+00:00",
+        "endedAt": "2026-10-10T05:09:39.478805+00:00"
+      },
+      {
+        "name": "overlong_migration_target_rolls_back",
+        "result": "passed",
+        "startedAt": "2026-10-10T05:09:39.478805+00:00",
+        "endedAt": "2026-10-10T05:10:57.635556+00:00"
+      },
+      {
+        "name": "explicit_program_root_migration",
+        "result": "passed",
+        "startedAt": "2026-10-10T05:10:57.635556+00:00",
+        "endedAt": "2026-10-10T05:13:14.650380+00:00"
+      },
+      {
+        "name": "running_shell_upgrade",
+        "result": "passed",
+        "startedAt": "2026-10-10T05:13:14.650380+00:00",
+        "endedAt": "2026-10-10T05:15:40.393258+00:00"
+      },
+      {
+        "name": "owned_orphan_runtime_upgrade",
+        "result": "passed",
+        "startedAt": "2026-10-10T05:15:40.393258+00:00",
+        "endedAt": "2026-10-10T05:17:57.711087+00:00"
+      },
+      {
+        "name": "unconfirmed_file_lock_failure_and_retry",
+        "result": "passed",
+        "startedAt": "2026-10-10T05:17:57.711087+00:00",
+        "endedAt": "2026-10-10T05:20:17.847892+00:00"
+      },
+      {
+        "name": "identity_mismatch_rejected",
+        "result": "passed",
+        "startedAt": "2026-10-10T05:20:17.847892+00:00",
+        "endedAt": "2026-10-10T05:20:17.854886+00:00"
+      }
+    ]
+  },
+  "independentVerification": {
+    "command": "scripts/package/run.ps1 installer-smoke-verify --smoke-report <exact report> --candidate-build-id <exact id> --candidate-installer <exact installer>",
+    "exitCode": 0
+  },
+  "runtimeVerification": {
+    "doctor": "passed",
+    "frozenServices": {
+      "bridge": "passed",
+      "voice": "passed"
+    },
+    "identity": {
+      "buildId": "20261010T043140Z-2de2b4bded82-ddade15c",
+      "buildMode": "local-test",
+      "dirty": true,
+      "distribution": "ordinary",
+      "productVersion": "0.4.1",
+      "profileId": "installer-smoke",
+      "schemaVersion": 1,
+      "sourceCommit": "2de2b4bded82b88475992a4ceae00b738518fb99",
+      "sourceTreeSha256": "c86ef8b1485744b611b381787d02a4d6896b52c1388728e8fbf74961690c590b"
+    },
+    "runtimeInventorySha256": "0e02e8b03f3266cfdcd1515968447210bc3c3407e19bc3a8b5c6b90031e8b74f",
+    "schemaVersion": 1
+  },
+  "guideBaseline": {
+    "lifecycle": "transient",
+    "snapshot_sha256": "fdb31c26a469e99f790acbe228824e4e68ac9128580158e19f41bb187e341682",
+    "source_commit": "d019c3579b83e6fb14aa219f29cc033a22b63074"
+  },
+  "lifecycle": {
+    "candidateWorkRemoved": true,
+    "candidateRegistryRemoved": true,
+    "installerAndManifestValidated": true,
+    "nativeSymbolsValidated": true,
+    "archivedEvidencePreserved": true,
+    "reservationsReleased": true,
+    "temporaryResourceViewsRemoved": true,
+    "guideOverlayRestored": true,
+    "automaticCategories": [],
+    "legacyCachesAdoptedOrDeleted": false
+  },
+  "checks": {
+    "backendFull": {
+      "passed": 4052,
+      "skipped": 5,
+      "scope": "before final cross-volume adapter fixes; later changes covered by latest targeted check"
+    },
+    "packageAndStorageLatest": {
+      "passed": 175,
+      "command": "scripts/check/run.ps1 --stage backend scripts/package scripts/build-storage -q",
+      "lintAndFormatFiles": 987,
+      "mypyFiles": 811
+    },
+    "frontend": {
+      "testFiles": 178,
+      "passed": 1471,
+      "lintTypecheckBuild": "passed"
+    },
+    "rust": "Tauri core test and release check passed",
+    "guidance": "skill validation, guidance audit and project adapter doctor passed",
+    "shellWrappers": "PowerShell parse and Bash syntax passed"
+  },
+  "limits": {
+    "manualInstallerLanguageUI": "not run; unchanged by this feature",
+    "productionUpgrade": {
+      "executed": false,
+      "authorized": false
+    },
+    "platformExecution": "Windows 11 x64; other platforms syntax/interfaces only",
+    "physicalDiskSavings": "not measured; no real legacy cleanup",
+    "userAcceptance": "pending"
+  },
+  "evidenceFiles": [
+    {
+      "path": "D:\\agent-friend-build-validation\\158\\package-state\\work\\4aa1f81a6164\\3f7903fcbf29\\installer-smoke-reports\\smoke-20261010T043140Z-2de2b4bded82-ddade15c.json",
+      "size": 6718,
+      "sha256": "629157035fac976cdeb79c6bcf2a013aa9b992007ebac185b7df2ee55574140c"
+    },
+    {
+      "path": "D:\\agent-friend-build-validation\\158\\releases\\_local-test\\0.4.1\\windows-x64\\ordinary\\20261010T043140Z-2de2b4bded82-ddade15c\\release.json",
+      "size": 2353,
+      "sha256": "498e79926f2b99d9a20c17d8b605385fce310e86a0b6e421f8cb3c0445a66858"
+    },
+    {
+      "path": "D:\\agent-friend-build-validation\\158\\normal-matrix-result.json",
+      "size": 639,
+      "sha256": "36d1fbd62699fa5ef338ef13899d179e9ab8d26a3bc3859d31ce24253b00b9c6"
+    },
+    {
+      "path": "D:\\agent-friend-build-validation\\158\\normal-environment-probe.json",
+      "size": 743,
+      "sha256": "88fb06ea3b426774639ec41fbaeabf4d09f2d19425c905f86cf23a1c1f7cfb62"
+    },
+    {
+      "path": "D:\\agent-friend-build-validation\\158\\normal-matrix.log",
+      "size": 33693,
+      "sha256": "03698fc710d06547fb7660aae112ebb57f99585b57729ee49659f08da44f877a"
+    },
+    {
+      "path": "D:\\agent-friend-build-validation\\158\\normal-verify.log",
+      "size": 199,
+      "sha256": "dfc197d921aebaa886157f90eed43e70048da575189b388c5e1b9a16030b8683"
+    },
+    {
+      "path": "D:\\agent-friend-build-validation\\158\\final-candidate.log",
+      "size": 58631,
+      "sha256": "1a7b22bd78faea22203127d448b64739b0bf462190a2fbf3e8977cd3fdc2bec3"
+    },
+    {
+      "path": "D:\\agent-friend-build-validation\\158\\releases\\_symbols\\windows-x64\\installer-smoke\\20261010T043140Z-2de2b4bded82-ddade15c\\symbols.json",
+      "size": 1506,
+      "sha256": "dfeab82e4195edb9d96f52c0899c93efa06d6fa06e68daed1dae82ef14708822"
+    },
+    {
+      "path": "C:\\Users\\example-user\\AppData\\Local\\agent-friend\\build-control\\reports\\4aa1f81a61648489128b75ae\\e228497bb0e76124cd9342fd-f5792f8ffe744a9893516b3cd887a7c6.json",
+      "size": 2842,
+      "sha256": "42605ae336f33194975f1ec0f66b247263e45189128115327a4d1d7c15a396ff"
+    }
+  ]
+}

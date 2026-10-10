@@ -6,4 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/_ensure-node.sh"
 ensure_node_pnpm
 cd "$SCRIPT_DIR/../../frontend"
-exec pnpm tauri dev "$@"
+cd "$SCRIPT_DIR/../.."
+source scripts/_lib/python312.sh
+build_python
+exec "$BUILD_PYTHON" -B scripts/build-storage/execute.py --cwd "$PWD/frontend" dev -- node "$PWD/frontend/node_modules/@tauri-apps/cli/tauri.js" dev "$@"

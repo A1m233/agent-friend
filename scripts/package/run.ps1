@@ -7,5 +7,7 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($f
 Set-Location (Join-Path $PSScriptRoot "..\..")
 # Installer smoke requires normal Windows shell paths; AppData overrides are rejected.
 # Runtime builds enforce Guide provenance, companion hashes, and non-mutating helper load smoke.
-uv run --group package --group memory-retrieval-benchmark python scripts/package/run.py @args
+. (Join-Path $PSScriptRoot "..\_lib\python312.ps1")
+$python = Get-BuildPython
+& $python -B (Join-Path $PSScriptRoot "dispatch.py") @args
 exit $LASTEXITCODE

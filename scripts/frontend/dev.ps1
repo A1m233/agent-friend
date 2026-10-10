@@ -6,4 +6,9 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($f
 . (Join-Path $PSScriptRoot "_ensure-node.ps1")
 Ensure-NodePnpm
 Set-Location (Join-Path $PSScriptRoot "..\..\frontend")
-pnpm tauri dev @args
+$repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
+Set-Location $repoRoot
+. (Join-Path $PSScriptRoot "..\_lib\python312.ps1")
+$python = Get-BuildPython
+& $python -B (Join-Path $repoRoot "scripts\build-storage\execute.py") --cwd (Join-Path $repoRoot "frontend") dev -- node (Join-Path $repoRoot "frontend\node_modules\@tauri-apps\cli\tauri.js") dev @args
+exit $LASTEXITCODE

@@ -122,6 +122,43 @@ def test_child_build_output_is_safe_for_non_utf8_windows_console() -> None:
     assert raw.getvalue().decode("gbk").splitlines() == ["build complete ?"]
 
 
+def test_child_smoke_build_uses_utf8_independent_of_windows_locale(tmp_path, monkeypatch):
+    package = _load("package_run_child_utf8", PACKAGE_DIR / "run.py")
+    original = subprocess.Popen
+
+    def child(command, **kwargs):
+        return original(
+            [
+                sys.executable,
+                "-c",
+                "print('错误信息');print('build_id: exact');print('installer: candidate.exe')",
+            ],
+            **kwargs,
+        )
+
+    monkeypatch.setenv("PYTHONIOENCODING", "gbk")
+    monkeypatch.setattr(package.subprocess, "Popen", child)
+    roots = SimpleNamespace(state_root=tmp_path / "state", releases_root=tmp_path / "releases")
+    assert package._child_smoke_build(roots, offline=True) == ("exact", Path("candidate.exe"))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows drive-letter URL ambiguity")
+def test_tauri_config_cross_drive_path_is_absolute_and_not_a_url(tmp_path, monkeypatch):
+    package = _load("package_run_cross_drive", PACKAGE_DIR / "run.py")
+    target = tmp_path / "frontend dist"
+    target.mkdir()
+
+    def different_volume(*args):
+        raise ValueError("path is on another mount")
+
+    monkeypatch.setattr(package.os.path, "relpath", different_volume)
+    value = package._tauri_config_path(target)
+    assert value.startswith("\\\\?\\")
+    assert Path(value).is_absolute()
+    assert Path(value).samefile(target)
+    assert ":" not in value.split("\\", 1)[0]
+
+
 def test_tauri_package_explicitly_selects_the_desktop_shell_binary() -> None:
     cargo = tomllib.loads(
         (PACKAGE_DIR.parent.parent / "frontend" / "src-tauri" / "Cargo.toml").read_text("utf-8")
@@ -243,6 +280,12 @@ def test_installer_smoke_build_uses_one_candidate_build_for_default_fixture(
     def fake_child_build(_roots, *, offline):
         nonlocal child_calls
         child_calls += 1
+        candidate_paths.build_dir.mkdir(parents=True)
+        (candidate_paths.build_dir / "smoke-baseline-shell.exe").write_bytes(
+            shared_shell.read_bytes()
+        )
+        # Another build can replace mutable cache output immediately after the child exits.
+        shared_shell.write_bytes(b"another-build")
         return candidate_id, candidate_installer
 
     captured: dict[str, object] = {}
@@ -266,7 +309,7 @@ def test_installer_smoke_build_uses_one_candidate_build_for_default_fixture(
     assert captured["candidate_build_id"] == candidate_id
     assert (
         candidate_paths.build_dir / "smoke-baseline-shell.exe"
-    ).read_bytes() == shared_shell.read_bytes()
+    ).read_bytes() == package.DESKTOP_SHELL_ROLE_MARKER + b"-candidate-shell"
 
 
 def test_production_installer_gate_requires_explicit_matching_smoke_report(
@@ -1141,7 +1184,10 @@ def test_nsis_postinstall_imports_and_deletes_trusted_seed() -> None:
     assert "SetErrorLevel 33" in hooks
 
 
-def test_trusted_resources_use_keyring_and_never_write_plaintext(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("external_view", [False, True])
+def test_trusted_resources_use_keyring_and_never_write_plaintext(
+    tmp_path, monkeypatch, external_view
+) -> None:
     package = _load("package_run_trusted_resources", PACKAGE_DIR / "run.py")
     base_config = tmp_path / "tauri.package.conf.json"
     base_config.write_text(
@@ -1180,6 +1226,7 @@ def test_trusted_resources_use_keyring_and_never_write_plaintext(tmp_path, monke
     nsis_template = tmp_path / "installer.nsi"
     nsis_template.write_text("template", encoding="utf-8")
     package._prepare_trusted_resources(build_paths, credential_store=store)
+    resource_root = tmp_path / "view" if external_view else build_paths.build_dir
 
     config_path = package._write_package_config(
         build_paths,
@@ -1187,6 +1234,7 @@ def test_trusted_resources_use_keyring_and_never_write_plaintext(tmp_path, monke
         profile=package.resolve_install_profile("production"),
         trusted_beta=True,
         nsis_template=nsis_template,
+        resource_root=resource_root,
     )
     payload, key = package._trusted_resource_paths(build_paths)
     assert payload.is_file()
@@ -1195,9 +1243,12 @@ def test_trusted_resources_use_keyring_and_never_write_plaintext(tmp_path, monke
     resources = config["bundle"]["resources"]
     assert payload.as_posix() not in resources
     assert key.as_posix() not in resources
-    assert resources[build_paths.payload_stage.as_posix() + "/"] == "packages/trusted-test"
+    assert resources[(resource_root / "payload-stage").as_posix() + "/"] == "packages/trusted-test"
     metadata_path = package._package_metadata_path(build_paths)
-    assert resources[metadata_path.as_posix()] == "package-build.json"
+    assert (
+        resources[(resource_root / "config" / metadata_path.name).as_posix()]
+        == "package-build.json"
+    )
     metadata = json.loads(metadata_path.read_text("utf-8"))
     assert metadata["buildMode"] == "local-test"
     assert metadata["distribution"] == "trusted-beta"
@@ -1744,7 +1795,7 @@ def test_installer_build_uses_external_cargo_target_and_generated_resource_confi
         payload_resource = build_paths.payload_stage.as_posix() + "/"
         assert resources[payload_resource] == "packages/external-build"
         assert config["build"]["beforeBuildCommand"] == ""
-        assert config["build"]["frontendDist"] == package._tauri_relative_path(
+        assert config["build"]["frontendDist"] == package._tauri_config_path(
             build_paths.frontend_dist
         )
         bundle = build_paths.cargo_target_dir / "release" / "bundle" / "nsis"

@@ -37,7 +37,9 @@ class CleanupCandidate:
 
 
 def package_workspace_lock_path(roots: PackageRoots) -> Path:
-    return roots.state_root / "locks" / roots.repo_id / "package-workspace.lock"
+    from build_storage.config import control_root
+
+    return control_root() / "locks" / "package" / f"{roots.repo_id}.lock"
 
 
 def _utc_now() -> datetime:
@@ -266,7 +268,19 @@ def apply_workspace_gc(roots: PackageRoots, report: dict[str, Any]) -> dict[str,
 
 def cleanup_build_after_success(roots: PackageRoots, build_id: str) -> None:
     paths = create_build_paths(roots, build_id=build_id)
-    safe_rmtree(paths.build_dir, build_paths=paths)
+    from build_storage import Storage
+    from build_storage.execution import complete_build
+    from build_storage.files import identity
+
+    storage = (
+        Storage(roots.repo_root, common=roots.repo_root)
+        if not (roots.repo_root / ".git").exists()
+        else Storage(roots.repo_root)
+    )
+    if storage.record_path(identity(paths.build_dir)).exists():
+        complete_build(storage, paths.build_dir, remove=True, outcome="passed")
+    else:
+        safe_rmtree(paths.build_dir, build_paths=paths)
 
 
 def cleanup_smoke_builds_after_success(roots: PackageRoots, build_report_path: Path) -> list[str]:

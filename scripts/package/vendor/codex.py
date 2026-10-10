@@ -59,7 +59,9 @@ def prepare(
         return executable
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="agent-friend-codex-vendor-") as temp_value:
+    with tempfile.TemporaryDirectory(
+        prefix="agent-friend-codex-vendor-", dir=destination.parent
+    ) as temp_value:
         temp = Path(temp_value)
         archive = temp / artifact["filename"]
         _download(

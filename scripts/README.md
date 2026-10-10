@@ -153,7 +153,7 @@ Python通知代码调整后可显式执行 `restart-bridge`，复用前端的 `r
 
 > frozen runtime 的 doctor/capability smoke 包含 Scheduled Task 的 Agent 工具、SQLite 到期生成和提交后中断恢复路径；该 smoke 使用确定性本地数据，不调用 LLM 或外部服务。
 
-> 打包缓存和中间构建默认写入 `%LOCALAPPDATA%\agent-friend\packaging\`，最终制品写入 `%USERPROFILE%\agent-friend-releases\`，均不依赖仓库或 worktree。可用 `AGENT_FRIEND_PACKAGE_STATE_DIR` / `--state-dir` 和 `AGENT_FRIEND_RELEASES_DIR` / `--releases-dir` 覆盖。所有 worktree 的 package build 使用仓库级互斥锁，开始构建前要求 state 所在卷至少有 40 GiB 可用空间；成功完成 installer/all 后自动删除本次 build-id，runtime 与 installer-smoke 中间态按复用契约暂存。`workspace-status` 只读盘点，`workspace-gc` 默认 dry-run、显式 `--apply` 后回收超过 48 小时的 build-id 与超过 7 天未使用的 per-worktree 增量 cache，不触碰 source worktree 或 releases。`version-status` 查询稳定产品版本、本机最新有效正式制品和下一 trusted-beta 版本；准备安装到当前机器时先用 `production-install-plan` 读取真实 production 注册表、active receipt 与 build identity，实际构建再附带 `--for-current-install`，降级会在创建 build workspace 前被拒绝。`version-set <semver>` 显式同步稳定产品版本。每个开发周期用 `trusted-beta-configure <next-stable-semver>` 配置一次下一稳定版本，之后脚本自动生成 `<target>-beta.<UTC YYYYMMDD>.<sequence>`；`--trusted-beta --local-test` 沿用该下一 beta 版本，只把制品标记为不可发布。正式 release 与可分发 trusted-beta 都要求 clean worktree 且同一制品不可覆盖；验证未提交代码时使用 `--local-test`，产物会标记 `NOT-FOR-DISTRIBUTION`。
+> 构建存储由 `build-storage` 统一管理。未配置时 package 保持既有默认根；配置 `buildRoot` 后标准构建按类别使用仓库外目录。显式 package state/release 覆盖仍有效，实际路径以 `package plan` 为准。快速状态查询不安装构建依赖；精确扫描用 `--scan`。自动回收默认关闭，仅在显式启用的类别中执行；旧目录需接管并确认旧消费者退出，安装包、manifest、native symbols 与必要证据均不在缓存回收范围。`version-status` 查询稳定产品版本、本机最新有效正式制品和下一 trusted-beta 版本；准备安装到当前机器时先用 `production-install-plan` 读取真实 production 注册表、active receipt 与 build identity，实际构建再附带 `--for-current-install`，降级会在创建 build workspace 前被拒绝。`version-set <semver>` 显式同步稳定产品版本。每个开发周期用 `trusted-beta-configure <next-stable-semver>` 配置一次下一稳定版本，之后脚本自动生成 `<target>-beta.<UTC YYYYMMDD>.<sequence>`；`--trusted-beta --local-test` 沿用该下一 beta 版本，只把制品标记为不可发布。正式 release 与可分发 trusted-beta 都要求 clean worktree 且同一制品不可覆盖；验证未提交代码时使用 `--local-test`，产物会标记 `NOT-FOR-DISTRIBUTION`。
 
 > 桌面端额外需要 **Node 22+ / pnpm（`corepack enable pnpm`）/ Rust（[rustup.rs](https://rustup.rs)）**；`setup` 会检测并提示，但不替你装系统级工具。只想跑后端 CLI 可忽略这三项。
 
@@ -163,6 +163,7 @@ Python通知代码调整后可显式执行 `restart-bridge`，复用前端的 `r
 
 | 脚本 | 用途 | mac/linux | windows |
 |---|---|---|---|
+| `build-storage/` | 轻量配置、盘点、缓存回收、保留与中断操作核对；仅需已安装的 Python 3.12，不同步项目依赖 | `./scripts/build-storage/run.sh status\|inventory --scan\|gc [--apply]` | `.\scripts\build-storage\run.ps1 status\|inventory --scan\|gc [--apply]` |
 | `setup/` | 一键环境初始化（检查 uv → `uv sync` → 准备固定命令运行时 → 提示配置系统凭据 → 尽力装前端依赖 → 检查 Rust；命令运行时失败会阻止 setup，缺 node/pnpm/Rust 只提示不报错） | `./scripts/setup/run.sh [--clean]` | `.\scripts\setup\run.ps1 [--clean]` |
 | `command-runtime/` | 准备、校验并输出产品固定版本的官方 Codex 命令运行时；`ensure` 使用按 vendor lock 内容寻址的用户级共享 cache，供 setup/dev/bridge 幂等调用并跨 worktree 复用，下载或完整性失败会阻止开发 runtime；`dev status/stop` 保持只读。`status` 检查产品隔离的 Windows 沙箱身份，`setup` 显式触发一次管理员初始化，普通 dev/bridge 不会暗中弹 UAC；`smoke` 无网络、无真实 LLM 地验证 buffered、streaming、显式 host-user、模型可见精确终止、只读沙箱与直接 PowerShell argv；`network-smoke` 显式访问 GitHub API，验证公共 Tool 的 managed HTTPS 通道；`skill-install-smoke` 把公开测试 Skill 安装进隔离临时 catalog 并验证无重启发现 | `./scripts/command-runtime/run.sh ensure\|prepare\|doctor\|path\|status\|setup\|smoke\|network-smoke\|skill-install-smoke` | `.\scripts\command-runtime\run.ps1 ensure\|prepare\|doctor\|path\|status\|setup\|smoke\|network-smoke\|skill-install-smoke` |
 | `agent-friend-guide/` | 准备并校验受管的公开 Guide checkout；生成完整 Skill ZIP + 兼容 manifest，或通过 `gh` 以 draft-assets-publish 顺序创建并复核 immutable release；仅在桌面基线需要刷新时从已提交且 origin 可见的精确 commit 同步 builtin。包允许 references/scripts/assets 等任意正常资源，构建和更新均不执行包内脚本 | `./scripts/agent-friend-guide/run.sh prepare\|status\|verify ...` / `build-release\|publish-release --release-sequence N --min-product-version X --max-product-version-exclusive Y ...` / `sync --guide-commit SHA` | `.\scripts\agent-friend-guide\run.ps1 prepare\|status\|verify ...` / `build-release\|publish-release --release-sequence N --min-product-version X --max-product-version-exclusive Y ...` / `sync --guide-commit SHA` |
@@ -263,3 +264,35 @@ NSIS 模板适配对受控 payload 的规范绝对路径使用 Windows 扩展长
 
 
 151 附件文件化后，`deepseek-vision-smoke/run.* --allow-llm` 改为三种静态图片的合成工具结果协议验证（最多 3 次生成、无 Files API 上传）；它不验证 Agent 工具选择。`assistant-phase-smoke/run.*` 的 lookup_fixture 返回图像与值，保留两次生成上限，不再上传用户附件。`model-connections-smoke/run.* capabilities` 的图片用工具结果投递，PDF/TXT 仅做确定性文件引用检查，不再验证原生文档输入；普通最多 2 次生成，extended 最多 3 次生成。三者均继续要求单次真实 LLM 授权。
+
+## 构建存储管理
+
+管理命令需要本机已有 Python 3.12，缺少时提示安装，不自动下载解释器或创建 `.venv`。下面以 Windows 为例，macOS/Linux 使用对应 `run.sh`。
+
+```powershell
+.\scripts\build-storage\run.ps1 status
+.\scripts\build-storage\run.ps1 inventory --scan
+.\scripts\package\run.ps1 plan --purpose runtime-verify --state-dir D:\agent-friend-packaging
+.\scripts\build-storage\run.ps1 configure --build-root D:\agent-friend-builds --budget-gib 80 --low-water-gib 60
+.\scripts\build-storage\run.ps1 configure --automatic on --category package-cache --category package-build
+.\scripts\build-storage\run.ps1 gc --scan
+.\scripts\build-storage\run.ps1 gc --apply
+.\scripts\build-storage\run.ps1 pin --object-id <ID> --reason "等待检查"
+.\scripts\build-storage\run.ps1 unpin --object-id <ID>
+```
+
+盘符只是显式配置示例，不会自动选择或迁移已有目录。自动回收类别还可选择 `dev`、`rust-check`、`runtime-regression`；只有登记归属的对象会被处理。默认预算 80 GiB，低水位 60 GiB，闲置缓存 7 天；失败/等待续跑工作区默认保留 48 小时。pin 和活动保护优先于容量目标。体积是逻辑文件大小，实际释放量应看删除前后的卷空间。
+
+`package workspace-status` / `workspace-gc` 是 package 类别的兼容入口；快速盘点只读记录，不递归读取所有缓存。`--scan` 显式更新体积，stderr 显示进度；取消或读取失败会标记不完整，不当成零占用。仓库内旧 target、虚拟环境和全局依赖缓存不被自动接管。
+
+旧 package 目录先执行 `package run.ps1 workspace-adopt --path <ABSOLUTE_PATH>` 预览；核实目标后加 `--apply`。接管后默认 pin，确认旧构建进程及其后代全部退出再 unpin。未知目录、错误 identity、链接或 junction 都拒绝接管删除。
+
+纯冻结验证使用 `package run.* runtime-verify --local-test` 并传既有必需的 Guide/verification 参数；成功后归档报告并回收工作区。`runtime` 保持分步续跑用途，后续仍必须提供精确 `--reuse-build-id`。完整安装包及 symbols 保留在 release 根。
+
+开发、Rust 检查与 runtime 回归入口均使用受保护的仓库外 target。`CARGO_TARGET_DIR` 可显式覆盖；Rust check 两阶段共同使用该值，不接受只影响单阶段的 `--target-dir`。未接管的旧 target 可继续使用，但不会自动删除。构建开始前检查实际卷，保护期间为并发操作预留容量；空间不足时不自动降低门槛。
+
+Windows 源码与构建根分属不同卷时，Tauri 封装使用源码卷上的临时 junction 读取资源，实际 payload 仍留在受管构建卷；正常结束只移除已核实的链接，不递归删除其目标。通用接管和缓存删除仍拒绝链接。
+
+异常退出后，运行记录和空间预留可能继续受保护。只有人工确认整个子进程树已停止，才能执行 `build-storage run.* reconcile --operation-id <ID> --confirm-stopped --reason <核实依据>`。命令不会杀进程，也不会删除失败现场。
+
+`build-storage run.* benchmark` 只在自动移除的隔离 fixture 中比较快速盘点与递归计数，输出环境、样本规模和耗时；不扫描或清理真实缓存。`package run.* plan --purpose runtime-verify|runtime|installer|all|installer-smoke-build` 展示对应用途与生命周期，计划不代替实际验证门禁。
