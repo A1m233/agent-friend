@@ -36,7 +36,7 @@ describe("ToolCard", () => {
     globalThis.ResizeObserver = originalResizeObserver;
   });
 
-  it.each([false, true])("bounds standalone details but lets embedded details use the parent scroll area (embedded=%s)", async (embedded) => {
+  it.each([false, true])("bounds parameters and results independently in both layouts (embedded=%s)", async (embedded) => {
     const block: ToolBlock = {
       kind: "tool",
       toolCallId: "search",
@@ -60,7 +60,7 @@ describe("ToolCard", () => {
     );
 
     const scrollAreas = [...container.querySelectorAll('[data-slot="scroll-area"]')];
-    expect(scrollAreas).toHaveLength(embedded ? 0 : 2);
+    expect(scrollAreas).toHaveLength(2);
     for (const scrollArea of scrollAreas) {
       expect(scrollArea.classList.contains("max-h-52")).toBe(true);
       const viewport = scrollArea.querySelector('[data-slot="scroll-area-viewport"]');
