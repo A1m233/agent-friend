@@ -61,6 +61,7 @@ pub struct GenerateDiagnosticBundleResult {
     outcome: &'static str,
     included_session_ids: Vec<String>,
     failures: Vec<CollectionFailure>,
+    warnings: Vec<CollectionFailure>,
 }
 
 struct ArchiveEntry {
@@ -510,7 +511,7 @@ pub async fn generate_diagnostic_bundle(
         crate::native_crash::export_for_bundle(include_crash_dumps)
     })
     .await;
-    native_crash_export::append(
+    let warnings = native_crash_export::append(
         crash_export.map_err(|_| ()),
         include_crash_dumps,
         &mut entries,
@@ -532,6 +533,7 @@ pub async fn generate_diagnostic_bundle(
             requested_session_ids: &session_ids,
             included_session_ids: &included_session_ids,
             failures: &failures,
+            warnings: &warnings,
             logs: &log_manifest,
             windows_shell: &shell_summary,
             attachments: &attachment_collection.summary,
@@ -561,6 +563,7 @@ pub async fn generate_diagnostic_bundle(
         outcome,
         included_session_ids,
         failures,
+        warnings,
     })
 }
 
@@ -1029,6 +1032,7 @@ struct BundleManifestInput<'a> {
     requested_session_ids: &'a [String],
     included_session_ids: &'a [String],
     failures: &'a [CollectionFailure],
+    warnings: &'a [CollectionFailure],
     logs: &'a [LogManifestItem],
     windows_shell: &'a Value,
     attachments: &'a Value,
@@ -1049,6 +1053,7 @@ fn build_bundle_manifest(
         "requestedSessionIds": input.requested_session_ids,
         "includedSessionIds": input.included_session_ids,
         "failures": input.failures,
+        "warnings": input.warnings,
         "excluded": [
             "memory database",
             "persona assets",
@@ -1424,6 +1429,7 @@ mod tests {
                 requested_session_ids: &requested_session_ids,
                 included_session_ids: &included_session_ids,
                 failures: &failures,
+                warnings: &[],
                 logs: &logs,
                 windows_shell: &windows_shell,
                 attachments: &attachments,
@@ -1543,6 +1549,7 @@ mod tests {
                 requested_session_ids: &[],
                 included_session_ids: &[],
                 failures: &failures,
+                warnings: &[],
                 logs: &[],
                 windows_shell: &json!({}),
                 attachments: &json!({}),

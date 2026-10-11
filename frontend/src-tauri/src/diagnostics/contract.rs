@@ -240,6 +240,7 @@ mod tests {
             "requestedSessionIds": [],
             "includedSessionIds": [],
             "failures": [],
+            "warnings": [],
             "excluded": [],
             "logLimits": {},
             "logs": [],

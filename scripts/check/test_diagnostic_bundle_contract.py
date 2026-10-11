@@ -81,12 +81,12 @@ def _native_crash_entries(*, include_raw: bool) -> dict[str, object]:
 
 
 def _inspect_native_crash(
-    path: Path, entries: dict[str, object], *, declared: bool = True
+    path: Path, entries: dict[str, object], *, declared: bool = True, version: int = 1
 ) -> tuple[dict[str, object], list[str]]:
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, value in entries.items():
             archive.writestr(name, value if isinstance(value, bytes) else json.dumps(value))
-    manifest = {"capabilities": ["native-crash-evidence-v1"] if declared else []}
+    manifest = {"capabilities": [f"native-crash-evidence-v{version}"] if declared else []}
     warnings: list[str] = []
     with zipfile.ZipFile(path) as archive:
         summary = INSPECTOR.summarize_native_crash(archive, manifest, warnings)
@@ -572,6 +572,7 @@ def _build_bundle(
         "requestedSessionIds": ["session-1"],
         "includedSessionIds": ["session-1"],
         "failures": [],
+        "warnings": [],
         "excluded": [],
         "logLimits": {
             "maxBytesPerFile": None,
@@ -1811,3 +1812,23 @@ def test_v4_session_reader_accepts_json_larger_than_legacy_guard(tmp_path: Path)
     assert summary["warnings"] == []
     assert summary["sessions"][0]["coverage"]["byteLimitsRemoved"] is True
     assert "error" not in summary["sessions"][0]
+
+
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("extra_failure", [None, "watcher-handshake-failed", "dump-missing"])
+def test_native_crash_historical_gap_classification_is_versioned(
+    tmp_path: Path, version: int, extra_failure: str | None
+) -> None:
+    entries = _native_crash_entries(include_raw=False)
+    coverage = entries["diagnostics/native-crash/coverage.json"]
+    assert isinstance(coverage, dict)
+    historical = "observer-and-process-ended-without-result"
+    coverage["failures"] = [historical, *([extra_failure] if extra_failure else [])]
+    summary, warnings = _inspect_native_crash(tmp_path / "history.zip", entries, version=version)
+    assert summary["evidence"] == "partial"
+    assert summary["historicalGapCount"] == int(version == 2)
+    assert summary["failureCount"] == int(version == 1) + int(extra_failure is not None)
+    assert ("native crash: historical-exit-evidence-incomplete" in warnings) == (version == 2)
+    assert ("native crash: collection-failures" in warnings) == (
+        version == 1 or extra_failure is not None
+    )

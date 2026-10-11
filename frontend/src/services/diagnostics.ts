@@ -11,6 +11,7 @@ export interface GenerateDiagnosticBundleResult {
   outcome: "complete" | "partial";
   includedSessionIds: string[];
   failures: DiagnosticCollectionFailure[];
+  warnings?: DiagnosticCollectionFailure[];
 }
 
 export interface GenerateDiagnosticBundleInput {

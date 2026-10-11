@@ -26,6 +26,7 @@ CORE_ENTRIES = (
 )
 CAPABILITY_HANDLERS = {
     "native-crash-evidence-v1": "nativeCrashEvidence",
+    "native-crash-evidence-v2": "nativeCrashEvidence",
     "startup-timeline-v1": "startupTimeline",
     "desktop-application-launch-v1": "desktopApplications",
     "selected-sessions-v1": "sessions",
@@ -1888,6 +1889,7 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 "generatedAt": manifest.get("generatedAt"),
                 "outcome": manifest.get("outcome"),
                 "failures": manifest.get("failures", []),
+                "warnings": manifest.get("warnings", []),
                 "requestedSessionIds": manifest.get("requestedSessionIds", []),
                 "includedSessionIds": manifest.get("includedSessionIds", []),
                 "excluded": manifest.get("excluded", []),
@@ -1993,7 +1995,9 @@ def summarize_native_crash(
     coverage_entry = prefix + "coverage.json"
     names = set(archive.namelist())
     family_names = {name for name in names if name.startswith(prefix)}
-    declared = "native-crash-evidence-v1" in (manifest.get("capabilities") or [])
+    capabilities = manifest.get("capabilities") or []
+    separates_history = "native-crash-evidence-v2" in capabilities
+    declared = separates_history or "native-crash-evidence-v1" in capabilities
     if not declared and not family_names:
         return {"evidence": "not-collected"}
     result: dict[str, Any] = {
@@ -2070,8 +2074,16 @@ def summarize_native_crash(
         failures = coverage.get("failures")
         if not isinstance(failures, list):
             raise BundleError("native crash invalid failure collection")
-        result["failureCount"] = len(failures)
-        if failures:
+        historical_gaps = [
+            code
+            for code in failures
+            if separates_history and code == "observer-and-process-ended-without-result"
+        ]
+        result["historicalGapCount"] = len(historical_gaps)
+        result["failureCount"] = len(failures) - len(historical_gaps)
+        if historical_gaps:
+            gaps.add("historical-exit-evidence-incomplete")
+        if result["failureCount"]:
             gaps.add("collection-failures")
         sessions = coverage.get("sessions", [])
         if not isinstance(sessions, list) or len(sessions) > 2048:
@@ -2526,7 +2538,8 @@ def print_human(summary: dict[str, Any]) -> None:
     print(
         f"Manifest: format={manifest['formatVersion']} revision={manifest['schemaRevision']} "
         f"outcome={manifest['outcome']} "
-        f"generatedAt={manifest['generatedAt']} failures={len(manifest['failures'])}"
+        f"generatedAt={manifest['generatedAt']} failures={len(manifest['failures'])} "
+        f"warnings={len(manifest['warnings'])}"
     )
     print(
         "Capabilities: "

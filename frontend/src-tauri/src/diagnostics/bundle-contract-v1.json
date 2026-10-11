@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 21,
+  "schemaRevision": 22,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -29,8 +29,8 @@
   },
   "capabilities": [
     {
-      "id": "native-crash-evidence-v1",
-      "manifestFields": [],
+      "id": "native-crash-evidence-v2",
+      "manifestFields": ["warnings"],
       "requiredEntries": ["diagnostics/native-crash/coverage.json"],
       "entryPatterns": [
         "diagnostics/native-crash/coverage.json",

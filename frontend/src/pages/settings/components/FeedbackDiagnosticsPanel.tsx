@@ -33,6 +33,13 @@ export interface FeedbackDiagnosticsPrefill {
   sessionId?: string;
 }
 
+function resultTitle(result: GenerateDiagnosticBundleResult): string {
+  if (result.outcome === "partial") return "诊断包已生成，但部分内容获取失败";
+  return result.warnings?.length
+    ? "诊断包已生成，部分历史证据不完整"
+    : "诊断包已生成";
+}
+
 export function FeedbackDiagnosticsPanel({
   prefill,
 }: {
@@ -135,7 +142,7 @@ export function FeedbackDiagnosticsPanel({
       setResult(next);
       const partial = next.outcome === "partial";
       const notify = partial ? toast.warning : toast.success;
-      notify(partial ? "诊断包已生成，但部分内容获取失败" : "诊断包已生成", {
+      notify(resultTitle(next), {
         action: {
           label: "打开所在目录",
           onClick: () => void reveal(next.path),
@@ -489,9 +496,7 @@ export function FeedbackDiagnosticsPanel({
               )}
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-fg">
-                  {result.outcome === "complete"
-                    ? "诊断包已生成"
-                    : "诊断包已生成，但部分内容获取失败"}
+                  {resultTitle(result)}
                 </p>
                 <p className="mt-1 break-all text-xs text-muted">{result.path}</p>
               </div>
@@ -505,6 +510,19 @@ export function FeedbackDiagnosticsPanel({
                   </li>
                 ))}
               </ul>
+            ) : null}
+            {result.warnings?.length ? (
+              <div className="text-xs text-muted">
+                <p className="font-medium">历史证据说明</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {result.warnings.map((warning, index) => (
+                    <li key={`${warning.collection}-${warning.item ?? index}`}>
+                      {warning.item ? `${warning.item}：` : ""}
+                      {warning.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ) : null}
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => void copyPath()}>
