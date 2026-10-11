@@ -5959,6 +5959,7 @@ class Conversation:
                 authorization_requested=result.meta.get("authorization_requested") is True,
                 error_code=str(result.meta.get("error_kind") or ""),
                 duration_seconds=duration,
+                images=result.images if not result.is_error else (),
                 origin=tc.get("origin", "model"),
             )
 

@@ -13,6 +13,48 @@ contract:
   expected_behavior: response
 
 cases:
+  # Incident-derived minimal routing anchor; not a replay of the long production history.
+  # Fake image metadata tests routing only, not pixels, assets or UI publication.
+  - id: C24-13
+    query: 听说你能截图，你来截个图我看看
+    facet: 截图事故派生 anchor · 使用真实 builtin 指引和命令返回的当前轮看图 scope
+    source: prod-screenshot-output-scope-20261010
+    surface: desktop_chat
+    expected_skill_catalog_coverage: complete
+    expected_skill_catalog_entries:
+      - name: screenshot
+        source: builtin
+    tool_run_policy:
+      max_total_tool_calls: 6
+      max_model_continuations: 6
+    fake_tools:
+      - name: exec_command
+        responses:
+          - match_args:
+              skill: {entry: scripts/take_screenshot.ps1}
+              access: {filesystem: read_write}
+            result_text: >-
+              {"status":"exited","exit_code":0,"stdout":"C:\\fixture\\capture\\desktop-check.png\n","output_directory":{"filesystem_scope_id":"scope_capture_current","permissions":["read_image"],"lifetime":"current_user_turn","instruction":"默认截图在此目录。view_image.path 填脚本输出的图片文件名；显式保存到外部位置或 temp 时，此 scope 不适用，须取得对应位置的 read_image 授权。"}}
+      - name: view_image
+        responses:
+          - match_args: {filesystem_scope_id: scope_capture_current, path: desktop-check.png}
+            result_text: '{"image":"desktop-check.png","width":960,"height":540,"source":"local_file_snapshot"}'
+    judge:
+      required_tool_sequence: [skill_read, exec_command, view_image]
+      required_successful_tool_calls:
+        - name: skill_read
+          args: {skill_id: builtin/screenshot}
+        - name: exec_command
+          args:
+            skill: {entry: scripts/take_screenshot.ps1}
+            access: {filesystem: read_write}
+        - name: view_image
+          args: {filesystem_scope_id: scope_capture_current, path: desktop-check.png}
+      maximum_tool_call_counts: {exec_command: 1, view_image: 1}
+      must_not_call_any: [host_process_start, request_filesystem_access]
+      require_non_empty_response: true
+      forbid_tool_identifier_confusion: true
+
   - id: C24-11
     query: 请找到我之前上传的那份报告，先确认原文件身份并准备好，暂时不用读正文。
     facet: 上传附件引用恢复 · 摘要只有文件名时从会话入口恢复身份

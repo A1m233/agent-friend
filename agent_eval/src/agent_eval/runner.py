@@ -336,6 +336,11 @@ class _FixtureTool:
 
             self.description = SessionFilesTool.description
             self.parameters_schema = SessionFilesTool.parameters_schema
+        elif fixture.name == "view_image":
+            from agent.tools.builtin.view_image.tool import ViewImageTool
+
+            self.description = ViewImageTool.description
+            self.parameters_schema = ViewImageTool.parameters_schema
         elif fixture.name == "host_process_start":
             self.description = HostProcessStartTool.description
             self.parameters_schema = HostProcessStartTool.parameters_schema

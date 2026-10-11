@@ -1,0 +1,42 @@
+{
+  "status": "deferred_by_user",
+  "selection": [
+    "C24-13",
+    "C17-07",
+    "C24-03"
+  ],
+  "model": "custom/e460216e-71da-42cb-a252-03ecaf1aa2bd/8d0327f8-a306-412a-9796-ddb22aaa122a",
+  "reasoning_preset": "effort:medium",
+  "wire_model": "openai/gpt-6.1-sol",
+  "protocol": "responses",
+  "model_provenance": "Original incident session model_config_change at position 39833 precedes run e464e0c6-2bde-4d1e-b83f-7064d1e0459a at position 53609; same saved product model ID. Current directory label my cpa / gpt-6.1-sol. Historical endpoint configuration was not independently preserved.",
+  "case_set_digest": "88fda8626b00d5b556e0024e386acc76f90a3cab549dfef9e174db8dcac27a7a",
+  "repeats": 1,
+  "report_directory": "agent_eval/reports",
+  "note": "req160 screenshot routing first validation; original saved product model ID, effort:medium; synthetic minimal incident cases and adjacent ordinary-command control; metadata-only fake images; not visual E2E or statistical evidence",
+  "purpose": {
+    "C24-13": "first validation of current screenshot output scope routing",
+    "C17-07": "first validation preserving unknown-start no-replay behavior",
+    "C24-03": "adjacent ordinary command control; not used to design screenshot changes"
+  },
+  "estimated_model_requests": "8-12 normally; no unplanned retries or extra cases",
+  "estimated_input_tokens": "roughly 100000-200000 across repeated system/skill contexts; not actual usage",
+  "leakage_audit": {
+    "literal": "No new case IDs, scope_capture_current, desktop-check or original query in screenshot Skill / command_runtime / view_image production guidance",
+    "semantic": "Guidance expresses managed output and current-turn scope rules without fixture-specific values. Target evaluates instruction-following; C24-03 is adjacent unmodified control. Do not claim generalized reliability."
+  },
+  "manual_review": [
+    "actual command and absence of home/volume-wide write roots",
+    "no host or unsandboxed fallback",
+    "scope and relative filename flow",
+    "stop_reason/runtime_error and final text",
+    "fake metadata does not demonstrate pixel viewing or UI publication"
+  ],
+  "completed": [],
+  "pending": [
+    "C24-13",
+    "C17-07",
+    "C24-03"
+  ],
+  "authorization": "2026-10-11: user explicitly chose not to call a real model in this run"
+}

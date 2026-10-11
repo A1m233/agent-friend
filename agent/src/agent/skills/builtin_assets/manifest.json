@@ -63,9 +63,13 @@
       "source_commit": "49f948faa9258a0c61caceaf225e179651397431",
       "source_path": "skills/.curated/screenshot",
       "license": "Apache-2.0",
-      "snapshot_sha256": "9c5ac885e307dbb85aea5353a04fabc91ad238fae378d5069ba4dfe01eec3339",
+      "snapshot_sha256": "edb21da3a3f8942a2ce667301a9a71926b7fbb3658064c9956dea033e3f0b0e8",
       "retrieved_at": "2026-09-20",
-      "compatibility_patches": []
+      "compatibility_patches": [
+        "Renamed the PowerShell HOME-conflicting local variable.",
+        "Defaulted screenshots to the host-injected session output directory while preserving explicit paths and temp mode.",
+        "Aligned governed Skill commands, PowerShell 7 usage, bounded output permissions and automatic view_image previews with agent-friend."
+      ]
     },
     "doc": {
       "source_repository": "https://github.com/openai/skills",

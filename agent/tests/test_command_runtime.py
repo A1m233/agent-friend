@@ -1968,6 +1968,63 @@ def test_skill_paths_require_structured_binding(runtime: CommandRuntime, tmp_pat
     assert json.loads(result.text)["error"] == "skill_binding_required"
 
 
+def test_screenshot_binding_uses_narrow_output_and_current_turn_image_scope(
+    runtime: CommandRuntime, tmp_path: Path
+) -> None:
+    from agent.command_runtime.screenshot_output import (
+        SCREENSHOT_OUTPUT_ENV,
+        screenshot_output_scope,
+    )
+
+    package = tmp_path / "screenshot"
+    (package / "scripts").mkdir(parents=True)
+    (package / "scripts/take_screenshot.ps1").write_text("# fixture", encoding="utf-8")
+    activation = _activation(package, skill_id="builtin/screenshot", source="builtin")
+    context = ToolRunContext.create("")
+    tool = ExecCommandTool(
+        runtime, ApprovalBroker(), session_workspaces_root=tmp_path / "workspaces"
+    )
+    args = {
+        "cmd": "pwsh.exe -File scripts/take_screenshot.ps1",
+        "skill": {"entry": "scripts/take_screenshot.ps1", "workdir": "."},
+        "access": {"filesystem": "read_write", "network": "disabled"},
+        "reason": "capture",
+        COMMAND_SKILL_SNAPSHOT_ARG: _turn_snapshot(activation),
+    }
+    try:
+        details, _, roots, _, _ = tool._parse(args, context, session_id="s", run_id="r")
+        output = Path(details.environment_overrides[SCREENSHOT_OUTPUT_ENV])
+        assert output.is_relative_to((tmp_path / "workspaces").resolve())
+        assert (output, True) in roots
+        assert not any(path == Path.home().resolve() and writable for path, writable in roots)
+        scope_result = screenshot_output_scope(details, context)["output_directory"]
+        assert isinstance(scope_result, dict)
+        scope = context.filesystem_authorizations.scope(scope_result["filesystem_scope_id"])
+        assert scope is not None and scope.root == output
+        assert scope.permissions == frozenset({"read_image"})
+        assert ToolRunContext.create("").filesystem_authorizations.scope(scope.scope_id) is None
+        args["access"] = {
+            "filesystem": "read_write",
+            "additional_roots": [
+                {"locator": {"kind": "standard", "name": "home"}, "access": "read_write"}
+            ],
+        }
+        with pytest.raises(CommandRuntimeError, match="截图不需要") as error:
+            tool._parse(args, context, session_id="s", run_id="r")
+        assert error.value.code == "screenshot_write_scope_too_broad"
+        # A legitimate ordinary command keeps the existing approval route.
+        ordinary = {
+            key: value
+            for key, value in args.items()
+            if key not in {"skill", COMMAND_SKILL_SNAPSHOT_ARG}
+        }
+        ordinary["cmd"] = "echo ordinary"
+        _, _, ordinary_roots, _, _ = tool._parse(ordinary, context, session_id="s", run_id="r")
+        assert (Path.home().resolve(), True) in ordinary_roots
+    finally:
+        context.close_commands()
+
+
 def test_skill_binding_approval_contains_content_fingerprint(
     runtime: CommandRuntime, tmp_path: Path
 ) -> None:

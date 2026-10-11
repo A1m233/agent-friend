@@ -121,6 +121,28 @@ def _provider_spec(
     model_id = (
         model or optional_secret(source, DEEPSEEK_MODEL) or default_model_for_provider("deepseek")
     )
+    from llm_providers.model_identity import is_custom_model_reference
+
+    if is_custom_model_reference(model_id):
+        from llm_providers.connections import ModelDirectory
+        from llm_providers.connections.codec import decode_connections
+
+        from llm_providers import ModelRuntimeConfig
+        from runtime_config import DesktopSettingsReader
+
+        reader = DesktopSettingsReader()
+        settings = reader.read()
+        if settings is None and reader.path.exists():
+            raise ValueError("Model settings cannot be read")
+        directory = ModelDirectory(decode_connections((settings or {}).get("modelConnections")))
+        config = (
+            ModelRuntimeConfig(model_id, reasoning_preset)
+            if reasoning_preset is not None
+            else directory.default_config(model_id)
+        )
+        return directory.build_spec(
+            config, api_key=require_secret(source, directory.credential_name(model_id))
+        )
     try:
         provider_id = infer_provider_id_from_model(model_id)
     except ValueError:
@@ -172,14 +194,14 @@ def main() -> int:
         print(f"[err] {exc}", file=sys.stderr)
         return 1
 
-    from llm_providers.errors import LLMAuthError
+    from llm_providers.errors import LLMAuthError, LLMModelUnavailableError
 
     from runtime_config import CredentialMissingError
 
     try:
         source = _credential_source()
         spec = _provider_spec(args.model, source, args.reasoning_preset)
-    except (CredentialMissingError, LLMAuthError, ValueError) as exc:
+    except (CredentialMissingError, LLMAuthError, LLMModelUnavailableError, ValueError) as exc:
         print(
             f"[配置错误] {exc}\n"
             "请使用 scripts/credentials/run.* 配置被测 model 对应的 provider credential；"

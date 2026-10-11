@@ -122,6 +122,9 @@ def mac_default_dir() -> Path:
 
 
 def default_dir(system: str) -> Path:
+    managed_output = os.environ.get("AGENT_FRIEND_SCREENSHOT_OUTPUT_DIR")
+    if managed_output:
+        return Path(managed_output)
     home = Path.home()
     if system == "Darwin":
         return mac_default_dir()

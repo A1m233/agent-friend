@@ -22,6 +22,7 @@ class ViewImageTool:
     description: ClassVar[str] = (
         "读取本地静态 PNG/JPEG/WebP，让当前模型直接查看图片。需要观察任务中的图片时使用；"
         "会话上传图像直接填本轮文件提示或 session_files list 返回的 file_ref，无需目录授权。"
+        "受管理截图可直接使用 exec_command.output_directory 返回的当前轮 read_image scope。"
         "外部本地图片才通过 request_filesystem_access "
         "取得当前轮 read_image 授权；read_text 不包含看图权限。返回图像及来源/尺寸，"
         "每次一张、最多 8 MiB、1600 万像素、单边 8192。权限错误应取得有效 scope 后再试；"
@@ -39,7 +40,7 @@ class ViewImageTool:
             "filesystem_scope_id": {
                 "type": "string",
                 "minLength": 1,
-                "description": "当前轮 request_filesystem_access 成功结果 scopes[].filesystem_scope_id，须含 read_image；不是 request_id、skill_id 或旧轮 scope。",
+                "description": "当前轮 request_filesystem_access 成功结果 scopes[].filesystem_scope_id，或受管理截图 exec_command 成功结果 output_directory.filesystem_scope_id，须含 read_image；不是 request_id、skill_id 或旧轮 scope。",
             },
             "path": {
                 "type": "string",

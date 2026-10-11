@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from threading import Event, Thread
 from typing import Any, cast
 
+from agent.attachments import AttachmentRef
+from agent.conversation_events import ToolCallResult
 from agent.runtime import RunHandle, RunOutcome, RunRequest, UserEvent
 from agent_bridge.protocols.ag_ui.encoders import encode_stream
 from agent_bridge.session_turns import SessionTurnCoordinator
@@ -41,6 +43,43 @@ class _ConversationStub:
 
     def stream(self, _user_input: str, **_kwargs: Any) -> Iterator[ConversationEvent]:
         yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
+
+
+def test_tool_image_extension_preserves_asset_identity_and_excludes_errors() -> None:
+    from dataclasses import asdict
+
+    image = AttachmentRef("a" * 64, "screen.png", "image", "image/png", 80, "a" * 64)
+    for failed in (False, True):
+        result = ToolCallResult(
+            tool_call_id="provider",
+            event_tool_call_id="event",
+            tool_name="view_image",
+            text="image",
+            images=(image,),
+            is_error=failed,
+        )
+        assert asdict(result)["images"][0] == image.to_dict()
+
+        class ImageConversation(_ConversationStub):
+            image_result = result
+
+            def stream(self, _user_input: str, **_kwargs: Any) -> Iterator[ConversationEvent]:
+                yield self.image_result
+                yield TurnDone(stop_reason="end_turn")
+
+        body = b"".join(
+            encode_stream(
+                lambda: cast(Conversation, ImageConversation()), "hi", thread_id="s", run_id="r"
+            )
+        ).decode()
+        events = [json.loads(line[5:]) for line in body.splitlines() if line.startswith("data:")]
+        extensions = [event for event in events if event.get("name") == "agent_friend.tool_images"]
+        if failed:
+            assert not extensions
+        else:
+            assert extensions[0]["value"] == {"toolCallId": "event", "images": [image.to_dict()]}
+            text_result = next(event for event in events if event["type"] == "TOOL_CALL_RESULT")
+            assert text_result["toolCallId"] == "event"
 
 
 def test_refusal_and_citations_encoded_as_message_metadata() -> None:

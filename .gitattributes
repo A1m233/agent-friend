@@ -9,6 +9,7 @@ scripts/package/run.sh text eol=lf
 scripts/rust-check/run.sh text eol=lf
 scripts/frontend/dev.sh text eol=lf
 scripts/session-memory/run.sh text eol=lf
+scripts/screenshot-smoke/run.sh text eol=lf
 
 # Checksummed source patches must keep byte-identical LF content on Windows.
 scripts/_lib/xiaohongshu_connector/windows-disable-leakless.patch text eol=lf

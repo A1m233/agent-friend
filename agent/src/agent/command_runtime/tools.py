@@ -52,12 +52,18 @@ from .runtime import (
     safe_loopback_proxy_environment,
     sandbox_context,
 )
+from .screenshot_output import (
+    SCREENSHOT_OUTPUT_ENV,
+    screenshot_output_scope,
+    validate_screenshot_roots,
+)
 from .skill_snapshot import SkillExecutionSnapshot, prepare_skill_snapshot
 from .workspace import (
     MAX_SESSION_WORKSPACE_BYTES,
     MAX_SESSION_WORKSPACE_FILE_BYTES,
     MAX_SESSION_WORKSPACE_FILES,
     check_workspace_budget,
+    reject_linked_path,
     session_workspace_path,
 )
 
@@ -398,6 +404,8 @@ class ExecCommandTool:
         "openpyxl 不会重算公式。产品基线未提供 Office 页面渲染、公式重算或 LibreOffice，"
         "应使用 Skill 的结构化内容处理路径并说明未做视觉检查；不要为基础读取安装渲染工具。"
         "生成文件时显式指定当前授权目录内的输出路径，不依赖脚本默认保存位置。"
+        "内置 screenshot 是宿主管理的例外：默认输出到本次会话截图目录，"
+        "不申请 home 可写；成功结果 output_directory 返回当前轮 read_image scope。"
         "直接启动一个程序及其参数时优先使用 argv；只有确实需要 shell 内建命令、管道、"
         "重定向、变量展开等 shell 解释，或运行 Skill-bound 脚本时才使用 cmd。"
         "sandboxed 模式中的 python/python3 会稳定解析到产品管理、按会话隔离的 Python，"
@@ -943,6 +951,7 @@ class ExecCommandTool:
                     "launch_seconds": round(time.monotonic() - launch_started, 3),
                     **self._host_path_evidence(details),
                     **self._execution_environment_evidence(details),
+                    **screenshot_output_scope(details, context),
                 }
             )
         runtime_error: CommandRuntimeError | None = None
@@ -1004,6 +1013,8 @@ class ExecCommandTool:
         )
         result_payload.update(self._host_path_evidence(details))
         result_error = snapshot.status not in {"exited"} or snapshot.exit_code != 0
+        if not result_error:
+            result_payload.update(screenshot_output_scope(details, context))
         execution_environment = details.execution_environment
         if (
             not result_error
@@ -1194,6 +1205,7 @@ class ExecCommandTool:
         cwd_source: str
         skill_binding: CommandSkillBinding | None = None
         skill_snapshot: SkillExecutionSnapshot | None = None
+        screenshot_output: Path | None = None
         raw_skill = args.get("skill")
         if execution == "host_user" and raw_skill is not None:
             raise CommandRuntimeError(
@@ -1289,6 +1301,22 @@ class ExecCommandTool:
                 workdir=display_workdir,
                 fingerprint=skill_snapshot.fingerprint,
             )
+            if skill_binding.skill_id == "builtin/screenshot" and skill_binding.entry in {
+                "scripts/take_screenshot.ps1",
+                "scripts/take_screenshot.py",
+            }:
+                validate_screenshot_roots(roots)
+                if filesystem != "read_write":
+                    raise CommandRuntimeError(
+                        "screenshot_write_access_required",
+                        "截图会生成图片，请申请 filesystem=read_write；不需要添加 home 写权限。",
+                    )
+                session_workdir = self._session_workdir(session_id)
+                self._check_session_workspace_budget(session_workdir)
+                screenshot_output = session_workdir / "outputs" / f"screenshot-{uuid4().hex}"
+                reject_linked_path(screenshot_output)
+                screenshot_output.mkdir(parents=True, exist_ok=False)
+                roots = (*roots, (screenshot_output, True))
         if execution == "host_user":
             filesystem = "unrestricted"
             network = "unrestricted"
@@ -1394,6 +1422,8 @@ class ExecCommandTool:
             for path, _writable in derived_roots
         )
         environment_overrides = dict(managed.environment) if managed is not None else {}
+        if screenshot_output is not None:
+            environment_overrides[SCREENSHOT_OUTPUT_ENV] = str(screenshot_output)
         if (
             managed is not None
             and managed.provider.identity.provider == "python"

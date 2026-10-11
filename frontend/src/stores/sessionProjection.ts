@@ -35,6 +35,7 @@ import { TOOL_ERROR_PREFIX } from "./conversationReducer";
 import { normalizeAssistantPhase, parseAssistantPhaseState } from "./assistantPhase";
 import { parseRunErrorRecovery } from "./taskRecovery";
 import { parseAssistantContent } from "./assistantContent";
+import { toolImagesOf } from "./toolImages";
 
 function textMessage(
   id: string,
@@ -345,6 +346,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       const isError = p.is_error === true || hasLegacyErrorPrefix;
       block.result = hasLegacyErrorPrefix ? content.slice(TOOL_ERROR_PREFIX.length) : content;
       block.status = isError ? "error" : "done";
+      block.images = isError ? [] : toolImagesOf(p.images);
       continue;
     }
   }

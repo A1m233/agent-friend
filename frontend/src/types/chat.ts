@@ -71,6 +71,8 @@ export interface ToolBlock {
   args: string;
   /** 工具结果文本；运行中为 undefined。 */
   result?: string;
+  /** Validated asset snapshots from the tool result, never paths parsed from text. */
+  images?: ChatAttachment[];
   status: ToolStatus;
 }
 

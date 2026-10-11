@@ -12,6 +12,7 @@ import {
 import type { ToolBlock, ToolStatus } from "@/types/chat";
 import { SocialAuthCard } from "./SocialAuthCard";
 import { ApplicationLaunchCard } from "./ApplicationLaunchCard";
+import { ToolResultImages } from "./ToolResultImages";
 import {
   useConversationStore,
   useCommandRuntimeStore,
@@ -85,6 +86,7 @@ function ToolDetailSection({
 }
 
 function ToolDetails({ block, args }: { block: ToolBlock; args: string }) {
+  const images = block.name === "view_image" && block.status === "done" ? block.images : undefined;
   const filesystemResult = ["filesystem_read_text", "filesystem_read_text_tail"].includes(
     block.name,
   ) && block.result
@@ -96,7 +98,12 @@ function ToolDetails({ block, args }: { block: ToolBlock; args: string }) {
   return (
     <div className="mt-2 space-y-2">
       {args ? <ToolDetailSection title="参数" content={args} /> : null}
-      {block.result ? (
+      {images?.length ? (
+        <section aria-label="结果" className="space-y-1">
+          <div className="font-medium text-muted">结果</div>
+          <ToolResultImages images={images} />
+        </section>
+      ) : block.result ? (
         <ToolDetailSection
           title="结果"
           content={result}
@@ -618,7 +625,7 @@ export function ToolCard({
   }
   const meta = STATUS_META[block.status];
   const args = presentToolPayload(block.args).text;
-  const hasDetails = Boolean(args || block.result);
+  const hasDetails = Boolean(args || block.result || (block.status === "done" && block.images?.length));
 
   return (
     <div className={cn(
