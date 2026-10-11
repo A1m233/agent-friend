@@ -11,7 +11,7 @@ pub(super) fn append(
     include_dumps: bool,
     entries: &mut Vec<ArchiveEntry>,
     failures: &mut Vec<CollectionFailure>,
-) -> Result<(), String> {
+) -> Result<Vec<CollectionFailure>, String> {
     let export = match result {
         Ok(export) => export,
         Err(()) => {
@@ -33,7 +33,7 @@ pub(super) fn append(
                     "failures": ["collector-task-failed"],
                 }),
             )?);
-            return Ok(());
+            return Ok(Vec::new());
         }
     };
     // This is an internal contract, but fail closed if a future collector bypasses consent.
@@ -59,17 +59,27 @@ pub(super) fn append(
             source: ArchiveEntrySource::NativeCrashDump(dump),
         });
     }
-    failures.extend(
-        export
-            .failures
-            .into_iter()
-            .map(|message| CollectionFailure {
+    let mut warnings = Vec::new();
+    for message in export.failures {
+        // This code is persisted only when recovering an already-ended session.
+        // Preserve it in coverage, but distinguish its evidence gap from export failure.
+        if message == "observer-and-process-ended-without-result" {
+            warnings.push(CollectionFailure {
+                collection: "native-crash".into(),
+                item: None,
+                message: format!(
+                    "历史运行的退出记录不完整，无法确定当时的退出原因；本次已导出保留的记录（{message}）"
+                ),
+            });
+        } else {
+            failures.push(CollectionFailure {
                 collection: "native-crash".into(),
                 item: None,
                 message: format!("崩溃记录采集或导出不完整（{message}）"),
-            }),
-    );
-    Ok(())
+            });
+        }
+    }
+    Ok(warnings)
 }
 
 pub(super) fn write_dump(mut dump: ExportDump, output: &mut impl Write) -> Result<(), String> {
@@ -135,6 +145,7 @@ mod tests {
                 ))
                 .arg(archive)
                 .arg("--json")
+                .env("PYTHONIOENCODING", "utf-8")
                 .output()
                 .expect("project Python interpreter");
         assert!(
@@ -218,6 +229,7 @@ mod tests {
                     requested_session_ids: &[],
                     included_session_ids: &[],
                     failures: &[],
+                    warnings: &[],
                     logs: &[],
                     windows_shell: &json!({}),
                     attachments: &json!({}),
@@ -268,6 +280,104 @@ mod tests {
                     .is_ok(),
                 include_dumps
             );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn historical_exit_gap_survives_export_without_masking_other_failures() {
+        use super::super::{
+            build_bundle_manifest, contract, write_archive_atomically, BundleManifestInput,
+        };
+        let root = std::env::temp_dir().join(format!("af-crash-history-{}", rand::random::<u64>()));
+        fs::create_dir_all(root.join("sessions")).unwrap();
+        fs::create_dir_all(root.join("incidents")).unwrap();
+        fs::create_dir_all(root.join("dumps")).unwrap();
+        let historical = "observer-and-process-ended-without-result";
+        for extra_failure in [
+            None,
+            Some("watcher-handshake-failed"),
+            Some("storage-unreadable"),
+        ] {
+            let mut codes = vec![historical];
+            if let Some(code) = extra_failure {
+                codes.push(code);
+            }
+            let session = json!({
+                "schemaVersion": 1, "sessionId": "12-123-old",
+                "processId": 12, "processCreatedTicks": 123,
+                "recordedAt": "2026-10-10T00:00:00Z", "buildIdentity": null,
+                "identityStatus": "development", "captureStatus": "ready",
+                "watcherPid": null, "watcherCreatedTicks": null,
+                "completed": true, "failures": codes,
+            });
+            let session_path = root.join("sessions/12-123-old.json");
+            let original = serde_json::to_vec(&session).unwrap();
+            fs::write(&session_path, &original).unwrap();
+            let export = crate::native_crash::export_from_test_dir(&root, false);
+            let mut entries = Vec::new();
+            let mut failures = Vec::new();
+            let warnings = append(Ok(export), false, &mut entries, &mut failures).unwrap();
+            assert_eq!(warnings.len(), 1);
+            assert!(warnings[0].message.contains(historical));
+            assert_eq!(failures.len(), usize::from(extra_failure.is_some()));
+            let outcome = if failures.is_empty() {
+                "complete"
+            } else {
+                "partial"
+            };
+            let contract = contract::BundleContract::load().unwrap();
+            let manifest = build_bundle_manifest(
+                &contract,
+                BundleManifestInput {
+                    generated_at: "2026-10-11T00:00:00Z",
+                    outcome,
+                    requested_session_ids: &[],
+                    included_session_ids: &[],
+                    failures: &failures,
+                    warnings: &warnings,
+                    logs: &[],
+                    windows_shell: &json!({}),
+                    attachments: &json!({}),
+                    render_evidence: &json!({}),
+                    pet_input_evidence: &json!({}),
+                },
+            );
+            let definition: serde_json::Value =
+                serde_json::from_str(include_str!("bundle-contract-v1.json")).unwrap();
+            for family in std::iter::once(&definition["core"])
+                .chain(definition["capabilities"].as_array().unwrap().iter())
+            {
+                for entry in family["requiredEntries"].as_array().unwrap() {
+                    let name = entry.as_str().unwrap();
+                    if name != "manifest.json" && !entries.iter().any(|e| e.name == name) {
+                        entries.push(json_entry(name, &json!({})).unwrap());
+                    }
+                }
+            }
+            entries.push(json_entry("manifest.json", &manifest).unwrap());
+            contract
+                .validate_bundle(&manifest, entries.iter().map(|e| e.name.as_str()))
+                .unwrap();
+            let archive = write_archive_atomically(&root, "history", entries).unwrap();
+            let summary = inspect_archive(&archive);
+            assert_eq!(summary["manifest"]["outcome"], outcome);
+            assert_eq!(summary["manifest"]["warnings"].as_array().unwrap().len(), 1);
+            assert_eq!(summary["nativeCrashEvidence"]["historicalGapCount"], 1);
+            assert_eq!(
+                summary["nativeCrashEvidence"]["failureCount"],
+                usize::from(extra_failure.is_some())
+            );
+            assert_eq!(summary["nativeCrashEvidence"]["evidence"], "partial");
+            let mut zip = zip::ZipArchive::new(File::open(archive).unwrap()).unwrap();
+            let mut coverage = String::new();
+            zip.by_name("diagnostics/native-crash/coverage.json")
+                .unwrap()
+                .read_to_string(&mut coverage)
+                .unwrap();
+            let coverage: serde_json::Value = serde_json::from_str(&coverage).unwrap();
+            assert_eq!(coverage["sessions"][0]["failures"], session["failures"]);
+            assert_eq!(fs::read(&session_path).unwrap(), original);
         }
         fs::remove_dir_all(root).unwrap();
     }

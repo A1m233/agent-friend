@@ -104,10 +104,11 @@ in older bundles mean recovery evidence was not collected, not proof of no fault
 - `formatVersion`: breaking bundle-format boundary. Unknown values require producer-source inspection.
 - `schemaRevision`: additive revision within the format. It may be absent from older v1 bundles.
 - `capabilities`: evidence families the producer contract declares. An unknown capability is a consumer-coverage gap even when the ZIP remains structurally readable.
-- `outcome: complete`: no collector added a failure.
+- `outcome: complete`: no failure was added to the bundle manifest; historical evidence warnings may still be present.
 - `outcome: partial`: a non-fatal collection failed; the ZIP is still usable.
 - `requestedSessionIds` versus `includedSessionIds`: establish whether selected session fetches succeeded.
 - `failures`: preserve collection, item, and message; do not collapse these into a generic warning.
+- `warnings` (native-crash-evidence-v2): preserve historical evidence gaps separately; they do not change the bundle outcome. See Native Crash Evidence for the narrowly classified code.
 - `excluded`: currently calls out the memory database, persona assets, raw settings, full environment, and unselected sessions.
 - `logs[].tailStartOffset > 0`: earlier log content is absent. Absence before that offset is not evidence.
 - `logs[].includedBytes` is measured after text decoding/redaction and may differ from the raw byte span.
@@ -328,6 +329,18 @@ Native crash summaries use structured metadata rather than raw panic messages, c
 ## Native Crash Evidence
 
 `native-crash-evidence-v1` introduces required crash coverage and retained incident metadata. Use the producer-owned machine contract for exact archive entry patterns. Older bundles without this capability and without its entries are `not-collected`; absence is neither corruption nor proof that the application did not crash. A declared capability with missing coverage is a collection gap.
+
+`native-crash-evidence-v2` (schema revision 22) adds `manifest.warnings` and the
+same warning list to the desktop export result. Only the retained
+`observer-and-process-ended-without-result` code is classified as a historical
+evidence warning instead of a bundle collection failure. All other failure codes
+retain their existing failure semantics. Coverage/session `failures` and incident
+metadata are preserved unchanged; no missing exit result or dump is recovered by
+this classification. The inspector separates `historicalGapCount` from
+`failureCount`, and still marks native-crash evidence as partial when history is
+incomplete. `outcome: complete` with warnings means the export completed, not that
+all past incidents have complete evidence. V1 bundles retain their original
+failure interpretation; absent `warnings` in older bundles means an empty list.
 
 The coverage snapshot records the export's `rawDumpsRequested`, retained incident/raw-dump counts, per-session capture availability, failures and retention limits. `captureStatus: per-session` requires reading the retained sessions' actual state; it does not promise that every incident was captured. `unsupported-platform` does not establish Windows-style capture on macOS or Linux. Historical incidents retain their own `buildIdentity`, `sessionId`, `processId` and operating-system `processCreatedTicks`; never replace them with `diagnostics/application.json` from a later restart or upgrade.
 

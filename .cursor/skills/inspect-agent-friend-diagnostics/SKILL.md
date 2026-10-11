@@ -42,7 +42,7 @@ Before diagnosing, establish:
 
 - archive validity, duplicate/unsafe names, and CRC result;
 - format version, schema revision, declared capabilities, and unhandled capabilities;
-- manifest outcome and every collection failure;
+- manifest outcome, every collection failure, and historical evidence warnings;
 - requested versus included sessions;
 - generated time, timezone, application version, distribution, build mode, commit, and dirty state;
 - log source, modification time, original size, tail start offset, and included size;
@@ -58,7 +58,7 @@ Before diagnosing, establish:
 - command-runtime health, bounded setup/proxy event counts, native error codes and retention gaps; treat hashed runtime/operation identities as correlation keys, not session IDs. A ready export snapshot does not invalidate an earlier helper failure.
 - desktop application launch evidence counts and gaps; distinguish accepted launch requests from readiness and unknown dispatch outcomes from non-execution. Never treat launch references as process handles or print application arguments in inventory.
 
-`outcome: complete` means the configured collectors reported no failure. It does not prove that the user selected the relevant session, that the retained log tail covers the occurrence, or that an excluded source was unnecessary.
+`outcome: complete` means no failure was added to the bundle manifest; historical evidence warnings may still be present. It does not prove that the user selected the relevant session, that the retained log tail covers the occurrence, or that an excluded source was unnecessary.
 
 ## Correlate the Smallest Relevant Slice
 
