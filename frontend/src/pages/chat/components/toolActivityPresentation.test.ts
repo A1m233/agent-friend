@@ -22,6 +22,13 @@ function tool(
   };
 }
 
+it("keeps image results in the ordinary grouped tool disclosure", () => {
+  const image = tool("image", "view_image", { images: [{ assetId: "a".repeat(64), displayName: "screen.png", kind: "image", mediaType: "image/png", sizeBytes: 80 }] });
+  const segments = buildMessagePresentationSegments([tool("capture", "exec_command"), image, tool("next", "web_search")]);
+  expect(segments).toMatchObject([{ kind: "toolActivity", blocks: [{ name: "exec_command" }, { name: "view_image" }, { name: "web_search" }] }]);
+  expect(toolPresentation(image).summary).toBe("已查看一张图片");
+});
+
 describe("tool activity presentation", () => {
   it("groups adjacent ordinary tools and keeps a stable id as the group grows", () => {
     const first = tool("call-1", "web_search", { args: JSON.stringify({ query: "Codex" }) });

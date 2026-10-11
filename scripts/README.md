@@ -1,5 +1,9 @@
 # scripts/
 
+| 名字 | 用途 | mac/linux 入口 | Windows 入口 |
+|---|---|---|---|
+| screenshot-smoke | 现有 Windows 产品 Codex/PowerShell 的 64×64 截图、view_image 和源文件清理后资产保留验证；无 LLM、无沙箱初始化；报告与图片保留在系统临时目录。非 Windows 明确拒绝，不伪装跨平台实测。 | `./scripts/screenshot-smoke/run.sh --runtime-root PATH --codex-home PATH` | `.\scripts\screenshot-smoke\run.ps1 --runtime-root PATH --codex-home PATH` |
+
 `session-latency/run.* cold-cache --fixture EXPLICIT_JSONL --operation query|history|execution --repeat 3 --output NEW_JSON`
 在私有临时副本中分别测量无派生缓存、跨进程保留缓存及同 Store 重读，阻断网络且不构建 provider。
 `--source-ref COMMIT` 测量冻结的可信 Git 源码；默认冻结当前源码并记录逐文件指纹，避免并发编辑污染实验。

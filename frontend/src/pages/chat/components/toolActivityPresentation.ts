@@ -58,6 +58,7 @@ const CATEGORY_LABELS: Record<ToolActivityCategory, string> = {
 };
 
 const FILESYSTEM_READ_TOOLS = new Set([
+  "view_image",
   "filesystem_search",
   "filesystem_list_directory",
   "filesystem_stat",
@@ -153,6 +154,10 @@ function filesystemSummary(name: string, args: Record<string, unknown>): string 
 function summaryFor(block: ToolBlock, args: Record<string, unknown>): string {
   const query = queryFrom(args);
   switch (block.name) {
+    case "view_image":
+      return block.status === "done" && block.images?.length === 1
+        ? "已查看一张图片"
+        : "查看图片";
     case "web_search":
       return `搜索网页${quoted(query)}`;
     case "social_search":

@@ -34,6 +34,7 @@ import type { PushEvent } from "@/types/push";
 import { applyAssistantPhase, setAssistantItem, updateAssistantItemPhase } from "./assistantPhase";
 import { parseRunErrorRecovery } from "./taskRecovery";
 import { applyAssistantContent } from "./assistantContent";
+import { toolImagesOf } from "./toolImages";
 
 /** 工具结果里 bridge 用此前缀表达 is_error（006 encoders：无专用字段，约定前缀）。 */
 export const TOOL_ERROR_PREFIX = "[error] ";
@@ -99,6 +100,7 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
           ...t,
           result,
           status: isError ? "error" : "done",
+          ...(isError ? { images: [] } : {}),
         })),
       };
     }
@@ -111,6 +113,16 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
 
     case EventType.CUSTOM: {
       const e = evt as CustomEvent;
+      if (e.name === "agent_friend.tool_images") {
+        const data = e.value as Record<string, unknown> | null;
+        if (!data || typeof data.toolCallId !== "string") return msg;
+        return {
+          ...msg,
+          blocks: patchTool(msg.blocks, data.toolCallId, (tool) => (
+            tool.status === "done" ? { ...tool, images: toolImagesOf(data.images) } : tool
+          )),
+        };
+      }
       if (e.name === "agent_friend.assistant_message_metadata") {
         const data = e.value as Record<string, unknown>;
         return applyAssistantContent(msg, data?.messageId, data?.contentParts);
@@ -279,6 +291,7 @@ export function applyPushConversationEvent(
           ...tool,
           result: pushString(evt.text),
           status: evt.is_error === true ? "error" : "done",
+          images: evt.is_error === true ? [] : toolImagesOf(evt.images),
         })),
       };
     }

@@ -84,7 +84,10 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
             else "49f948faa9258a0c61caceaf225e179651397431"
         )
         assert source["source_path"] == f"skills/.curated/{name}"
-        assert source["compatibility_patches"] == []
+        if name == "screenshot":
+            assert source["compatibility_patches"]
+        else:
+            assert source["compatibility_patches"] == []
         assert source["snapshot_sha256"] == _package_digest(record.package_root)
         assert (record.package_root / "LICENSE.txt").is_file()
     assert (

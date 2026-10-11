@@ -15,12 +15,15 @@ function Get-Timestamp {
 }
 
 function Get-DefaultDirectory {
-  $home = [Environment]::GetFolderPath("UserProfile")
-  $pictures = Join-Path $home "Pictures"
+  if ($env:AGENT_FRIEND_SCREENSHOT_OUTPUT_DIR) {
+    return $env:AGENT_FRIEND_SCREENSHOT_OUTPUT_DIR
+  }
+  $userHome = [Environment]::GetFolderPath("UserProfile")
+  $pictures = Join-Path $userHome "Pictures"
   $screenshots = Join-Path $pictures "Screenshots"
   if (Test-Path $screenshots) { return $screenshots }
   if (Test-Path $pictures) { return $pictures }
-  return $home
+  return $userHome
 }
 
 function New-DefaultFilename {

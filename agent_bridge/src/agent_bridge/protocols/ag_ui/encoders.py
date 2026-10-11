@@ -337,6 +337,17 @@ def encode_stream(
                             role="tool",
                         )
                     )
+                    if ev.images and not ev.is_error:
+                        yield _encode(
+                            CustomEvent(
+                                type=EventType.CUSTOM,
+                                name="agent_friend.tool_images",
+                                value={
+                                    "toolCallId": wire_tool_call_id,
+                                    "images": [image.to_dict() for image in ev.images],
+                                },
+                            )
+                        )
 
                 elif isinstance(ev, ModelResponseStatus):
                     yield _encode(

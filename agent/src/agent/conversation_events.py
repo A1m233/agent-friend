@@ -25,6 +25,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from .attachments import AttachmentRef
+
 
 @dataclass(frozen=True)
 class TextDelta:
@@ -139,6 +141,7 @@ class ToolCallResult:
     authorization_requested: bool = False
     error_code: str = ""
     duration_seconds: float = 0.0
+    images: tuple[AttachmentRef, ...] = ()
     origin: Literal["model", "deterministic_history_router"] = "model"
     type: Literal["tool_call_result"] = "tool_call_result"
 
