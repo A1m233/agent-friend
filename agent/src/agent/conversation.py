@@ -989,6 +989,10 @@ class Conversation:
                         raise ValueError(
                             "skill_turn_snapshot_conflict: frozen Skill snapshot 与选择不一致。"
                         )
+                elif resume_task:
+                    # Continuation reuses durable caller intent; catalog changes must
+                    # not infer additional explicit selections from the old text.
+                    effective_skill_selections = self._normalize_selections(skill_selections)
                 else:
                     effective_skill_selections = self._resolve_turn_skill_selections(
                         user_input,
@@ -1048,7 +1052,7 @@ class Conversation:
                         model_window=self._active_llm_client().context_window,
                         semantic_activation_available=self._skill_read_available(),
                     )
-                    if existing_user_event is None and self._skill_service is not None
+                    if completed_replay_text is None and self._skill_service is not None
                     else None
                 )
                 first_turn_catalog_message = self._skill_catalog_message()
@@ -1065,8 +1069,14 @@ class Conversation:
             def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
                 if existing_user_event is not None:
                     return (
-                        yield from self._build_openai_messages_continuation_stream(
-                            cancel_check=cancel_check
+                        yield from self._assemble_stream(
+                            pre_user_context=(
+                                [first_turn_catalog_message]
+                                if first_turn_catalog_message is not None
+                                else None
+                            ),
+                            turn_context=self._skill_context_messages() or None,
+                            cancel_check=cancel_check,
                         )
                     )
                 return (
