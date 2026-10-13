@@ -38,7 +38,11 @@ def main() -> int:
     parser.add_argument("--build-root", type=Path)
     parser.add_argument("--budget-gib", type=float)
     parser.add_argument("--low-water-gib", type=float)
-    parser.add_argument("--automatic", choices=("on", "off"))
+    parser.add_argument(
+        "--automatic",
+        choices=("on", "off"),
+        help="Configure optional post-build maintenance; admission cleanup is always enabled.",
+    )
     parser.add_argument("--object-id")
     parser.add_argument("--reason")
     parser.add_argument("--path", type=Path)

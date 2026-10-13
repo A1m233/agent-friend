@@ -15,7 +15,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / "_lib"))
 from build_storage import Storage
 from build_storage.execution import admit, complete_build, require_space, use_target
 from build_storage.files import GIB, identity
-from build_storage.policy import maintain, plan, space_plan
+from build_storage.policy import maintain, plan
 from build_storage.reservations import reserve
 
 
@@ -32,7 +32,7 @@ def package_plan(roots: Any, *, initial: bool = True, purpose: str = "all") -> d
         raise ValueError("unknown package purpose")
     needs = package_needs(roots, initial=initial)
     storage = Storage(roots.repo_root)
-    policy = plan(storage)
+    policy = plan(storage, needs=needs)
     return {
         "schemaVersion": 1,
         "purpose": purpose,
@@ -60,11 +60,13 @@ def package_plan(roots: Any, *, initial: bool = True, purpose: str = "all") -> d
             "status": "not-verified-by-this-plan",
         },
         "cleanup": {
+            "admission": "automatic-until-build-requirements-met",
             "automaticCategories": storage.config["automaticCategories"],
             "execution": "revalidate-under-lock-before-writing",
         },
         "estimate": "conservative-stage-reserve",
-        "space": space_plan(needs),
+        "allowed": policy["allowed"],
+        "space": policy["space"],
         "storage": policy,
         "needs": needs,
     }
