@@ -18,7 +18,7 @@ DEFAULTS: dict[str, Any] = {
     "lowWaterBytes": 60 * GIB,
     "cacheDays": 7,
     "retentionHours": 48,
-    "automaticCategories": [],
+    "automaticCategories": [],  # Optional post-build maintenance, not admission cleanup.
 }
 
 

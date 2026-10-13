@@ -157,7 +157,7 @@ Python通知代码调整后可显式执行 `restart-bridge`，复用前端的 `r
 
 > frozen runtime 的 doctor/capability smoke 包含 Scheduled Task 的 Agent 工具、SQLite 到期生成和提交后中断恢复路径；该 smoke 使用确定性本地数据，不调用 LLM 或外部服务。
 
-> 构建存储由 `build-storage` 统一管理。未配置时 package 保持既有默认根；配置 `buildRoot` 后标准构建按类别使用仓库外目录。显式 package state/release 覆盖仍有效，实际路径以 `package plan` 为准。快速状态查询不安装构建依赖；精确扫描用 `--scan`。自动回收默认关闭，仅在显式启用的类别中执行；旧目录需接管并确认旧消费者退出，安装包、manifest、native symbols 与必要证据均不在缓存回收范围。`version-status` 查询稳定产品版本、本机最新有效正式制品和下一 trusted-beta 版本；准备安装到当前机器时先用 `production-install-plan` 读取真实 production 注册表、active receipt 与 build identity，实际构建再附带 `--for-current-install`，降级会在创建 build workspace 前被拒绝。`version-set <semver>` 显式同步稳定产品版本。每个开发周期用 `trusted-beta-configure <next-stable-semver>` 配置一次下一稳定版本，之后脚本自动生成 `<target>-beta.<UTC YYYYMMDD>.<sequence>`；`--trusted-beta --local-test` 沿用该下一 beta 版本，只把制品标记为不可发布。正式 release 与可分发 trusted-beta 都要求 clean worktree 且同一制品不可覆盖；验证未提交代码时使用 `--local-test`，产物会标记 `NOT-FOR-DISTRIBUTION`。
+> 构建存储由 `build-storage` 统一管理。未配置时 package 保持既有默认根；配置 `buildRoot` 后标准构建按类别使用仓库外目录。显式 package state/release 覆盖仍有效，实际路径以 `package plan` 为准。快速状态查询不安装构建依赖；精确扫描用 `--scan`。构建前默认按需安全回收，满足空间与预算要求即停止；额外的构建后维护默认关闭，仅在显式启用的类别中执行；旧目录需接管并确认旧消费者退出，安装包、manifest、native symbols 与必要证据均不在缓存回收范围。`version-status` 查询稳定产品版本、本机最新有效正式制品和下一 trusted-beta 版本；准备安装到当前机器时先用 `production-install-plan` 读取真实 production 注册表、active receipt 与 build identity，实际构建再附带 `--for-current-install`，降级会在创建 build workspace 前被拒绝。`version-set <semver>` 显式同步稳定产品版本。每个开发周期用 `trusted-beta-configure <next-stable-semver>` 配置一次下一稳定版本，之后脚本自动生成 `<target>-beta.<UTC YYYYMMDD>.<sequence>`；`--trusted-beta --local-test` 沿用该下一 beta 版本，只把制品标记为不可发布。正式 release 与可分发 trusted-beta 都要求 clean worktree 且同一制品不可覆盖；验证未提交代码时使用 `--local-test`，产物会标记 `NOT-FOR-DISTRIBUTION`。
 
 > 桌面端额外需要 **Node 22+ / pnpm（`corepack enable pnpm`）/ Rust（[rustup.rs](https://rustup.rs)）**；`setup` 会检测并提示，但不替你装系统级工具。只想跑后端 CLI 可忽略这三项。
 
@@ -285,7 +285,9 @@ NSIS 模板适配对受控 payload 的规范绝对路径使用 Windows 扩展长
 .\scripts\build-storage\run.ps1 unpin --object-id <ID>
 ```
 
-盘符只是显式配置示例，不会自动选择或迁移已有目录。自动回收类别还可选择 `dev`、`rust-check`、`runtime-regression`；只有登记归属的对象会被处理。默认预算 80 GiB，低水位 60 GiB，闲置缓存 7 天；失败/等待续跑工作区默认保留 48 小时。pin 和活动保护优先于容量目标。体积是逻辑文件大小，实际释放量应看删除前后的卷空间。
+盘符只是显式配置示例，不会自动选择或迁移已有目录。标准构建入口默认按需回收本仓库已登记且空闲、未受保护的构建缓存和中间目录，统一满足缓存预算与本次各卷所需空间后立即停止；不会为了固定低水位继续删除，也不会仅因缓存过期就清理。pin、保留期、活动状态、对象锁和归属校验始终优先，安装包、manifest、symbols、下载缓存及用户资产不参与回收。构建前回收无需启用持久自动维护配置。
+
+`configure --automatic on/off` 与 `automaticCategories` 只控制构建结束后的可选维护，默认关闭；类别可选择 `package-cache`、`package-build`、`dev`、`rust-check`、`runtime-regression`。默认预算 80 GiB；可选维护/显式 GC 的低水位为 60 GiB、闲置缓存期限为 7 天；失败/等待续跑工作区默认保留 48 小时。体积是逻辑文件大小，实际释放量以删除后重新读取的卷空间为准。
 
 `package workspace-status` / `workspace-gc` 是 package 类别的兼容入口；快速盘点只读记录，不递归读取所有缓存。`--scan` 显式更新体积，stderr 显示进度；取消或读取失败会标记不完整，不当成零占用。仓库内旧 target、虚拟环境和全局依赖缓存不被自动接管。
 
@@ -293,10 +295,10 @@ NSIS 模板适配对受控 payload 的规范绝对路径使用 Windows 扩展长
 
 纯冻结验证使用 `package run.* runtime-verify --local-test` 并传既有必需的 Guide/verification 参数；成功后归档报告并回收工作区。`runtime` 保持分步续跑用途，后续仍必须提供精确 `--reuse-build-id`。完整安装包及 symbols 保留在 release 根。
 
-开发、Rust 检查与 runtime 回归入口均使用受保护的仓库外 target。`CARGO_TARGET_DIR` 可显式覆盖；Rust check 两阶段共同使用该值，不接受只影响单阶段的 `--target-dir`。未接管的旧 target 可继续使用，但不会自动删除。构建开始前检查实际卷，保护期间为并发操作预留容量；空间不足时不自动降低门槛。
+开发、Rust 检查与 runtime 回归入口均使用受保护的仓库外 target。`CARGO_TARGET_DIR` 可显式覆盖；Rust check 两阶段共同使用该值，不接受只影响单阶段的 `--target-dir`。未接管的旧 target 可继续使用，但不会自动删除。构建前统一检查预算、实际卷空间及其它操作的预留，必要时安全回收；保护期间为并发操作预留容量。运行中对象的占用按已有体积与所属操作的预留增长量保守估算，每个操作的预留只计一次；无法估算的对象仍阻塞准入。安全回收后仍不足时报告缺口，不降低门槛或解除保护。
 
 Windows 源码与构建根分属不同卷时，Tauri 封装使用源码卷上的临时 junction 读取资源，实际 payload 仍留在受管构建卷；正常结束只移除已核实的链接，不递归删除其目标。通用接管和缓存删除仍拒绝链接。
 
 异常退出后，运行记录和空间预留可能继续受保护。只有人工确认整个子进程树已停止，才能执行 `build-storage run.* reconcile --operation-id <ID> --confirm-stopped --reason <核实依据>`。命令不会杀进程，也不会删除失败现场。
 
-`build-storage run.* benchmark` 只在自动移除的隔离 fixture 中比较快速盘点与递归计数，输出环境、样本规模和耗时；不扫描或清理真实缓存。`package run.* plan --purpose runtime-verify|runtime|installer|all|installer-smoke-build` 展示对应用途与生命周期，计划不代替实际验证门禁。
+`build-storage run.* benchmark` 只在自动移除的隔离 fixture 中比较快速盘点与递归计数，输出环境、样本规模和耗时；不扫描或清理真实缓存。`package run.* plan --purpose runtime-verify|runtime|installer|all|installer-smoke-build` 展示对应用途与生命周期；顶层 `allowed` 合并空间、并发预留与缓存预算，不应只读 `space.allowed`。计划不执行回收，也不代替实际构建时的安全回收与验证门禁。

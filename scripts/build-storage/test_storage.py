@@ -11,7 +11,7 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parents[1] / "_lib"))
 
 from build_storage import Storage
-from build_storage.execution import use_target
+from build_storage.execution import admit, use_target
 from build_storage.files import MARKER, identity, read_json, write_json
 from build_storage.locks import Busy, lock
 from build_storage.policy import collect, plan, space_plan
@@ -340,3 +340,121 @@ def test_junction_or_symlink_is_not_recursively_deleted(storage, tmp_path):
             link.rmdir()
         else:
             link.unlink()
+
+
+def test_admission_automatically_reclaims_only_enough_for_budget(storage, tmp_path):
+    first = object_with_bytes(storage, tmp_path, "old", 100)
+    second = object_with_bytes(storage, tmp_path, "new", 100)
+    first["lastUsedAt"] = time.time() - 60
+    write_json(storage.record_path(first["id"]), first)
+    # A high maintenance low-water mark must not make admission delete both caches.
+    storage.configure({"budgetBytes": 150, "lowWaterBytes": 10**18})
+    assert storage.config["automaticCategories"] == []
+    result = admit(storage, [("build", tmp_path, 1)])
+    assert result["allowed"]
+    assert [r["id"] for r in result["cleanup"]["deleted"]] == [first["id"]]
+    assert storage.record_path(second["id"]).exists()
+    assert storage.config["automaticCategories"] == []
+
+
+def test_admission_does_not_clean_expired_cache_when_requirements_met(storage, tmp_path):
+    row = object_with_bytes(storage, tmp_path, "cache")
+    row["lastUsedAt"] = 1
+    write_json(storage.record_path(row["id"]), row)
+    storage.configure({"lowWaterBytes": 10**18})
+    result = admit(storage, [("build", tmp_path, 1)])
+    assert result["cleanup"] is None
+    assert (tmp_path / "cache/data").exists()
+
+
+def test_admission_cleans_only_short_volume_and_stops_at_actual_need(
+    storage, tmp_path, monkeypatch
+):
+    other = object_with_bytes(storage, tmp_path, "other-volume", 100)
+    old = object_with_bytes(storage, tmp_path, "old", 100)
+    object_with_bytes(storage, tmp_path, "new", 100)
+    old["lastUsedAt"] = 1
+    other["lastUsedAt"] = 0
+    for row in (old, other):
+        write_json(storage.record_path(row["id"]), row)
+
+    def capacity(path):
+        if path.name == "other-volume":
+            return "other", 10
+        return "build", 100 if (tmp_path / "old").exists() else 200
+
+    monkeypatch.setattr("build_storage.policy.volume", capacity)
+    monkeypatch.setattr("build_storage.store.volume", capacity)
+    result = admit(storage, [("work", tmp_path / "work", 150)])
+    assert result["allowed"]
+    assert [r["id"] for r in result["cleanup"]["deleted"]] == [old["id"]]
+    assert (tmp_path / "new/data").exists()
+    assert (tmp_path / "other-volume/data").exists()
+
+
+@pytest.mark.parametrize("protection", ["pin", "retain", "running", "ownership"])
+def test_automatic_admission_never_bypasses_protection(storage, tmp_path, protection):
+    row = object_with_bytes(storage, tmp_path, "protected")
+    if protection == "pin":
+        storage.pin(row["id"], "user retained")
+    elif protection == "ownership":
+        (tmp_path / "protected" / MARKER).write_text("{}", encoding="utf-8")
+    else:
+        row["state"] = "running" if protection == "running" else "idle"
+        row["retainUntil"] = time.time() + 3600 if protection == "retain" else None
+        write_json(storage.record_path(row["id"]), row)
+    storage.configure({"budgetBytes": 1})
+    with pytest.raises(RuntimeError, match="build admission blocked"):
+        admit(storage, [("build", tmp_path, 1)])
+    assert (tmp_path / "protected/data").read_bytes() == b"x" * 100
+
+
+def test_parallel_running_objects_use_one_growth_reservation(storage, tmp_path, monkeypatch):
+    monkeypatch.setattr("build_storage.policy.volume", lambda _: ("volume", 1000))
+    monkeypatch.setattr("build_storage.store.volume", lambda _: ("volume", 1000))
+    object_with_bytes(storage, tmp_path, "cache", 100)
+    storage.configure({"budgetBytes": 250})
+    with (
+        reserve(storage, [("operation", tmp_path, 120)]),
+        storage.use(tmp_path / "cache", "package-cache"),
+        storage.use(tmp_path / "build", "package-build"),
+    ):
+        report = admit(storage, [("concurrent", tmp_path, 100)])
+        assert report["allowed"]
+        assert report["storage"]["knownLogicalBytes"] == 100
+        assert report["storage"]["reservedGrowthBytes"] == 120
+        assert len(report["storage"]["estimatedObjects"]) == 2
+        assert report["storage"]["unknownObjects"] == []
+        assert report["space"]["volumes"][0]["reservedBytes"] == 120
+        assert report["cleanup"] is None
+
+
+def test_running_without_reservation_remains_unknown_and_protected(storage, tmp_path):
+    object_with_bytes(storage, tmp_path, "idle")
+    with storage.use(tmp_path / "running", "dev"):
+        with pytest.raises(RuntimeError, match="build admission blocked"):
+            admit(storage, [("build", tmp_path, 1)])
+        assert (tmp_path / "idle/data").exists()
+        assert (tmp_path / "running" / MARKER).exists()
+
+
+def test_reservation_growth_cannot_silently_exceed_budget(storage, tmp_path, monkeypatch):
+    monkeypatch.setattr("build_storage.policy.volume", lambda _: ("volume", 1000))
+    monkeypatch.setattr("build_storage.store.volume", lambda _: ("volume", 1000))
+    storage.configure({"budgetBytes": 100})
+    with (
+        reserve(storage, [("running", tmp_path, 120)]),
+        storage.use(tmp_path / "cache", "dev"),
+        pytest.raises(RuntimeError, match="build admission blocked"),
+    ):
+        admit(storage, [("build", tmp_path, 1)])
+
+
+def test_admission_reports_unreserved_space_shortfall(storage, tmp_path, monkeypatch):
+    monkeypatch.setattr("build_storage.policy.volume", lambda _: ("volume", 100))
+    with reserve(storage, [("running", tmp_path, 60)]):
+        preview = plan(storage, needs=[("next", tmp_path, 60)])
+        assert not preview["allowed"]
+        assert preview["space"]["volumes"][0]["shortfallBytes"] == 20
+        with pytest.raises(RuntimeError, match="build admission blocked"):
+            admit(storage, [("next", tmp_path, 60)])

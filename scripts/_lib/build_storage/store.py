@@ -277,6 +277,12 @@ class Storage:
             record = self.register(target, category)
             if record["state"] == "running":
                 raise Busy(f"previous operation not reconciled: {target}")
+            if record["bytes"] is None or record["measurementGeneration"] != record["generation"]:
+                record.update(
+                    bytes=tree_size(target),
+                    measuredAt=time.time(),
+                    measurementGeneration=record["generation"],
+                )
             record.update(
                 state="running",
                 purpose=purpose,

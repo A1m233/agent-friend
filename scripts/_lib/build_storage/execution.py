@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -12,7 +13,7 @@ from typing import Any
 
 from .files import GIB, MARKER, identity, read_json, safe_directory, write_json
 from .locks import Busy, lock
-from .policy import maintain, plan, space_plan
+from .policy import collect, maintain, plan, space_plan
 from .reservations import reserve
 from .store import Storage
 
@@ -25,18 +26,25 @@ def require_space(needs: list[tuple[str, Path, int]]) -> dict[str, Any]:
 
 
 def admit(storage: Storage, needs: list[tuple[str, Path, int]]) -> dict[str, Any]:
-    maintain(storage)
-    report = plan(storage)
-    if report["unknownObjects"]:
-        report = plan(storage, scan=True)
-    if not report["budgetSatisfied"]:
-        raise RuntimeError("build budget is not satisfied; inspect protected or unmeasured objects")
-    space = require_space(needs)
-    if storage.config["automaticCategories"]:
-        low = storage.config["lowWaterBytes"]
-        if any(item["availableBytes"] < low for item in space["volumes"]):
-            raise RuntimeError("volume remains below configured low water after bounded cleanup")
-    return {"storage": report, "space": space}
+    report = plan(storage, needs=needs)
+    cleanup = None
+    if not report["allowed"]:
+        report = plan(storage, scan=True, needs=needs)
+        if not report["complete"]:
+            raise RuntimeError(f"build admission blocked by incomplete inventory: {report}")
+        if not report["allowed"]:
+            cleanup = collect(storage, report, needs=needs)
+            report = cleanup["postPlan"]
+            print(
+                f"build cache cleanup: deleted={len(cleanup['deleted'])} "
+                f"skipped={len(cleanup['skipped'])} failed={len(cleanup['failed'])}",
+                file=sys.stderr,
+            )
+    if not report["allowed"]:
+        raise RuntimeError(
+            f"build admission blocked after safe cleanup: {report}; cleanup={cleanup}"
+        )
+    return {"allowed": True, "storage": report, "space": report["space"], "cleanup": cleanup}
 
 
 @contextmanager

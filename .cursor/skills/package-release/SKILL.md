@@ -73,15 +73,16 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
 
 - 发布前必须成功生成私有 native symbols 归档（桌面 EXE、匹配 GUID/age 的 PDB、代码段身份及构建元数据），release manifest 绑定归档 SHA。入口自动校验；失败不可绕过。归档位于 releases 根的 `_symbols/windows-x64/<profile>/<build-id>/`，独立于 workspace GC，不能随缓存删除或公开。trusted-beta 归档含敏感 EXE；诊断包永不附带符号。离线定位使用 `scripts/crash-diagnostics/run.* symbolize --dump <PATH> --symbols <ARCHIVE_DIR> --output <NEW_JSON>`，不自动下载符号。
 
-- 先用 `package run.* plan` 查看实际目录、卷空间与受管缓存策略；计划不代表 Guide、smoke 或正式发布门禁已经通过，实际 runner 会重新核验。
+- 先用 `package run.* plan` 查看实际目录与统一的 `allowed` 结果，同时核对卷空间、并发预留和缓存预算；不要只看 `space.allowed`。预览不执行回收，`allowed=false` 时先区分可回收缓存与受保护/未知对象；实际构建会自动尝试必要回收后重新核验。计划不代表 Guide、smoke 或正式发布门禁已经通过。
 - `workspace-status` 是轻量只读查询，不初始化项目虚拟环境；默认展示已有统计及历史未接管目录。需要精确体积时显式加 `--scan`，关注完整性和统计时间，不把 unknown 当作零。
-- `workspace-gc` 默认只展示 package 类别的回收计划；用户明确要求清理后才加 `--apply`。不会删除源码、安装包（含 local-test）、manifest、native symbols、下载缓存或用户资产。
+- `workspace-gc` 默认只展示 package 类别的独立维护计划；用户要求清理时可加 `--apply`。构建所需的回收直接交给标准构建入口，不必先让用户选择缓存目录或额外批准 GC。不会删除源码、安装包（含 local-test）、manifest、native symbols、下载缓存或用户资产。
 - 开发、Rust 检查和专项回归缓存使用 `scripts/build-storage/run.*` 的统一管理入口；具体参数与范围以该入口和 `scripts/README.md` 为准，不自行拼接删除路径。
-- 自动回收默认关闭。用户明确配置并启用指定类别后，后续标准构建可按该持久策略执行；不因用户要求产包或实现需求就替其启用，也不重复索要仍有效的同范围授权。
+- 请求构建即覆盖本次必要的安全缓存回收：标准入口自动处理本仓库已登记、空闲且未受 pin/保留期/锁保护的可再生成构建对象，满足本次卷空间与预算要求即停止。Agent 调用标准入口并简短回报结果，不手工拼路径删除，也不为常规回收再次询问。
+- `automaticCategories` / `configure --automatic` 只控制构建结束后的可选维护，默认关闭；它按闲置期限与低水位回收，与构建前按需回收分开。构建请求不隐含修改这一持久配置。
 - 旧目录只能先盘点和识别；`workspace-adopt --path <精确目录>` 默认预览，显式 `--apply` 后登记并保护。确认旧消费者已停止后才按对象 ID 解除保护，不凭目录年龄推断空闲。
 - `runtime-verify` 用于纯冻结验证，成功后保留报告并回收本次中间目录；`runtime` 用于等待 `installer --reuse-build-id`，按脚本给出的期限保留。失败现场和显式 pin 也遵循同一可查询记录。
 - 构建与清理采用稳定控制目录中的互斥保护；更换 state root 不能绕过。锁冲突只报告，不删除 lock 或强杀未知进程。
-- 空间门槛、预算、保留期限及实际可回收量全部以脚本计划为准；多卷或并发预留可能使需要的空间高于原 state 单卷门槛。空间不足时报告缺口，未经授权不换盘或扩大回收范围。
+- 空间门槛、预算、保留期限及实际可回收量全部以脚本计划为准；运行中对象保持保护，有有效容量预留时以已有体积加预留增长量估算，不把暂时过期的统计直接当作零或全局故障。安全回收后仍不足或无法确认占用时报告具体缺口/保护原因，未经授权不换盘、接管未知目录或解除保护。
 - 中断操作按 `build-storage status` 的对象和 reservation 记录定位；只有核实整棵子进程树停止后，才使用显式 reconcile 入口解除保护。不得把 PID 消失当作所有后代已经退出。
 
 ## 模式边界

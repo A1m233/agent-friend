@@ -95,3 +95,18 @@ def test_plan_distinguishes_verification_resume_and_matrix_lifetimes(scenario):
         assert report["lifecycle"]["releaseArtifacts"] == "preserved"
         assert report["verification"]["status"] == "not-verified-by-this-plan"
     assert not storage.control.exists()
+
+
+def test_package_plan_combines_budget_and_space_without_cleanup(scenario):
+    roots, storage = scenario
+    target = roots.work_root / "build-cache"
+    with storage.use(target, "package-cache"):
+        (target / "data").write_bytes(b"x" * 100)
+    storage.configure({"budgetBytes": 50})
+    report = governance.package_plan(roots)
+    assert report["space"]["allowed"]
+    assert not report["storage"]["budgetSatisfied"]
+    assert not report["allowed"]
+    assert (target / "data").exists()
+    assert governance.preflight(roots)["allowed"]
+    assert not target.exists()
