@@ -247,6 +247,9 @@ _ERROR_CODES = {
     "invalid_request_error": (LLMBadRequestError, "request"),
     "invalid_request": (LLMBadRequestError, "request"),
     "content_policy_violation": (LLMContentPolicyError, "content_policy"),
+    # Also emitted inside HTTP 200 streams; this is a provider-reported timeout,
+    # not evidence that one of our local timeout timers expired.
+    "request_timeout": (LLMTransientProviderError, "timeout"),
     "server_error": (LLMTransientProviderError, "service_unavailable"),
     "server_is_overloaded": (LLMTransientProviderError, "overload"),
     "engine_overloaded_error": (LLMTransientProviderError, "overload"),

@@ -5,6 +5,7 @@ import copy
 import json
 import threading
 from dataclasses import replace
+from hashlib import sha256
 from types import SimpleNamespace
 from typing import Any
 
@@ -279,6 +280,58 @@ def http_mock(monkeypatch: pytest.MonkeyPatch) -> Any:
         return requests
 
     return install
+
+
+@pytest.mark.parametrize("code", ["request_timeout", "fixture_unknown_error"])
+@pytest.mark.parametrize("after_output", [False, True])
+def test_stream_timeout_retry_and_diagnostic_boundary(
+    http_mock: Any,
+    caplog: pytest.LogCaptureFixture,
+    code: str,
+    after_output: bool,
+) -> None:
+    caplog.set_level("INFO", logger="llm_providers.call_observation")
+    events = text_events()[:2] if after_output else []
+    events.append({"type": "error", "code": code, "message": "private body sk-secret"})
+    requests = http_mock(events)
+    client = LLMClient(
+        build_provider_spec(provider_id="deepseek", api_key="fixture"),
+        network_retry_backoff_seconds=0,
+    )
+    expected = (
+        LLMStreamInterruptedAfterOutputError
+        if code == "request_timeout" and after_output
+        else LLMTransientProviderError
+        if code == "request_timeout"
+        else LLMProviderError
+    )
+    with pytest.raises(expected) as caught:
+        list(client.stream(ModelRequest(messages=[], control=ModelCallControl(retry_limit=1))))
+    assert type(caught.value) is expected
+    retry_expected = code == "request_timeout" and not after_output
+    assert len(requests) == (2 if retry_expected else 1)
+    record = next(
+        json.loads(r.message.split("model_call_observation ", 1)[1])
+        for r in caplog.records
+        if "model_call_observation " in r.message
+    )
+    assert record["http_attempts"] == len(requests)
+    assert record["retry_plans"] == int(retry_expected)
+    assert record["stop_reason"] == (
+        "retry_exhausted"
+        if retry_expected
+        else "output_committed"
+        if code == "request_timeout"
+        else "not_retryable"
+    )
+    evidence = record["error"]
+    assert evidence["code"] == (
+        "request_timeout"
+        if code == "request_timeout"
+        else "sha256:" + sha256(code.encode()).hexdigest()[:24]
+    )
+    assert evidence["request_ref"] == "sha256:" + sha256(b"req-1").hexdigest()[:24]
+    assert "private body" not in caplog.text and "sk-secret" not in caplog.text
 
 
 @pytest.mark.parametrize(

@@ -23,6 +23,8 @@ from agent.context.usage_anchor import InputEstimate
 from agent.messages import Message
 from agent.sessions import Event
 from agent.sessions.model_history import SessionModelHistory
+from llm_providers.error_normalization import map_provider_error
+from llm_providers.responses.stream import _ResponseFailure
 from llm_providers.stream_events import ProviderAssistantTurn
 
 from llm_providers import (
@@ -257,6 +259,32 @@ def test_capacity_repartition_and_transient_retry_share_four_requests() -> None:
     assert len(model.requests) == 4
     assert runtime.compaction_control is not None
     assert runtime.compaction_control.summary_requests == 4
+
+
+@pytest.mark.parametrize("repeated", [False, True])
+@pytest.mark.parametrize("code", ["request_timeout", "fixture_unknown_error"])
+def test_provider_stream_timeout_has_one_summary_retry_and_preserves_history(
+    code: str, repeated: bool
+) -> None:
+    error = map_provider_error(_ResponseFailure({"type": "error", "code": code}, None))
+    model = SummaryModel(outcomes=[error, error] if repeated else [error])
+    history = _task(groups=2)
+    before = copy.deepcopy(history)
+    runtime = _runtime(model, history[0])
+    if code == "request_timeout" and not repeated:
+        result = SummarizingContextManager().build_messages(history, "sys", runtime=runtime)
+        assert result.new_compaction is not None
+        assert result.new_compaction.summary_attempts == 2
+    else:
+        with pytest.raises(ContextCompactionUnavailableError) as caught:
+            SummarizingContextManager().build_messages(history, "sys", runtime=runtime)
+        assert caught.value.reason == "llm_error"
+        assert caught.value.__cause__ is error
+    assert history == before
+    assert len(model.requests) == (2 if code == "request_timeout" else 1)
+    assert all(request.control.retry_limit == 0 for request in model.requests)
+    if len(model.requests) == 2:
+        assert model.requests[0].messages == model.requests[1].messages
 
 
 @pytest.mark.parametrize(

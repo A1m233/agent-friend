@@ -38,6 +38,7 @@ class HttpFailure(Exception):
         ("invalid_request_error", 400, LLMBadRequestError),
         ("server_is_overloaded", 503, LLMTransientProviderError),
         ("engine_overloaded_error", 429, LLMTransientProviderError),
+        ("request_timeout", 408, LLMTransientProviderError),
     ],
 )
 def test_equivalent_error_carriers(code: str, status: int, expected: type[Exception]) -> None:
@@ -75,6 +76,28 @@ def test_unknown_error_preserves_digest_not_untrusted_text() -> None:
             raise map_provider_error(raw) from None
     except LLMProviderError:
         assert "sk-secret" not in traceback.format_exc()
+
+
+def test_stream_request_timeout_keeps_provider_code_without_inventing_local_timeout() -> None:
+    # CPA uses this public code for a stream that ends before response.completed.
+    # It does not establish that a local timer expired or an HTTP 408 was received.
+    mapped = map_provider_error(
+        _ResponseFailure(
+            {"type": "error", "code": "request_timeout", "message": "private body"},
+            "private-response-id",
+        )
+    )
+    assert isinstance(mapped, LLMTransientProviderError)
+    evidence = mapped.error_evidence
+    assert evidence is not None
+    assert evidence.code == "request_timeout"
+    assert evidence.category == "timeout"
+    assert evidence.source == "stream_error"
+    assert evidence.status_code is None
+    assert evidence.timeout_stage is None
+    assert evidence.timeout_seconds is None
+    assert evidence.response_ref is not None
+    assert "private" not in json.dumps(asdict(evidence)) + str(mapped)
 
 
 @pytest.mark.parametrize(
