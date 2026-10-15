@@ -192,8 +192,11 @@ store._read_records = forbidden
 store.query = forbidden
 assert store.query_page('one', turn_limit=30).active_events[-1].uuid == 'u'
 """
+    # This checks cross-process index reuse, not interpreter startup performance.
+    # Importing agent also loads provider dependencies; allow startup headroom
+    # on loaded Windows runners while keeping the child bounded.
     result = subprocess.run(
-        [sys.executable, "-c", program, str(tmp_path)], capture_output=True, text=True, timeout=20
+        [sys.executable, "-c", program, str(tmp_path)], capture_output=True, text=True, timeout=60
     )
     assert result.returncode == 0, result.stderr
 

@@ -48,6 +48,55 @@ async function generate() {
   await act(async () => button!.click());
 }
 
+async function editDescription(value: string) {
+  const input = container.querySelector<HTMLTextAreaElement>('[aria-label="问题说明"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  return input;
+}
+
+it.each(["complete", "partial"])("clears the submitted description after a %s export", async (outcome) => {
+  mocks.generate.mockResolvedValue({
+    path: "diagnostics.zip", outcome, failures: [], includedSessionIds: [],
+  });
+  await act(async () => root.render(createElement(FeedbackDiagnosticsPanel, { prefill: null })));
+  const input = await editDescription("  导出前的问题说明  ");
+  await generate();
+  expect(mocks.generate).toHaveBeenLastCalledWith(expect.objectContaining({ description: "导出前的问题说明" }));
+  expect(input.value).toBe("");
+  await generate();
+  expect(mocks.generate).toHaveBeenLastCalledWith(expect.objectContaining({ description: undefined }));
+});
+
+it("keeps the description when bundle generation fails", async () => {
+  mocks.generate.mockRejectedValue(new Error("export failed"));
+  await act(async () => root.render(createElement(FeedbackDiagnosticsPanel, { prefill: null })));
+  const input = await editDescription("保留以便重试");
+  await generate();
+  expect(input.value).toBe("保留以便重试");
+  expect(toast.error).toHaveBeenCalledWith("无法生成诊断包", { description: "export failed" });
+});
+
+it.each(["新问题说明", "原问题说明"])("preserves edits during export even when the final text is %s", async (latest) => {
+  let finish!: (value: unknown) => void;
+  mocks.generate.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  await act(async () => root.render(createElement(FeedbackDiagnosticsPanel, { prefill: null })));
+  const input = await editDescription("原问题说明");
+  await generate();
+  expect(mocks.generate).toHaveBeenCalledWith(expect.objectContaining({ description: "原问题说明" }));
+  await editDescription("编辑中的说明");
+  await editDescription(latest);
+  await act(async () => finish({
+    path: "diagnostics.zip", outcome: "complete", failures: [], includedSessionIds: [],
+  }));
+  expect(input.value).toBe(latest);
+  await generate();
+  expect(mocks.generate).toHaveBeenLastCalledWith(expect.objectContaining({ description: latest }));
+  expect(input.value).toBe("");
+});
+
 it("exports summaries by default and opts into dumps independently of conversations", async () => {
   await act(async () => root.render(createElement(FeedbackDiagnosticsPanel, { prefill: null })));
   const checkbox = container.querySelector<HTMLButtonElement>('[aria-label="包含原始崩溃转储"]');
