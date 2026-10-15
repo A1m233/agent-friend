@@ -52,6 +52,7 @@ export function FeedbackDiagnosticsPanel({
   const archivedLoading = useArchivedSessionsStore((state) => state.loading);
   const refreshArchived = useArchivedSessionsStore((state) => state.refresh);
   const [description, setDescription] = useState("");
+  const descriptionRevision = useRef(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [generating, setGenerating] = useState(false);
   const [allTurns, setAllTurns] = useState(true);
@@ -128,6 +129,7 @@ export function FeedbackDiagnosticsPanel({
 
   const generate = async () => {
     if (selectedIds.size > 0 && !allTurns && !validTurnLimit) return;
+    const submittedRevision = descriptionRevision.current;
     setGenerating(true);
     setResult(null);
     try {
@@ -140,6 +142,9 @@ export function FeedbackDiagnosticsPanel({
         includeCrashDumps,
       });
       setResult(next);
+      // A generated bundle contains the submitted description, including partial exports.
+      // Preserve any edits made while the export was in flight.
+      if (descriptionRevision.current === submittedRevision) setDescription("");
       const partial = next.outcome === "partial";
       const notify = partial ? toast.warning : toast.success;
       notify(resultTitle(next), {
@@ -226,7 +231,10 @@ export function FeedbackDiagnosticsPanel({
           maxLength={20_000}
           rows={5}
           placeholder="可以描述实际表现、期望表现和复现方式"
-          onChange={(event) => setDescription(event.target.value)}
+          onChange={(event) => {
+            descriptionRevision.current += 1;
+            setDescription(event.target.value);
+          }}
           aria-label="问题说明"
         />
         <p className="text-xs text-muted">不填写也可以生成基础诊断包。</p>
