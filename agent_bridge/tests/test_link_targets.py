@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -16,6 +17,7 @@ from agent_bridge.assembly import BridgeRuntime
 from agent_bridge.routes.link_targets import inspect_path, local_path, register_routes
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from agent import AttachmentStore
 
@@ -154,3 +156,40 @@ def test_missing_and_wrong_context_have_visible_errors(environment, tmp_path: Pa
         ).status_code
         == 422
     )
+
+
+def test_generated_image_uses_shared_resolution_and_retains_session_scope(environment) -> None:  # type: ignore[no-untyped-def]
+    client, sessions, assets, _ = environment
+    data = io.BytesIO()
+    Image.new("RGB", (2, 2), "white").save(data, format="PNG")
+    _, ref = assets.import_image_bytes(data.getvalue(), display_name="generated.png")
+    sessions.append_event(
+        "one",
+        Event(
+            uuid=str(uuid4()),
+            type="assistant_message",
+            ts=datetime.now(UTC),
+            payload={
+                "content": "",
+                "generated_image": {"status": "saved"},
+                "attachments": [ref.to_dict()],
+            },
+        ),
+    )
+
+    def resolve(sid: str) -> dict[str, str]:
+        return cast(
+            dict[str, str],
+            client.post(
+                "/v1/link-targets/resolve",
+                json={"context": "session", "sessionId": sid, "assetId": ref.asset_id},
+            ).json(),
+        )
+
+    result = resolve("one")
+    assert result["kind"] == "file"
+    assert Path(result["value"]).read_bytes() == data.getvalue()
+    assert resolve("two")["kind"] == "unavailable"
+    assert resolve("two")["value"] == ""
+    Path(result["value"]).unlink()
+    assert resolve("one")["kind"] == "unavailable"

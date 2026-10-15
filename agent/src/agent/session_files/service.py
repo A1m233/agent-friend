@@ -31,11 +31,12 @@ class SessionFile:
     file_ref: str
     source_message_ref: str
     attachment: AttachmentRef
+    source: str = "user_upload"
 
     def metadata(self) -> dict[str, Any]:
         return {
             "file_ref": self.file_ref,
-            "source": "user_upload",
+            "source": self.source,
             "source_message_ref": self.source_message_ref,
             **self.attachment.to_dict(),
         }
@@ -78,7 +79,7 @@ class SessionFileService:
         session = self.sessions.load(session_id)
         found = []
         for event in session.active_events:
-            if event.type != "user_message":
+            if event.type not in {"user_message", "assistant_message"}:
                 continue
             for index, raw in enumerate(event.payload.get("attachments") or []):
                 try:
@@ -92,7 +93,16 @@ class SessionFileService:
                 ):
                     raise SessionFileError("session_file_reference_invalid")
                 identity = hashlib.sha256(f"{event.uuid}:{index}".encode()).hexdigest()
-                found.append(SessionFile(f"file-{identity}", event.uuid, ref))
+                found.append(
+                    SessionFile(
+                        f"file-{identity}",
+                        event.uuid,
+                        ref,
+                        "assistant_generated"
+                        if event.type == "assistant_message"
+                        else "user_upload",
+                    )
+                )
         return found
 
     def read_bytes(self, session_id: str, file_ref: str, *, max_bytes: int) -> tuple[bytes, str]:

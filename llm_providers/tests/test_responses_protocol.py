@@ -12,6 +12,7 @@ import pytest
 import test_responses as fixtures
 from llm_providers.errors import LLMIncompleteResponseError, LLMProviderError
 from llm_providers.responses.evidence import (
+    IMAGE_EVENTS,
     REASONING_EVENTS,
     REFUSAL_EVENTS,
     UNSUPPORTED_EVENTS,
@@ -57,7 +58,10 @@ def test_locked_sdk_event_inventory_is_explicitly_classified() -> None:
         "response.output_text.done",
         "response.output_text.annotation.added",
     }
-    assert sdk_events <= supported | REASONING_EVENTS | REFUSAL_EVENTS | UNSUPPORTED_EVENTS
+    assert (
+        sdk_events
+        <= supported | REASONING_EVENTS | REFUSAL_EVENTS | UNSUPPORTED_EVENTS | IMAGE_EVENTS
+    )
     published = json.loads(
         (Path(__file__).parent / "fixtures/responses/events-2026-10-05.json").read_text(
             encoding="utf-8"
@@ -65,7 +69,7 @@ def test_locked_sdk_event_inventory_is_explicitly_classified() -> None:
     )
     assert (
         set(published["events"])
-        == supported | REASONING_EVENTS | REFUSAL_EVENTS | UNSUPPORTED_EVENTS
+        == supported | REASONING_EVENTS | REFUSAL_EVENTS | UNSUPPORTED_EVENTS | IMAGE_EVENTS
     )
     output_types = {
         name

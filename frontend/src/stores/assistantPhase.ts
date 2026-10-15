@@ -29,12 +29,13 @@ export function setAssistantItem(
       ? { ...previous, phase: normalizeAssistantPhase(phase) } : block);
   }
   const block: TextBlock = {
+    ...previous,
     kind: "text", mid, text: previous?.text ?? "", phase: normalizeAssistantPhase(phase),
     itemIndex: typeof itemIndex === "number" && Number.isInteger(itemIndex) && itemIndex >= 0
       ? itemIndex : undefined,
   };
   const result = blocks.filter((item) => item.kind !== "text" || item.mid !== mid);
-  const next = result.findIndex((item) => item.kind === "text" && item.itemIndex !== undefined
+  const next = result.findIndex((item) => (item.kind === "text" || item.kind === "image") && item.itemIndex !== undefined
     && block.itemIndex !== undefined && item.itemIndex > block.itemIndex);
   if (next < 0) result.push(block);
   else result.splice(next, 0, block);

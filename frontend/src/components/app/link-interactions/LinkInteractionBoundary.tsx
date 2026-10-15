@@ -11,6 +11,7 @@ interface Hit { node: Element; href: string; image: boolean }
 function currentHit(hit: Hit): boolean {
   if (!hit.node.isConnected) return false;
   if (hit.node instanceof HTMLAnchorElement) return hit.node.getAttribute("href") === hit.href;
+  if (hit.node.hasAttribute("data-attachment-url")) return hit.node.getAttribute("data-attachment-url") === hit.href;
   return (hit.node as Element & { props?: { item?: { url?: string } } }).props?.item?.url === hit.href;
 }
 
@@ -22,6 +23,8 @@ export function linkAtEvent(event: Event): Hit | null {
     if (!(item instanceof Element)) continue;
     if (item.hasAttribute("data-link-ignore")) return null;
     if (item instanceof HTMLAnchorElement) return { node: item, href: item.getAttribute("href") ?? "", image: false };
+    const attachmentUrl = item.getAttribute("data-attachment-url");
+    if (attachmentUrl) return { node: item, href: attachmentUrl, image: true };
     if (item.tagName === "T-FILECARD") {
       const card = item as Element & { props?: { item?: { url?: string; fileType?: string } } };
       const value = card.props?.item;
@@ -67,7 +70,7 @@ export function LinkInteractionBoundary({ context, children }: { context: LinkCo
     };
     const observer = new MutationObserver(check);
     observer.observe(document.body, { subtree: true, childList: true });
-    observer.observe(menuHit.node, { attributes: true, attributeFilter: ["href"] });
+    observer.observe(menuHit.node, { attributes: true, attributeFilter: ["href", "data-attachment-url"] });
     const contentRoot = menuHit.node.getRootNode();
     if (contentRoot instanceof ShadowRoot) observer.observe(contentRoot, { subtree: true, childList: true });
     return () => observer.disconnect();

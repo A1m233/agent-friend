@@ -82,6 +82,22 @@ class AssistantMessageMetadata:
 
 
 @dataclass(frozen=True)
+class AssistantImageStart:
+    message_id: str
+    item_index: int
+    type: Literal["assistant_image_start"] = "assistant_image_start"
+
+
+@dataclass(frozen=True)
+class AssistantImage:
+    message_id: str
+    item_index: int
+    images: tuple[AttachmentRef, ...] = ()
+    error_code: str | None = None
+    type: Literal["assistant_image"] = "assistant_image"
+
+
+@dataclass(frozen=True)
 class AssistantPhaseStatus:
     run_id: str
     mode: Literal["native", "legacy"]
@@ -211,6 +227,8 @@ class TurnDone:
 
 ConversationEvent = (
     TextDelta
+    | AssistantImageStart
+    | AssistantImage
     | AssistantMessageStart
     | AssistantMessageEnd
     | AssistantMessageReset

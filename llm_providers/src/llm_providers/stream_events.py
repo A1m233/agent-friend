@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from .assistant_content import AssistantContentPart
+from .image_output import LLMImageResult, LLMImageStart
 from .reasoning import ProviderReasoningState
 from .request_witness import ProviderRequestRelation, ProviderRequestWitness
 
@@ -54,6 +55,7 @@ class ProviderAssistantTurn:
     tool_calls: tuple[ProviderToolCall, ...] = ()
     reasoning_state: ProviderReasoningState | None = None
     text_items: tuple[ProviderAssistantItem, ...] = ()
+    image_count: int = 0
 
     def __repr__(self) -> str:
         return (
@@ -334,6 +336,8 @@ class LLMTurnDone:
 
 LLMStreamEvent = (
     LLMTextDelta
+    | LLMImageStart
+    | LLMImageResult
     | LLMToolCallDelta
     | LLMRetryScheduled
     | LLMActivity

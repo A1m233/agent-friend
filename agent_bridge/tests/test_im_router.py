@@ -24,6 +24,7 @@ from typing import Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
+from agent.conversation_events import AssistantImage, AssistantImageStart
 from agent.runtime import AgentRuntime, RunOutcome
 from agent.system_prompt import IM_QQ_SURFACE
 from agent_bridge.protocols.im.adapters.qq import QQAdapter
@@ -317,6 +318,39 @@ async def test_handle_inbound_passes_session_id_to_bind_persistent(
 
 
 # ---------- 文本聚合 ----------
+
+
+@pytest.mark.asyncio
+async def test_image_barrier_keeps_order_and_durable_receipts(
+    router: IMRouter,
+    session_bridge: MagicMock,
+    tmp_path: Path,
+) -> None:
+    session_bridge.bind_persistent.return_value = _make_conv(
+        [
+            TextDelta("before", message_id="before", item_index=0),
+            AssistantImageStart("image", 1),
+            AssistantImage("image", 1, ()),
+            TextDelta("after", message_id="after", item_index=2),
+            TurnDone(),
+        ]
+    )
+    session_bridge.assistant_events_after.return_value = (
+        SimpleNamespace(uuid="image", payload={"generated_image": {}, "item_index": 1}),
+        SimpleNamespace(uuid="before", payload={"content": "before", "item_index": 0}),
+        SimpleNamespace(uuid="after", payload={"content": "after", "item_index": 2}),
+    )
+    session_bridge.generated_image_path.return_value = (tmp_path / "image.png", "image.png")
+    provider = ReceiptStreamingProvider([{"id": "prefix"}] * 10)
+    await router.handle_inbound("qq", _make_event(), provider)
+    assert provider.stream is not None
+    assert provider.stream.delivery_state().accepted_text == "before"
+    assert len(provider.sent) == 2
+    assert provider.sent[0].image is not None and provider.sent[1].text == "after"
+    receipts = session_bridge.record_image_delivery.call_args_list
+    assert [call.kwargs["outcome"] for call in receipts] == ["delivered"] * 3
+    assert [call.kwargs["source"] for call in receipts] == ["before", "image", "after"]
+    session_bridge.bind_persistent.return_value.stream.assert_called_once()
 
 
 @pytest.mark.asyncio

@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from uuid import uuid4
 
 from llm_providers.assistant_content import content_metadata
+from llm_providers.image_output import LLMImageResult, LLMImageStart
 from llm_providers.multimodal.chat_images import project_tool_image_transport
 from llm_providers.multimodal.tool_images import record_image_rejection, supports_tool_images
 from llm_providers.protocol import DEFAULT_MODEL_RETRIES
@@ -123,6 +124,8 @@ from .context.usage_anchor import (
     estimate_input,
 )
 from .conversation_events import (
+    AssistantImage,
+    AssistantImageStart,
     AssistantMessageEnd,
     AssistantMessageMetadata,
     AssistantMessagePhase,
@@ -481,6 +484,7 @@ class Conversation:
         self._tool_post_hook = tool_post_hook
         self._post_turn_external = post_turn_external
         self._message_renderer = message_renderer
+        self._generated_image_store = session_file_service.assets if session_file_service else None
         from .attachments.input_projection import project_file_message
         from .session_files.inputs import SessionFileInputs
 
@@ -1139,7 +1143,23 @@ class Conversation:
                             "native" if fact.get("mode") == "native" else "legacy",
                             cast(Any, fact.get("validation", "pending")),
                         )
-                    for index, replay in enumerate(completed_replay_events):
+                    for index, replay in enumerate(
+                        sorted(
+                            completed_replay_events,
+                            key=lambda event: event.payload.get("item_index", 0),
+                        )
+                    ):
+                        if "generated_image" in replay.payload:
+                            yield AssistantImage(
+                                replay.uuid,
+                                replay.payload.get("item_index", index),
+                                tuple(
+                                    AttachmentRef.from_dict(ref)
+                                    for ref in replay.payload.get("attachments", [])
+                                ),
+                                replay.payload["generated_image"].get("error_code"),
+                            )
+                            continue
                         phase = normalize_phase(replay.payload.get("phase"))
                         yield AssistantMessageStart(replay.uuid, phase, index)
                         yield TextDelta(
@@ -1590,6 +1610,8 @@ class Conversation:
                     AssistantMessageReset,
                     AssistantMessagePhase,
                     AssistantMessageMetadata,
+                    AssistantImage,
+                    AssistantImageStart,
                     AssistantPhaseStatus,
                 ),
             ):
@@ -2346,6 +2368,7 @@ class Conversation:
         state = self._run_model_snapshot.phase if self._run_model_snapshot else None
         items = state.ordered_text() if state and content == state.arrival_text else []
         if items:
+            assert state is not None
             first: Event | None = None
             for item in items:
                 if item.persisted:
@@ -2360,6 +2383,9 @@ class Conversation:
                     message_id=item.message_id,
                     phase=item.phase,
                     content_parts=content_metadata(item.content_parts),
+                    item_index=state.response_offset + item.index
+                    if item.source_id is not None
+                    else None,
                 )
                 item.persisted = True
                 if first is None:
@@ -2389,6 +2415,8 @@ class Conversation:
         message_id: str | None = None,
         phase: Literal["commentary", "final_answer", "unknown"] = "unknown",
         content_parts: list[dict[str, Any]] | None = None,
+        item_index: int | None = None,
+        image: AssistantImage | None = None,
     ) -> Event:
         meta: dict[str, Any] = self._run_event_meta(
             {
@@ -2405,6 +2433,11 @@ class Conversation:
         if self._active_tool_run_state is not None:
             meta["tool_run"] = self._active_tool_run_state.diagnostics()
         payload: dict[str, Any] = {"content": content, "partial": partial, "phase": phase}
+        if item_index is not None:
+            payload["item_index"] = item_index
+        if image is not None:
+            payload["generated_image"] = {"error_code": image.error_code}
+            payload["attachments"] = [ref.to_dict() for ref in image.images]
         if content_parts:
             payload["content_parts"] = content_parts
         if partial and interruption_reason:
@@ -2465,7 +2498,39 @@ class Conversation:
         try:
             for event in stream:
                 self._check_cancel(cancel_check)
-                if isinstance(event, LLMAssistantItemStart):
+                if isinstance(event, LLMImageStart):
+                    state.start(LLMAssistantItemStart(event.item_id, event.output_index))
+                    item = state.items[event.item_id]
+                    item.is_image = True
+                    yield AssistantImageStart(item.message_id, state.response_offset + item.index)
+                elif isinstance(event, LLMImageResult):
+                    if event.item_id not in state.items:
+                        state.start(LLMAssistantItemStart(event.item_id, event.output_index))
+                    item = state.items[event.item_id]
+                    item.is_image = True
+                    if not item.persisted:
+                        from .generated_images import save_generated_image
+
+                        item.text, refs, error = save_generated_image(
+                            event, self._generated_image_store, item.message_id
+                        )
+                        item.done = True
+                        image = AssistantImage(
+                            item.message_id, state.response_offset + item.index, refs, error
+                        )
+                        self._append_assistant_item_event(
+                            item.text,
+                            partial=False,
+                            persona_name=self._session.current_persona_name,
+                            persona_id=self._session.current_persona_id,
+                            model=self._active_model_id(),
+                            message_id=item.message_id,
+                            item_index=image.item_index,
+                            image=image,
+                        )
+                        item.persisted = True
+                        yield image
+                elif isinstance(event, LLMAssistantItemStart):
                     state.start(event)
                 elif isinstance(event, LLMAssistantItemDone):
                     item = state.items[event.item_id]
@@ -2529,6 +2594,28 @@ class Conversation:
                         state.tool_seen = True
                     yield event
         except BaseException as exc:
+            for item in state.items.values():
+                if item.is_image and not item.persisted:
+                    from .generated_images import save_generated_image
+
+                    item.text, refs, error = save_generated_image(
+                        LLMImageResult(item.source_id or "", item.index, b"", "image_interrupted"),
+                        self._generated_image_store,
+                        item.message_id,
+                    )
+                    self._append_assistant_item_event(
+                        item.text,
+                        partial=False,
+                        persona_name=self._session.current_persona_name,
+                        persona_id=self._session.current_persona_id,
+                        model=self._active_model_id(),
+                        message_id=item.message_id,
+                        item_index=state.response_offset + item.index,
+                        image=AssistantImage(
+                            item.message_id, state.response_offset + item.index, refs, error
+                        ),
+                    )
+                    item.persisted = True
             if state.visible and any(not item.persisted for item in state.ordered_text()):
                 self._append_assistant_event(
                     state.arrival_text,
@@ -4029,7 +4116,9 @@ class Conversation:
                 for event in self._track_assistant_stream(stream, cancel_check):
                     if isinstance(event, LLMRetryScheduled):
                         retries_used = max(retries_used, event.attempt - 1)
-                    if isinstance(event, (LLMTextDelta, LLMTurnDone)):
+                    if isinstance(
+                        event, (LLMTextDelta, LLMTurnDone, AssistantImageStart, AssistantImage)
+                    ):
                         self._check_cancel(cancel_check)
                         request_accepted = True
                         completed = self._commit_pending_context_checkpoints()
@@ -5590,6 +5679,8 @@ class Conversation:
                         AssistantMessageReset,
                         AssistantMessagePhase,
                         AssistantMessageMetadata,
+                        AssistantImage,
+                        AssistantImageStart,
                         AssistantPhaseStatus,
                     ),
                 ):
@@ -6087,6 +6178,8 @@ class Conversation:
                     AssistantMessageReset,
                     AssistantMessagePhase,
                     AssistantMessageMetadata,
+                    AssistantImage,
+                    AssistantImageStart,
                     AssistantPhaseStatus,
                 ),
             ):

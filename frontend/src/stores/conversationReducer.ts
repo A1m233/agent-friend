@@ -35,6 +35,7 @@ import { applyAssistantPhase, setAssistantItem, updateAssistantItemPhase } from 
 import { parseRunErrorRecovery } from "./taskRecovery";
 import { applyAssistantContent } from "./assistantContent";
 import { toolImagesOf } from "./toolImages";
+import { applyAssistantImage } from "./assistantImages";
 
 /** 工具结果里 bridge 用此前缀表达 is_error（006 encoders：无专用字段，约定前缀）。 */
 export const TOOL_ERROR_PREFIX = "[error] ";
@@ -113,6 +114,7 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
 
     case EventType.CUSTOM: {
       const e = evt as CustomEvent;
+      if (e.name === "agent_friend.assistant_image") return applyAssistantImage(msg, e.value);
       if (e.name === "agent_friend.tool_images") {
         const data = e.value as Record<string, unknown> | null;
         if (!data || typeof data.toolCallId !== "string") return msg;
@@ -227,6 +229,9 @@ export function applyPushConversationEvent(
   switch (evt.type) {
     case "assistant_phase":
       return applyAssistantPhase(msg, evt, runId);
+    case "assistant_image":
+    case "assistant_image_start":
+      return applyAssistantImage(msg, evt);
     case "assistant_message_metadata":
       return applyAssistantContent(msg, evt.message_id, evt.content_parts);
     case "assistant_message_start":

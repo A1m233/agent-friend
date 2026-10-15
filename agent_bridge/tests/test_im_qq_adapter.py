@@ -28,7 +28,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from agent_bridge.protocols.im.adapters.qq import QQAdapter
-from agent_bridge.protocols.im.content import OutboundAction, OutboundContent, OutboundControls
+from agent_bridge.protocols.im.adapters.qq_media_logging import private_media_transport
+from agent_bridge.protocols.im.content import (
+    OutboundAction,
+    OutboundContent,
+    OutboundControls,
+    OutboundImage,
+)
 from agent_bridge.protocols.im.control import menu_controls
 from agent_bridge.protocols.im.credentials import ImCredential
 from agent_bridge.protocols.im.event import InboundEvent
@@ -144,6 +150,54 @@ def _make_c2c_event(
 
 
 # ---------- 初始 status ----------
+
+
+def test_media_transport_logs_do_not_expose_upload_credentials(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with (
+        caplog.at_level(logging.DEBUG, logger="httpx"),
+        caplog.at_level(logging.DEBUG, logger="qqbot_agent_sdk.media_loader"),
+    ):
+        with private_media_transport():
+            logging.getLogger("httpx").info("https://upload.example?secret=private")
+            logging.getLogger("qqbot_agent_sdk.media_loader").warning("failed secret-url")
+        logging.getLogger("httpx").info("ordinary request")
+    assert "private" not in caplog.text and "secret-url" not in caplog.text
+    assert "ordinary request" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reply,outcome",
+    [({"id": "image-message"}, "delivered"), ({}, "unknown"), ({"code": 11001}, "failed")],
+)
+async def test_generated_image_upload_and_receipt(
+    adapter: QQAdapter, tmp_path: Path, reply: dict[str, Any], outcome: str
+) -> None:
+    adapter._api = MagicMock()
+    adapter._api.post_c2c_message = AsyncMock(return_value=reply)
+    adapter._http_client = MagicMock()
+    path = tmp_path / "image.png"
+    path.write_bytes(b"fixture")
+    with patch("agent_bridge.protocols.im.adapters.qq.MediaUploader") as uploader:
+        uploader.return_value.upload = AsyncMock(return_value="file-info")
+        receipt = await adapter.send(
+            OutboundContent(
+                chat_id="user",
+                chat_scope="c2c",
+                text="",
+                reply_to_message_id="incoming",
+                image=OutboundImage(path, "image.png"),
+            )
+        )
+        assert receipt.outcome == outcome
+        uploader.return_value.upload.assert_awaited_once()
+        adapter._api.post_c2c_message.assert_awaited_once()
+        message = adapter._api.post_c2c_message.await_args.args[1]
+        assert message.msg_type == QQMessageType.RICH_MEDIA
+        assert message.media.file_info == "file-info"
+        assert message.msg_id == "incoming"
 
 
 def test_initial_status_stopped(adapter: QQAdapter) -> None:

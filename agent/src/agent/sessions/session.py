@@ -564,6 +564,9 @@ class Session:
             elif ev.type == "assistant_message":
                 msg_meta: dict[str, Any] = dict(ev.meta)
                 msg_meta["phase"] = ev.payload.get("phase", "unknown")
+                item_index = ev.payload.get("item_index")
+                if isinstance(item_index, int) and not isinstance(item_index, bool):
+                    msg_meta["item_index"] = item_index
                 if ev.payload.get("content_parts"):
                     msg_meta["content_parts"] = ev.payload["content_parts"]
                 if ev.payload.get("partial"):
@@ -575,8 +578,21 @@ class Session:
                     meta=msg_meta,
                     uuid=ev.uuid,
                 )
-                result.append(msg)
-                last_assistant = msg
+                position = len(result)
+                if "item_index" in msg_meta and msg_meta.get("run_id"):
+                    while position > 0:
+                        previous = result[position - 1]
+                        previous_index = previous.meta.get("item_index")
+                        if (
+                            previous.role != "assistant"
+                            or previous.meta.get("run_id") != msg_meta["run_id"]
+                            or not isinstance(previous_index, int)
+                            or previous_index <= msg_meta["item_index"]
+                        ):
+                            break
+                        position -= 1
+                result.insert(position, msg)
+                last_assistant = result[-1]
                 pending_reminder_fact = False
             elif ev.type == "provider_reasoning_state":
                 if include_model_only:

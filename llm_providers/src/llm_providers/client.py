@@ -39,6 +39,7 @@ from .errors import (
     LLMStreamInterruptedAfterOutputError,
     LLMTransientProviderError,
 )
+from .image_output import LLMImageResult, LLMImageStart
 from .kimi_transport import (
     open_cancellable_kimi_stream,
     uses_kimi_stream_transport,
@@ -728,6 +729,7 @@ class LLMClient:
         relation_witness = previous_request_witness
         for attempt in range(max_retries + 1):
             emitted = False
+            image_started = False
             completed = False
             should_retry = False
             retry_error: LLMNetworkError | LLMTransientProviderError | None = None
@@ -754,6 +756,8 @@ class LLMClient:
             )
             try:
                 for event in upstream:
+                    if isinstance(event, (LLMImageStart, LLMImageResult)):
+                        image_started = True
                     # 活动信号不包含正文或工具调用；它不应改变“尚未产出可用结果”
                     # 的安全重试语义。
                     # Tool-call deltas also remain transient until a terminal chunk
@@ -767,7 +771,7 @@ class LLMClient:
                 return
             except (LLMNetworkError, LLMTransientProviderError) as exc:
                 retry_limit = min(self._retry_limit(exc), max_retries) if allow_retries else 0
-                if completed or (emitted and not allow_output_retries):
+                if completed or image_started or (emitted and not allow_output_retries):
                     observation = current_call.get()
                     if observation is not None:
                         observation.retry_stop = "output_committed"

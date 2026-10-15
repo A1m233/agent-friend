@@ -35,6 +35,7 @@ from typing import Any
 import httpx
 from agent.latency import RunLatencyContext, log_run_latency
 from qqbot_agent_sdk.api_client import QQApiClient
+from qqbot_agent_sdk.constants import MEDIA_TYPE_IMAGE
 from qqbot_agent_sdk.dto import (
     InlineKeyboard,
     KeyboardButton,
@@ -44,11 +45,13 @@ from qqbot_agent_sdk.dto import (
     KeyboardContent,
     KeyboardRow,
     MarkdownContent,
+    MediaInfo,
     MessageToCreate,
     QQMessageType,
     parse_interaction_event,
 )
 from qqbot_agent_sdk.event_parser import EventParser, InboundEvent
+from qqbot_agent_sdk.media_loader import MediaUploader
 from qqbot_agent_sdk.websocket import QQWebSocket, WSCallbacks
 
 from ..content import OutboundAction, OutboundContent, OutboundControls
@@ -58,6 +61,7 @@ from ..provider import OutboundSendResult, ProviderStatus
 from ..state import ControlCapability, IMStateStore
 from ..streaming import IMStreamSession, OutboundStreamContext
 from .qq_delivery_errors import classify_qq_failure
+from .qq_media_logging import private_media_transport
 from .qq_streaming import QQC2CStreamSession
 
 __all__ = ["QQAdapter"]
@@ -299,6 +303,9 @@ class QQAdapter:
             logger.warning("QQAdapter.send called before start (bind=%s)", self.bind_id)
             return OutboundSendResult("failed", error_kind="provider_not_started")
 
+        if content.image is not None:
+            return await self._send_image(content)
+
         msg_seq = self._next_msg_seq()
         msg = _message_to_create(content, msg_seq=msg_seq)
         controls = content.controls if self._should_try_controls(content.controls) else None
@@ -391,6 +398,47 @@ class QQAdapter:
             content.text_format,
         )
         return OutboundSendResult("delivered", provider_message_id=response_message_id or None)
+
+    async def _send_image(self, content: OutboundContent) -> OutboundSendResult:
+        if self._api is None or self._http_client is None or content.image is None:
+            return OutboundSendResult("failed", error_kind="provider_not_started")
+        if content.chat_scope != "c2c":
+            return OutboundSendResult("failed", error_kind="image_channel_unsupported")
+        try:
+            uploader = MediaUploader(self._api, self._http_client, log_tag="generated-image")
+            with private_media_transport():
+                file_info = await uploader.upload(
+                    chat_type="c2c",
+                    chat_id=content.chat_id,
+                    source=str(content.image.path),
+                    file_type=MEDIA_TYPE_IMAGE,
+                    file_name=content.image.display_name,
+                )
+        except Exception:
+            # Upload is not a send receipt; SDK exceptions may contain upload URLs.
+            return OutboundSendResult("failed", error_kind="image_upload_failed")
+        try:
+            with private_media_transport():
+                response = await self._api.post_c2c_message(
+                    content.chat_id,
+                    MessageToCreate(
+                        msg_type=QQMessageType.RICH_MEDIA,
+                        msg_seq=self._next_msg_seq(),
+                        msg_id=content.reply_to_message_id or "",
+                        media=MediaInfo(file_info=file_info),
+                    ),
+                )
+        except Exception as exc:
+            failure = classify_qq_failure(exc)
+            return OutboundSendResult(failure.outcome, error_kind=failure.kind)
+        if not isinstance(response, dict) or response.get("code", 0):
+            return OutboundSendResult("failed", error_kind="platform_rejected")
+        message_id = _response_message_id(response)
+        return (
+            OutboundSendResult("delivered", provider_message_id=message_id)
+            if message_id
+            else OutboundSendResult("unknown", error_kind="missing_receipt")
+        )
 
     def open_text_stream(self, context: OutboundStreamContext) -> IMStreamSession | None:
         """Create a QQ native C2C stream using the already configured API client."""
