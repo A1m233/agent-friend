@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-IN_PROGRESS
+COMPLETED
 
 ## 授权与基线
 
@@ -80,10 +80,10 @@ AC-4 已有确定性失败/未知测试；真实 QQ 单图投递与完整入站�
 - QQAdapter 实际上传并发送同一张图片一次，平台返回 delivered，用户确认“就只收到单张图片”。本次有意只发图片，不含说明文字；未运行 QQ 入站路由或完整图文链路。
 - 为遵守不干扰屏幕的约束，没有重启或关闭测试窗口；当时暂保留本任务 Tauri dev runtime；后续交互调整期间发现窗口已退出并完成后台清理，见本页收尾记录。
 
-AC-2、AC-4 的剩余边界和用户最终验收仍未关闭，保持 IN_PROGRESS。
+以上为第一轮观察时的历史状态；后续 QQ 完整链路、交互修订和用户合入确认见下方记录。
 测试输出有 LiteLLM 异步日志清理、重复 ZIP 测试夹具及 bilibili_api 退出清理警告，未导致门禁失败；
 前端构建有既有 highlight/CSS 与 chunk 大小提示。没有把这些提示写成失败或零警告。
-未创建安装包、未安装、未提交实现、未合入 main；当前已安装客户端不会自动变更。
+第一轮验收时未创建安装包、未安装或合入；本轮 Git 交付仍不构建安装包，已安装客户端不会因提交自动变更。
 
 ## 2026-10-16 交互调整
 
@@ -124,3 +124,15 @@ dev 已重新打开并保留：worktree 6ed4，feature/162-model-generated-image
 ## 合入交付
 
 2026-10-16 用户明确要求合入主干并推送。按已确认范围接受交付；桌面重启继续留待实际使用，右键菜单只保留自动化证据。合入前重新执行后端全量门禁，公开指南按 merge-main-and-push 流程复核，dev 保持运行。
+
+### 最终门禁与指南
+
+- 用户 2026-10-16 确认 QQ 图片和说明均收到且顺序正常，随后明确要求合入主干并推送，按已记录边界完成验收。真实桌面重启延期；新右键交互保留自动化证据，不声称做过实际文件管理器点击。
+- 实现提交 `2f3fd6c5`；同步最新 `origin/main` 后提交 `38ab259c`，无冲突。主干新增的是诊断说明清空与测试启动超时余量，与图片链路无文件重叠。
+- 合入前后端完整 `scripts/check/run.ps1 --stage backend -q --tb=short`：4151 passed / 5 skipped，lint/typecheck 通过，退出码 0。运行期间同步的主干 Python 差异只把一个测试子进程超时从 20 秒放宽为 60 秒，没有改变生产逻辑或断言；该测试在全量运行中也通过。
+- 同步主干后 `scripts/check/run.ps1 --stage frontend`：182 文件 / 1489 tests，lint/typecheck、production build 全部通过。既有警告详见前文。
+- 最终 `frontend/src-tauri` 相对 main 无差异，复用先前 Rust 门禁证据，不为等价恢复或 Git 合入重新打包。
+- 公开指南以产品提交 `38ab259c27febb6a60ce7cad83e5946cf952a343` 为来源，更新能力概览、使用、隐私和排障四篇 reference。Skill validator 与项目 verify 通过；指南提交 `7c2849dc596ffacc2017aa51fc2b84a2eaefd975` 已推送。
+- 指南 [r93](https://github.com/A1m233/agent-friend-guide/releases/tag/agent-friend-guide-r93) 已发布，immutable=true，ZIP/manifest 摘要已核对；兼容范围沿用当前 0.4.1 至 0.5.0（不含）。知识按能力存在与否限定，不能为旧安装版本增加功能。未修改产品 builtin 快照。
+- 本次收尾只更新需求状态和证据，产品代码与指南已审阅提交等价；复核无新增用户事实，不重复发布指南。
+- dev 保持当前 feature worktree 运行；主干合并在独立 main checkout 执行，不切换或关闭用户正在使用的开发实例。

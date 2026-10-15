@@ -113,3 +113,14 @@ E-013 最终门禁：scripts/check 的 frontend 阶段完整通过（lint/typech
 - 局限：单次真实成功路径，不证明所有模型、并发或长期稳定性；失败/取消继续由已有确定性测试覆盖。本轮未验右键文件夹和桌面重启恢复。
 - 私有材料：`%LOCALAPPDATA%/Temp/agent-friend-162-qq-e2e-20261016/` 的 baseline、runtime、observation、routing-observation、verification 与 manifest JSON。摘要和 hash 留在本索引，完整会话和图片不进入仓库；临时材料可能清理。
 - 辅助观测脚本只读本次增量事件、日志和 API，未发起额外 LLM 或 QQ 请求；源码 hash 见本机 manifest。dev 按用户明确要求保持运行，不能再按默认清理流程关闭。
+
+### E-015 · 合入前最终门禁与公开知识
+
+实现已固定于 `2f3fd6c5`，同步 main 后为 `38ab259c27febb6a60ce7cad83e5946cf952a343`。
+后端完整门禁 4151 passed / 5 skipped；同步 main 后前端 1489 passed 与构建通过。
+原生代码相对 main 没有差异；用户已明确授权按已说明的真实验收边界合入推送。
+公开指南提交 `7c2849dc596ffacc2017aa51fc2b84a2eaefd975` / immutable release r93：
+ZIP SHA-256 `4e8c043822085630c66fc386649c1afd52097d4705ab3ea05795a5b84c61549b`，
+snapshot SHA-256 `ea9a9d785b13ccf00f50c87817f7037489822938077af1b2460c63459cbf0383`。
+指南来源是上述产品固定提交；后续收尾仅需求文档状态与证据变化，无需扩大公开知识变更。
+不将这些 Git/文档动作当作新的真实模型、桌面重启、右键或安装验收；dev 按用户要求保留运行。
