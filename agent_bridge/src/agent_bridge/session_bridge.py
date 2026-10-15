@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 
 from agent.approvals import SessionApprovalMode
 
@@ -89,6 +90,58 @@ class SessionBridge:
     def session_exists(self, session_id: str) -> bool:
         """检查 ``session_id`` 是否已在持久化 store 中存在。"""
         return self._runtime.persistent_session_manager.exists(session_id)
+
+    def generated_image_path(self, session_id: str, event_uuid: str) -> tuple[Path, str]:
+        """Resolve only a retained assistant image in this session for channel delivery."""
+        from agent.attachments import AttachmentRef
+        from agent.session_files.service import verified_file
+
+        event = self.persistent_event(session_id, event_uuid)
+        if (
+            event is None
+            or event.type != "assistant_message"
+            or "generated_image" not in event.payload
+        ):
+            raise ValueError("image_reference_invalid")
+        refs = event.payload.get("attachments", [])
+        if len(refs) != 1 or self._runtime.attachment_store is None:
+            raise ValueError("image_unavailable")
+        ref = AttachmentRef.from_dict(refs[0])
+        path = self._runtime.attachment_store.verify(ref.asset_id)
+        if ref.kind != "image" or not verified_file(path, ref):
+            raise ValueError("image_integrity_failed")
+        return path, ref.display_name
+
+    def record_image_delivery(
+        self,
+        session_id: str,
+        *,
+        run_id: str | None,
+        source: str | None,
+        part_index: int,
+        outcome: str,
+        error_kind: str | None,
+    ) -> None:
+        from datetime import UTC, datetime
+        from uuid import uuid4
+
+        with self.session_turn(session_id):
+            self._runtime.persistent_store.append_event(
+                session_id,
+                Event(
+                    type="image_delivery",
+                    uuid=str(uuid4()),
+                    ts=datetime.now(UTC),
+                    payload={
+                        "source_message_ref": source,
+                        "part_index": part_index,
+                        "outcome": outcome,
+                        "error_kind": error_kind,
+                        "channel": "qq",
+                    },
+                    meta={"run_id": run_id} if run_id else {},
+                ),
+            )
 
     def persistent_model(self, session_id: str, *, default: str) -> str:
         """Return the frozen model for an existing session, or its creation default."""

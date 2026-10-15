@@ -37,6 +37,7 @@ class TextItem:
     done: bool = False
     persisted: bool = False
     content_parts: tuple[AssistantContentPart, ...] = ()
+    is_image: bool = False
 
 
 @dataclass
@@ -120,7 +121,9 @@ class PhaseRun:
     def finish(self, event: LLMTurnDone) -> None:
         """Validate source order, never delta arrival order or last text position."""
         sequence: list[tuple[int, Phase | None]] = [
-            (item.index, item.phase) for item in self.ordered_text() if item.text.strip()
+            (item.index, item.phase)
+            for item in self.ordered_text()
+            if item.text.strip() and not item.is_image
         ]
         assistant = event.assistant_turn
         calls = assistant.tool_calls if assistant else ()
@@ -147,6 +150,11 @@ class PhaseRun:
         # Explicit boundaries must complete; legacy has a response-level boundary.
         if any(not item.done and item.source_id is not None for item in self.ordered_text()):
             self.conflict = True
+        image_only = bool(assistant and assistant.image_count and not sequence and not calls)
         self.validation = (
-            "conflict" if self.conflict else "valid" if self.saw_final else "missing_final"
+            "conflict"
+            if self.conflict
+            else "valid"
+            if self.saw_final or image_only
+            else "missing_final"
         )

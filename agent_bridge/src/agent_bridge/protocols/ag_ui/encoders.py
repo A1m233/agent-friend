@@ -30,6 +30,7 @@ import json
 import logging
 from collections.abc import Callable, Iterator
 from contextlib import nullcontext
+from dataclasses import asdict
 from typing import Any, cast
 from uuid import uuid4
 
@@ -48,6 +49,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from ag_ui.encoder import EventEncoder
+from agent.conversation_events import AssistantImage, AssistantImageStart
 from agent.runtime import AgentRuntime, RunHandle, RunOutcome, UserEvent
 from agent.system_prompt.sections import PromptChannel
 from agent.system_prompt.surfaces import InteractionSurfaceId
@@ -181,7 +183,15 @@ def encode_stream(
                     except Exception:
                         # 镜像失败绝不影响 pull 路径——log warning 后继续
                         logger.warning("listener fan_out 失败", exc_info=True)
-                if isinstance(ev, AssistantMessageStart):
+                if isinstance(ev, (AssistantImage, AssistantImageStart)):
+                    yield _encode(
+                        CustomEvent(
+                            type=EventType.CUSTOM,
+                            name="agent_friend.assistant_image",
+                            value=asdict(ev),
+                        )
+                    )
+                elif isinstance(ev, AssistantMessageStart):
                     open_items.add(ev.message_id)
                     yield _encode(
                         TextMessageStartEvent(

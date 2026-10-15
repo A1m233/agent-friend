@@ -35,6 +35,8 @@ import { TOOL_ERROR_PREFIX } from "./conversationReducer";
 import { normalizeAssistantPhase, parseAssistantPhaseState } from "./assistantPhase";
 import { parseRunErrorRecovery } from "./taskRecovery";
 import { parseAssistantContent } from "./assistantContent";
+import { applyAssistantImage } from "./assistantImages";
+import { setAssistantItem } from "./assistantPhase";
 import { toolImagesOf } from "./toolImages";
 
 function textMessage(
@@ -259,11 +261,20 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       const message = ensureAssistant(ev.uuid, ev.ts, runId);
       // 一轮 assistant 可能包含多段文本和工具调用；左下角展示整轮最后回复的完成时间。
       message.createdAt = ev.ts;
-      if (content) {
+      if (p.generated_image && typeof p.generated_image === "object") {
+        const image = p.generated_image as Record<string, unknown>;
+        message.blocks = applyAssistantImage(message, {
+          type: "assistant_image", message_id: ev.uuid, item_index: p.item_index ?? 0,
+          images: p.attachments, error_code: image.error_code,
+        }).blocks;
+      } else if (content) {
         message.blocks.push({ kind: "text", mid: ev.uuid, text: content,
           ...(p.content_parts ? { contentParts: parseAssistantContent(p.content_parts) } : {}),
           ...(p.partial === true ? { partial: true } : {}),
           ...(p.phase === undefined ? {} : { phase: normalizeAssistantPhase(p.phase) }) });
+      }
+      if (!p.generated_image && p.item_index !== undefined) {
+        message.blocks = setAssistantItem(message.blocks, ev.uuid, p.phase, p.item_index);
       }
       if (p.partial === true) {
         const reason = asString(p.interruption_reason);

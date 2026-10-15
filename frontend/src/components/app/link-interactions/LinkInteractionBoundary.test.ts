@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LinkInteractionBoundary } from "./LinkInteractionBoundary";
 import { activateLink, resolveLink, type ResolvedLink } from "@/lib/links/actions";
 import { managedLinkHref } from "@/lib/links/targets";
-import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem } from "@/components/ui";
+import { Button, ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem } from "@/components/ui";
 
 vi.mock("@/lib/links/actions", () => ({
   resolveLink: vi.fn(), activateLink: vi.fn(), copyLink: vi.fn(),
@@ -82,5 +82,16 @@ describe("shared link interactions", () => {
     await act(async () => trigger.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 })));
     expect(document.querySelector('[role="menu"]')?.textContent).toBe("原有操作");
     expect(resolveLink).not.toHaveBeenCalled();
+  });
+  it("supports the image keyboard menu and invalidates it when its asset changes", async () => {
+    const imageProps = { "data-attachment-url": "http://localhost/first", children: "image" };
+    await render("one", createElement(Button, imageProps));
+    const image = host.querySelector("button")!;
+    await act(async () => image.dispatchEvent(new KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true })));
+    expect(resolveLink).toHaveBeenCalledWith("http://localhost/first", { kind: "session", sessionId: "one" });
+    expect(document.querySelector('[role="menu"]')).toBeTruthy();
+    await act(async () => image.setAttribute("data-attachment-url", "http://localhost/second"));
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(activateLink).not.toHaveBeenCalled();
   });
 });

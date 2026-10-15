@@ -67,7 +67,7 @@ def test_extension_can_interleave_through_sdk(http_mock: Any, kind: str, positio
                     encoding="utf-8"
                 )
             )["output_items"]
-            if kind not in {"message", "function_call", "reasoning"}
+            if kind not in {"message", "function_call", "reasoning", "image_generation_call"}
         ],
     ],
 )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -20,6 +21,7 @@ from ..errors import (
     LLMOutputBudgetExhaustedError,
     LLMProviderError,
 )
+from ..image_output import LLMImageStart, decode_image_result
 from ..reasoning import build_provider_reasoning_state
 from ..request_witness import ProviderRequestWitness
 from ..spec import ProviderSpec
@@ -40,6 +42,7 @@ from ..stream_events import (
 from ..timeouts import ModelTimeoutPolicy, resolve_timeout_policy
 from ..usage import extract_responses_usage
 from .evidence import (
+    IMAGE_EVENTS,
     REASONING_EVENTS,
     REFUSAL_EVENTS,
     UNSUPPORTED_EVENTS,
@@ -116,6 +119,7 @@ class _Item:
     refusal_indices: set[int] = field(default_factory=set)
     annotations: dict[int, dict[int, dict[str, Any]]] = field(default_factory=dict)
     content_parts: tuple[AssistantContentPart, ...] = ()
+    image_digest: str | None = None
 
 
 class ResponsesState:
@@ -157,7 +161,12 @@ class ResponsesState:
     def _add(self, raw: dict[str, Any], index: Any) -> tuple[_Item, list[LLMStreamEvent]]:
         identity = raw.get("id")
         kind = raw.get("type")
-        if isinstance(kind, str) and kind not in {"message", "function_call", "reasoning"}:
+        if isinstance(kind, str) and kind not in {
+            "message",
+            "function_call",
+            "reasoning",
+            "image_generation_call",
+        }:
             identity = identity or f"other-{index}"
         if (
             not isinstance(identity, str)
@@ -173,7 +182,9 @@ class ResponsesState:
             raise _protocol("invalid output item type")
         item = _Item(identity=identity, kind=kind, output_index=index)
         events: list[LLMStreamEvent] = []
-        if kind == "message":
+        if kind == "image_generation_call":
+            events.append(LLMImageStart(identity, index))
+        elif kind == "message":
             if raw.get("role") != "assistant":
                 raise _protocol("output message must be assistant")
             item.phase = _phase(raw.get("phase"))
@@ -236,6 +247,7 @@ class ResponsesState:
             "message",
             "function_call",
             "reasoning",
+            "image_generation_call",
         }:
             raw = {"id": identity or f"other-{index}", "type": raw["type"]}
             identity = raw["id"]
@@ -248,6 +260,29 @@ class ResponsesState:
             item = self.items[identity]
             if self.indices.get(index) != identity or raw.get("type") != item.kind:
                 raise _protocol("item completion identity mismatch")
+        if item.kind == "image_generation_call":
+            result = raw.get("result")
+            digest = (
+                hashlib.sha256(
+                    (result if isinstance(result, str) else "").encode("utf-8")
+                ).hexdigest()
+                + ":"
+                + str(raw.get("status"))
+            )
+            if item.done:
+                if item.image_digest != digest:
+                    raise _protocol("conflicting image completion")
+                return events
+            count = (
+                sum(
+                    other.kind == "image_generation_call" and other.done
+                    for other in self.items.values()
+                )
+                + 1
+            )
+            events.append(decode_image_result(identity, index, result, raw.get("status"), count))
+            item.done, item.image_digest = True, digest
+            return events
         if item.kind not in {"message", "function_call", "reasoning"}:
             item.done = True
             self._skip({"type": "response.output_item.done"}, "unsupported_output_item")
@@ -481,7 +516,10 @@ class ResponsesState:
             return self._arguments(self._item(event, "function_call"), event.get("arguments"))
         elif kind == "response.output_item.done":
             snapshot = _object(event.get("item"))
-            if snapshot.get("status") == "incomplete":
+            if (
+                snapshot.get("status") == "incomplete"
+                and snapshot.get("type") != "image_generation_call"
+            ):
                 # Preserve the terminal response's usage/reason instead of
                 # failing early or executing a partially generated function.
                 pending = self._item(
@@ -546,6 +584,11 @@ class ResponsesState:
                 if text
                 else []
             )
+        elif kind in IMAGE_EVENTS:
+            # Progress and partial previews never constitute a delivered image.
+            # An orphan progress event is malformed, not an empty response to retry.
+            self._item(event, "image_generation_call")
+            return [LLMActivity(kind="processing")]
         elif kind in UNSUPPORTED_EVENTS:
             return self._skip(event, "unimplemented_capability_progress")
         elif kind in {"response.content_part.added", "response.content_part.done"}:
@@ -700,7 +743,8 @@ class ResponsesState:
         )
         if calls and any(item.refusal_indices for item in ordered):
             raise _protocol("refusal response contains tool calls")
-        if not text and not calls:
+        image_count = sum(item.kind == "image_generation_call" and item.done for item in ordered)
+        if not text and not calls and not image_count:
             if any(item.kind not in {"message", "function_call", "reasoning"} for item in ordered):
                 raise _protocol("unsupported output capability")
             raise LLMEmptyResponseError("模型未返回可见正文或工具调用。")
@@ -732,6 +776,7 @@ class ResponsesState:
                     for item in ordered
                     if item.kind == "message"
                 ),
+                image_count=image_count,
             ),
         )
 

@@ -107,7 +107,17 @@ export interface CompactionBlock {
   status: "running" | "complete";
 }
 
+export interface ImageBlock {
+  kind: "image";
+  mid: string;
+  itemIndex: number;
+  images: ChatAttachment[];
+  status: "pending" | "saved" | "failed";
+  errorCode?: string;
+}
+
 export type MessageBlock =
+  | ImageBlock
   | TextBlock
   | ToolBlock
   | ThinkingBlock

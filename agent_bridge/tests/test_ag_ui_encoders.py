@@ -9,7 +9,7 @@ from threading import Event, Thread
 from typing import Any, cast
 
 from agent.attachments import AttachmentRef
-from agent.conversation_events import ToolCallResult
+from agent.conversation_events import AssistantImage, AssistantImageStart, ToolCallResult
 from agent.runtime import RunHandle, RunOutcome, RunRequest, UserEvent
 from agent_bridge.protocols.ag_ui.encoders import encode_stream
 from agent_bridge.session_turns import SessionTurnCoordinator
@@ -43,6 +43,28 @@ class _ConversationStub:
 
     def stream(self, _user_input: str, **_kwargs: Any) -> Iterator[ConversationEvent]:
         yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
+
+
+def test_pure_generated_image_encodes_asset_and_terminal_without_fake_text() -> None:
+    image = AttachmentRef("a" * 64, "generated.png", "image", "image/png", 80, "a" * 64)
+
+    class ImageConversation(_ConversationStub):
+        def stream(self, _user_input: str, **_kwargs: Any) -> Iterator[ConversationEvent]:
+            yield AssistantImageStart("picture", 0)
+            yield AssistantImage("picture", 0, (image,))
+            yield TurnDone()
+
+    body = b"".join(
+        encode_stream(
+            lambda: cast(Conversation, ImageConversation()), "image", thread_id="s", run_id="r"
+        )
+    ).decode()
+    events = [json.loads(line[5:]) for line in body.splitlines() if line.startswith("data:")]
+    images = [e["value"] for e in events if e.get("name") == "agent_friend.assistant_image"]
+    assert [e["type"] for e in images] == ["assistant_image_start", "assistant_image"]
+    assert images[1]["images"] == [image.to_dict()]
+    assert events[-1]["type"] == "RUN_FINISHED"
+    assert not any(e["type"].startswith("TEXT_MESSAGE") for e in events)
 
 
 def test_tool_image_extension_preserves_asset_identity_and_excludes_errors() -> None:

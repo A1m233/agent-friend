@@ -18,6 +18,10 @@ REASONING_EVENTS = frozenset(
     for suffix in suffixes
 )
 REFUSAL_EVENTS = frozenset({"response.refusal.delta", "response.refusal.done"})
+IMAGE_EVENTS = frozenset(
+    f"response.image_generation_call.{suffix}"
+    for suffix in ("in_progress", "generating", "partial_image", "completed")
+)
 UNSUPPORTED_EVENTS = frozenset(
     f"response.{family}.{suffix}"
     for family, suffixes in (
@@ -27,7 +31,6 @@ UNSUPPORTED_EVENTS = frozenset(
         ("code_interpreter_call", ("in_progress", "interpreting", "completed")),
         ("file_search_call", ("in_progress", "searching", "completed")),
         ("web_search_call", ("in_progress", "searching", "completed")),
-        ("image_generation_call", ("in_progress", "generating", "partial_image", "completed")),
         ("mcp_call_arguments", ("delta", "done")),
         ("mcp_call", ("in_progress", "completed", "failed")),
         ("mcp_list_tools", ("in_progress", "completed", "failed")),

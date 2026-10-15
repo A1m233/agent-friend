@@ -53,6 +53,7 @@ import type {
   MessagePrimaryActivity,
   PrimaryActivityPresentation,
 } from "./activity/primaryActivity";
+import { GeneratedImage } from "./GeneratedImage";
 import { MessageAttachments } from "./MessageAttachments";
 import { AssistantContentDetails } from "./AssistantContentDetails";
 import { MessageActionBar } from "./MessageActionBar";
@@ -334,7 +335,7 @@ function messageCopyText(message: ChatMessage): string {
 function lastRenderableBlockIndex(message: ChatMessage): number {
   for (let i = message.blocks.length - 1; i >= 0; i -= 1) {
     const block = message.blocks[i];
-    if (block.kind === "text" || block.kind === "tool" || block.kind === "reminder") return i;
+    if (block.kind === "text" || block.kind === "tool" || block.kind === "reminder" || block.kind === "image") return i;
   }
   return -1;
 }
@@ -453,6 +454,10 @@ function MessageContent({
 
       const b = segment.block;
       const i = segment.startIndex;
+      if (b.kind === "image") {
+        if (i === actionBarBlockIndex) shouldRenderExternalActionBar = true;
+        return <GeneratedImage key={`image:${b.mid}`} block={b} running={message.status === "streaming"} />;
+      }
       if (b.kind === "text") {
         if (!b.text) return null;
         return (

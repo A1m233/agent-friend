@@ -39,10 +39,13 @@ import logging
 import threading
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from dataclasses import replace
+from typing import Any
 from uuid import uuid4
 
 from agent.attachments import AttachmentError, AttachmentRef
 from agent.attachments.input_policy import AttachmentInputPolicy
+from agent.conversation_events import AssistantImage, AssistantImageStart
 from agent.latency import RunLatencyContext, log_run_latency, monotonic_ms
 from agent.message_references import QuotedTextReference
 from agent.runtime import AgentRuntime, RunOutcome, RunRequest, UserEvent
@@ -60,8 +63,9 @@ from llm_providers import model_capabilities
 
 from ...errors import map_exception
 from ...session_bridge import PersistentBootstrap, SessionBridge
-from .content import OutboundContent, OutboundTextFormat
+from .content import OutboundContent, OutboundImage, OutboundTextFormat
 from .control import menu_controls
+from .delivery.images import deliver_images
 from .delivery.models import TrackedStream
 from .delivery.recovery import recover_reply, send_observed
 from .event import InboundEvent
@@ -276,6 +280,22 @@ class IMRouter:
         on_text_delta: Callable[[str], None] | None = None
         on_compaction_progress: Callable[[StreamProgressUpdate], None] | None = None
         stop_delivery = threading.Event()
+        image_barrier = threading.Event()
+
+        def observe_output(output: object) -> None:
+            if isinstance(output, (AssistantImageStart, AssistantImage)):
+                image_barrier.set()
+
+        def publish_delta(delta: str) -> None:
+            if (
+                not image_barrier.is_set()
+                and delta_queue is not None
+                and not stop_delivery.is_set()
+            ):
+                delivery_loop.call_soon_threadsafe(delta_queue.put_nowait, delta)
+
+        delivery_loop = asyncio.get_running_loop()
+        on_text_delta = publish_delta
         tracked = im_type == "qq" and isinstance(stream_session, TrackedStream)
 
         async def send_progress() -> None:
@@ -305,12 +325,6 @@ class IMRouter:
             )
             relay_task = asyncio.create_task(relay.feed_from_queue(delta_queue, _STREAM_END))
             loop = asyncio.get_running_loop()
-
-            def publish_delta(delta: str) -> None:
-                if not stop_delivery.is_set():
-                    loop.call_soon_threadsafe(delta_queue.put_nowait, delta)
-
-            on_text_delta = publish_delta
 
             def publish_progress(update: StreamProgressUpdate) -> None:
                 if not stop_delivery.is_set():
@@ -352,6 +366,7 @@ class IMRouter:
                         latency_started_ms,
                         origin_destination_id,
                         user_event_id,
+                        observe_output,
                     )
                 except BaseException:
                     if tracked:
@@ -462,6 +477,99 @@ class IMRouter:
         assistant_sources = tuple(
             item.uuid for item in self._bridge.assistant_events_after(session_id, user_event_id)
         )
+
+        image_events = sorted(
+            self._bridge.assistant_events_after(session_id, user_event_id),
+            key=lambda item: item.payload.get("item_index", 0),
+        )
+        if any("generated_image" in item.payload for item in image_events):
+            base = OutboundContent(
+                chat_id=event.chat_id,
+                chat_scope=event.chat_scope,
+                reply_to_message_id=event.message_id,
+                text="",
+            )
+            parts: list[OutboundContent] = []
+            sources: list[str] = []
+            failed_parts: set[int] = set()
+            prefix_text: list[str] = []
+            prefix_sources: list[str] = []
+            after_image = False
+            for item in image_events:
+                if "generated_image" in item.payload:
+                    after_image = True
+                    try:
+                        if im_type != "qq":
+                            raise ValueError("image_channel_unsupported")
+                        path, name = self._bridge.generated_image_path(session_id, item.uuid)
+                        parts.append(replace(base, image=OutboundImage(path, name)))
+                    except (OSError, ValueError):
+                        failed_parts.add(len(parts))
+                        parts.append(
+                            replace(
+                                base,
+                                text="这张图片未能保存或无法在当前渠道发送，请在桌面端原会话查看。",
+                            )
+                        )
+                    sources.append(item.uuid)
+                elif after_image and item.payload.get("content"):
+                    parts.append(
+                        replace(
+                            base,
+                            text=str(item.payload["content"])
+                            + _source_suffix(item.payload.get("content_parts", [])),
+                            text_format="markdown",
+                        )
+                    )
+                    sources.append(item.uuid)
+                elif item.payload.get("content"):
+                    prefix_sources.append(item.uuid)
+                    prefix_text.append(
+                        str(item.payload["content"])
+                        + _source_suffix(item.payload.get("content_parts", []))
+                    )
+
+            def receipt_record(index: int, receipt: OutboundSendResult) -> None:
+                logger.info(
+                    "IM image reply receipt run_id=%s part=%d outcome=%s error_kind=%s",
+                    run_id,
+                    index,
+                    receipt.outcome,
+                    receipt.error_kind,
+                )
+                source = (
+                    sources[index]
+                    if index >= 0
+                    else (prefix_sources[0] if prefix_sources else None)
+                )
+                self._bridge.record_image_delivery(
+                    session_id,
+                    run_id=run_id,
+                    source=source,
+                    part_index=index,
+                    outcome=receipt.outcome,
+                    error_kind=receipt.error_kind,
+                )
+                if source and receipt.provider_message_id:
+                    self._register_outbound_alias(
+                        provider_or_send,
+                        im_type=im_type,
+                        event=event,
+                        session_id=session_id,
+                        event_uuid=source,
+                        provider_message_id=receipt.provider_message_id,
+                    )
+
+            await deliver_images(
+                replace(base, text=reply_prefix + "".join(prefix_text)),
+                parts,
+                stream_session,
+                send_fn,
+                should_stop=stop_delivery.is_set,
+                on_receipt=receipt_record,
+                failed_parts=frozenset(failed_parts),
+            )
+            return
 
         # 跑通了但 agent 一字未输出(罕见):也回 fallback,避免发空消息给 IM
         if not agent_text:
@@ -668,6 +776,7 @@ class IMRouter:
         latency_started_ms: int | None = None,
         interaction_destination_id: str | None = None,
         user_event_id: str | None = None,
+        on_output: Callable[[object], None] | None = None,
     ) -> str:
         """跑一轮 :class:`Conversation`,聚合所有 :class:`TextDelta` 到完整文本。
 
@@ -690,6 +799,8 @@ class IMRouter:
 
         def consume_event(ev: object) -> None:
             nonlocal tool_boundary_pending
+            if on_output is not None:
+                on_output(ev)
 
             if isinstance(ev, ContextCompactionStatus):
                 if on_compaction_progress is not None:
@@ -699,18 +810,8 @@ class IMRouter:
                 tool_boundary_pending = bool(buf)
                 return
             if isinstance(ev, AssistantMessageMetadata):
-                sources: list[str] = []
-                for part in ev.content_parts:
-                    for source in part.get("annotations", []):
-                        url = source.get("url", "")
-                        label = source.get("title") or source.get("filename") or "外部文件引用"
-                        sources.append(
-                            f"{label}: {url}"
-                            if isinstance(url, str) and url.startswith(("https://", "http://"))
-                            else f"{label}（当前无法打开）"
-                        )
-                if sources:
-                    suffix = "\n\n来源：\n" + "\n".join(dict.fromkeys(sources))
+                suffix = _source_suffix(ev.content_parts)
+                if suffix:
                     buf.append(suffix)
                     if on_text_delta is not None:
                         on_text_delta(suffix)
@@ -907,6 +1008,20 @@ class IMRouter:
             )
         except Exception:
             logger.warning("IM run_error 持久化失败", exc_info=True)
+
+
+def _source_suffix(parts: list[dict[str, Any]]) -> str:
+    sources: list[str] = []
+    for part in parts:
+        for source in part.get("annotations", []):
+            url = source.get("url", "")
+            label = source.get("title") or source.get("filename") or "外部文件引用"
+            sources.append(
+                f"{label}: {url}"
+                if isinstance(url, str) and url.startswith(("https://", "http://"))
+                else f"{label}（当前无法打开）"
+            )
+    return "\n\n来源：\n" + "\n".join(dict.fromkeys(sources)) if sources else ""
 
 
 def _text_len(value: object) -> int:

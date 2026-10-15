@@ -146,6 +146,7 @@ def resolve_target(runtime: BridgeRuntime, request: LinkRequest) -> dict[str, st
                     isinstance(item, dict) and item.get("asset_id") == request.asset_id
                     for event in session.active_events
                     if event.type == "user_message"
+                    or (event.type == "assistant_message" and "generated_image" in event.payload)
                     for item in event.payload.get("attachments", []) or []
                 ):
                     return unavailable("", "此会话没有该附件的有效引用")

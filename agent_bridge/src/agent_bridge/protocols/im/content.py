@@ -3,8 +3,8 @@
 agent 主链路跑完一轮后,IMRouter 把聚合的 assistant 文本封装成
 :class:`OutboundContent`,交给具体 adapter 调平台 API 回写。
 
-本期只支持**文本正文**。正文可以声明为纯文本或 Markdown;富媒体
-(图片 / 卡片 / 语音 / 文件)出 022 范围,留待未来扩展。
+正文可以声明为纯文本或 Markdown；162 起支持宿主解析的图片原件，
+由支持图片的 adapter 上传并返回独立发送回执。
 
 详见 docs/requirements/022-im-channel-and-qq-adapter/design.md §3.2。
 """
@@ -12,12 +12,14 @@ agent 主链路跑完一轮后,IMRouter 把聚合的 assistant 文本封装成
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 __all__ = [
     "OutboundAction",
     "OutboundContent",
     "OutboundControls",
+    "OutboundImage",
     "OutboundTextFormat",
 ]
 
@@ -50,6 +52,14 @@ class OutboundControls:
 
 
 @dataclass(frozen=True)
+class OutboundImage:
+    """Host-resolved canonical asset, never a path parsed from model text."""
+
+    path: Path
+    display_name: str
+
+
+@dataclass(frozen=True)
 class OutboundContent:
     """IM adapter 回写给平台的一条消息。
 
@@ -74,3 +84,4 @@ class OutboundContent:
     reply_to_message_id: str | None = None
     text_format: OutboundTextFormat = "plain_text"
     controls: OutboundControls | None = None
+    image: OutboundImage | None = None
