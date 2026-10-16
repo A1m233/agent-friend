@@ -10,6 +10,11 @@ use std::{
 pub const MAX_BYTES: u64 = 10 * 1024 * 1024;
 pub const MAX_SECONDS: u64 = 30;
 
+pub fn decode_default() -> Result<Audio, String> {
+    // Embed the sound so installed builds never depend on an external file.
+    decode(include_bytes!("audio/default.wav").to_vec())
+}
+
 pub struct Audio {
     pub samples: Vec<f32>,
     pub channels: u16,
