@@ -1,7 +1,8 @@
-use super::{assets, play_default, stop_default};
+use super::assets;
 use crate::{paths, settings::NotificationSoundSource};
 use rodio::{buffer::SamplesBuffer, OutputStream, Sink};
 use std::{
+    path::Path,
     sync::{mpsc, Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -80,7 +81,6 @@ fn run(rx: mpsc::Receiver<Request>, active: Arc<Mutex<Option<String>>>) {
                     || deadline.is_some_and(|end| Instant::now() >= end)
                 {
                     audio = None;
-                    stop_default();
                     preview = None;
                     deadline = None;
                     if let Ok(mut value) = active.lock() {
@@ -94,7 +94,6 @@ fn run(rx: mpsc::Receiver<Request>, active: Arc<Mutex<Option<String>>>) {
             Request::Stop(id, reply) => {
                 if owns_preview(&preview, &id) {
                     audio = None;
-                    stop_default();
                     preview = None;
                     deadline = None;
                     if let Ok(mut value) = active.lock() {
@@ -105,37 +104,19 @@ fn run(rx: mpsc::Receiver<Request>, active: Arc<Mutex<Option<String>>>) {
             }
             Request::Play(source, owner, reply) => {
                 audio = None;
-                stop_default();
                 preview = owner;
                 deadline = Some(Instant::now() + Duration::from_secs(assets::MAX_SECONDS));
-                let result = match source {
-                    NotificationSoundSource::Default {} => default_result(),
-                    NotificationSoundSource::Custom { asset_id, .. } => {
-                        match assets::load(&paths::notification_sounds_dir(), &asset_id) {
-                            Ok(data) => (|| {
-                                let (stream, handle) = OutputStream::try_default()
-                                    .map_err(|_| "无法打开音频输出设备".to_string())?;
-                                let sink = Sink::try_new(&handle)
-                                    .map_err(|_| "无法启动音频播放".to_string())?;
-                                sink.append(SamplesBuffer::new(
-                                    data.channels,
-                                    data.rate,
-                                    data.samples,
-                                ));
-                                audio = Some((stream, sink));
-                                Ok(())
-                            })(),
-                            Err(error) => {
-                                log::warn!("custom notification sound unavailable: {error}");
-                                if preview.is_none() {
-                                    default_result()
-                                } else {
-                                    Err(error)
-                                }
-                            }
-                        }
-                    }
-                };
+                let result =
+                    load_audio(source, &paths::notification_sounds_dir(), preview.is_some())
+                        .and_then(|data| {
+                            let (stream, handle) = OutputStream::try_default()
+                                .map_err(|_| "无法打开音频输出设备".to_string())?;
+                            let sink = Sink::try_new(&handle)
+                                .map_err(|_| "无法启动音频播放".to_string())?;
+                            sink.append(SamplesBuffer::new(data.channels, data.rate, data.samples));
+                            audio = Some((stream, sink));
+                            Ok(())
+                        });
                 if result.is_err() {
                     preview = None;
                     deadline = None;
@@ -152,17 +133,51 @@ fn run(rx: mpsc::Receiver<Request>, active: Arc<Mutex<Option<String>>>) {
     }
 }
 
-fn default_result() -> Result<(), String> {
-    if play_default() {
-        Ok(())
-    } else {
-        Err("默认提示音不可用，请检查系统声音设置".into())
+fn load_audio(
+    source: NotificationSoundSource,
+    root: &Path,
+    preview: bool,
+) -> Result<assets::Audio, String> {
+    match source {
+        NotificationSoundSource::Default {} => assets::decode_default(),
+        NotificationSoundSource::Custom { asset_id, .. } => match assets::load(root, &asset_id) {
+            Ok(data) => Ok(data),
+            Err(error) => {
+                log::warn!("custom notification sound unavailable: {error}");
+                if preview {
+                    Err(error)
+                } else {
+                    assets::decode_default()
+                }
+            }
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn default_and_missing_custom_notification_use_bundled_audio() {
+        let expected = assets::decode_default().unwrap();
+        assert!(expected.samples.iter().any(|sample| sample.abs() > 0.0));
+        let missing = NotificationSoundSource::Custom {
+            asset_id: "invalid".into(),
+            name: "missing.wav".into(),
+        };
+        for (source, preview) in [
+            (NotificationSoundSource::default(), false),
+            (NotificationSoundSource::default(), true),
+            (missing.clone(), false),
+        ] {
+            let data = load_audio(source, Path::new("."), preview).unwrap();
+            assert_eq!(data.channels, expected.channels);
+            assert_eq!(data.rate, expected.rate);
+            assert_eq!(data.samples, expected.samples);
+        }
+        assert!(load_audio(missing, Path::new("."), true).is_err());
+    }
+
     #[test]
     fn stopping_old_preview_never_stops_notification_or_new_preview() {
         assert!(!owns_preview(&None, "old"));

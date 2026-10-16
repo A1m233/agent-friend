@@ -93,42 +93,6 @@ pub async fn play_notification_sound(
     .map_err(|error| error.to_string())?
 }
 
-#[cfg(target_os = "windows")]
-fn play_default() -> bool {
-    use windows::{
-        core::w,
-        Win32::Media::Audio::{PlaySoundW, SND_ALIAS, SND_ASYNC, SND_NODEFAULT, SND_SYSTEM},
-    };
-    unsafe {
-        // A registry event alias respects the current Windows sound scheme.
-        // SYSTEM selects system-sounds volume; NODEFAULT leaves missing/muted
-        // events silent. The static UTF-16 alias outlives asynchronous playback.
-        PlaySoundW(
-            w!("Notification.Default"),
-            None,
-            SND_ALIAS | SND_ASYNC | SND_SYSTEM | SND_NODEFAULT,
-        )
-        .as_bool()
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn play_default() -> bool {
-    // Other platform sound adapters can be added without changing notifications.
-    false
-}
-
-#[cfg(target_os = "windows")]
-fn stop_default() {
-    use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC};
-    unsafe {
-        let _ = PlaySoundW(None, None, SND_ASYNC);
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn stop_default() {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
