@@ -7,6 +7,7 @@
  */
 
 import { create } from "zustand";
+import { logRunStop } from "@/services/runStop/diagnostics";
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
 import { isTauri } from "@/utils/tauri";
@@ -273,7 +274,8 @@ export type SendOutcome = "completed" | "failed" | "interrupted" | "rejected";
 
 export type { StopRequestPhase } from "./runCancellation";
 
-export type StopOutcome = "accepted" | "pending" | "already-pending" | "noop" | "failed";
+export type StopOutcome = "accepted" | "pending" | "already-pending" | "no-session"
+  | "no-active-run" | "not-controllable" | "state-changed" | "failed";
 
 export type SendStartResult =
   | {
@@ -2265,19 +2267,30 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   async stop() {
     const initial = get();
     const sessionId = initial.currentSessionId;
-    if (!sessionId) return "noop";
     const presentation = sessionRunPresentation(initial, sessionId);
     const runId = presentation.run?.run_id;
-    if (!runId) return "noop";
-    if (initial.stopRequestsByRun[runId]) return "already-pending";
-    if (!presentation.canStop) return "noop";
+    const decision = (result: StopOutcome): StopOutcome => {
+      logRunStop("decision", {
+        sessionId, runId, runtimeId: presentation.run?.runtime_instance_id,
+        phase: presentation.phase, result,
+      });
+      return result;
+    };
+    if (!sessionId) return decision("no-session");
+    if (!runId) return decision(initial.runCalibrationPhase === "ready" ? "no-active-run" : "state-changed");
+    if (initial.stopRequestsByRun[runId]) return decision("already-pending");
+    if (!presentation.canStop) return decision("not-controllable");
+    logRunStop("decision", {
+      sessionId, runId, runtimeId: presentation.run?.runtime_instance_id,
+      phase: presentation.phase, result: "request_cancel",
+    });
 
     const outcome = await cancellations.request(presentation.run!);
-    if (outcome === "pending" && !cancellations.has(runId)) return "noop";
+    if (outcome === "pending" && !cancellations.has(runId)) return decision("state-changed");
     const run = get().runSnapshots[runId];
     if (run?.status === "terminal" && get().currentSessionId === sessionId) {
       void get().refreshCurrentSession(sessionId);
     }
-    return outcome;
+    return decision(outcome);
   },
 }));

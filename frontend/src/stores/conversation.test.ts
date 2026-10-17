@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventType, type BaseEvent } from "@ag-ui/core";
+import { STOP_FEEDBACK } from "@/pages/chat/components/stopFeedback";
 
 const { isTauriMock } = vi.hoisted(() => ({
   isTauriMock: vi.fn(() => false),
@@ -841,6 +842,29 @@ describe("conversation store · session approval mode", () => {
 });
 
 describe("conversation store · cancel lifecycle", () => {
+  it("reports the reason and feedback when stop cannot issue a request", async () => {
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      for (const [sessionId, calibration, scope, expected] of [
+        [null, "ready", null, "no-session"],
+        ["s", "ready", null, "no-active-run"],
+        ["s", "calibrating", null, "state-changed"],
+        ["s", "ready", "voice", "not-controllable"],
+      ] as const) {
+        useConversationStore.setState({
+          currentSessionId: sessionId, runCalibrationPhase: calibration, stopRequestsByRun: {},
+          runSnapshots: scope ? { r: { ...runSnapshot("r", "s", "running", 1), control_scope: scope } } : {},
+        });
+        const outcome = await useConversationStore.getState().stop();
+        expect(outcome).toBe(expected);
+        expect(STOP_FEEDBACK[outcome]).toBeTruthy();
+        expect(log).toHaveBeenLastCalledWith("[run-stop]", expect.objectContaining({ event: "decision", result: expected }));
+      }
+      expect(mockRunCancel).not.toHaveBeenCalled();
+      expect(STOP_FEEDBACK.accepted).toBeNull();
+    } finally { log.mockRestore(); }
+  });
+
   it("立即进入取消中、去重请求，并在 Runtime 终态前保持 busy", async () => {
     let streamSignal: AbortSignal | undefined;
     mockStream.mockImplementation((_input, opts) => (async function* () {
@@ -952,7 +976,7 @@ describe("conversation store · cancel lifecycle", () => {
       },
     });
     mockRunCancel.mockRejectedValueOnce({ code: "run_runtime_mismatch" });
-    await expect(useConversationStore.getState().stop()).resolves.toBe("noop");
+    await expect(useConversationStore.getState().stop()).resolves.toBe("state-changed");
     expect(useConversationStore.getState().stopRequestsByRun).toEqual({});
     expect(mockRunList).toHaveBeenCalledWith(true);
   });
