@@ -20,6 +20,7 @@ interface ChatSenderBoxProps extends ChatSenderProps {
   className?: string;
   onNativeValueChange?: (value: string) => void;
   onNativePasteFiles?: (files: File[]) => void;
+  onNativeStopClick?: () => void;
   shouldIgnoreNativeValueChange?: () => boolean;
   sendBlocked?: boolean;
   onNativeEditorChange?: (state: ChatSenderEditorState) => void;
@@ -33,6 +34,7 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
       className,
       onNativeValueChange,
       onNativePasteFiles,
+      onNativeStopClick,
       shouldIgnoreNativeValueChange,
       sendBlocked = false,
       onNativeEditorChange,
@@ -115,7 +117,16 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
         event.preventDefault();
         onNativePasteFiles(files);
       };
+      const onClick = (event: MouseEvent) => {
+        // Observe the installed sender's action button before its stop event is dispatched.
+        // Do not cancel or synthesize events: this probe cannot alter the vendor click path.
+        if (!props.loading || !event.composedPath().some((node) => (
+          node instanceof Element && node.classList.contains("t-chat__input__button")
+        ))) return;
+        try { onNativeStopClick?.(); } catch { /* Diagnostics are best effort. */ }
+      };
 
+      el.addEventListener("click", onClick, true);
       el.addEventListener("compositionstart", onCompStart, true);
       el.addEventListener("compositionend", onCompEnd, true);
       for (const name of ["input", "select", "keyup", "mouseup"]) el.addEventListener(name, reportEditor, true);
@@ -124,6 +135,7 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
       el.addEventListener("change", onNativeChange);
       el.addEventListener("input", onNativeChange);
       return () => {
+        el.removeEventListener("click", onClick, true);
         el.removeEventListener("compositionstart", onCompStart, true);
         el.removeEventListener("compositionend", onCompEnd, true);
         for (const name of ["input", "select", "keyup", "mouseup"]) el.removeEventListener(name, reportEditor, true);
@@ -132,7 +144,7 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
         el.removeEventListener("change", onNativeChange);
         el.removeEventListener("input", onNativeChange);
       };
-    }, [onNativeEditorChange, onNativePasteFiles, onNativeValueChange, shouldIgnoreNativeValueChange, props.loading, sendBlocked]);
+    }, [onNativeEditorChange, onNativePasteFiles, onNativeStopClick, onNativeValueChange, shouldIgnoreNativeValueChange, props.loading, sendBlocked]);
 
     return (
       <div

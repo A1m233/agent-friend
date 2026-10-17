@@ -1,4 +1,5 @@
 import type { CancelRunResponse, RunSnapshot } from "@/types/run";
+import { logRunStop, stopErrorCode } from "@/services/runStop/diagnostics";
 
 export type StopRequestPhase = "requesting" | "accepted";
 interface CancellationIntent {
@@ -53,14 +54,25 @@ export function createRunCancellation(options: {
       return Promise.resolve("accepted");
     }
     const flight = (async (): Promise<"accepted" | "pending"> => {
+      const started = performance.now();
+      const identity = { sessionId: intent.sessionId, runId: intent.runId, runtimeId: intent.runtimeId };
+      logRunStop("request_started", identity);
       try {
         const response = await options.cancel(intent.sessionId, intent.runId, intent.runtimeId ?? undefined);
-        if (intents.get(intent.runId) !== intent) return "accepted";
+        const durationMs = performance.now() - started;
+        if (intents.get(intent.runId) !== intent) {
+          logRunStop("request_finished", { ...identity, durationMs, reason: "stale_response" });
+          return "accepted";
+        }
         const run = response.run;
         if (
           run.run_id !== intent.runId || run.session_id !== intent.sessionId
           || (intent.runtimeId && run.runtime_instance_id && intent.runtimeId !== run.runtime_instance_id)
-        ) return "pending";
+        ) {
+          logRunStop("request_finished", { ...identity, durationMs, reason: "response_identity_mismatch" });
+          return "pending";
+        }
+        logRunStop("request_finished", { ...identity, durationMs, result: response.result, status: run.status });
         intent.phase = "accepted";
         publish();
         options.snapshot(run);
@@ -68,6 +80,9 @@ export function createRunCancellation(options: {
         if (run.status === "terminal") forget(intent.runId);
         return "accepted";
       } catch (error) {
+        logRunStop("request_finished", {
+          ...identity, durationMs: performance.now() - started, reason: stopErrorCode(error),
+        });
         if (intents.get(intent.runId) !== intent) return "pending";
         if (error && typeof error === "object" && "code" in error && error.code === "run_runtime_mismatch") {
           forget(intent.runId);
@@ -136,7 +151,14 @@ export function createRunCancellation(options: {
         intent.runtimeId = run.runtime_instance_id;
         publish();
       }
-      if (run.status === "terminal") { forget(run.run_id); return; }
+      if (run.status === "terminal") {
+        logRunStop("terminal", {
+          sessionId: run.session_id, runId: run.run_id, runtimeId: run.runtime_instance_id,
+          result: run.outcome ?? undefined,
+        });
+        forget(run.run_id);
+        return;
+      }
       if (run.version <= (observedVersions.get(run.run_id) ?? -1)) return;
       observedVersions.set(run.run_id, run.version);
       void signalRetry(intent);

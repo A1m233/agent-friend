@@ -10,6 +10,8 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
+import { logRunStop } from "@/services/runStop/diagnostics";
+import { STOP_FEEDBACK } from "./stopFeedback";
 import { Ban, Plus, Upload } from "lucide-react";
 import { Attachments, type TdAttachmentItem } from "@tdesign-react/chat";
 import { useDropzone } from "react-dropzone";
@@ -660,14 +662,25 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 handleTextChange(value);
               }}
               onSend={(e) => submit(e.detail.value)}
+              onNativeStopClick={() => logRunStop("button_click", {
+                sessionId: currentSessionId, runId: runPresentation.run?.run_id,
+                runtimeId: runPresentation.run?.runtime_instance_id,
+                phase: runPresentation.phase, disabled: disabled || Boolean(editSubmitting) || cancelling,
+              })}
               onStop={() => {
-                if (cancelling) return;
+                logRunStop("stop_event", {
+                  sessionId: currentSessionId, runId: runPresentation.run?.run_id,
+                  runtimeId: runPresentation.run?.runtime_instance_id, phase: runPresentation.phase,
+                });
                 void stop().then((outcome) => {
-                  if (outcome === "failed") {
-                    toast.error("取消失败，回复仍在继续");
-                  } else if (outcome === "pending") {
-                    toast.info("停止请求已保留，正在等待确认");
-                  }
+                  const message = STOP_FEEDBACK[outcome];
+                  if (message) (outcome === "failed" ? toast.error : toast.info)(message);
+                }).catch(() => {
+                  logRunStop("decision", {
+                    sessionId: currentSessionId, runId: runPresentation.run?.run_id,
+                    reason: "unexpected_stop_error", result: "failed",
+                  });
+                  toast.error(STOP_FEEDBACK.failed);
                 });
               }}
               sendBtnDisabled={(value) => streaming

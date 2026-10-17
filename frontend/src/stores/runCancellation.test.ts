@@ -21,6 +21,39 @@ function setup(storage?: () => Storage | undefined) {
 }
 
 describe("run cancellation intent", () => {
+  it("records failed attempts, retries and terminal confirmation without logging response content", async () => {
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      const { coordinator, cancel } = setup();
+      cancel.mockRejectedValueOnce({ code: "network", message: "private error" })
+        .mockResolvedValueOnce({ result: "accepted", run: run(2) });
+      await coordinator.request(run());
+      expect(log).toHaveBeenCalledWith("[run-stop]", expect.objectContaining({ event: "request_finished", reason: "network", runId: "run-a" }));
+      await coordinator.retry();
+      expect(log).toHaveBeenCalledWith("[run-stop]", expect.objectContaining({ event: "request_finished", result: "accepted", status: "running" }));
+      expect(log.mock.calls.filter(([, fields]) => fields.event === "terminal")).toHaveLength(0);
+      coordinator.observe({ ...run(3), status: "terminal", outcome: "cancelled" });
+      expect(log).toHaveBeenLastCalledWith("[run-stop]", expect.objectContaining({ event: "terminal", result: "cancelled" }));
+      expect(JSON.stringify(log.mock.calls)).not.toContain("private error");
+    } finally { log.mockRestore(); }
+  });
+
+  it("still cancels and deduplicates when the diagnostic sink throws", async () => {
+    const log = vi.spyOn(console, "info").mockImplementation(() => { throw new Error("sink failure"); });
+    try {
+      const gate = deferred<CancelRunResponse>();
+      const { coordinator, cancel, accepted } = setup();
+      cancel.mockReturnValue(gate.promise);
+      const first = coordinator.request(run());
+      const second = coordinator.request(run());
+      expect(cancel).toHaveBeenCalledTimes(1);
+      gate.resolve({ result: "accepted", run: run(2) });
+      await expect(first).resolves.toBe("accepted");
+      await expect(second).resolves.toBe("accepted");
+      expect(accepted).toHaveBeenCalledOnce();
+    } finally { log.mockRestore(); }
+  });
+
   it("retains pre-registration 404 and retries once when registration is observed", async () => {
     const { coordinator, cancel, changed } = setup();
     cancel.mockRejectedValueOnce({ code: "run_not_found" })

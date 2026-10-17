@@ -26,6 +26,33 @@ function findInShadowRoots(root: ParentNode, selector: string): HTMLElement | nu
 }
 
 describe("ChatSenderBox real component integration", () => {
+  it("observes the native stop click before dispatch, without breaking stop when the observer fails", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const order: string[] = [];
+    const onSend = vi.fn();
+    const onStop = vi.fn(() => order.push("stop"));
+    const observe = vi.fn(() => { order.push("click"); throw new Error("diagnostic failure"); });
+    const render = (loading: boolean) => act(async () => root.render(createElement(ChatSenderBox, {
+      placement: "bottom", loading, value: "hello", onSend, onStop, onNativeStopClick: observe,
+    })));
+    try {
+      await render(true);
+      await act(async () => (findInShadowRoots(container, "button") as HTMLButtonElement).click());
+      expect(order).toEqual(["click", "stop"]);
+      expect(onStop).toHaveBeenCalledOnce();
+      expect(onSend).not.toHaveBeenCalled();
+      await render(false);
+      await act(async () => (findInShadowRoots(container, "button") as HTMLButtonElement).click());
+      expect(observe).toHaveBeenCalledOnce();
+      expect(onSend).toHaveBeenCalledOnce();
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
   it.each(["callback", "boolean"] as const)("updates non-text send eligibility through a %s prop", async (mode) => {
     const container = document.createElement("div");
     document.body.append(container);
