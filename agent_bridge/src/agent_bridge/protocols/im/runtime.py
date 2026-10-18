@@ -33,6 +33,7 @@ from portalocker.exceptions import LockException
 
 from ...presence import IMPresenceSnapshot
 from .adapters.qq import QQAdapter
+from .approvals import IMApprovalService
 from .coalescing import CoalescingDecision, QQAttachmentTextCoalescer
 from .content import OutboundContent, OutboundTextFormat
 from .coordinator import IMBindingCoordinator
@@ -117,6 +118,7 @@ class IMRuntime:
         control_service: IMControlService | None = None,
         session_exists: Callable[[str], bool] | None = None,
         inbound_coalescer: QQAttachmentTextCoalescer | None = None,
+        approvals: IMApprovalService | None = None,
     ) -> None:
         self._router = router
         self._credentials = credentials
@@ -129,6 +131,7 @@ class IMRuntime:
         self._control_service = control_service
         self._session_exists = session_exists or (lambda _session_id: False)
         self._inbound_coalescer = inbound_coalescer
+        self._approvals = approvals
         self._providers: dict[tuple[str, str], IMProvider] = {}
         self._provider_locks: dict[tuple[str, str], Any] = {}
         self._desired_bindings: set[tuple[str, str]] = set()
@@ -182,6 +185,9 @@ class IMRuntime:
         ]
         self._providers.clear()
         self._provider_locks.clear()
+        if self._approvals is not None:
+            for _key, provider, _lock in records:
+                self._approvals.deactivate(provider)
 
         async def _stop_one(p: IMProvider, lock: Any | None) -> None:
             try:
@@ -428,6 +434,8 @@ class IMRuntime:
             self._release_provider_lock(lock, provider.type, provider.bind_id)
             raise
         self._providers[key] = provider
+        if self._approvals is not None:
+            self._approvals.activate(provider)
         logger.info(
             "IM provider spawned (im_type=%s, bind_id=%s)",
             provider.type,
@@ -801,6 +809,8 @@ class IMRuntime:
         )
 
     def _cancel_provider_pending(self, provider: IMProvider, *, reason: str) -> None:
+        if self._approvals is not None:
+            self._approvals.deactivate(provider)
         coalescer = self._inbound_coalescer
         if coalescer is None:
             return

@@ -7,12 +7,16 @@
 # --live-qq：155 固定合成回合验收；先 --preflight，实际发送须 --allow-send。
 # 需停止已有 QQ owner；手机发送 AF155-A/B/C，报告写 --output，不调用 LLM。
 # --cases B 可只复验 B；最多等待 900 秒。
+# --live-qq-approvals --case modes|files|commands|pending|preview: no LLM.
 # 详见 docs/requirements/022-im-channel-and-qq-adapter/design.md §5.2。
 $ErrorActionPreference = "Stop"
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Set-Location (Join-Path $PSScriptRoot "..\..")
 
-if ($args.Count -gt 0 -and $args[0] -eq "--live-qq") {
+if ($args.Count -gt 0 -and $args[0] -eq "--live-qq-approvals") {
+    $liveArgs = @($args | Select-Object -Skip 1)
+    & uv run python scripts/im-smoke/qq_approvals.py @liveArgs
+} elseif ($args.Count -gt 0 -and $args[0] -eq "--live-qq") {
     $liveArgs = @($args | Select-Object -Skip 1)
     & uv run python scripts/im-smoke/qq_delivery.py @liveArgs
 } else {

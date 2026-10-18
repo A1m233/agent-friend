@@ -132,7 +132,8 @@ class RequestFilesystemAccessTool:
         "扩大后续范围。覆盖、移动、删除必须在 actions 中列出准确目标。关键根递归删除"
         "或目标无法确定的强制递归删除仍受独立灾难性策略约束；若返回"
         "catastrophic_action_blocked_in_session_auto，不要原样重试或改写目标绕过，"
-        "应请用户切回每次授权并重新检查准确请求。非桌面交互端会明确拒绝，不能假设"
+        "应请用户切回每次授权并重新检查准确请求。仅桌面聊天和宿主已登记的 QQ 私聊运行"
+        "支持审批；其他入口会明确拒绝，不能假设"
         "获得权限。"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
@@ -237,7 +238,12 @@ class RequestFilesystemAccessTool:
         self._policy = policy
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
-        if args.get(FILESYSTEM_SURFACE_ARG) != "desktop_chat" or self._broker is None:
+        surface = str(args.get(FILESYSTEM_SURFACE_ARG) or "")
+        if self._broker is None or not self._broker.surface_available(
+            str(args.get(FILESYSTEM_SESSION_ID_ARG) or ""),
+            str(args.get(FILESYSTEM_RUN_ID_ARG) or ""),
+            surface,
+        ):
             return _json_result(
                 {
                     "status": "unavailable",
@@ -276,7 +282,7 @@ class RequestFilesystemAccessTool:
             items=items,
             actions=actions,
         )
-        decision = self._broker.request(request, timeout_seconds=300.0)
+        decision = self._broker.request(request, timeout_seconds=300.0, surface=surface)
         if decision is None:
             return _json_result(
                 {

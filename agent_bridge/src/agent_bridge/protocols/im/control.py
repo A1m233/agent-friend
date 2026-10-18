@@ -19,6 +19,8 @@ from llm_providers import public_model_catalog
 
 from ...errors import map_exception
 from ...session_models import SessionModelService
+from .approvals import IMApprovalService
+from .approvals.service import PAGE_PAYLOAD
 from .content import OutboundAction, OutboundContent, OutboundControls
 from .coordinator import IMBindingBusyError, IMBindingCoordinator
 from .event import InboundInteraction
@@ -121,6 +123,7 @@ class IMControlService:
         coordinator: IMBindingCoordinator,
         model_service: SessionModelService,
         catalog: Callable[[], dict[str, Any]] | None = None,
+        approvals: IMApprovalService | None = None,
     ) -> None:
         self._sessions = sessions
         self._state = state_store
@@ -128,8 +131,11 @@ class IMControlService:
         self._models = model_service
         self._catalog = catalog or public_model_catalog
         self._tokens = _ControlTokenRegistry()
+        self._approvals = approvals
 
     async def handle(self, provider: IMProvider, event: InboundInteraction) -> None:
+        if self._approvals is not None and await self._approvals.handle(provider, event):
+            return
         key = IMBindingKey(
             im_type=provider.type,
             provider_bind_id=provider.bind_id,
@@ -195,6 +201,19 @@ class IMControlService:
             f"当前会话：{title}\n当前模型：{_model_label(config.model_id, catalog)}\n"
             f"当前推理强度：{reasoning_label}"
         )
+        approval_rows: tuple[tuple[OutboundAction, ...], ...] = ()
+        if self._approvals is not None:
+            text += f"\n当前授权：{self._approvals.mode_summary(current.session_id)}"
+            approval_rows = (
+                (
+                    OutboundAction(
+                        id="approval-settings",
+                        label="授权设置",
+                        visited_label="已打开",
+                        payload=PAGE_PAYLOAD,
+                    ),
+                ),
+            )
         controls = OutboundControls(
             rows=(
                 (
@@ -207,6 +226,7 @@ class IMControlService:
                     ),
                 ),
                 (self._token_button("switch-session", "切换会话", key, "session_page"),),
+                *approval_rows,
             )
         )
         await self._send(provider, key, text, controls)

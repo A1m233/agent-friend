@@ -29,3 +29,5 @@ class InboundInteraction:
     chat_id: str
     operator_id: str
     payload: str
+    # Gateway envelope id for passive replies; distinct from d.id used for ACK.
+    reply_event_id: str | None = None

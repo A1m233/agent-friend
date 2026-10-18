@@ -61,6 +61,7 @@ class ApprovalBroker:
         self._lock = threading.Lock()
         self._pending: dict[str, Any] = {}
         self._run_modes: dict[tuple[str, str], SessionApprovalModeState] = {}
+        self._run_surfaces: dict[tuple[str, str], str] = {}
         self._listeners: list[Callable[[dict[str, object]], None]] = []
         self._session_locks: dict[str, threading.RLock] = {}
         self._mode_store = mode_store
@@ -71,6 +72,28 @@ class ApprovalBroker:
     def add_listener(self, listener: Callable[[dict[str, object]], None]) -> None:
         with self._lock:
             self._listeners.append(listener)
+
+    def register_surface_run(self, session_id: str, run_id: str, surface: str) -> None:
+        """Register a host-owned approval route, never a model-supplied capability."""
+        if not session_id or not run_id or surface != "im:qq":
+            raise ValueError("invalid approval surface registration")
+        with self._session_lock(session_id), self._lock:
+            key = (session_id, run_id)
+            if key in self._run_surfaces:
+                raise ValueError("duplicate approval surface registration")
+            self._run_surfaces[key] = surface
+
+    def unregister_surface_run(self, session_id: str, run_id: str) -> None:
+        with self._session_lock(session_id):
+            with self._lock:
+                self._run_surfaces.pop((session_id, run_id), None)
+            self.cancel_run(session_id, run_id)
+
+    def surface_available(self, session_id: str, run_id: str, surface: str) -> bool:
+        if surface == "desktop_chat":
+            return True
+        with self._lock:
+            return bool(surface) and self._run_surfaces.get((session_id, run_id)) == surface
 
     def mode_state(self, session_id: str, run_id: str | None = None) -> SessionApprovalModeState:
         if run_id is not None:
@@ -144,7 +167,7 @@ class ApprovalBroker:
             self._notify(listeners, request)
         return state
 
-    def request(self, request: Any, *, timeout_seconds: float) -> Any:
+    def request(self, request: Any, *, timeout_seconds: float, surface: str | None = None) -> Any:
         if request.requested_lifetime not in ENABLED_APPROVAL_LIFETIMES:
             raise ValueError(f"approval lifetime is not enabled: {request.requested_lifetime}")
         assessment = self._risk_policy.assess(request) if self._risk_policy is not None else None
@@ -158,7 +181,17 @@ class ApprovalBroker:
                 "request" if (request.session_id, request.run_id) in self._run_modes else "session"
             )
             request.risk_assessment = assessment
-            if mode_state.mode == "session_auto":
+            if surface is not None and not self.surface_available(
+                request.session_id, request.run_id, surface
+            ):
+                immediate = True
+                request._decision = request.cancelled_decision()
+                request.status = "cancelled"
+                request.version += 1
+                request._event.set()
+                with self._lock:
+                    listeners = tuple(self._listeners)
+            elif mode_state.mode == "session_auto":
                 immediate = True
                 if assessment is not None and assessment.catastrophic:
                     decision = request.cancelled_decision()
@@ -231,6 +264,7 @@ class ApprovalBroker:
         run_id: str | None = None,
         expected_kind: str | None = None,
         lifetime: str = "once",
+        expected_version: int | None = None,
     ) -> bool:
         if lifetime not in ENABLED_APPROVAL_LIFETIMES:
             return False
@@ -239,13 +273,19 @@ class ApprovalBroker:
             return False
         lock = self._session_lock(effective_session_id)
         with lock, self._lock:
+            if self._session_exists is not None and not self._session_exists(effective_session_id):
+                return False
             request = self._pending.get(request_id)
-            if request is None or not self._matches_pending(
-                request,
-                session_id=session_id,
-                run_id=run_id,
-                expected_kind=expected_kind,
-                lifetime=lifetime,
+            if (
+                request is None
+                or (expected_version is not None and request.version != expected_version)
+                or not self._matches_pending(
+                    request,
+                    session_id=session_id,
+                    run_id=run_id,
+                    expected_kind=expected_kind,
+                    lifetime=lifetime,
+                )
             ):
                 return False
             request._decision = decision
@@ -325,7 +365,10 @@ class ApprovalBroker:
         return state
 
     def cancel_run(self, session_id: str, run_id: str) -> None:
-        self._cancel_session_requests(session_id, lambda item: item.run_id == run_id)
+        with self._session_lock(session_id):
+            with self._lock:
+                self._run_surfaces.pop((session_id, run_id), None)
+            self._cancel_session_requests(session_id, lambda item: item.run_id == run_id)
 
     def deny_session(self, session_id: str) -> None:
         """Compatibility entrypoint; new cancellation paths should use cancel_run."""

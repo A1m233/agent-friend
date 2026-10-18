@@ -31,6 +31,7 @@ class OutboundSendResult:
     outcome: Literal["delivered", "failed", "unknown"]
     provider_message_id: str | None = None
     error_kind: str | None = None
+    controls: Literal["not_requested", "accepted", "omitted", "unknown"] = "unknown"
 
 
 ProviderStatus = Literal["active", "degraded", "error", "stopped"]

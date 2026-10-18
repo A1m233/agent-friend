@@ -877,6 +877,17 @@ def build_runtime(
         # IM consumes the same common runtime as the desktop routes.
         session_bridge = _SessionBridge(base_runtime)
         im_reference_aliases = IMReferenceAliasIndex(settings.im_reference_alias_path)
+        from .protocols.im.approvals import IMApprovalService
+
+        im_state_store = IMStateStore(settings.im_state_path)
+        im_approvals = IMApprovalService(
+            approval_broker,
+            im_state_store,
+            session_title=lambda session_id: (
+                persistent_session_manager.query(session_id).initial_title
+            ),
+            session_exists=session_bridge.session_exists,
+        )
         im_router = IMRouter(
             session_bridge=session_bridge,
             default_persona=default_persona,
@@ -885,8 +896,8 @@ def build_runtime(
             reference_aliases=im_reference_aliases,
             capability_resolver=base_runtime.attachment_capabilities,
             session_files_available=lambda: base_runtime.session_files_available,
+            approvals=im_approvals,
         )
-        im_state_store = IMStateStore(settings.im_state_path)
         im_binding_coordinator = IMBindingCoordinator()
         im_inbound_coalescer = QQAttachmentTextCoalescer(
             im_binding_coordinator,
@@ -900,6 +911,7 @@ def build_runtime(
             coordinator=im_binding_coordinator,
             model_service=session_model_service,
             catalog=lambda: connection_model_catalog(base_runtime.connection_runtime),
+            approvals=im_approvals,
         )
         im_deduper = RecentMessageDeduper(
             ttl_seconds=settings.im_voice_dedupe_ttl_seconds,
@@ -929,6 +941,7 @@ def build_runtime(
             control_service=im_control_service,
             session_exists=session_bridge.session_exists,
             inbound_coalescer=im_inbound_coalescer,
+            approvals=im_approvals,
         )
         im_onboard_registry = _OnboardSessionRegistry(im_runtime=im_runtime)
     reminder_delivery = ReminderDeliveryOrchestrator(

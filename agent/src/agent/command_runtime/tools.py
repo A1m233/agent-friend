@@ -665,7 +665,12 @@ class ExecCommandTool:
         return self._invoke(args, execution="sandboxed")
 
     def _invoke(self, args: dict[str, Any], *, execution: CommandExecution) -> ToolResult:
-        if args.get(COMMAND_SURFACE_ARG) != "desktop_chat" or self._broker is None:
+        surface = str(args.get(COMMAND_SURFACE_ARG) or "")
+        if self._broker is None or not self._broker.surface_available(
+            str(args.get(COMMAND_SESSION_ID_ARG) or ""),
+            str(args.get(COMMAND_RUN_ID_ARG) or ""),
+            surface,
+        ):
             return _result(
                 {
                     "status": "unavailable",
@@ -709,7 +714,7 @@ class ExecCommandTool:
             details=details,
         )
         approval_started = time.monotonic()
-        decision = self._broker.request(request, timeout_seconds=300.0)
+        decision = self._broker.request(request, timeout_seconds=300.0, surface=surface)
         approval_wait_seconds = time.monotonic() - approval_started
         if decision is None:
             return _result(

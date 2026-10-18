@@ -98,6 +98,42 @@ async def test_send_missing_receipt_is_unknown(adapter: QQAdapter, reply: dict[s
 
 
 @pytest.mark.asyncio
+async def test_approval_event_reply_preserves_exact_body_and_controls_receipt(
+    adapter: QQAdapter,
+) -> None:
+    api = MagicMock()
+    api.post_c2c_message = AsyncMock(return_value={"id": "approval-message"})
+    adapter._api = api
+    content = OutboundContent(
+        chat_id="user",
+        chat_scope="c2c",
+        text="exact command > file.txt",
+        text_format="markdown",
+        controls=menu_controls(),
+        reply_to_event_id="interaction-id",
+    )
+    receipt = await adapter.send(content)
+    wire = api.post_c2c_message.await_args.args[1].to_dict()
+    assert wire["event_id"] == "interaction-id"
+    assert "msg_id" not in wire
+    assert wire["markdown"]["content"] == content.text
+    assert receipt.controls == "accepted"
+    api.post_c2c_message = AsyncMock(
+        side_effect=[
+            {"code": 400, "message": "keyboard rejected"},
+            {"id": "text-only"},
+        ]
+    )
+    receipt = await adapter.send(content)
+    assert receipt.outcome == "delivered" and receipt.controls == "omitted"
+    assert (
+        api.post_c2c_message.await_args_list[-1].args[1].to_dict()["event_id"] == "interaction-id"
+    )
+    api.post_c2c_message = AsyncMock(return_value={"id": "no-controls"})
+    assert (await adapter.send(content)).controls == "omitted"
+
+
+@pytest.mark.asyncio
 async def test_send_explicit_http_denial_is_failed(adapter: QQAdapter) -> None:
     api = MagicMock()
     api.post_c2c_message = AsyncMock(
