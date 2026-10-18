@@ -28,6 +28,7 @@ import random
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -52,7 +53,7 @@ from qqbot_agent_sdk.dto import (
 )
 from qqbot_agent_sdk.event_parser import EventParser, InboundEvent
 from qqbot_agent_sdk.media_loader import MediaUploader
-from qqbot_agent_sdk.websocket import QQWebSocket, WSCallbacks
+from qqbot_agent_sdk.websocket import WSCallbacks
 
 from ..content import OutboundAction, OutboundContent, OutboundControls
 from ..credentials import ImCredential
@@ -61,6 +62,7 @@ from ..provider import OutboundSendResult, ProviderStatus
 from ..state import ControlCapability, IMStateStore
 from ..streaming import IMStreamSession, OutboundStreamContext
 from .qq_delivery_errors import classify_qq_failure
+from .qq_gateway import DISPATCH_EVENT_ID, QQWebSocket
 from .qq_media_logging import private_media_transport
 from .qq_streaming import QQC2CStreamSession
 
@@ -397,7 +399,17 @@ class QQAdapter:
             _text_len(content.text),
             content.text_format,
         )
-        return OutboundSendResult("delivered", provider_message_id=response_message_id or None)
+        return OutboundSendResult(
+            "delivered",
+            provider_message_id=response_message_id,
+            controls=(
+                "accepted"
+                if keyboard is not None
+                else "omitted"
+                if content.controls is not None
+                else "not_requested"
+            ),
+        )
 
     async def _send_image(self, content: OutboundContent) -> OutboundSendResult:
         if self._api is None or self._http_client is None or content.image is None:
@@ -618,6 +630,7 @@ class QQAdapter:
                 chat_id=parsed.chat_id,
                 operator_id=parsed.operator_openid,
                 payload=parsed.data.resolved.button_data,
+                reply_event_id=raw.get(DISPATCH_EVENT_ID) or None,
             )
         )
 
@@ -708,6 +721,7 @@ class QQAdapter:
         return OutboundSendResult(
             "delivered",
             provider_message_id=message_id,
+            controls="omitted",
         )
 
     def _set_controls_capability(self, status: ControlCapability) -> None:
@@ -812,19 +826,38 @@ def _is_controls_rejection(response: object) -> bool:
     return any(marker in message for marker in ("keyboard", "group_id", "按钮", "按键", "权限"))
 
 
+@dataclass
+class _QQMessageToCreate(MessageToCreate):
+    """The pinned SDK omits QQ's passive interaction-reply field."""
+
+    event_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        if self.event_id and self.msg_id:
+            raise ValueError("QQ message and event reply targets are mutually exclusive")
+        value = super().to_dict()
+        if self.event_id:
+            value["event_id"] = self.event_id
+        return value
+
+
 def _message_to_create(content: OutboundContent, *, msg_seq: int) -> MessageToCreate:
+    if content.reply_to_event_id and content.reply_to_message_id:
+        raise ValueError("QQ reply targets are mutually exclusive")
     if content.text_format == "markdown":
-        return MessageToCreate(
+        return _QQMessageToCreate(
             msg_type=QQMessageType.MARKDOWN,
             markdown=MarkdownContent(content=content.text),
             msg_id=content.reply_to_message_id or "",
             msg_seq=msg_seq,
+            event_id=content.reply_to_event_id or "",
         )
-    return MessageToCreate(
+    return _QQMessageToCreate(
         content=content.text,
         msg_type=QQMessageType.TEXT,
         msg_id=content.reply_to_message_id or "",
         msg_seq=msg_seq,
+        event_id=content.reply_to_event_id or "",
     )
 
 

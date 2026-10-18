@@ -1548,6 +1548,15 @@ def _doctor() -> int:
         }
 
     try:
+        from capability_smoke.qq_approvals import run_qq_approval_smoke
+
+        qq_approval_details = run_qq_approval_smoke()
+    except Exception as exc:
+        checks["capability:qq_approvals"] = {"ok": False, "error_type": type(exc).__name__}
+    else:
+        checks["capability:qq_approvals"] = {"ok": True, **qq_approval_details}
+
+    try:
         recovery_details = _smoke_sandbox_recovery()
     except Exception as exc:
         checks["capability:sandbox_recovery"] = {"ok": False, "error": str(exc)}

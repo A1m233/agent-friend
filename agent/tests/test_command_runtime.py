@@ -1443,10 +1443,13 @@ def test_windows_setup_reports_missing_readiness_marker_after_success(
     assert "proxy port 15236" in str(incomplete.value)
 
 
+@pytest.mark.parametrize("surface", ["desktop_chat", "im:qq"])
 def test_command_tool_uses_shared_approval_and_buffered_semantics(
-    runtime: CommandRuntime, tmp_path: Path
+    runtime: CommandRuntime, tmp_path: Path, surface: str
 ) -> None:
     broker = ApprovalBroker()
+    if surface == "im:qq":
+        broker.register_surface_run("session-a", "run-a", surface)
     tool = ExecCommandTool(runtime, broker)
     context = ToolRunContext.create("")
     result_box = []
@@ -1458,7 +1461,7 @@ def test_command_tool_uses_shared_approval_and_buffered_semantics(
         COMMAND_SESSION_ID_ARG: "session-a",
         COMMAND_RUN_ID_ARG: "run-a",
         COMMAND_TOOL_CALL_ID_ARG: "call-a",
-        COMMAND_SURFACE_ARG: "desktop_chat",
+        COMMAND_SURFACE_ARG: surface,
         COMMAND_RUN_CONTEXT_ARG: context,
         COMMAND_EXECUTION_CHECKPOINT_ARG: (
             lambda operation_id, recovery_mode, evidence_ref=None: checkpoints.append(

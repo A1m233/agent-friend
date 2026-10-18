@@ -85,3 +85,4 @@ class OutboundContent:
     text_format: OutboundTextFormat = "plain_text"
     controls: OutboundControls | None = None
     image: OutboundImage | None = None
+    reply_to_event_id: str | None = None

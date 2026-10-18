@@ -38,9 +38,9 @@ import asyncio
 import logging
 import threading
 from collections.abc import Awaitable, Callable
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from agent.attachments import AttachmentError, AttachmentRef
@@ -63,6 +63,7 @@ from llm_providers import model_capabilities
 
 from ...errors import map_exception
 from ...session_bridge import PersistentBootstrap, SessionBridge
+from .approvals import IMApprovalService
 from .content import OutboundContent, OutboundImage, OutboundTextFormat
 from .control import menu_controls
 from .delivery.images import deliver_images
@@ -70,7 +71,7 @@ from .delivery.models import TrackedStream
 from .delivery.recovery import recover_reply, send_observed
 from .event import InboundEvent
 from .media import InboundMedia, render_model_media_context, render_user_media_notice
-from .provider import IMOutboundProvider, OutboundSendResult
+from .provider import IMOutboundProvider, IMProvider, OutboundSendResult
 from .qq_references import qq_current_message_aliases
 from .reference_aliases import IMReferenceAliasIndex
 from .streaming import (
@@ -144,6 +145,7 @@ class IMRouter:
         reference_aliases: IMReferenceAliasIndex | None = None,
         capability_resolver: Callable[[str], ModelRouteCapabilities] = model_capabilities,
         session_files_available: Callable[[], bool] | None = None,
+        approvals: IMApprovalService | None = None,
     ) -> None:
         self._capability_resolver = capability_resolver
         self._session_files_available = session_files_available or (lambda: False)
@@ -152,6 +154,7 @@ class IMRouter:
         self._default_model = default_model
         self._agent_runtime = agent_runtime
         self._reference_aliases = reference_aliases
+        self._approvals = approvals
 
     def session_id_for(self, im_type: str, event: InboundEvent) -> str:
         """计算 IM inbound 应该挂在哪个 session 上。**策略扩展点**。
@@ -367,13 +370,24 @@ class IMRouter:
                         origin_destination_id,
                         user_event_id,
                         observe_output,
+                        approval_registered,
                     )
                 except BaseException:
                     if tracked:
                         stop_delivery.set()
                     raise
 
-            agent_text = await asyncio.to_thread(run_turn)
+            approval_route = (
+                self._approvals.run_route(
+                    cast(IMProvider, provider_or_send), event, session_id, run_id
+                )
+                if self._approvals is not None
+                and run_id is not None
+                and hasattr(provider_or_send, "bind_id")
+                else nullcontext(False)
+            )
+            with approval_route as approval_registered:
+                agent_text = await asyncio.to_thread(run_turn)
         except asyncio.CancelledError:
             stop_delivery.set()
             if relay_task is not None:
@@ -777,6 +791,7 @@ class IMRouter:
         interaction_destination_id: str | None = None,
         user_event_id: str | None = None,
         on_output: Callable[[object], None] | None = None,
+        approval_registered: bool = False,
     ) -> str:
         """跑一轮 :class:`Conversation`,聚合所有 :class:`TextDelta` 到完整文本。
 
@@ -864,6 +879,8 @@ class IMRouter:
                     "interaction_destination_id": interaction_destination_id,
                 },
             )
+            if approval_registered and self._approvals is not None and run_id is not None:
+                self._approvals.attach_cancel(boot.thread_id, run_id, handle.cancel)
             for ev in handle.events():
                 consume_event(ev)
             terminal = handle.terminal

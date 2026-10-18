@@ -1033,6 +1033,12 @@ def test_doctor_without_configured_model_checks_static_html_extraction(monkeypat
         "history_outcome": "interrupted",
     }
     assert payload["checks"]["capability:governed_filesystem"]["ok"] is True
+    assert payload["checks"]["capability:qq_approvals"] == {
+        "ok": True,
+        "qq_approval_roundtrip": True,
+        "stale_callback_rejected": True,
+        "run_cleanup": True,
+    }
     assert payload["checks"]["capability:managed_execution_python"] == {
         "ok": True,
         "status": "not-configured",

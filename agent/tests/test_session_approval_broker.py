@@ -127,6 +127,42 @@ def test_session_auto_fully_approves_normal_request(tmp_path: Path) -> None:
     assert broker.pending() == ()
 
 
+def test_qq_surface_registration_cancellation_and_version_cas(tmp_path: Path) -> None:
+    broker = _broker(tmp_path)
+    broker.set_session_mode("sid-1", mode="session_auto", expected_version=0)
+    denied = _request()
+    assert not broker.request(denied, timeout_seconds=0.1, surface="im:qq").approved
+    assert denied.status == "cancelled"
+    broker.register_surface_run("sid-1", "run-1", "im:qq")
+    assert broker.request(_request(), timeout_seconds=0.1, surface="im:qq").approved
+    assert not broker.surface_available("sid-1", "another-run", "im:qq")
+    assert not broker.surface_available("another-session", "run-1", "im:qq")
+    assert not broker.surface_available("sid-1", "run-1", "voice_call")
+    broker.set_session_mode("sid-1", mode="per_request", expected_version=1)
+    pending = _request()
+    worker = threading.Thread(
+        target=lambda: broker.request(pending, timeout_seconds=2, surface="im:qq")
+    )
+    worker.start()
+    try:
+        _wait_pending(broker)
+        assert not broker.decide(
+            pending.request_id,
+            pending.fully_approved_decision(),
+            expected_version=99,
+        )
+        assert pending.status == "pending"
+        broker.cancel_run("sid-1", "run-1")
+        assert not broker.surface_available("sid-1", "run-1", "im:qq")
+        assert not broker.request(_request(), timeout_seconds=0.1, surface="im:qq").approved
+    finally:
+        broker.unregister_surface_run("sid-1", "run-1")
+        worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert pending.to_dict()["status"] == "cancelled"
+    assert broker.pending() == ()
+
+
 def test_request_auto_is_scoped_and_preserves_session_default(tmp_path: Path) -> None:
     broker = _broker(tmp_path)
     with broker.run_mode("sid-1", "run-1", "session_auto"):

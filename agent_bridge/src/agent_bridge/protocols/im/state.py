@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -54,6 +56,22 @@ class IMStateStore:
     def __init__(self, path: Path) -> None:
         self._path = Path(path)
         self._lock = threading.RLock()
+        self._binding_listeners: list[Callable[[IMBindingKey], None]] = []
+
+    def add_binding_listener(self, listener: Callable[[IMBindingKey], None]) -> None:
+        with self._lock:
+            self._binding_listeners.append(listener)
+
+    @contextmanager
+    def binding_guard(self, expected: IMSessionBinding) -> Iterator[bool]:
+        """Serialize a short decision with binding writes, never network I/O."""
+        with self._lock:
+            current = self.get_binding(expected.key)
+            yield bool(
+                current is not None
+                and current.session_id == expected.session_id
+                and current.updated_at == expected.updated_at
+            )
 
     def get_binding(self, key: IMBindingKey) -> IMSessionBinding | None:
         with self._lock:
@@ -203,6 +221,14 @@ class IMStateStore:
             return _empty_payload()
 
     def _save(self, payload: dict[str, Any]) -> None:
+        old = {
+            binding.key: (binding.session_id, binding.updated_at)
+            for binding in (_binding_from_dict(raw) for raw in self._load()["bindings"])
+        }
+        new = {
+            binding.key: (binding.session_id, binding.updated_at)
+            for binding in (_binding_from_dict(raw) for raw in payload["bindings"])
+        }
         self._path.parent.mkdir(parents=True, exist_ok=True)
         temp = self._path.with_suffix(self._path.suffix + ".tmp")
         temp.write_text(
@@ -210,6 +236,10 @@ class IMStateStore:
             encoding="utf-8",
         )
         temp.replace(self._path)
+        for key in old.keys() | new.keys():
+            if old.get(key) != new.get(key):
+                for listener in tuple(self._binding_listeners):
+                    listener(key)
 
 
 def _empty_payload() -> dict[str, Any]:
