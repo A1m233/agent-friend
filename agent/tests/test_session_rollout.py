@@ -201,6 +201,76 @@ def _open_cached(manager: SessionManager, session_id: str) -> Session:
     return loaded
 
 
+def test_scheduled_source_reaches_provider_and_survives_followup_and_restart(
+    tmp_path: Path,
+) -> None:
+    llm = _RecordingLLM()
+    manager = _manager(tmp_path, llm)
+    sid = _create(manager)
+    conv = manager.start_conversation(manager.open(sid))
+    list(conv.stream("接下来的自动检查先忽略"))
+    source = {
+        "kind": "scheduled_task",
+        "task_id": "task-a",
+        "task_name": "每日检查",
+        "occurrence_id": "occ-a",
+        "trigger_kind": "scheduled",
+        "scheduled_at_utc": "2026-10-18T06:00:00Z",
+    }
+    list(conv.stream("执行检查", user_event_id="scheduled:occ-a", request_source=source))
+    list(conv.stream("现在可以手动执行检查"))
+    for request in llm.received[1:]:
+        sourced = [m for m in request if "<agent_friend_request_source" in str(m.get("content"))]
+        assert len(sourced) == 1
+        assert sourced[0]["role"] == "user"
+        assert sourced[0]["content"].endswith("执行检查")
+        assert '"task_id": "task-a"' in sourced[0]["content"]
+        assert any(m.get("content") == "接下来的自动检查先忽略" for m in request)
+    assert llm.received[-1][-1]["content"] == "现在可以手动执行检查"
+    assert [e.payload["content"] for e in conv.session.events if e.type == "user_message"] == [
+        "接下来的自动检查先忽略",
+        "执行检查",
+        "现在可以手动执行检查",
+    ]
+    list(
+        conv.stream(
+            "执行检查",
+            user_event_id="scheduled:occ-b",
+            request_source={**source, "task_id": "task-b", "occurrence_id": "occ-b"},
+        )
+    )
+    manager.close()
+    cold_llm = _RecordingLLM()
+    cold_manager = _manager(tmp_path, cold_llm)
+    _run(cold_manager, sid, "回顾来源")
+    assert (
+        sum("<agent_friend_request_source" in str(m.get("content")) for m in cold_llm.received[0])
+        == 2
+    )
+    sourced = [
+        m["content"]
+        for m in cold_llm.received[0]
+        if "<agent_friend_request_source" in str(m.get("content"))
+    ]
+    assert '"task_id": "task-a"' in sourced[0]
+    assert '"task_id": "task-b"' in sourced[1]
+    cold_manager.close()
+
+
+def test_scheduled_source_is_not_duplicated_during_tool_continuation(tmp_path: Path) -> None:
+    llm = _ToolLoopLLM()
+    manager = _manager(tmp_path, llm, registry=ToolRegistry([_CountingEcho()]))
+    sid = _create(manager)
+    conv = manager.start_conversation(manager.open(sid))
+    list(conv.stream("执行检查", request_source={"kind": "scheduled_task", "task_name": "检查"}))
+    assert len(llm.received) == 2
+    assert all(
+        sum("<agent_friend_request_source" in str(m.get("content")) for m in req) == 1
+        for req in llm.received
+    )
+    manager.close()
+
+
 def test_execution_load_keeps_business_events_and_verified_current_context(tmp_path: Path) -> None:
     store = JsonlSessionStore(tmp_path / "sessions")
     manager = _manager(tmp_path, _RecordingLLM(), store=store)

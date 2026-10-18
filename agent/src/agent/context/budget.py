@@ -59,7 +59,8 @@ def estimate_tokens(messages: list[Message]) -> int:
     for msg in messages:
         content = (
             msg.to_openai()["content"]
-            if msg.role == "user" and (msg.references or msg.attachments)
+            if msg.role == "user"
+            and (msg.references or msg.attachments or msg.meta.get("request_source"))
             else msg.content
         )
         total_chars += len(content or "")

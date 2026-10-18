@@ -131,6 +131,8 @@ def test_runner_submits_to_fixed_session_and_persists_terminal(tmp_path: Path) -
     assert request_service.calls[0]["boot"].thread_id == "fixed-session"
     assert request_service.calls[0]["user_event_id"] == f"scheduled:{occurrence.id}"
     assert request_service.calls[0]["source"]["task_id"] == task.id
+    assert request_service.calls[0]["source"]["trigger_kind"] == "manual"
+    assert request_service.calls[0]["source"]["scheduled_at_utc"] == NOW.isoformat()
     assert sessions.list() == []  # The producer must never create a replacement session.
 
 

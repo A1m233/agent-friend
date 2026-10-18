@@ -25,6 +25,7 @@ from ..attachments import AttachmentRef
 from ..attachments.models import parse_image_refs
 from ..message_references import parse_quoted_text_references
 from ..messages import Message
+from ..request_context.source import request_source_meta
 from .errors import SessionCorruptError
 from .events import (
     ROLLOUT_EVENT_TYPES,
@@ -550,7 +551,7 @@ class Session:
                         role="user",
                         content=ev.payload.get("content", ""),
                         timestamp=ev.ts,
-                        meta=dict(ev.meta),
+                        meta={**ev.meta, **request_source_meta(ev.payload.get("request_source"))},
                         uuid=ev.uuid,
                         attachments=[
                             AttachmentRef.from_dict(item)

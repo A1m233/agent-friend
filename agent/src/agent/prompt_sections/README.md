@@ -35,7 +35,7 @@
 | 普通聊天／CLI | `agent.prompts.MarkdownPromptBuilder` → 默认 composer | 默认 section |
 | 任务手动继续／压缩后继续 | `Conversation.continue_after_tool_error` → 原用户目标／有来源的 task anchor → 正常工具循环 | 默认 section；摘要不恢复权限，原任务附件与 Skill 选择仍由宿主核对 |
 | 桌面／语音／IM | Bridge ag_ui／openai／im → AgentRuntime → Conversation | 同上，渠道规则独立 |
-| 定时任务／系统触发提醒／授权跟进 | Bridge scheduled_tasks／reminders／social_auth → AgentRuntime | 同上，不改变任务状态 |
+| 定时任务／系统触发提醒／授权跟进 | Bridge scheduled_tasks／reminders／social_auth → AgentRuntime | 同上，不改变任务状态；定时消息由 request_context/source 提供按消息归属的宿主来源，摘要转录与任务锚点复用同一事实 |
 | 气泡 | `agent_bridge.notifications.generation.NotificationGenerator` | 共享资源 + 正式人格 + 通知任务；失败通知由 service 使用本地事实文案，不调用模型 |
 | 人格编辑 | `agent.personas.editor.PersonaEditorPromptBuilder` | 共享资源 + 编辑任务 + 正式人格；候选仅为数据 |
 | 历史检索／记忆召回 | conversation_history／memory.retrieval.renderer | 保留来源；由消费它们的发言入口解释身份 |

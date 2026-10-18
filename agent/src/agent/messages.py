@@ -23,11 +23,14 @@ from .message_references import (
     parse_quoted_text_references,
     render_user_content_for_model,
 )
+from .request_context.source import render_request_source
 
 Role = Literal["system", "user", "assistant", "tool"]
 """消息角色。``"tool"`` 起自 005，承载工具执行结果回喂给 LLM 的消息。"""
 
 _INTERNAL_PROMPT_MARKERS = {
+    "<agent_friend_request_source": "&lt;agent_friend_request_source",
+    "</agent_friend_request_source>": "&lt;/agent_friend_request_source&gt;",
     "<system_trigger>": "&lt;system_trigger&gt;",
     "</system_trigger>": "&lt;/system_trigger&gt;",
     "<agent_friend_runtime_context": "&lt;agent_friend_runtime_context",
@@ -134,6 +137,8 @@ class Message:
             content = f"{content}\n{markers}".strip()
         if self.images:
             content += "\n[工具图像未提供给模型：需要多模态投递适配器；不能据此推断图像内容]"
+        if self.role == "user":
+            content = render_request_source(content, self.meta.get("request_source"))
         out: dict[str, Any] = {"role": self.role, "content": content}
 
         if self.role == "tool":

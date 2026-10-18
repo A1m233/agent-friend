@@ -11,6 +11,7 @@ from ..message_references import (
     render_user_content_for_model,
 )
 from ..messages import Message, escape_internal_prompt_markers
+from ..request_context.source import request_source_meta
 
 TASK_ANCHOR_VERSION = 1
 
@@ -65,6 +66,7 @@ def task_anchor_message(user: Message) -> Message:
             f"{content}\n{attachments}"
         ).rstrip(),
         meta={
+            **request_source_meta(user.meta.get("request_source")),
             "synthetic": "task_anchor",
             "model_only": True,
             "source_user_event_uuid": user.uuid,

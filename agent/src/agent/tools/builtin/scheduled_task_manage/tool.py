@@ -113,6 +113,8 @@ class ScheduledTaskManageTool:
         "授权；工具失败时不得声称成功。"
         "任务必须绑定用户明确选择的已有普通会话，多次执行共用该会话。归档后停止，重启不重放未完成请求。"
         "附件和任务专用模型、权限请在桌面定时任务页面设置；本工具不能授予自动权限。"
+        "创建时用户明确选择当前会话可用 target_current_session=true，由宿主绑定；"
+        "与 target_session_id 二选一，不能省略目标或猜会话 ID。"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
@@ -151,7 +153,12 @@ class ScheduledTaskManageTool:
             "target_session_id": {
                 "type": "string",
                 "minLength": 1,
-                "description": "明确选择的目标会话 ID，来自会话查询结果；不是 task_id 或 occurrence_id。新建会话请使用桌面任务表单。不能把创建来源默认为执行目标。",
+                "description": "用户明确选择的已有目标会话 ID，可复用 list/get 返回任务的 target_session_id；不是 task_id 或 occurrence_id。仅选择当前会话时用 target_current_session；新建会话使用桌面任务表单。",
+            },
+            "target_current_session": {
+                "type": "boolean",
+                "const": True,
+                "description": "仅 create：用户明确要求在当前会话执行时传 true。真实会话由宿主解析，与 target_session_id 互斥，不代表额外授权。",
             },
             "schedule": _SCHEDULE_SCHEMA,
             "skill_id": {
@@ -182,7 +189,11 @@ class ScheduledTaskManageTool:
         "oneOf": [
             {
                 "properties": {"operation": {"const": "create"}},
-                "required": ["name", "instruction", "schedule", "target_session_id"],
+                "required": ["name", "instruction", "schedule"],
+                "oneOf": [
+                    {"required": ["target_session_id"]},
+                    {"required": ["target_current_session"]},
+                ],
             },
             {"properties": {"operation": {"const": "list"}}},
             {"properties": {"operation": {"const": "get"}}, "required": ["task_id"]},
@@ -210,6 +221,10 @@ class ScheduledTaskManageTool:
             {"properties": {"operation": {"const": "delete"}}, "required": ["task_id", "revision"]},
             {"properties": {"operation": {"const": "run_now"}}, "required": ["task_id"]},
             {"properties": {"operation": {"const": "history"}}, "required": ["task_id"]},
+        ],
+        "anyOf": [
+            {"properties": {"operation": {"const": "create"}}},
+            {"not": {"required": ["target_current_session"]}},
         ],
         "additionalProperties": False,
     }
@@ -270,7 +285,12 @@ class ScheduledTaskManageTool:
 
     def _invoke(self, args: dict[str, Any]) -> dict[str, Any]:
         operation = _required_string(args, "operation")
+        if "target_current_session" in args and operation != "create":
+            raise ValueError(
+                "target_current_session 仅用于 create；修改任务请使用 target_session_id。"
+            )
         if operation == "create":
+            target_session_id = _create_target(args)
             skill_id = _optional_string(args, "skill_id")
             self._validate_skill(skill_id)
             task = self._service.create(
@@ -284,7 +304,7 @@ class ScheduledTaskManageTool:
                 model_id=self._default_model_id,
                 skill_id=skill_id,
                 origin_session_id=_optional_string(args, _RUNTIME_SESSION_ID),
-                target_session_id=_required_string(args, "target_session_id"),
+                target_session_id=target_session_id,
             )
             return {"status": "ok", "operation": operation, "task": task_to_dict(task)}
         if operation == "list":
@@ -382,6 +402,26 @@ class ScheduledTaskManageTool:
         ):
             waiting = self._approval_pending(occurrence.session_id, occurrence.run_id)
         return occurrence_to_dict(occurrence, waiting_for_approval=waiting)
+
+
+def _create_target(args: dict[str, Any]) -> str:
+    current = "target_current_session" in args
+    explicit = "target_session_id" in args
+    if current == explicit:
+        raise ValueError(
+            "create 必须在 target_current_session=true 和 target_session_id 中选择一个。"
+        )
+    if not current:
+        return _required_string(args, "target_session_id")
+    if args["target_current_session"] is not True:
+        raise ValueError("选择当前会话请传 target_current_session=true。")
+    session_id = _optional_string(args, _RUNTIME_SESSION_ID)
+    if not session_id:
+        raise ScheduledTaskError(
+            "current_session_unavailable",
+            "宿主未提供当前会话；请在已有会话中重试，或通过桌面任务表单选择目标会话。",
+        )
+    return session_id
 
 
 def _runtime_now(args: dict[str, Any]) -> datetime:

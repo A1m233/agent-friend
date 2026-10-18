@@ -1,0 +1,28 @@
+{
+  "purpose": "Feature 164 first real-model target verification",
+  "cases": [
+    "C18-07",
+    "C18-08",
+    "C18-09"
+  ],
+  "model": "custom/e460216e-71da-42cb-a252-03ecaf1aa2bd/8d0327f8-a306-412a-9796-ddb22aaa122a",
+  "provider_model": "gpt-6.1-sol",
+  "reasoning_preset": "effort:medium",
+  "provenance": "Incident session model_config_change c81a9499-ea15-4c71-9cba-b96545584f79; 2026-10-18 14:00 run 4d2cb7bb68144a75be32e16f2091cc39 bridge log binds custom ID to openai/gpt-6.1-sol; adjacent controls use same model under verification",
+  "sampling": "first verification; once each; no retries or extra cases",
+  "expected_calls": "approximately 5-8 model requests total",
+  "destination": "agent_eval/reports",
+  "leakage_audit": "source.py, summary_prompt.py, scheduled_task_manage/tool.py: no fixture IDs, workspace-sync, or original query strings; semantic audit: generic host provenance and existing constraints only",
+  "holdout": "C18-08/09 adjacent controls participated in design; no independent holdout; target-sample observation only",
+  "code_head": "4b14952a916acb04019897addfd4d297a8911840",
+  "overlay": "uncommitted feature 164 implementation",
+  "case_file_sha256": "7874232989D1027DFB6C06693B23F999A4F92B21CE120DB92BFB54FDE30FCABE",
+  "note": "feature164-first-real; incident model GPT-6.1-sol/effort:medium; derived target + adjacent controls; fake exec; leakage audit clean; no independent holdout; target observations only",
+  "status": "completed; all three reports manually reviewed; no extra sampling",
+  "pending": [],
+  "completed": [
+    "C18-07: pass; transcript reviewed; zero tools; report 2026-10-18T15-39-34-4b14952a-C18-07.json",
+    "C18-08: pass; transcript reviewed; expected fake argv and grounded result; report 2026-10-18T15-40-03-4b14952a-C18-08.json",
+    "C18-09: pass; transcript reviewed; expected fake argv and grounded result; report 2026-10-18T15-40-43-4b14952a-C18-09.json"
+  ]
+}

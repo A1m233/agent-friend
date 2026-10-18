@@ -22,6 +22,7 @@ from typing import Any
 
 from ..message_references import render_user_content_for_model
 from ..messages import Message
+from ..request_context.source import render_request_source
 
 SUMMARY_SYSTEM_PROMPT = """\
 你是内部上下文压缩器，把提供的对话资料归纳为结构化摘要，供后续对话使用。
@@ -75,6 +76,8 @@ SUMMARY_SYSTEM_PROMPT = """\
 - 工具事务已经返回不代表外部工作已经完成。仍运行、未知、失败与已完成必须分别陈述。
 - 前缀未见结果不代表未执行；只陈述资料中已验证的状态，后续保留原文尾部中的明确
   结果可更新摘要状态。
+- 保留消息的宿主来源：定时任务请求不能归纳成用户当时手动发出的新指令。
+  保留仍有效的用户限制及其适用范围；来源标记不代表限制已撤销或获得新的权限。
 - 用中文。"""
 
 _SUMMARY_CONTEXT_PREFIX = "[此前对话的压缩摘要——你应当像记得这些一样自然地继续对话]\n"
@@ -104,6 +107,7 @@ def render_transcript(messages: list[Message]) -> str:
                 "[该用户轮选择的历史 Skill 指令]" if synthetic == "skill_instructions" else "用户"
             )
             content = render_user_content_for_model(m.content, m.references)
+            content = render_request_source(content, m.meta.get("request_source"))
             lines.append(f"{label}: {content} {attachment_markers} {source_marker}".rstrip())
         elif m.role == "assistant":
             if m.content:

@@ -45,6 +45,24 @@ def _mapping(raw: Any, *, label: str) -> dict[str, Any]:
     return raw
 
 
+def _request_source(raw: Any, *, label: str) -> dict[str, str] | None:
+    if raw is None:
+        return None
+    value = _mapping(raw, label=label)
+    allowed = {"kind", "task_id", "task_name", "occurrence_id", "trigger_kind", "scheduled_at_utc"}
+    if set(value) - allowed or value.get("kind") != "scheduled_task":
+        raise ValueError(f"{label} 必须是 scheduled_task 来源，且不能含未知字段")
+    result = {key: _required_str(value, key, label=label) for key in value}
+    if "trigger_kind" in result and result["trigger_kind"] not in {
+        "scheduled",
+        "catch_up",
+        "manual",
+    }:
+        raise ValueError(f"{label}.trigger_kind 无效")
+    _optional_aware_datetime(value, "scheduled_at_utc", label=label)
+    return result
+
+
 def _required_str(raw: dict[str, Any], key: str, *, label: str) -> str:
     value = raw.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -926,6 +944,9 @@ def _load_contract_file(path: Path) -> Contract:
                     current_events_raw,
                     label=f"{label}.current_session_events",
                     asset_root=asset_root,
+                ),
+                request_source=_request_source(
+                    case_data.get("request_source"), label=f"{label}.request_source"
                 ),
                 query_attachments=query_attachments,
                 fake_tools=_parse_fake_tools(
