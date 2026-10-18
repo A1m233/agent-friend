@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal
 from ..attachments import AttachmentRef
 from ..message_references import parse_quoted_text_references
 from ..messages import Message
+from ..request_context.source import request_source_meta
 from .protocol import CompactionRecord, PriorSummary
 from .summary_prompt import render_summary_as_context
 from .task_anchor import (
@@ -81,6 +82,7 @@ def _restore_task_anchor(comp: Event, events: list[Event]) -> Message | None:
             role="user",
             content=source.payload.get("content", ""),
             uuid=source.uuid,
+            meta=request_source_meta(source.payload.get("request_source")),
             attachments=[
                 AttachmentRef.from_dict(item) for item in source.payload.get("attachments", [])
             ],

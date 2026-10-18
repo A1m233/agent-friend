@@ -890,6 +890,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
 
             for event in conversation.stream(
                 case.query,
+                request_source=case.request_source,
                 attachments=resolve_attachments(case.query_attachments),
                 surface=InteractionSurfaceId(case.surface) if case.surface is not None else None,
             ):

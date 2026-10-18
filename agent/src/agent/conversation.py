@@ -174,6 +174,7 @@ from .prompt_cache_trace import (
     PromptRequestTrace,
 )
 from .prompts import PromptBuilder
+from .request_context.source import bind_current_request, restore_request_sources
 from .sessions import (
     Event,
     ModelContextPlan,
@@ -3071,6 +3072,7 @@ class Conversation:
         raw_history = (
             self._session_model_history.snapshot() if history_override is None else history_override
         )
+        raw_history = restore_request_sources(raw_history, self._session.active_events)
         runtime = self._build_runtime_context(
             prior_summary_override=prior_summary_override,
             tool_specs=typed_tool_specs,
@@ -3153,13 +3155,18 @@ class Conversation:
         completed_history = projection.apply(history_for_llm, at_end=True)
         context_additions = completed_history[len(history_for_llm) :]
         budget_runtime = runtime
+        source_user = (
+            runtime.compaction_control.current_user
+            if new_user_input is not None and runtime.compaction_control is not None
+            else None
+        )
         runtime = replace(
             runtime,
             request_estimator=lambda messages: estimate_request_tokens(
-                projection.apply(messages), budget_runtime
+                projection.apply(bind_current_request(messages, source_user)), budget_runtime
             ),
             request_assessment=lambda messages: assess_request_budget(
-                projection.apply(messages), budget_runtime
+                projection.apply(bind_current_request(messages, source_user)), budget_runtime
             ),
         )
         skill_additions = [
@@ -3230,18 +3237,7 @@ class Conversation:
                 "当前上下文策略无法执行显式压缩。", reason="checkpoint_unsupported"
             )
         if new_user_input is not None and current_user is not None:
-            build.messages[:] = [
-                replace(
-                    message,
-                    meta={
-                        **message.meta,
-                        "source_user_event_uuid": current_user.uuid,
-                    },
-                )
-                if message.meta.get("current_input")
-                else message
-                for message in build.messages
-            ]
+            build.messages[:] = bind_current_request(build.messages, current_user)
         build.messages[:] = projection.apply(build.messages)
         self._pending_model_context_plan = projection.accepted_plan(build.messages)
         self._pending_compaction = (
@@ -5462,7 +5458,7 @@ class Conversation:
                     "__agent_friend_runtime_timezone": action_time[1],
                 }
             )
-        if name == "todo_manage":
+        if name in {"todo_manage", "scheduled_task_manage"}:
             invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
         if name in {
             _RECOVER_TOOL_RESULT_TOOL_NAME,

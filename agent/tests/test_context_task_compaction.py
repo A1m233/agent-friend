@@ -227,7 +227,7 @@ def test_summary_provider_input_separates_host_task_from_user_goal_and_history()
     )
 
     assert result.new_compaction is not None
-    assert result.new_compaction.summary_prompt_version == 4
+    assert result.new_compaction.summary_prompt_version == 5
     assert 1 < len(model.requests) <= 3
     for request in model.requests:
         assert [message["role"] for message in request.messages] == ["system", "user"]
@@ -314,9 +314,15 @@ def test_same_input_does_not_get_a_second_automatic_summary_budget() -> None:
     assert len(model.requests) == count
 
 
-def test_v4_materialized_checkpoint_preserves_anchor_and_rejects_source_drift() -> None:
+@pytest.mark.parametrize("scheduled", [False, True])
+def test_v4_materialized_checkpoint_preserves_anchor_and_rejects_source_drift(
+    scheduled: bool,
+) -> None:
     model = SummaryModel()
     history = _task(groups=2)
+    source = {"kind": "scheduled_task", "task_id": "task-1", "task_name": "检查记录"}
+    if scheduled:
+        history[0].meta["request_source"] = source
     runtime = _runtime(model, history[0])
     result = SummarizingContextManager().build_messages(history, "sys", runtime=runtime)
     assert result.new_compaction is not None
@@ -325,7 +331,10 @@ def test_v4_materialized_checkpoint_preserves_anchor_and_rejects_source_drift() 
             type="user_message",
             uuid="user",
             ts=datetime.now(UTC),
-            payload={"content": history[0].content},
+            payload={
+                "content": history[0].content,
+                **({"request_source": source} if scheduled else {}),
+            },
         ),
         *[
             Event(
@@ -351,6 +360,14 @@ def test_v4_materialized_checkpoint_preserves_anchor_and_rejects_source_drift() 
     assert resolution.status == "materialized"
     assert resolution.prior_summary is not None
     assert resolution.prior_summary.task_anchor is not None
+    if scheduled:
+        assert (
+            "agent_friend_request_source"
+            in resolution.prior_summary.task_anchor.to_openai()["content"]
+        )
+        assert any(
+            "agent_friend_request_source" in str(request.messages) for request in model.requests
+        )
     count = len(model.requests)
     cold_runtime = _runtime(model, history[0])
     cold_runtime.prior_summary = resolution.prior_summary

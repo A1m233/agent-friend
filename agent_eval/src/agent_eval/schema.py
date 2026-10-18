@@ -201,6 +201,7 @@ class Case:
     self_presentation_mode: SelfPresentationMode = "immersive"
     runtime_now: datetime | None = None
     surface: str | None = None
+    request_source: dict[str, str] | None = None
     forbidden_terms: list[str] = field(default_factory=list)
     fixture_session: FixtureSession | None = None
     fixture_compaction: FixtureCompaction | None = None

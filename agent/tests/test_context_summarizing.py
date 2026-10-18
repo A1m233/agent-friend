@@ -1004,7 +1004,9 @@ def test_unsupported_summary_parameter_is_blocked_only_for_same_run_and_model(
 
     llm = RejectingLLM()
     manager = SummarizingContextManager()
-    runtime = _runtime(llm, 2_000)
+    # Leave room for the real summary contract so this reaches provider rejection,
+    # rather than testing the unrelated summary-input budget guard.
+    runtime = _runtime(llm, 3_000)
     runtime.run_id = "run-1"
     history = _turns(10, 400)
 

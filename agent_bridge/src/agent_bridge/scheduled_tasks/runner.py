@@ -127,6 +127,8 @@ class ScheduledTaskRunOrchestrator:
                     "task_id": occurrence.task_id,
                     "occurrence_id": occurrence.id,
                     "task_name": snapshot.name,
+                    "trigger_kind": occurrence.trigger_kind.value,
+                    "scheduled_at_utc": occurrence.scheduled_at_utc.isoformat(),
                 },
                 skills=((selection,) if selection else ()),
                 skill_snapshot=skill_snapshot,
