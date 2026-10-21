@@ -40,7 +40,7 @@ describe("pet accessory group", () => {
     expect(layout.actionBar.orientation).toBe("horizontal");
   });
 
-  it("keeps a readable tall stack above the central pet instead of chasing full height", () => {
+  it("keeps a tall stack above the pet when that is the roomier horizontal direction", () => {
     const layout = calculate({ x: 880, y: 460, w: 160, h: 160 }, { bubble: { w: 360, h: 1800 } })!;
     expect(layout.side).toBe("top");
     expect(layout.actionBar.orientation).toBe("horizontal");
@@ -157,6 +157,67 @@ describe("pet accessory group", () => {
   });
 });
 
+describe("notification stack direction", () => {
+  it.each([
+    { y: 200, side: "bottom" },
+    { y: 680, side: "top" },
+  ] as const)("shows the whole stack on the spacious side at y=$y", ({ y, side }) => {
+    const anchor = { x: 880, y, w: 160, h: 160 };
+    const layout = calculate(anchor, { bubble: { w: 360, h: 480 } })!;
+    expect(layout.side).toBe(side);
+    expect(layout.bubble?.h).toBe(480);
+    expect(layout.actionBar.orientation).toBe("horizontal");
+    expect(layout.tooltipSide).toBe(side);
+    assertInside(layout.bubble!, viewport);
+    assertOrder(layout, anchor);
+  });
+
+  it("chooses more vertical space when neither side fits, keeping the group horizontal", () => {
+    const anchor = { x: 880, y: 300, w: 160, h: 160 };
+    const layout = calculate(anchor, { bubble: { w: 360, h: 480 } })!;
+    expect(layout.side).toBe("bottom");
+    expect(layout.bubble?.h).toBe(456);
+    assertInside(layout.bubble!, viewport);
+    assertOrder(layout, anchor);
+  });
+
+  it("flips on growth and requires spare space before returning above on shrink", () => {
+    const anchor = { x: 880, y: 300, w: 160, h: 160 };
+    let previousSide: AccessorySide | undefined;
+    for (const [height, side] of [
+      [160, "top"], [240, "bottom"], [175, "bottom"], [177, "bottom"],
+      [170, "bottom"], [160, "top"],
+    ] as const) {
+      const layout = calculate(anchor, { bubble: { w: 360, h: height }, previousSide })!;
+      expect(layout.side).toBe(side);
+      expect(layout.bubble?.h).toBe(height);
+      assertOrder(layout, anchor);
+      previousSide = layout.side;
+    }
+    expect(calculate(anchor, { bubble: null, previousSide: "bottom" })?.side).toBe("top");
+  });
+
+  it("buffers small space differences when both directions require scrolling", () => {
+    let previousSide: AccessorySide = "top";
+    for (const [y, side] of [[434, "top"], [431, "bottom"], [446, "bottom"], [449, "top"]] as const) {
+      const anchor = { x: 880, y, w: 160, h: 160 };
+      const layout: AccessoryLayout = calculate(anchor, { bubble: { w: 360, h: 480 }, previousSide })!;
+      expect(layout.side).toBe(side);
+      assertInside(layout.bubble!, viewport);
+      assertOrder(layout, anchor);
+      previousSide = layout.side;
+    }
+  });
+
+  it("abandons the old side immediately when only the other side fits", () => {
+    for (const [y, previousSide, side] of [[200, "top", "bottom"], [680, "bottom", "top"]] as const) {
+      expect(calculate({ x: 880, y, w: 160, h: 160 }, {
+        bubble: { w: 360, h: 480 }, previousSide,
+      })?.side).toBe(side);
+    }
+  });
+});
+
 const regions: Array<{ region: string; side: AccessorySide; position: (size: number) => PetRect }> = [
   { region: "center", side: "top", position: (s) => ({ x: (1920 - s) / 2, y: (1040 - s) / 2, w: s, h: s }) },
   { region: "top", side: "bottom", position: (s) => ({ x: (1920 - s) / 2, y: 0, w: s, h: s }) },
@@ -204,19 +265,20 @@ describe("region directions preserved for every avatar and notification state", 
       }
     });
 
-  it.each([40, 160])("moves top to bottom and back without retaining the old side: avatar %s", (avatarSize) => {
+  it.each([40, 160])("follows screen edges and retains tall stacks at the equal-space center: avatar %s", (avatarSize) => {
     for (const { content } of contents) {
       let previousSide: AccessorySide | undefined;
       for (const regionName of ["top", "bottom", "top", "center"]) {
         const region = regions.find(({ region }) => region === regionName)!;
         const layout = calculate(region.position(avatarSize), { bubble: content, previousSide });
-        assertDirection(layout, region.side);
+        const scrollingAtCenter = regionName === "center" && content !== null && content.h > viewport.h;
+        assertDirection(layout, scrollingAtCenter ? previousSide! : region.side);
         previousSide = layout!.side;
       }
     }
   });
 
-  it.each(["top-left", "top-right"])("leaves %s toward top-center as bottom, then center as top", (cornerName) => {
+  it.each(["top-left", "top-right"])("leaves %s as horizontal and buffers equal scrolling space at center", (cornerName) => {
     const corner = regions.find(({ region }) => region === cornerName)!;
     for (const { content } of contents) {
       const first = calculate(corner.position(160), { bubble: content });
@@ -224,7 +286,8 @@ describe("region directions preserved for every avatar and notification state", 
       const above = calculate(regions[1].position(160), { bubble: content, previousSide: first!.side });
       assertDirection(above, "bottom");
       const center = calculate(regions[0].position(160), { bubble: content, previousSide: above!.side });
-      assertDirection(center, "top");
+      // Both sides offer equal space at center: tall content retains its side.
+      assertDirection(center, content && content.h > 316 ? "bottom" : "top");
     }
   });
 
