@@ -74,6 +74,30 @@ describe("pet layout coordinator", () => {
     expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "apply_pet_accessory_layout").at(-1)![1].request.measurementRevision).toBe(4);
   });
 
+  it("moves the whole group below on stack growth using desired size rather than the old native height", async () => {
+    const petAnchor = { ...anchor, y: 200 };
+    await act(async () => root.render(createElement(Probe, { petAnchor })));
+    const lastRequest = () => invokeMock.mock.calls.filter(([cmd]) => cmd === "apply_pet_accessory_layout").at(-1)![1].request;
+    expect(document.querySelector("output")?.dataset.side).toBe("top");
+    expect(lastRequest().bubble.height).toBe(120);
+
+    const listener = listeners.get(BUBBLE_MEASUREMENT_EVENT)!;
+    // The old 120 physical-pixel host still exists while the stack asks for 600.
+    await act(async () => listener({ payload: {
+      ...measurement, revision: 2, desiredHeightPhysical: 600, retainBounds: true,
+    } }));
+    expect(document.querySelector("output")?.dataset.side).toBe("bottom");
+    expect(document.querySelector("output")?.dataset.orientation).toBe("horizontal");
+    expect(lastRequest().measurementRevision).toBe(2);
+    expect(lastRequest().bubble.height).toBe(600);
+    expect(lastRequest().bubble.y).toBeGreaterThan((petAnchor.y + petAnchor.h) * 2);
+    expect(lastRequest().bubble.y + lastRequest().bubble.height).toBeLessThanOrEqual(1920);
+
+    await act(async () => listener({ payload: { ...measurement, revision: 3 } }));
+    expect(document.querySelector("output")?.dataset.side).toBe("top");
+    expect(lastRequest().bubble.height).toBe(120);
+  });
+
   it("retains stationary close bounds but releases them immediately when dragging starts", async () => {
     await act(async () => root.render(createElement(Probe)));
     const lastRequest = () => invokeMock.mock.calls.filter(([cmd]) => cmd === "apply_pet_accessory_layout").at(-1)![1].request;

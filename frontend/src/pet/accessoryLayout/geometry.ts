@@ -127,9 +127,28 @@ export function computeAccessoryLayout(input: {
     const tooltipBoundary = canShow ? normalTooltip : readableTooltip(availableTooltip) ? availableTooltip : null;
     return [{ side, actionBar: { orientation: vertical ? "vertical" : "horizontal", left: barRect.x, top: barRect.y, width: bar.w, height: bar.h }, bubble: bubbleRect, bubbleLimit: limit, tooltipSide: side, tooltipBoundary }];
   });
-  // Readable content qualifies a candidate; extra natural height never outranks
-  // the spatial order. If none can show a bubble, keep usable controls visible.
-  return (bubble ? candidates.find((candidate) => candidate.bubble !== null) : undefined)
+  const readable = candidates.filter((candidate) => candidate.bubble !== null);
+  // Preserve the regional lateral layout near screen edges. Within a horizontal
+  // layout, compare the whole measured stack before constraining it to scroll.
+  if (bubble && readable[0]?.actionBar.orientation === "horizontal") {
+    const horizontal = readable.filter((candidate) => candidate.actionBar.orientation === "horizontal");
+    // Equal visible heights retain top-first order, including when both fit.
+    const best = horizontal.reduce((a, b) => b.bubble!.h > a.bubble!.h ? b : a);
+    const previous = horizontal.find((candidate) => candidate.side === input.previousSide);
+    if (previous && previous !== best) {
+      const buffer = gap * 2;
+      const bothFit = previous.bubble!.h >= bubble.h && best.bubble!.h >= bubble.h;
+      const neitherFits = previous.bubble!.h < bubble.h && best.bubble!.h < bubble.h;
+      // Switch immediately when only the other side fits. To return to the
+      // preferred side, require spare room; when both scroll, require a useful
+      // gain. This prevents tiny size/position changes from flipping the group.
+      if ((bothFit && best.bubbleLimit.h < bubble.h + buffer) ||
+          (neitherFits && best.bubble!.h - previous.bubble!.h <= buffer)) return previous;
+    }
+    return best;
+  }
+  // If no direction can show a bubble, keep usable controls visible.
+  return readable[0]
     ?? candidates.find((candidate) => candidate.tooltipBoundary !== null)
     ?? candidates[0]
     ?? null;
