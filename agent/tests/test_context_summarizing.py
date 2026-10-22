@@ -299,7 +299,8 @@ def test_build_summary_messages_shape() -> None:
     assert "只引用用户正文" in system
     assert "前缀未见结果不代表未执行" in system
     assert "后续保留原文尾部中的明确" in system
-    assert "请严格按以下两段式输出" in system
+    assert "不输出分析过程或草稿" in system
+    assert "<analysis>" not in system
 
 
 def test_render_summary_as_context_has_prefix() -> None:

@@ -106,6 +106,9 @@ class LanguageModelCapabilities:
     # Rebuilding a checkpoint may replace complete, settled provider groups;
     # it never permits stripping required state from a retained/open group.
     context_checkpoint_mode: Literal["replace_complete_groups", "unavailable"] = "unavailable"
+    # Positive, independently known output ceiling; None means unavailable.
+    # It must not be inferred from an input window or an ordinary call budget.
+    max_output_tokens: int | None = None
 
 
 class LanguageModel(Protocol):

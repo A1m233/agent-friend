@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from typing import cast
 from uuid import uuid4
 
+from llm_providers.errors import LLMIncompleteResponseError, LLMOutputBudgetExhaustedError
+
 from llm_providers import (
     LLMContextWindowError,
     LLMEmptyResponseError,
@@ -57,9 +59,13 @@ from .protocol import (
     ToolContextEditRecord,
     assemble_messages,
 )
+from .summary_budget import (
+    summary_generation_tokens,
+    summary_output_exhausted,
+    summary_target_tokens,
+)
 from .summary_generation import generate_summary
 from .summary_prompt import (
-    SUMMARY_SYSTEM_PROMPT,
     build_summary_messages,
     render_transcript,
     strip_analysis,
@@ -77,7 +83,7 @@ SUMMARY_RECENT_TAIL_TURNS = 2
 POST_COMPACTION_TARGET_RATIO = 0.7
 """压缩后目标占用相对触发阈值的比例，给后续 turn 与 usage 校准留出余量。"""
 
-SUMMARY_PROMPT_VERSION = 5
+SUMMARY_PROMPT_VERSION = 6
 MAX_SUMMARY_CONTEXT_RETRIES = 2
 SUMMARY_NETWORK_RETRIES = 0
 logger = logging.getLogger(__name__)
@@ -321,8 +327,8 @@ class SummarizingContextManager:
                 prompt_version=SUMMARY_PROMPT_VERSION,
                 lineage_tracker=self._prompt_cache_lineage,
             )
-        summary_output_budget = max(512, min(4096, int(runtime.budget.effective_window * 0.05)))
-        cut = self._recent_tail_cut(history, parts, runtime, summary_output_budget)
+        target_tokens = summary_target_tokens(runtime)
+        cut = self._recent_tail_cut(history, parts, runtime, target_tokens)
         if cut <= 0:
             # 没有可压缩的较旧部分（全在保护 tail / 无 user 边界）→ 检查无损兜底，
             # 不计失败、不跳闸（这不是摘要失败，是无从压缩）。
@@ -346,11 +352,14 @@ class SummarizingContextManager:
         raw = ""
         summary_source: list[Message] = []
         attempts = 0
+        context_retries = 0
+        output_retry_used = False
         input_kind = "bounded_full"
-        for attempt in range(MAX_SUMMARY_CONTEXT_RETRIES + 1):
+        # Two input-size repairs and one output-budget repair share four calls.
+        for attempt in range(MAX_SUMMARY_CONTEXT_RETRIES + 2):
             runtime.check_cancelled()
             attempts = attempt + 1
-            ratio = 0.75**attempt
+            ratio = 0.75**context_retries
             summary_source = self._bounded_summary_source(
                 summarizable_older,
                 runtime,
@@ -361,6 +370,12 @@ class SummarizingContextManager:
                     history, parts, runtime, reason="summary_input_too_large"
                 )
             summary_text = render_transcript(summary_source)
+            request_messages = build_summary_messages(summary_text, target_tokens=target_tokens)
+            generation_tokens = summary_generation_tokens(
+                request_messages, runtime, expanded=output_retry_used
+            )
+            if generation_tokens <= 0:
+                return self._on_failure(history, parts, runtime, reason="summary_input_too_large")
             lineage = self._prompt_cache_lineage.begin(
                 session_id=runtime.session_id,
                 operation="context_compaction",
@@ -372,8 +387,8 @@ class SummarizingContextManager:
                 response = generate_summary(
                     runtime.llm_client,
                     ModelRequest(
-                        messages=build_summary_messages(summary_text),
-                        settings={"max_tokens": summary_output_budget},
+                        messages=request_messages,
+                        settings={"max_tokens": generation_tokens},
                         control=ModelCallControl(
                             cancel_check=runtime.cancel_check,
                             retry_limit=SUMMARY_NETWORK_RETRIES,
@@ -399,10 +414,33 @@ class SummarizingContextManager:
                 break
             except LLMContextWindowError:
                 runtime.check_cancelled()
-                if attempt >= MAX_SUMMARY_CONTEXT_RETRIES:
+                if context_retries >= MAX_SUMMARY_CONTEXT_RETRIES:
                     return self._on_failure(
                         history, parts, runtime, reason="summary_context_window_exceeded"
                     )
+                context_retries += 1
+            except (LLMIncompleteResponseError, LLMOutputBudgetExhaustedError) as exc:
+                runtime.check_cancelled()
+                exhausted = summary_output_exhausted(exc)
+                expanded_tokens = summary_generation_tokens(
+                    request_messages, runtime, expanded=True
+                )
+                if exhausted and not output_retry_used and expanded_tokens > generation_tokens:
+                    output_retry_used = True
+                    logger.info(
+                        "summary_output_budget_retry session=%s run=%s previous_tokens=%s next_tokens=%s",
+                        runtime.session_id,
+                        runtime.run_id,
+                        generation_tokens,
+                        expanded_tokens,
+                    )
+                    continue
+                return self._on_failure(
+                    history,
+                    parts,
+                    runtime,
+                    reason="summary_output_budget_exhausted" if exhausted else "summary_incomplete",
+                )
             except LLMUnsupportedParameterError as exc:
                 runtime.check_cancelled()
                 if runtime.run_id:
@@ -489,11 +527,11 @@ class SummarizingContextManager:
                 "summary_input": input_kind,
                 "token_estimate": record.tokens_after,
                 "summary_attempts": attempts,
+                "summary_target_tokens": target_tokens,
+                "summary_generation_tokens": generation_tokens,
+                "summary_output_retry_used": output_retry_used,
                 "summary_input_tokens": estimate_tokens(
-                    [
-                        Message(role="system", content=SUMMARY_SYSTEM_PROMPT),
-                        Message(role="user", content=render_transcript(summary_source)),
-                    ]
+                    [Message(role="system", content=item["content"]) for item in request_messages]
                 ),
                 "summary_input_budget": runtime.budget.trigger_threshold,
                 "tool_results_truncated": projection.truncated,
@@ -624,7 +662,9 @@ class SummarizingContextManager:
             ]
             source = [*pinned, *older[start:]]
             transcript = render_transcript(source)
-            request = build_summary_messages(transcript)
+            request = build_summary_messages(
+                transcript, target_tokens=summary_target_tokens(runtime)
+            )
             summary_messages = [
                 Message(role=message["role"], content=message["content"]) for message in request
             ]
@@ -640,7 +680,7 @@ class SummarizingContextManager:
         history: list[Message],
         parts: _AssembleParts,
         runtime: RuntimeContext,
-        summary_output_budget: int,
+        target_tokens: int,
     ) -> int:
         """选择连续 recent turn 后缀，并让压缩结果回落到稳定目标水位。"""
         user_indices = recent_turn_start_candidates(history)
@@ -648,7 +688,7 @@ class SummarizingContextManager:
             user_indices = user_indices[:-1]
         if len(user_indices) <= 1:
             return 0
-        placeholder_chars = max(1, int(summary_output_budget / 0.75))
+        placeholder_chars = max(1, int(target_tokens / 0.75))
         placeholder = Message(role="system", content="S" * placeholder_chars)
         target = int(runtime.budget.trigger_threshold * POST_COMPACTION_TARGET_RATIO)
         for cut in user_indices[1:]:
