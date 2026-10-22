@@ -8,6 +8,8 @@ from collections.abc import Callable
 from hashlib import sha256
 from uuid import uuid4
 
+from llm_providers.errors import LLMIncompleteResponseError, LLMOutputBudgetExhaustedError
+
 from llm_providers import (
     LLMContextWindowError,
     LLMEmptyResponseError,
@@ -34,6 +36,11 @@ from .protocol import (
     CompactionRecord,
     RuntimeContext,
     ToolContextEditRecord,
+)
+from .summary_budget import (
+    summary_generation_tokens,
+    summary_output_exhausted,
+    summary_target_tokens,
 )
 from .summary_generation import generate_summary
 from .summary_prompt import build_summary_messages, render_transcript, strip_analysis
@@ -93,7 +100,7 @@ def _select_prefix(
     assemble: Assemble,
     runtime: RuntimeContext,
     control: CompactionControl,
-    output_budget: int,
+    target_tokens: int,
     has_new_user_input: bool,
 ) -> tuple[int, Message | None, bool]:
     try:
@@ -107,7 +114,7 @@ def _select_prefix(
     ]
     if has_new_user_input and history:
         ordinary.append(len(history))
-    placeholder = Message(role="system", content="S" * max(1, math.ceil(output_budget / 0.75)))
+    placeholder = Message(role="system", content="S" * max(1, math.ceil(target_tokens / 0.75)))
     threshold = runtime.budget.trigger_threshold
     target = int(threshold * 0.7)
 
@@ -129,7 +136,7 @@ def _select_prefix(
                 if assessment.tokens <= target:
                     return possible
             else:
-                # The output maximum is a reserve, not a proven minimum summary
+                # The retained-text target is a reserve, not a minimum summary
                 # size. A short valid summary may fit when the placeholder does
                 # not; the actual complete candidate is checked again below.
                 mandatory = assess_request_budget(
@@ -161,7 +168,7 @@ def _select_prefix(
 
 
 def _summary_request(
-    source: list[Message], previous: str, goal: Message | None
+    source: list[Message], previous: str, goal: Message | None, target_tokens: int
 ) -> list[dict[str, str]]:
     sections = []
     if goal is not None:
@@ -169,7 +176,7 @@ def _summary_request(
     if previous:
         sections.append("【资料分区：此前已归纳的连续前缀】\n" + previous)
     sections.append("【资料分区：接续的原始记录】\n" + render_transcript(source))
-    return build_summary_messages("\n\n".join(sections))
+    return build_summary_messages("\n\n".join(sections), target_tokens=target_tokens)
 
 
 def _request_tokens(messages: list[dict[str, str]], runtime: RuntimeContext) -> int:
@@ -183,7 +190,7 @@ def _summarize_prefix(
     prefix: list[Message],
     runtime: RuntimeContext,
     control: CompactionControl,
-    output_budget: int,
+    target_tokens: int,
     prompt_version: int,
     lineage_tracker: OperationRequestLineageTracker,
 ) -> str:
@@ -232,11 +239,16 @@ def _summarize_prefix(
             source = [
                 message for message in prefix[cursor:end] if not message.meta.get("model_only")
             ]
-            candidate = _summary_request(source, previous, control.current_user)
+            candidate = _summary_request(source, previous, control.current_user, target_tokens)
             if _request_tokens(candidate, runtime) > budget:
                 break
             chosen, request_messages = end, candidate
         if chosen == cursor:
+            raise _failure("summary_input_too_large")
+        generation_tokens = summary_generation_tokens(
+            request_messages, runtime, expanded=control.summary_output_retry_used
+        )
+        if generation_tokens <= 0:
             raise _failure("summary_input_too_large")
         fingerprint = sha256(
             json.dumps(request_messages, ensure_ascii=False, sort_keys=True).encode()
@@ -257,7 +269,7 @@ def _summarize_prefix(
                 runtime.llm_client,
                 ModelRequest(
                     messages=list(request_messages),
-                    settings={"max_tokens": output_budget},
+                    settings={"max_tokens": generation_tokens},
                     control=ModelCallControl(
                         cancel_check=runtime.cancel_check,
                         retry_limit=0,
@@ -293,6 +305,22 @@ def _summarize_prefix(
         except LLMUnsupportedParameterError as exc:
             runtime.check_cancelled()
             raise _failure("unsupported_model_parameter") from exc
+        except (LLMIncompleteResponseError, LLMOutputBudgetExhaustedError) as exc:
+            runtime.check_cancelled()
+            exhausted = summary_output_exhausted(exc)
+            expanded_tokens = summary_generation_tokens(request_messages, runtime, expanded=True)
+            if (
+                exhausted
+                and not control.summary_output_retry_used
+                and expanded_tokens > generation_tokens
+                and control.summary_requests < MAX_SUMMARY_REQUESTS
+            ):
+                control.summary_output_retry_used = True
+                retry_fingerprint = fingerprint
+                continue
+            raise _failure(
+                "summary_output_budget_exhausted" if exhausted else "summary_incomplete"
+            ) from exc
         except LLMEmptyResponseError as exc:
             runtime.check_cancelled()
             raise _failure("empty_summary") from exc
@@ -333,13 +361,13 @@ def compact_task_history(
         raise ValueError("compaction_control_required")
     if not history:
         raise _failure("nothing_to_compact")
-    output_budget = max(512, min(4096, int(runtime.budget.effective_window * 0.05)))
+    target_tokens = summary_target_tokens(runtime)
     cut, anchor, task_internal = _select_prefix(
-        history, assemble, runtime, control, output_budget, has_new_user_input
+        history, assemble, runtime, control, target_tokens, has_new_user_input
     )
     prefix, tail = history[:cut], history[cut:]
     summary = _summarize_prefix(
-        prefix, runtime, control, output_budget, prompt_version, lineage_tracker
+        prefix, runtime, control, target_tokens, prompt_version, lineage_tracker
     )
     summary_uuid = str(uuid4())
     retained = preserve_latest_skill_catalog(history, tail)
@@ -399,6 +427,8 @@ def compact_task_history(
             "token_estimate": assessment.tokens,
             "summary_attempts": control.summary_requests,
             "summary_segments": control.successful_segments,
+            "summary_target_tokens": target_tokens,
+            "summary_output_retry_used": control.summary_output_retry_used,
             "task_internal_compaction": task_internal,
             "source_fingerprint": control.source_fingerprint,
             "tool_results_truncated": projection.truncated,

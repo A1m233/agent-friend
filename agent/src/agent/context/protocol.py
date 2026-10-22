@@ -53,6 +53,7 @@ class CompactionControl:
     summarized_source: tuple[str, ...] = ()
     summary_text: str = ""
     summary_goal_fingerprint: str = ""
+    summary_output_retry_used: bool = False
 
 
 @dataclass(frozen=True)

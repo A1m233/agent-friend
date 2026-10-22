@@ -227,7 +227,7 @@ def test_summary_provider_input_separates_host_task_from_user_goal_and_history()
     )
 
     assert result.new_compaction is not None
-    assert result.new_compaction.summary_prompt_version == 5
+    assert result.new_compaction.summary_prompt_version == 6
     assert 1 < len(model.requests) <= 3
     for request in model.requests:
         assert [message["role"] for message in request.messages] == ["system", "user"]

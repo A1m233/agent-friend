@@ -1,6 +1,6 @@
 # 064 · 摘要生成固定封顶 4096 token，未区分生成预算与摘要长度
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：high
 - **发现日期**：2026-09-07
 - **关联需求**：[113-session-rollout-persistence-and-recovery](../../requirements/113-session-rollout-persistence-and-recovery/requirement.md)
@@ -40,3 +40,5 @@ Windows 桌面端长会话在 2026-09-07 02:25:22 开始的一轮中显示“正
 - 使用确定性 fake 覆盖纯思考、长度截断、空摘要和正常摘要分支；真实模型对照须另行授权。失败提示的展示改进可按用户体验范围另行确认。
 
 以上是后续候选方向，不是已批准的实现方案。本次未修改产品代码、未新增真实模型调用。
+
+已在 commit `35c878fa3a590f7fb1f0eb8bc9f9608358efc370` 修复；后端、前端与 Rust 检查通过，真实模型效果未单独验证。

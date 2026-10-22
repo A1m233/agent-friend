@@ -102,6 +102,33 @@ def test_context_window_uses_spec_override_first(monkeypatch: pytest.MonkeyPatch
     assert client.model_limits.context_window_source == "provider_spec"
 
 
+@pytest.mark.parametrize(
+    "limit,expected",
+    [(8192, 8192), (None, None), (0, None), (-1, None), (True, None), ("8192", None)],
+)
+def test_output_ceiling_uses_only_exact_positive_local_metadata(
+    monkeypatch: pytest.MonkeyPatch, limit: object, expected: int | None
+) -> None:
+    monkeypatch.setattr(
+        "llm_providers.client.litellm.model_cost",
+        {"deepseek/deepseek-chat": {"max_output_tokens": limit, "max_tokens": 999999}},
+    )
+
+    def no_probe(*args: object, **kwargs: object) -> None:
+        pytest.fail("output capability lookup must not probe a provider")
+
+    monkeypatch.setattr(_GET_MODEL_INFO, no_probe)
+    assert LLMClient(_spec()).capabilities.max_output_tokens == expected
+    assert LLMClient(_spec(provider_id="custom")).capabilities.max_output_tokens is None
+    assert LLMClient(_spec(model="openai/unknown")).capabilities.max_output_tokens is None
+    assert (
+        LLMClient(
+            _spec(model="openai/native-route", product_model_id="deepseek/deepseek-chat")
+        ).capabilities.max_output_tokens
+        == expected
+    )
+
+
 def test_context_window_falls_back_to_litellm(monkeypatch: pytest.MonkeyPatch) -> None:
     """第 2 层：无 override 时取 litellm 元数据 max_input_tokens。"""
     monkeypatch.setattr(_GET_MODEL_INFO, lambda _model: {"max_input_tokens": 200000})

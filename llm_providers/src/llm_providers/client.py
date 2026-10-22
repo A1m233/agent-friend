@@ -289,7 +289,18 @@ class LLMClient:
             # opaque reasoning items are replayed explicitly in that request.
             input_usage_scope="request",
             context_checkpoint_mode="replace_complete_groups",
+            max_output_tokens=self._max_output_tokens,
         )
+
+    @cached_property
+    def _max_output_tokens(self) -> int | None:
+        # Read exact local metadata only: get_model_info may probe a provider.
+        # A custom endpoint's name does not establish its real capabilities.
+        if self.spec.provider_id == "custom":
+            return None
+        info = litellm.model_cost.get(self.spec.product_model_id or self.spec.model, {})
+        value = info.get("max_output_tokens")
+        return value if type(value) is int and value > 0 else None
 
     @property
     def context_window(self) -> int:
