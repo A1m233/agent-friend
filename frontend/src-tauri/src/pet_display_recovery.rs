@@ -5,6 +5,7 @@ use std::{fs, path::Path, time::Duration};
 use tauri::Manager;
 
 pub const RECOVERY_POLL_INTERVAL_MS: u64 = 250;
+const DISPLAY_REFRESH_HIDDEN_MS: u64 = 250;
 pub const RECOVERY_MIN_HIDDEN_MS: u64 = 6_500;
 pub const RECOVERY_STABLE_MS: u64 = 1_500;
 pub const RECOVERY_TIMEOUT_MS: u64 = 12_000;
@@ -121,6 +122,7 @@ impl SessionDisplayState {
 pub enum DisplayObservation {
     None,
     BeginRecovery { generation: u64 },
+    BeginRefresh { generation: u64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -195,19 +197,6 @@ impl PetDisplayRecoveryState {
     pub fn observe_display_state(&mut self, state: SessionDisplayState) -> DisplayObservation {
         let previous = self.last_display_state.replace(state);
 
-        if !self.protection_enabled {
-            if self
-                .active_recovery
-                .is_some_and(|active| active.cause == RecoveryCause::DisplayResume)
-            {
-                self.active_recovery = None;
-            }
-            if self.safety_suppressed == Some(RecoveryCause::DisplayResume) {
-                self.safety_suppressed = None;
-            }
-            return DisplayObservation::None;
-        }
-
         if state.is_not_rendering() {
             if self
                 .active_recovery
@@ -235,8 +224,14 @@ impl PetDisplayRecoveryState {
             cause: RecoveryCause::DisplayResume,
         });
         self.safety_suppressed = None;
-        DisplayObservation::BeginRecovery {
-            generation: self.next_generation,
+        if self.protection_enabled {
+            DisplayObservation::BeginRecovery {
+                generation: self.next_generation,
+            }
+        } else {
+            DisplayObservation::BeginRefresh {
+                generation: self.next_generation,
+            }
         }
     }
 
@@ -730,6 +725,45 @@ pub(crate) fn disable_protection(app: &tauri::AppHandle) -> Result<(), String> {
     apply_visibility_command(app, command, "display-recovery-protection-disabled")
 }
 
+/// Recreate a visibility transition without opting into render-safety probes.
+/// A plain show on an already-visible HWND need not refresh its presentation.
+/// Both operations are dispatched to the UI thread and recheck the generation,
+/// so a user hide, another display-off, or GPU containment cancels stale work.
+fn schedule_refresh(app: &tauri::AppHandle, generation: u64) {
+    let handle = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        if !is_current(&handle, generation) {
+            return;
+        }
+        if let Err(error) =
+            apply_visibility_command(&handle, VisibilityCommand::Hide, "display-resume")
+        {
+            log::warn!("pet display refresh hide failed: generation={generation} error={error}");
+            // Still attempt to restore: the native call can have partially applied.
+        }
+        log::info!("pet display refresh started: generation={generation}");
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(DISPLAY_REFRESH_HIDDEN_MS)).await;
+            let restored = handle.clone();
+            if let Err(error) = handle.run_on_main_thread(move || {
+                match complete_and_restore(&restored, generation, "display-resume-complete") {
+                    Ok(true) => log::info!("pet display refresh completed: generation={generation}"),
+                    Ok(false) => log::info!("pet display refresh cancelled: generation={generation}"),
+                    Err(error) => log::warn!(
+                        "pet display refresh restore failed: generation={generation} error={error}"
+                    ),
+                }
+            }) {
+                log::warn!(
+                    "pet display refresh restore dispatch failed: generation={generation} error={error}"
+                );
+            }
+        });
+    }) {
+        log::warn!("pet display refresh dispatch failed: generation={generation} error={error}");
+    }
+}
+
 fn schedule(app: &tauri::AppHandle, generation: u64, cause: RecoveryCause) {
     if app.get_webview_window("pet").is_none() {
         return;
@@ -1142,8 +1176,12 @@ pub(crate) fn handle_session_display_state(app: &tauri::AppHandle, raw_state: u3
             })
         })
         .unwrap_or(DisplayObservation::None);
-    if let DisplayObservation::BeginRecovery { generation } = observation {
-        schedule(app, generation, RecoveryCause::DisplayResume);
+    match observation {
+        DisplayObservation::BeginRecovery { generation } => {
+            schedule(app, generation, RecoveryCause::DisplayResume);
+        }
+        DisplayObservation::BeginRefresh { generation } => schedule_refresh(app, generation),
+        DisplayObservation::None => {}
     }
 }
 
@@ -1250,19 +1288,88 @@ mod tests {
     }
 
     #[test]
-    fn disabled_protection_tracks_display_state_without_starting_recovery() {
+    fn disabled_protection_refreshes_once_without_starting_protected_recovery() {
         let mut state = PetDisplayRecoveryState::default();
         state.disable_protection();
 
+        assert_eq!(
+            state.observe_display_state(SessionDisplayState::On),
+            DisplayObservation::None
+        );
         assert_eq!(
             state.observe_display_state(SessionDisplayState::Off),
             DisplayObservation::None
         );
         assert_eq!(
             state.observe_display_state(SessionDisplayState::On),
+            DisplayObservation::BeginRefresh { generation: 1 }
+        );
+        assert_eq!(
+            state.observe_display_state(SessionDisplayState::On),
             DisplayObservation::None
         );
+        assert_eq!(state.complete(1), Some(VisibilityCommand::Show));
         assert!(state.active_recovery.is_none());
+    }
+
+    #[test]
+    fn refresh_respects_user_hidden_state_and_user_hide_while_pending() {
+        let mut state = PetDisplayRecoveryState::default();
+        state.disable_protection();
+        state.set_desired_visible(false);
+        state.observe_display_state(SessionDisplayState::Off);
+        assert_eq!(
+            state.observe_display_state(SessionDisplayState::On),
+            DisplayObservation::None
+        );
+
+        state.set_desired_visible(true);
+        state.observe_display_state(SessionDisplayState::Off);
+        assert_eq!(
+            state.observe_display_state(SessionDisplayState::On),
+            DisplayObservation::BeginRefresh { generation: 1 }
+        );
+        state.set_desired_visible(false);
+        assert_eq!(state.complete(1), None);
+    }
+
+    #[test]
+    fn a_second_display_cycle_cancels_the_old_refresh() {
+        let mut state = PetDisplayRecoveryState::default();
+        state.disable_protection();
+        state.observe_display_state(SessionDisplayState::Off);
+        state.observe_display_state(SessionDisplayState::On);
+        state.observe_display_state(SessionDisplayState::Off);
+        assert_eq!(state.complete(1), None);
+        assert_eq!(
+            state.observe_display_state(SessionDisplayState::On),
+            DisplayObservation::BeginRefresh { generation: 2 }
+        );
+        assert_eq!(state.complete(1), None);
+        assert_eq!(state.complete(2), Some(VisibilityCommand::Show));
+    }
+
+    #[test]
+    fn refresh_cannot_override_active_or_suppressed_gpu_recovery() {
+        let mut state = PetDisplayRecoveryState::default();
+        state.disable_protection();
+        state.observe_display_state(SessionDisplayState::Off);
+        state.observe_display_state(SessionDisplayState::On);
+        let gpu_generation = state.begin_gpu_process_recovery().unwrap();
+        assert_eq!(state.complete(1), None);
+        state.observe_display_state(SessionDisplayState::Off);
+        assert_eq!(
+            state.observe_display_state(SessionDisplayState::On),
+            DisplayObservation::None
+        );
+        assert!(state.is_current(gpu_generation));
+        assert!(state.timeout(gpu_generation));
+        state.observe_display_state(SessionDisplayState::Off);
+        assert_eq!(
+            state.observe_display_state(SessionDisplayState::On),
+            DisplayObservation::None
+        );
+        assert_eq!(state.complete(gpu_generation), None);
     }
 
     #[test]
