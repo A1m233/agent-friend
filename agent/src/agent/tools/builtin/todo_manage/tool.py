@@ -18,6 +18,7 @@ from agent.todos import (
     schedule_from_dict,
     schedule_to_dict,
 )
+from agent.todos.history import TodoActor
 
 from ...protocol import ToolResult
 
@@ -344,6 +345,7 @@ class TodoManageTool:
         )
 
     def _invoke(self, args: dict[str, Any]) -> dict[str, Any]:
+        actor = TodoActor("agent", _optional_string(args, _RUNTIME_SESSION_ID))
         operation = _required_string(args, "operation")
         if operation == "create":
             schedules = tuple(
@@ -351,6 +353,7 @@ class TodoManageTool:
                 for item in _list(args.get("reminders", []), "reminders")
             )
             created = self._service.create(
+                actor=actor,
                 title=_required_string(args, "title"),
                 description=_optional_string(args, "description") or "",
                 reminders=schedules,
@@ -380,6 +383,7 @@ class TodoManageTool:
             schedule = _schedule_from_input(_mapping(args.get("reminder"), "reminder"), args)
             added_reminder = self._service.add_reminder(
                 todo_id,
+                actor=actor,
                 schedule=schedule,
                 origin_session_id=_optional_string(args, _RUNTIME_SESSION_ID),
             )
@@ -389,6 +393,7 @@ class TodoManageTool:
         if operation == "update":
             updated = self._service.update(
                 todo_id,
+                actor=actor,
                 revision=revision,
                 title=_optional_string(args, "title"),
                 description=_optional_string(args, "description"),
@@ -400,6 +405,7 @@ class TodoManageTool:
             updated_reminder = self._service.update_reminder(
                 todo_id,
                 reminder_id,
+                actor=actor,
                 revision=revision,
                 schedule=schedule,
                 enabled=bool(args.get("enabled", True)),
@@ -407,7 +413,7 @@ class TodoManageTool:
             return _success(operation, reminder=_reminder(updated_reminder))
         if operation == "remove_reminder":
             removed_reminder = self._service.remove_reminder(
-                todo_id, reminder_id, revision=revision
+                todo_id, reminder_id, revision=revision, actor=actor
             )
             return _success(operation, reminder=_reminder(removed_reminder))
         raise TodoError("invalid_arguments", f"不支持的 operation: {operation}")
@@ -423,7 +429,11 @@ class TodoManageTool:
         transition = getattr(self._service, operation)
         for index, (todo_id, revision) in enumerate(items):
             try:
-                details = transition(todo_id, revision=revision)
+                details = transition(
+                    todo_id,
+                    revision=revision,
+                    actor=TodoActor("agent", _optional_string(args, _RUNTIME_SESSION_ID)),
+                )
             except TodoError as exc:
                 error: dict[str, Any] = {
                     "index": index,
@@ -498,6 +508,7 @@ def _details(value: TodoDetails) -> dict[str, Any]:
         "status": todo.status.value,
         "revision": todo.revision,
         "created_at": _dt(todo.created_at),
+        "last_operation": value.last_operation,
         "updated_at": _dt(todo.updated_at),
         "completed_at": _dt(todo.completed_at),
         "cancelled_at": _dt(todo.cancelled_at),

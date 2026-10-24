@@ -41,6 +41,9 @@ import { recordStartupMilestone } from "@/lib/startup-evidence";
 const SettingsApp = lazy(() =>
   import("@/pages/settings/App").then((module) => ({ default: module.SettingsApp })),
 );
+const TodosApp = lazy(() =>
+  import("@/pages/todos/App").then((module) => ({ default: module.TodosApp })),
+);
 const ScheduledTasksApp = lazy(() =>
   import("@/pages/scheduled-tasks/App").then((module) => ({ default: module.ScheduledTasksApp })),
 );
@@ -194,6 +197,11 @@ export function ChatApp() {
           {visitedTargets.includes("settings") ? (
             <WorkspaceSurface active={target === "settings"}>
               <SettingsApp navigation={settingsNavigation} />
+            </WorkspaceSurface>
+          ) : null}
+          {visitedTargets.includes("todos") ? (
+            <WorkspaceSurface active={target === "todos"}>
+              <TodosApp active={target === "todos"} />
             </WorkspaceSurface>
           ) : null}
           {visitedTargets.includes("scheduled-tasks") ? (

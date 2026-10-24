@@ -310,6 +310,39 @@ impl RuntimeServiceSupervisor {
         Ok(value)
     }
 
+    pub async fn todo_operation(
+        &self,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let slot_ref = self.slot(RuntimeServiceKind::Bridge);
+        let token = slot_ref
+            .lock()
+            .await
+            .token
+            .clone()
+            .ok_or("todo_bridge_not_ready")?;
+        let response = self
+            .client
+            .post(format!(
+                "{}/internal/todos/mutate",
+                self.launch_context.base_url(RuntimeServiceKind::Bridge)
+            ))
+            .header("X-Agent-Friend-Lifecycle-Token", token)
+            .json(&body)
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(|_| "todo_request_failed")?;
+        let status = response.status();
+        let value: serde_json::Value =
+            response.json().await.map_err(|_| "todo_invalid_response")?;
+        // Preserve business error codes (not credentials) for conflict recovery in the form.
+        if !status.is_success() && value.get("error").is_none() {
+            return Err("todo_request_rejected".into());
+        }
+        Ok(value)
+    }
+
     pub async fn migration_snapshot_im_credentials(&self) -> Result<serde_json::Value, String> {
         let slot_ref = self.slot(RuntimeServiceKind::Bridge);
         let slot = slot_ref.lock().await;

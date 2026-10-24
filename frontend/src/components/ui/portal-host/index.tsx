@@ -5,8 +5,9 @@
  */
 import { useLayoutEffect, useState, type ReactNode } from "react";
 
-export function PortalHost({ container, children }: {
+export function PortalHost({ container, active = true, children }: {
   container?: Element | DocumentFragment | null;
+  active?: boolean;
   children: (host: HTMLDivElement) => ReactNode;
 }) {
   const [host] = useState(() => {
@@ -17,11 +18,11 @@ export function PortalHost({ container, children }: {
   });
 
   useLayoutEffect(() => {
-    if (!host) return;
+    if (!host || !active) return;
     const parent = container ?? document.body;
     parent.appendChild(host);
     return () => host.remove();
-  }, [container, host]);
+  }, [container, host, active]);
 
   return host ? children(host) : null;
 }

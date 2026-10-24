@@ -7,10 +7,22 @@ import { Select as SelectPrimitive } from "radix-ui"
 import { cn } from "@/utils/cn"
 import { PortalHost } from "../portal-host"
 
+const SelectOpenContext = React.createContext(false)
+
 function Select({
+  open: controlledOpen,
+  defaultOpen = false,
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Root>) {
-  return <SelectPrimitive.Root data-slot="select" {...props} />
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState(defaultOpen)
+  const open = controlledOpen ?? uncontrolledOpen
+  return <SelectOpenContext.Provider value={open}>
+    <SelectPrimitive.Root data-slot="select" {...props} open={open} onOpenChange={(next) => {
+      setUncontrolledOpen(next)
+      onOpenChange?.(next)
+    }} />
+  </SelectOpenContext.Provider>
 }
 
 function SelectGroup({
@@ -59,8 +71,11 @@ function SelectContent({
   sideOffset = 4,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
+  const open = React.useContext(SelectOpenContext)
   return (
-    <PortalHost>{(host) => <SelectPrimitive.Portal container={host}>
+    // Keep closed items mounted for SelectValue, but attach their host only on open.
+    // A pre-attached host is hidden by an enclosing Dialog and sits below its overlay.
+    <PortalHost active={open}>{(host) => <SelectPrimitive.Portal container={host}>
       <SelectPrimitive.Content
         data-slot="select-content"
         className={cn(

@@ -101,6 +101,7 @@ class Reminder:
 class TodoDetails:
     todo: Todo
     reminders: tuple[Reminder, ...] = ()
+    last_operation: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -168,6 +169,7 @@ class TodoListQuery:
     statuses: tuple[TodoStatus, ...] = (TodoStatus.OPEN,)
     limit: int = 100
     offset: int = 0
+    search: str = ""
 
 
 @dataclass(frozen=True)

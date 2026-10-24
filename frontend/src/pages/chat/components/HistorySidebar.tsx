@@ -1,3 +1,4 @@
+import { ListTodo } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -485,6 +486,16 @@ export function HistorySidebar({
             >
               <SquarePen />
               <span>新对话</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              isActive={workspaceTarget === "todos"}
+              className={NAVIGATION_BUTTON_CLASS}
+              onClick={() => navigateWorkspace("todos")}
+            >
+              <ListTodo />
+              <span>待办</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
