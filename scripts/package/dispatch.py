@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from windows_host import maybe_relay
+
 ROOT = Path(__file__).resolve().parents[2]
 MANAGEMENT = {"workspace-status", "workspace-gc", "workspace-adopt", "plan"}
 BUILD = {"runtime", "runtime-verify", "installer", "all", "installer-smoke-build"}
@@ -14,6 +16,9 @@ BUILD = {"runtime", "runtime-verify", "installer", "all", "installer-smoke-build
 def main() -> int:
     args = sys.argv[1:]
     step = args[0] if args else "all"
+    relayed = maybe_relay(args)
+    if relayed is not None:
+        return relayed
     if step in MANAGEMENT:
         return subprocess.call(
             [sys.executable, "-B", str(Path(__file__).with_name("manage.py")), *args], cwd=ROOT

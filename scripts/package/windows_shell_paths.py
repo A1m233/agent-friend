@@ -8,6 +8,10 @@ import tempfile
 from pathlib import Path
 
 
+class SmokePathRedirection(RuntimeError):
+    """A packaged desktop host redirected a fresh shell-folder write."""
+
+
 def shell_folder(csidl: int) -> Path:
     # Current-user shell context, matching the per-user NSIS installer.
     function = ctypes.WinDLL("shell32", use_last_error=True).SHGetFolderPathW
@@ -52,7 +56,7 @@ def verify_smoke_environment() -> None:
         try:
             actual = probe.resolve()
             if actual.parent != declared.resolve():
-                raise RuntimeError(
+                raise SmokePathRedirection(
                     f"installer smoke filesystem redirection: {probe} -> {actual}. "
                     "Run the package script from a normal, non-virtualized Windows terminal. "
                     "No installation or smoke-state cleanup has been started."
