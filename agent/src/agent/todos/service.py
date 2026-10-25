@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 
+from .history import UNKNOWN_ACTOR, TodoActor
 from .models import (
     OnceSchedule,
     Reminder,
@@ -42,6 +43,7 @@ class TodoService:
         reminders: tuple[ReminderSchedule, ...] = (),
         origin_kind: str | None = None,
         origin_id: str | None = None,
+        actor: TodoActor = UNKNOWN_ACTOR,
     ) -> TodoDetails:
         title = _title(title)
         description = _description(description)
@@ -56,18 +58,16 @@ class TodoService:
             origin_kind=origin_kind,
             origin_id=origin_id,
         )
-        self.store.create_todo(todo)
-        try:
-            for schedule in reminders:
-                self.add_reminder(
-                    todo.id,
-                    schedule=schedule,
-                    origin_session_id=(origin_id if origin_kind == "session" else None),
-                )
-        except Exception:
-            # The Todo is still a valid user record. Keep it visible rather than hiding a
-            # partial success; callers receive the precise reminder error and may retry.
-            raise
+        prepared = tuple(
+            self._prepare_reminder(
+                todo.id,
+                schedule=schedule,
+                origin_session_id=origin_id if origin_kind == "session" else None,
+            )
+            for schedule in reminders
+        )
+        self.store.create_todo(todo, reminders=prepared, actor=actor)
+        self._notify_wake()
         return self.store.get_todo(todo.id)
 
     def get(self, todo_id: str) -> TodoDetails:
@@ -81,6 +81,7 @@ class TodoService:
         todo_id: str,
         *,
         revision: int,
+        actor: TodoActor = UNKNOWN_ACTOR,
         title: str | None = None,
         description: str | None = None,
     ) -> TodoDetails:
@@ -95,30 +96,52 @@ class TodoService:
             title=resolved_title,
             description=resolved_description,
             now=self._now(),
+            actor=actor,
         )
         return self.store.get_todo(todo_id)
 
-    def complete(self, todo_id: str, *, revision: int) -> TodoDetails:
+    def complete(
+        self, todo_id: str, *, revision: int, actor: TodoActor = UNKNOWN_ACTOR
+    ) -> TodoDetails:
         self.store.set_todo_status(
-            todo_id, revision=revision, status=TodoStatus.COMPLETED, now=self._now()
-        )
-        self._notify_wake()
-        return self.store.get_todo(todo_id)
-
-    def cancel(self, todo_id: str, *, revision: int) -> TodoDetails:
-        self.store.set_todo_status(
-            todo_id, revision=revision, status=TodoStatus.CANCELLED, now=self._now()
+            todo_id, revision=revision, status=TodoStatus.COMPLETED, now=self._now(), actor=actor
         )
         self._notify_wake()
         return self.store.get_todo(todo_id)
 
-    def reopen(self, todo_id: str, *, revision: int) -> TodoDetails:
+    def cancel(
+        self, todo_id: str, *, revision: int, actor: TodoActor = UNKNOWN_ACTOR
+    ) -> TodoDetails:
         self.store.set_todo_status(
-            todo_id, revision=revision, status=TodoStatus.OPEN, now=self._now()
+            todo_id, revision=revision, status=TodoStatus.CANCELLED, now=self._now(), actor=actor
+        )
+        self._notify_wake()
+        return self.store.get_todo(todo_id)
+
+    def reopen(
+        self, todo_id: str, *, revision: int, actor: TodoActor = UNKNOWN_ACTOR
+    ) -> TodoDetails:
+        self.store.set_todo_status(
+            todo_id, revision=revision, status=TodoStatus.OPEN, now=self._now(), actor=actor
         )
         return self.store.get_todo(todo_id)
 
     def add_reminder(
+        self,
+        todo_id: str,
+        *,
+        schedule: ReminderSchedule,
+        origin_session_id: str | None = None,
+        actor: TodoActor = UNKNOWN_ACTOR,
+    ) -> Reminder:
+        reminder = self._prepare_reminder(
+            todo_id, schedule=schedule, origin_session_id=origin_session_id
+        )
+        result = self.store.create_reminder(reminder, actor=actor)
+        self._notify_wake()
+        return result
+
+    def _prepare_reminder(
         self,
         todo_id: str,
         *,
@@ -146,9 +169,7 @@ class TodoService:
             updated_at=now,
             origin_session_id=origin_session_id,
         )
-        result = self.store.create_reminder(reminder)
-        self._notify_wake()
-        return result
+        return reminder
 
     def update_reminder(
         self,
@@ -156,6 +177,7 @@ class TodoService:
         reminder_id: str,
         *,
         revision: int,
+        actor: TodoActor = UNKNOWN_ACTOR,
         schedule: ReminderSchedule,
         enabled: bool = True,
     ) -> Reminder:
@@ -185,7 +207,7 @@ class TodoService:
             revision=current.revision + 1,
             updated_at=now,
         )
-        result = self.store.update_reminder(updated, expected_revision=revision)
+        result = self.store.update_reminder(updated, expected_revision=revision, actor=actor)
         self._notify_wake()
         return result
 
@@ -195,9 +217,10 @@ class TodoService:
         reminder_id: str,
         *,
         revision: int,
+        actor: TodoActor = UNKNOWN_ACTOR,
     ) -> Reminder:
         result = self.store.disable_reminder(
-            todo_id, reminder_id, revision=revision, now=self._now()
+            todo_id, reminder_id, revision=revision, now=self._now(), actor=actor
         )
         self._notify_wake()
         return result

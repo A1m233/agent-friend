@@ -63,3 +63,16 @@ it("lets recurring times select every minute without native time controls", asyn
   expect(host.querySelector("output")?.textContent).toBe("23:59");
   expect(host.querySelector('input[type="time"],input[type="datetime-local"]')).toBeNull();
 });
+
+it("preserves existing seconds when changing minutes and does not submit its surrounding form", async () => {
+  const submit = vi.fn((event: Event) => event.preventDefault());
+  await act(async () => root.render(createElement("form", { onSubmit: submit }, createElement(Harness, { initial: "2030-05-09T23:59:17" }))));
+  await click(host.querySelector('[aria-label="执行日期和时间"]'));
+  await select("执行分钟", "07 分");
+  expect(host.querySelector("output")?.textContent).toBe("2030-05-09T23:07:17");
+  const day = new Date(2030, 4, 10).toLocaleDateString();
+  await click([...document.querySelectorAll('button[data-day]')].find(el => el.getAttribute("data-day") === day) ?? null);
+  expect(host.querySelector("output")?.textContent).toBe("2030-05-10T23:07:17");
+  await click([...document.querySelectorAll("button")].find(el => el.textContent === "完成") ?? null);
+  expect(submit).not.toHaveBeenCalled();
+});

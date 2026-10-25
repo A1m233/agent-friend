@@ -23,7 +23,7 @@ export function actionBarMinimumMetrics(buttonCount: number, spacing: number) {
 }
 
 export function actionBarButtonCount(dev: boolean, memoryInspector: boolean): number {
-  return 7 + (dev ? 6 : 0) + (memoryInspector ? 1 : 0);
+  return 8 + (dev ? 6 : 0) + (memoryInspector ? 1 : 0);
 }
 
 /** Reduced work areas still expose an action plus both paging controls. */

@@ -18,7 +18,9 @@ import {
 import { runsApi } from "@/services/api/runs";
 import { subscribePushInvalidation } from "@/services/pushInvalidation";
 import { TaskEditor } from "./TaskEditor";
-import { StatusBadge } from "./components/StatusBadge";
+import { StatusBadge } from "@/components/scheduling/StatusBadge";
+import { formatTimestamp } from "@/components/scheduling/presentation";
+import { toast } from "sonner";
 import {
   openScheduledTask,
   openScheduledMessage,
@@ -56,8 +58,7 @@ const reasonNames: Record<string, string> = {
   session_mutation: "会话已归档或删除",
   end_turn: "执行完成",
 };
-const date = (value: string | null) =>
-  value ? new Date(value).toLocaleString() : "—";
+const date = formatTimestamp;
 export function ScheduledTasksApp({ active }: { active: boolean }) {
   const id = useScheduledNavigation((state) => state.taskId);
   return <ScheduledTasksView key={id ?? "list"} id={id} active={active} />;
@@ -183,9 +184,10 @@ function ScheduledTasksView({ id, active }: { id: string | null; active: boolean
     setError("");
     try {
       await action();
+      toast.success("定时任务已更新", { id: "scheduled-task-operation", duration: 4000 });
       refresh((n) => n + 1);
     } catch (e) {
-      setError(friendlyErrorMessage(e));
+      toast.error(friendlyErrorMessage(e), { id: "scheduled-task-operation", duration: 6000 });
     } finally {
       setBusy(false);
     }

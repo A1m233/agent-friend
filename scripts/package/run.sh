@@ -7,7 +7,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-# Installer smoke requires normal Windows shell paths; AppData overrides are rejected.
+# Package writes preflight shell paths and relay through same-user Explorer if redirected.
+# The normal host repeats all checks; AppData overrides remain rejected.
 # Runtime builds enforce Guide provenance, companion hashes, and non-mutating helper load smoke.
 source scripts/_lib/python312.sh
 build_python

@@ -14,6 +14,7 @@ from typing import Any
 
 from agent.paths import todos_db_path
 
+from .history import UNKNOWN_ACTOR, TodoActor, append_change, history_item, latest_change, snapshot
 from .models import (
     AgentResponseStatus,
     DeliveryUpdate,
@@ -49,8 +50,16 @@ class TodoStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
-    def create_todo(self, todo: Todo) -> Todo:
-        with self._transaction() as conn:
+    def create_todo(
+        self,
+        todo: Todo,
+        *,
+        reminders: tuple[Reminder, ...] = (),
+        actor: TodoActor = UNKNOWN_ACTOR,
+    ) -> Todo:
+        with self._transaction(
+            todo_id=todo.id, action="created", actor=actor, now=todo.created_at
+        ) as conn:
             conn.execute(
                 """
                 INSERT INTO todos (
@@ -72,10 +81,13 @@ class TodoStore:
                     todo.origin_id,
                 ),
             )
+            for reminder in reminders:
+                self._insert_reminder(conn, reminder)
         return todo
 
     def get_todo(self, todo_id: str) -> TodoDetails:
         with self._connect() as conn:
+            conn.execute("BEGIN")
             row = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
             if row is None:
                 raise TodoError("not_found", f"Todo 不存在: {todo_id}")
@@ -83,7 +95,14 @@ class TodoStore:
                 "SELECT * FROM reminders WHERE todo_id = ? ORDER BY created_at, id",
                 (todo_id,),
             ).fetchall()
-        return TodoDetails(_todo_from_row(row), tuple(_reminder_from_row(r) for r in reminder_rows))
+            latest = latest_change(conn, todo_id)
+            occurrences = self._last_occurrences(conn, todo_id)
+        return TodoDetails(
+            _todo_from_row(row),
+            tuple(_reminder_from_row(r) for r in reminder_rows),
+            latest,
+            occurrences,
+        )
 
     def list_todos(self, query: TodoListQuery) -> list[TodoDetails]:
         if query.limit < 1 or query.limit > 500 or query.offset < 0:
@@ -92,12 +111,14 @@ class TodoStore:
             return []
         placeholders = ",".join("?" for _ in query.statuses)
         values: list[Any] = [status.value for status in query.statuses]
-        values.extend([query.limit, query.offset])
+        values.extend([query.search.strip(), query.search.strip(), query.limit, query.offset])
         with self._connect() as conn:
+            conn.execute("BEGIN")
             rows = conn.execute(
                 f"""
                 SELECT * FROM todos
                 WHERE status IN ({placeholders})
+                    AND (instr(lower(title), lower(?)) > 0 OR instr(lower(description), lower(?)) > 0)
                 ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END, updated_at DESC, id
                 LIMIT ? OFFSET ?
                 """,
@@ -113,9 +134,40 @@ class TodoStore:
                     TodoDetails(
                         _todo_from_row(row),
                         tuple(_reminder_from_row(item) for item in reminder_rows),
+                        latest_change(conn, str(row["id"])),
+                        self._last_occurrences(conn, str(row["id"])),
                     )
                 )
         return result
+
+    @staticmethod
+    def _last_occurrences(conn: sqlite3.Connection, todo_id: str) -> dict[str, datetime]:
+        rows = conn.execute(
+            """SELECT r.id, (
+                SELECT MAX(o.scheduled_at_utc) FROM reminder_occurrences o
+                WHERE o.reminder_id = r.id
+            ) AS scheduled_at FROM reminders r WHERE r.todo_id = ?""",
+            (todo_id,),
+        ).fetchall()
+        return {
+            str(row["id"]): _required_dt(row["scheduled_at"])
+            for row in rows
+            if row["scheduled_at"] is not None
+        }
+
+    def history(
+        self, todo_id: str, *, before_id: int | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        if not 1 <= limit <= 100 or (before_id is not None and before_id < 1):
+            raise TodoError("invalid_arguments", "历史 limit 必须为 1-100，游标必须为正数")
+        with self._connect() as conn:
+            self._require_todo(conn, todo_id)
+            rows = conn.execute(
+                """SELECT * FROM todo_history WHERE todo_id = ? AND (? IS NULL OR id < ?)
+                ORDER BY id DESC LIMIT ?""",
+                (todo_id, before_id, before_id, limit),
+            ).fetchall()
+        return [history_item(row) for row in rows]
 
     def update_todo_fields(
         self,
@@ -125,10 +177,13 @@ class TodoStore:
         title: str,
         description: str,
         now: datetime,
+        actor: TodoActor = UNKNOWN_ACTOR,
     ) -> Todo:
-        with self._transaction() as conn:
+        with self._transaction(todo_id=todo_id, action="updated", actor=actor, now=now) as conn:
             current = self._require_todo(conn, todo_id)
             self._require_revision(current, revision)
+            if (title, description) == (current.title, current.description):
+                return current
             next_revision = current.revision + 1
             conn.execute(
                 """
@@ -146,8 +201,11 @@ class TodoStore:
         revision: int,
         status: TodoStatus,
         now: datetime,
+        actor: TodoActor = UNKNOWN_ACTOR,
     ) -> Todo:
-        with self._transaction() as conn:
+        with self._transaction(
+            todo_id=todo_id, action="status_changed", actor=actor, now=now
+        ) as conn:
             current = self._require_todo(conn, todo_id)
             self._require_revision(current, revision)
             if current.status == status:
@@ -186,42 +244,67 @@ class TodoStore:
                 )
         return self.get_todo(todo_id).todo
 
-    def create_reminder(self, reminder: Reminder) -> Reminder:
-        with self._transaction() as conn:
+    def create_reminder(self, reminder: Reminder, *, actor: TodoActor = UNKNOWN_ACTOR) -> Reminder:
+        with self._transaction(
+            todo_id=reminder.todo_id,
+            action="reminder_added",
+            actor=actor,
+            now=reminder.created_at,
+        ) as conn:
             todo = self._require_todo(conn, reminder.todo_id)
             if todo.status is not TodoStatus.OPEN:
                 raise TodoError("invalid_state", "只能给 open Todo 添加 Reminder")
-            conn.execute(
-                """
-                INSERT INTO reminders (
-                    id, todo_id, kind, timezone, schedule_json, next_fire_at_utc,
-                    status, fire_count, revision, created_at, updated_at, origin_session_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    reminder.id,
-                    reminder.todo_id,
-                    reminder.kind.value,
-                    reminder.timezone,
-                    json.dumps(schedule_to_dict(reminder.schedule), sort_keys=True),
-                    _dump_dt(reminder.next_fire_at_utc),
-                    reminder.status.value,
-                    reminder.fire_count,
-                    reminder.revision,
-                    _dump_dt(reminder.created_at),
-                    _dump_dt(reminder.updated_at),
-                    reminder.origin_session_id,
-                ),
-            )
+            self._insert_reminder(conn, reminder)
         return reminder
 
-    def update_reminder(self, reminder: Reminder, *, expected_revision: int) -> Reminder:
-        with self._transaction() as conn:
+    @staticmethod
+    def _insert_reminder(conn: sqlite3.Connection, reminder: Reminder) -> None:
+        conn.execute(
+            """
+            INSERT INTO reminders (
+                id, todo_id, kind, timezone, schedule_json, next_fire_at_utc,
+                status, fire_count, revision, created_at, updated_at, origin_session_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                reminder.id,
+                reminder.todo_id,
+                reminder.kind.value,
+                reminder.timezone,
+                json.dumps(schedule_to_dict(reminder.schedule), sort_keys=True),
+                _dump_dt(reminder.next_fire_at_utc),
+                reminder.status.value,
+                reminder.fire_count,
+                reminder.revision,
+                _dump_dt(reminder.created_at),
+                _dump_dt(reminder.updated_at),
+                reminder.origin_session_id,
+            ),
+        )
+
+    def update_reminder(
+        self,
+        reminder: Reminder,
+        *,
+        expected_revision: int,
+        actor: TodoActor = UNKNOWN_ACTOR,
+    ) -> Reminder:
+        with self._transaction(
+            todo_id=reminder.todo_id,
+            action="reminder_updated",
+            actor=actor,
+            now=reminder.updated_at,
+        ) as conn:
+            todo = self._require_todo(conn, reminder.todo_id)
+            if todo.status is not TodoStatus.OPEN and reminder.status is ReminderStatus.ACTIVE:
+                raise TodoError("invalid_state", "请先重新打开待办，再启用提醒")
             current = self._require_reminder(conn, reminder.id)
             if current.todo_id != reminder.todo_id:
                 raise TodoError("not_found", f"Reminder 不属于 Todo: {reminder.todo_id}")
             if current.revision != expected_revision:
                 raise _revision_error(expected_revision, current.revision)
+            if current.schedule == reminder.schedule and current.status == reminder.status:
+                return current
             cursor = conn.execute(
                 """
                 UPDATE reminders SET kind = ?, timezone = ?, schedule_json = ?,
@@ -258,8 +341,11 @@ class TodoStore:
         *,
         revision: int,
         now: datetime,
+        actor: TodoActor = UNKNOWN_ACTOR,
     ) -> Reminder:
-        with self._transaction() as conn:
+        with self._transaction(
+            todo_id=todo_id, action="reminder_removed", actor=actor, now=now
+        ) as conn:
             current = self._require_reminder(conn, reminder_id)
             if current.todo_id != todo_id:
                 raise TodoError("not_found", f"Reminder 不属于 Todo: {todo_id}")
@@ -364,6 +450,7 @@ class TodoStore:
                 status = (
                     ReminderStatus.ACTIVE if next_fire is not None else ReminderStatus.EXHAUSTED
                 )
+                before = snapshot(conn, todo.id) if status is ReminderStatus.EXHAUSTED else None
                 conn.execute(
                     """
                     UPDATE reminders SET next_fire_at_utc = ?, status = ?, fire_count = ?,
@@ -378,6 +465,16 @@ class TodoStore:
                         reminder.revision,
                     ),
                 )
+                if before is not None:
+                    append_change(
+                        conn,
+                        todo_id=todo.id,
+                        action="reminder_exhausted",
+                        actor=TodoActor("system"),
+                        occurred_at=_dump_dt(now) or "",
+                        before=before,
+                        after=snapshot(conn, todo.id),
+                    )
         return created
 
     def claim_pending(
@@ -707,6 +804,18 @@ class TodoStore:
                     origin_id TEXT
                 );
 
+                CREATE TABLE IF NOT EXISTS todo_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    todo_id TEXT NOT NULL REFERENCES todos(id),
+                    action TEXT NOT NULL,
+                    actor_kind TEXT NOT NULL CHECK(actor_kind IN ('user', 'agent', 'system', 'unknown')),
+                    session_id TEXT,
+                    occurred_at TEXT NOT NULL,
+                    before_json TEXT NOT NULL,
+                    after_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_todo_history ON todo_history(todo_id, id DESC);
+
                 CREATE TABLE IF NOT EXISTS reminders (
                     id TEXT PRIMARY KEY,
                     todo_id TEXT NOT NULL REFERENCES todos(id),
@@ -830,11 +939,29 @@ class TodoStore:
             conn.close()
 
     @contextmanager
-    def _transaction(self) -> Iterator[sqlite3.Connection]:
+    def _transaction(
+        self,
+        *,
+        todo_id: str | None = None,
+        action: str = "",
+        actor: TodoActor = UNKNOWN_ACTOR,
+        now: datetime | None = None,
+    ) -> Iterator[sqlite3.Connection]:
         with self._lock, self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
+                before = snapshot(conn, todo_id) if todo_id is not None else {}
                 yield conn
+                if todo_id is not None and now is not None:
+                    append_change(
+                        conn,
+                        todo_id=todo_id,
+                        action=action,
+                        actor=actor,
+                        occurred_at=_dump_dt(now) or "",
+                        before=before,
+                        after=snapshot(conn, todo_id),
+                    )
             except Exception:
                 conn.rollback()
                 raise

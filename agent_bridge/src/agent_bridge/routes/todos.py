@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import secrets
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from agent.todos import (
     Reminder,
@@ -15,9 +16,12 @@ from agent.todos import (
     schedule_from_dict,
     schedule_to_dict,
 )
-from fastapi import APIRouter, FastAPI
+from agent.todos.history import TodoActor
+from agent.todos.models import OnceSchedule
+from agent.todos.recurrence import first_fire_at
+from fastapi import APIRouter, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..assembly import BridgeRuntime
 
@@ -52,7 +56,25 @@ class ReminderPatchRequest(_Request):
     enabled: bool = True
 
 
-def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
+class DesktopTodoRequest(_Request):
+    action: Literal[
+        "create",
+        "update",
+        "complete",
+        "cancel",
+        "reopen",
+        "add_reminder",
+        "update_reminder",
+        "remove_reminder",
+    ]
+    todo_id: str | None = None
+    reminder_id: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+def register_routes(
+    app: FastAPI, runtime: BridgeRuntime, *, owner_token: str | None = None
+) -> None:
     router = APIRouter(prefix="/v1/todos", tags=["todos"])
 
     def service() -> TodoService:
@@ -65,6 +87,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         status: str = "open",
         limit: int = 100,
         offset: int = 0,
+        search: str = "",
     ) -> object:
         try:
             statuses = tuple(TodoStatus(item) for item in status.split(",") if item)
@@ -72,7 +95,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 "todos": [
                     _details(item)
                     for item in service().list(
-                        TodoListQuery(statuses=statuses, limit=limit, offset=offset)
+                        TodoListQuery(statuses=statuses, limit=limit, offset=offset, search=search)
                     )
                 ]
             }
@@ -96,6 +119,14 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     def get_todo(todo_id: str) -> object:
         try:
             return _details(service().get(todo_id))
+        except TodoError as exc:
+            return _todo_error(exc)
+
+    @router.get("/{todo_id}/history")
+    def history(todo_id: str, before_id: int | None = None, limit: int = 50) -> object:
+        try:
+            items = service().store.history(todo_id, before_id=before_id, limit=limit)
+            return {"items": items, "nextCursor": items[-1]["id"] if len(items) == limit else None}
         except TodoError as exc:
             return _todo_error(exc)
 
@@ -171,6 +202,85 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
 
     app.include_router(router)
 
+    @app.post("/internal/todos/mutate", include_in_schema=False)
+    def desktop_mutate(
+        request: DesktopTodoRequest,
+        x_agent_friend_lifecycle_token: str | None = Header(default=None),
+    ) -> object:
+        if (
+            not owner_token
+            or not x_agent_friend_lifecycle_token
+            or not secrets.compare_digest(
+                owner_token,
+                x_agent_friend_lifecycle_token,
+            )
+        ):
+            raise HTTPException(status_code=401, detail="invalid desktop authorization")
+        actor = TodoActor("user")
+        try:
+            if request.action == "create":
+                create = TodoCreateRequest.model_validate(request.payload)
+                return _details(
+                    service().create(
+                        title=create.title,
+                        description=create.description,
+                        reminders=tuple(schedule_from_dict(item) for item in create.reminders),
+                        origin_kind="desktop",
+                        actor=actor,
+                    )
+                )
+            if not request.todo_id:
+                raise TodoError("invalid_arguments", "缺少待办标识")
+            if request.action == "update":
+                patch = TodoPatchRequest.model_validate(request.payload)
+                return _details(
+                    service().update(
+                        request.todo_id,
+                        revision=patch.revision,
+                        title=patch.title,
+                        description=patch.description,
+                        actor=actor,
+                    )
+                )
+            if request.action in {"complete", "cancel", "reopen"}:
+                revision = RevisionRequest.model_validate(request.payload).revision
+                transition = getattr(service(), request.action)
+                return _details(transition(request.todo_id, revision=revision, actor=actor))
+            if request.action == "add_reminder":
+                create_reminder = ReminderCreateRequest.model_validate(request.payload)
+                return _reminder(
+                    service().add_reminder(
+                        request.todo_id,
+                        schedule=schedule_from_dict(create_reminder.schedule),
+                        actor=actor,
+                    )
+                )
+            if not request.reminder_id:
+                raise TodoError("invalid_arguments", "缺少提醒标识")
+            if request.action == "update_reminder":
+                patch_reminder = ReminderPatchRequest.model_validate(request.payload)
+                return _reminder(
+                    service().update_reminder(
+                        request.todo_id,
+                        request.reminder_id,
+                        revision=patch_reminder.revision,
+                        schedule=schedule_from_dict(patch_reminder.schedule),
+                        enabled=patch_reminder.enabled,
+                        actor=actor,
+                    )
+                )
+            revision = RevisionRequest.model_validate(request.payload).revision
+            return _reminder(
+                service().remove_reminder(
+                    request.todo_id,
+                    request.reminder_id,
+                    revision=revision,
+                    actor=actor,
+                )
+            )
+        except (TodoError, ValueError, ValidationError) as exc:
+            return _todo_error(exc)
+
 
 def _todo_error(exc: TodoError | ValueError) -> JSONResponse:
     if isinstance(exc, TodoError):
@@ -196,15 +306,18 @@ def _details(value: TodoDetails) -> dict[str, Any]:
         "description": todo.description,
         "status": todo.status.value,
         "revision": todo.revision,
+        "lastOperation": value.last_operation,
         "createdAt": _dt(todo.created_at),
         "updatedAt": _dt(todo.updated_at),
         "completedAt": _dt(todo.completed_at),
         "cancelledAt": _dt(todo.cancelled_at),
-        "reminders": [_reminder(item) for item in value.reminders],
+        "reminders": [
+            _reminder(item, value.last_occurrences.get(item.id)) for item in value.reminders
+        ],
     }
 
 
-def _reminder(value: Reminder) -> dict[str, Any]:
+def _reminder(value: Reminder, last_occurrence: datetime | None = None) -> dict[str, Any]:
     return {
         "id": value.id,
         "todoId": value.todo_id,
@@ -212,6 +325,10 @@ def _reminder(value: Reminder) -> dict[str, Any]:
         "timezone": value.timezone,
         "schedule": schedule_to_dict(value.schedule),
         "nextFireAtUtc": _dt(value.next_fire_at_utc),
+        "onceAtUtc": _dt(first_fire_at(value.schedule))
+        if isinstance(value.schedule, OnceSchedule)
+        else None,
+        "lastOccurrenceAtUtc": _dt(last_occurrence),
         "status": value.status.value,
         "fireCount": value.fire_count,
         "revision": value.revision,

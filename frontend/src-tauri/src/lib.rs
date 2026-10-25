@@ -39,6 +39,7 @@ mod runtime_services;
 mod settings;
 mod shell_diagnostics;
 mod startup_instance_gate;
+mod todos;
 mod ui_state;
 mod webview_diagnostics;
 mod window_placement;
@@ -75,6 +76,7 @@ enum WorkspaceTarget {
     Settings,
     ImConnect,
     ScheduledTasks,
+    Todos,
     MemoryInspector,
 }
 
@@ -810,6 +812,11 @@ fn open_scheduled_tasks(app: tauri::AppHandle) -> Result<(), String> {
     navigate_workspace(&app, WorkspaceTarget::ScheduledTasks, None)
 }
 
+#[tauri::command]
+fn open_todos(app: tauri::AppHandle) -> Result<(), String> {
+    navigate_workspace(&app, WorkspaceTarget::Todos, None)
+}
+
 /// 029 · 打开独立语音通话小窗。
 #[tauri::command]
 fn open_voice_call(app: tauri::AppHandle) -> Result<(), String> {
@@ -1514,6 +1521,7 @@ pub fn run() {
         data_migration::coordinator::clear_last_migration_result,
         open_im_connect,
         open_scheduled_tasks,
+        open_todos,
         open_voice_call,
         open_voice_call_with_start,
         consume_pending_voice_start,
@@ -1542,6 +1550,7 @@ pub fn run() {
         runtime_credentials::retry_runtime_credential_apply,
         runtime_credentials::retry_runtime_credential_validation,
         runtime_credentials::report_runtime_credential_auth_failure,
+        todos::mutate_todo,
         runtime_services::get_runtime_service_snapshot,
         runtime_services::start_runtime_service,
         runtime_services::stop_runtime_service,
@@ -1617,6 +1626,7 @@ pub fn run() {
         webview_diagnostics::record_pet_webview_visibility,
         open_im_connect,
         open_scheduled_tasks,
+        open_todos,
         open_voice_call,
         open_voice_call_with_start,
         consume_pending_voice_start,
@@ -1644,6 +1654,7 @@ pub fn run() {
         runtime_credentials::retry_runtime_credential_apply,
         runtime_credentials::retry_runtime_credential_validation,
         runtime_credentials::report_runtime_credential_auth_failure,
+        todos::mutate_todo,
         runtime_services::get_runtime_service_snapshot,
         runtime_services::start_runtime_service,
         runtime_services::stop_runtime_service,
@@ -2164,6 +2175,25 @@ mod tests {
             second.request_id
         );
         assert!(state.take_pending().expect("take again").is_none());
+    }
+
+    #[test]
+    fn todo_navigation_targets_the_todo_workspace_without_starting_a_chat() {
+        let state = WorkspaceNavigationState::default();
+        let request = state
+            .set_pending(WorkspaceTarget::Todos, None, None)
+            .expect("set todo navigation");
+        let payload = serde_json::to_value(&request).expect("serialize todo navigation");
+        assert_eq!(payload["target"], "todos");
+        assert!(request.chat.is_none());
+        assert_eq!(
+            state
+                .take_pending()
+                .expect("take todo navigation")
+                .unwrap()
+                .target,
+            WorkspaceTarget::Todos
+        );
     }
 
     #[test]

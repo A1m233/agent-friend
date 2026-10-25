@@ -101,6 +101,9 @@ class Reminder:
 class TodoDetails:
     todo: Todo
     reminders: tuple[Reminder, ...] = ()
+    last_operation: dict[str, Any] | None = None
+    # Scheduled occurrence times, independent of notification delivery outcome.
+    last_occurrences: dict[str, datetime] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -168,6 +171,7 @@ class TodoListQuery:
     statuses: tuple[TodoStatus, ...] = (TodoStatus.OPEN,)
     limit: int = 100
     offset: int = 0
+    search: str = ""
 
 
 @dataclass(frozen=True)

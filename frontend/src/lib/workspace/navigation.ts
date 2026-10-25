@@ -12,6 +12,7 @@ export type WorkspaceTarget =
   | "settings"
   | "im-connect"
   | "scheduled-tasks"
+  | "todos"
   | "memory-inspector";
 
 export interface WorkspaceNavigationEnvelope {

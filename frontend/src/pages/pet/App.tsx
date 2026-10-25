@@ -977,6 +977,11 @@ export function PetApp() {
     void invoke("open_scheduled_tasks");
   };
 
+  const openTodos = () => {
+    if (!isTauri()) return;
+    void invoke("open_todos");
+  };
+
   const openMemoryInspector = () => {
     if (!isTauri()) return;
     void invoke("open_memory_inspector");
@@ -1060,6 +1065,7 @@ export function PetApp() {
             onMouseLeave={() => setHoverActionBarDom(false)}
             onOpenChat={openChat}
             onOpenScheduledTasks={openScheduledTasks}
+            onOpenTodos={openTodos}
             petAvatarSize={petAvatarSize}
             onCollapseToEdge={collapseToEdge}
             onRestoreNormal={restoreNormal}

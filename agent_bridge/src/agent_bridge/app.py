@@ -166,7 +166,7 @@ def create_app_with_runtime(
     register_model_routes(app, runtime)
     register_persona_routes(app, runtime)
     register_run_routes(app, runtime)
-    register_todo_routes(app, runtime)
+    register_todo_routes(app, runtime, owner_token=lifecycle_token)
     register_scheduled_task_routes(app, runtime)
     register_presence_routes(app, runtime)
     register_notification_routes(app, runtime)

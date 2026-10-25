@@ -22,6 +22,7 @@ function props(): ComponentProps<typeof ActionBar> {
     memoryInspectorEnabled: true,
     onMouseEnter: noop, onMouseLeave: noop, onOpenChat: noop,
     onOpenScheduledTasks: noop,
+    onOpenTodos: noop,
     onCollapseToEdge: noop, onRestoreNormal: noop, onOpenSettings: noop,
     onOpenFeedback: noop, onOpenIMConnect: noop, onStartVoiceCall: noop,
     onTogglePassthrough: noop, onOpenMemoryInspector: noop, onOpenLive2DDebugger: noop,
@@ -49,6 +50,8 @@ describe("ActionBar notification debug controls", () => {
     expect(markup).not.toContain("data-notification-debug");
     expect(markup).not.toContain("清空调试通知");
     expect(markup).toContain('aria-label="打开对话"');
+    expect(markup).toContain('aria-label="待办"');
+    expect(markup.indexOf('aria-label="待办"')).toBeLessThan(markup.indexOf('aria-label="定时任务"'));
     expect(markup.indexOf('aria-label="语音通话"')).toBeLessThan(markup.indexOf('aria-label="定时任务"'));
     expect(markup.indexOf('aria-label="定时任务"')).toBeLessThan(markup.indexOf('aria-label="缩小桌宠并移动到边上"'));
   });
@@ -179,6 +182,16 @@ describe("ActionBar outward tooltips with real Radix DOM", () => {
     const button = container.querySelector<HTMLButtonElement>('button[aria-label="打开对话"]')!;
     await act(async () => button.click());
     expect(input.onOpenChat).toHaveBeenCalledOnce();
+  });
+
+  it("opens todos from the pet toolbar", async () => {
+    const input = props();
+    input.onOpenTodos = vi.fn();
+    await act(async () => root.render(createElement(ActionBar, input)));
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="待办"]')!;
+    expect(button.hasAttribute("data-hit")).toBe(true);
+    await act(async () => button.click());
+    expect(input.onOpenTodos).toHaveBeenCalledOnce();
   });
 
   it("updates an open tooltip when the ActionBar moves from above to below the pet", async () => {

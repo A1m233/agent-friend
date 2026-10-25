@@ -1,0 +1,96 @@
+import { useState } from "react";
+import { Alert, AlertDescription, Button, Input, Textarea, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui";
+import { todosApi, type Todo, type TodoReminder } from "@/services/api/todos";
+import { friendlyErrorMessage } from "@/services/http";
+import { isRevisionConflict, statusNames } from "./presentation";
+import { ReminderFields } from "./ReminderFields";
+import { buildReminderSchedule, describeReminder, readReminderForm } from "./schedule";
+
+export type EditorTarget = { kind: "create" } | { kind: "content"; todo: Todo }
+  | { kind: "reminder"; todo: Todo; reminder?: TodoReminder };
+
+export function TodoEditor({ target, active = true, onClose, onSaved }: {
+  target: EditorTarget; active?: boolean; onClose: () => void; onSaved: (id?: string) => void;
+}) {
+  const original = "todo" in target ? target.todo : undefined;
+  const originalReminder = target.kind === "reminder" ? target.reminder : undefined;
+  const [baseline, setBaseline] = useState(original);
+  const [reminder, setReminder] = useState(originalReminder);
+  const [title, setTitle] = useState(original?.title ?? "");
+  const [description, setDescription] = useState(original?.description ?? "");
+  const [form, setForm] = useState(() => readReminderForm(originalReminder?.schedule));
+  const [reminders, setReminders] = useState(() => [{ id: crypto.randomUUID(), form: readReminderForm() }]);
+  const [latest, setLatest] = useState<Todo>();
+  const [conflicted, setConflicted] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    if (busy || conflicted) return;
+    setBusy(true); setError("");
+    try {
+      if (target.kind === "create") {
+        const created = await todosApi.create(title, description, reminders.map((item) => buildReminderSchedule(item.form)));
+        onSaved(created.id);
+      } else if (target.kind === "content" && baseline) {
+        await todosApi.update(baseline, title, description); onSaved(baseline.id);
+      } else if (baseline) {
+        await todosApi.saveReminder(baseline.id, buildReminderSchedule(form), reminder);
+        onSaved(baseline.id);
+      }
+    } catch (e) {
+      setError(friendlyErrorMessage(e));
+      if (isRevisionConflict(e) && baseline) {
+        setConflicted(true);
+        try { setLatest(await todosApi.get(baseline.id)); }
+        catch { setError("待办已被修改，但暂时无法读取最新内容。你的输入已保留。"); }
+      }
+    } finally { setBusy(false); }
+  }
+  async function loadLatest() {
+    if (!baseline) return;
+    try { setLatest(await todosApi.get(baseline.id)); } catch (e) { setError(friendlyErrorMessage(e)); }
+  }
+  function adoptLatest() {
+    if (!latest) return;
+    setBaseline(latest);
+    if (reminder) setReminder(latest.reminders.find((item) => item.id === reminder.id));
+    setLatest(undefined); setConflicted(false); setError("");
+  }
+  const titleText = target.kind === "create" ? "新建待办" : target.kind === "content" ? "编辑待办"
+    : reminder ? reminder.status === "active" ? "编辑提醒" : "重新启用提醒" : "添加提醒";
+  return <Dialog open={active} onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
+    <DialogContent className="max-h-full overflow-y-auto">
+      <DialogHeader><DialogTitle>{titleText}</DialogTitle>
+        <DialogDescription>{target.kind === "reminder" ? "设置什么时候提醒你。" : target.kind === "create" ? "记下要做的事，设置提醒时间。" : "修改待办的标题和描述。"}</DialogDescription>
+      </DialogHeader>
+      <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+        {target.kind !== "reminder" ? <>
+          <label className="grid gap-2 text-sm">标题<Input aria-label="标题" placeholder="要做什么？例如：提交周报" value={title} maxLength={500} required onChange={(e) => setTitle(e.target.value)} /></label>
+          <label className="grid gap-2 text-sm">描述<Textarea aria-label="描述" placeholder="补充说明、步骤或相关信息（可选）" value={description} maxLength={20000} onChange={(e) => setDescription(e.target.value)} /></label>
+        </> : <ReminderFields form={form} onChange={setForm} />}
+        {target.kind === "create" && <section className="grid gap-3">
+          {reminders.map(({ id, form: item }, index) => <div key={id} className="grid gap-2 rounded-lg border border-border p-3">
+            <p className="text-sm font-medium">提醒 {index + 1}</p>
+            <ReminderFields form={item} onChange={(next) => setReminders((current) => current.map((old, i) => i === index ? { ...old, form: next } : old))} />
+            <Button type="button" variant="destructive" onClick={() => setReminders((current) => current.filter((_, i) => i !== index))}>移除提醒</Button>
+          </div>)}
+          <Button type="button" variant="outline" onClick={() => setReminders((items) => [...items, { id: crypto.randomUUID(), form: readReminderForm() }])}>添加提醒</Button>
+        </section>}
+        {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+        {conflicted && <section className="grid gap-2 rounded-lg border border-border p-3 text-sm" aria-label="版本冲突">
+          <p>这条待办已被更新。你的输入已保留，请查看最新内容后决定是否继续保存。</p>
+          {latest ? <>
+            <p>最新标题：{latest.title} · {statusNames[latest.status]}</p>
+            <p className="whitespace-pre-wrap break-words">最新描述：{latest.description || "空"}</p>
+            {target.kind === "reminder" && latest.reminders.map((item) => <p key={item.id}>{describeReminder(item.schedule)}</p>)}
+            <Button type="button" variant="outline" disabled={target.kind === "reminder" && latest.status !== "open"} onClick={adoptLatest}>保留输入，采用最新版本</Button>
+          </> : <Button type="button" variant="outline" onClick={() => void loadLatest()}>读取最新内容</Button>}
+        </section>}
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>取消</Button>
+          <Button type="submit" loading={busy} disabled={busy || conflicted || (target.kind !== "reminder" && !title.trim())}>保存</Button>
+        </div>
+      </form>
+    </DialogContent>
+  </Dialog>;
+}

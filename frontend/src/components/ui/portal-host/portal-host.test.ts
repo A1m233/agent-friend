@@ -9,7 +9,7 @@ import { Popover, PopoverTrigger, PopoverContent } from "../popover";
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "../tooltip";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../dialog";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "../sheet";
-import { Select, SelectTrigger, SelectContent, SelectItem } from "../select";
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "../select";
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem } from "../context-menu";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.ResizeObserver = class {
@@ -102,5 +102,36 @@ it("keeps a custom container and StrictMode setup/cleanup balanced", async () =>
   }
   finally {
     target.remove();
+  }
+});
+
+it("opens a Select above its enclosing Dialog without hiding its options from accessibility", async () => {
+  await act(async () => root.render(createElement(Dialog, { defaultOpen: true },
+    createElement(DialogContent, null,
+      createElement(DialogTitle, null, "reminder"),
+      createElement(DialogDescription, null, "choose schedule"),
+      createElement(Select, { defaultValue: "once" },
+        createElement(SelectTrigger, null, createElement(SelectValue)),
+        createElement(SelectContent, null,
+          createElement(SelectItem, { value: "once" }, "Once"),
+          createElement(SelectItem, { value: "recurring" }, "Recurring")))))));
+  const trigger = document.querySelector<HTMLElement>('[role="combobox"]')!;
+  expect(trigger.textContent).toBe("Once");
+  expect(document.querySelectorAll("[data-ui-portal-host]")).toHaveLength(1);
+  for (let cycle = 0; cycle < 2; cycle++) {
+    await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "ArrowDown", bubbles: true,
+    })));
+    const option = document.querySelector<HTMLElement>('[role="option"]')!;
+    expect(option).not.toBeNull();
+    expect(option.closest('[aria-hidden="true"]')).toBeNull();
+    const dialogHost = document.querySelector('[role="dialog"]')!.closest("[data-ui-portal-host]")!;
+    const selectHost = option.closest("[data-ui-portal-host]")!;
+    expect(dialogHost.compareDocumentPosition(selectHost) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await act(async () => option.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Escape", bubbles: true,
+    })));
+    expect(document.querySelector('[role="listbox"]')).toBeNull();
+    expect(document.querySelectorAll("[data-ui-portal-host]")).toHaveLength(1);
   }
 });
