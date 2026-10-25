@@ -13,11 +13,11 @@ IN_PROGRESS
 - [x] 完成定向测试与 backend / frontend / rust 检查。
 - [ ] 合入前完成 full-matrix 隔离安装验证。
 - [x] 用户授权真实桌面验收；完成交互、布局与持久化核对。
-- [ ] 用户确认最终交付。
+- [x] 用户确认最终交付（2026-10-26 要求合入主干、推送并构建本地测试包）。
 
 ## AC 验证
 
-实现与自动化检查已完成；用户于 2026-10-24 授权后完成真实 Tauri 桌面验收。总体保持 IN_PROGRESS，等待用户最终确认及合入前安装矩阵。没有调用真实 LLM；用户要求先在 feature 分支提交并推送，尚未合入 main。
+实现与自动化检查已完成；用户于 2026-10-24 授权后完成真实 Tauri 桌面验收，并于 2026-10-26 要求合入主干、推送和构建本地测试包。总体保持 IN_PROGRESS：安装矩阵被 Codex 宿主的 Windows 文件系统重定向预检阻塞，尚未合入 main。没有调用真实 LLM。
 
 | AC | 当前证据 | 尚待事项 |
 |---|---|---|
@@ -123,3 +123,13 @@ IN_PROGRESS
 - 按用户截图反馈，仅隐藏已完成待办的“已过期 / 还有多久”等相对时间，保留具体提醒时刻与创建时间；恢复为待办中后重新显示。
 - `scripts/check/run.ps1 --stage frontend`：lint、token、TypeScript、192 文件 / 1555 项测试及生产构建全部通过，退出码 0。
 - 真实桌面只读核对已完成列表：35 条时间记录均保留具体时刻，相对时间计数为 0。证据沿用本机目录：`todo165-completed-absolute-only.png`、`todo165-completed-absolute-only.json`。dev 保持运行，未提交本轮修改。
+
+## 2026-10-26 合入与本地打包门禁
+
+- 后续调整提交为 `51676963`；无冲突合入 `origin/main` 的 `bfa977cb`，产品验证锚点为 `e2215122066bbcdca8a20016cedf79adb61e46e7`。主干合入与推送仍等待安装矩阵。
+- 合并后 backend 全量检查通过：lint、839 个源文件的 mypy、4252 passed / 5 skipped，退出码 0；前端与 Rust 未因同步主干改变，沿用此前最终源码的全绿证据。
+- 公开 Guide 已补充待办入口、提醒时间、快捷完成/重开和操作者历史，提交 `95bfb2a708fe9ecdb28d830518a00d8ae9aceea3` 已推送；`agent-friend-guide-r100` 已发布并确认 immutable。兼容范围沿用 0.4.1 至 0.5.0（不含）；snapshot 为 `74e57f6195fc5008595322c980662a3ddd4947d55398c32d7fe1706ce3119f73`。
+- `installer-smoke-build` 成功，候选 build ID 为 `20261025T161930Z-e2215122066b-bee08324`，profile 为 `installer-smoke`，版本 0.4.1，渠道 local-test。冻结 doctor、能力验证、bridge/voice 启停、前端构建、原生 release 编译、NSIS 和 native symbols 归档通过。
+- 构建报告为当前工作区受管 `installer-smoke-reports/build-20261025T161930Z-e2215122066b-bee08324.json`；包输入指纹 `145db874654bd073672664339572af86881d8833514fd64707865f9ef2c12b62`，候选安装器 SHA-256 `ca39484d37faf38bd0dd654c190c905379571faf6aa7b3adf261bc1dac3d1a0a`。该候选仅供隔离矩阵，不能作为普通用户测试包交付。
+- `installer-smoke` 在任何安装或清理前被环境预检拒绝：新建 LocalAppData 探针被重定向到 Codex 包的 LocalCache。通过桌面 Shell 启动的进程探针也复现；没有跳过门禁、改变 AppData 环境变量或修改 production。需要从普通非虚拟化 Windows 终端运行同一标准命令，再执行 `installer-smoke-verify`；成功后继续合入推送及 production profile 的普通本地测试包构建。
+- package runner 已恢复临时 Guide baseline，产品与公开 Guide 工作树均未留下 baseline overlay；用户要求保留的 dev 继续运行。
