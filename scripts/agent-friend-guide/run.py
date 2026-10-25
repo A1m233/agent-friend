@@ -800,6 +800,64 @@ def sync(product_repo: Path, guide_repo: Path, guide_commit: str) -> dict[str, A
     }
 
 
+def verify_checkout(
+    guide_repo: Path,
+    *,
+    managed_repo: Path,
+    selection: str,
+    expected_commit: str | None,
+) -> dict[str, Any]:
+    """Verify a named working tree without updating it or checking remote freshness."""
+    target: dict[str, Any] = {
+        "path": str(guide_repo),
+        "selection": selection,
+        "managedPath": str(managed_repo),
+        "isManaged": guide_repo == managed_repo,
+        "expectedCommit": expected_commit,
+        "head": None,
+        "committedAt": None,
+        "dirty": None,
+        "origin": None,
+        "scope": "working-tree",
+        "freshness": "not-checked",
+    }
+    stage = "checkout-identity"
+    try:
+        toplevel = Path(git(guide_repo, "rev-parse", "--show-toplevel")).resolve()
+        if toplevel != guide_repo:
+            raise GuideError("--guide-repo must name the Guide checkout root")
+        target["head"] = git_head(guide_repo)
+        target["committedAt"] = git(guide_repo, "show", "-s", "--format=%cI", target["head"])
+        target["dirty"] = bool(
+            git(
+                guide_repo,
+                "--no-optional-locks",
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+            )
+        )
+        target["origin"] = git(guide_repo, "remote", "get-url", "origin", check=False) or None
+        stage = "checkout-version"
+        if not target["isManaged"] and expected_commit is None:
+            raise GuideError(
+                "non-default Guide checkout requires --guide-commit <expected SHA>; "
+                f"omit --guide-repo to use the managed checkout: {managed_repo}"
+            )
+        if expected_commit is not None:
+            if not COMMIT_RE.fullmatch(expected_commit):
+                raise GuideError("--guide-commit must be a 40-character lowercase commit")
+            if target["head"] != expected_commit:
+                raise GuideError(
+                    f"guide HEAD {target['head']} differs from --guide-commit {expected_commit}"
+                )
+        stage = "package-content"
+        verified = verify_package(package_root(guide_repo))
+    except GuideError as exc:
+        return {"ok": False, "target": target, "errorStage": stage, "error": str(exc)}
+    return {"ok": True, "target": target, **verified}
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description="Maintain the agent-friend guide snapshot.")
     subparsers = value.add_subparsers(dest="command", required=True)
@@ -810,6 +868,11 @@ def parser() -> argparse.ArgumentParser:
         sub = subparsers.add_parser(command)
         sub.add_argument("--guide-repo", type=Path)
         sub.add_argument("--json", action="store_true")
+        if command == "verify":
+            sub.add_argument(
+                "--guide-commit",
+                help="Expected checkout HEAD; required for a non-default --guide-repo.",
+            )
     sync_parser = subparsers.add_parser("sync")
     sync_parser.add_argument("--guide-repo", type=Path)
     sync_parser.add_argument("--guide-commit", required=True)
@@ -831,8 +894,9 @@ def parser() -> argparse.ArgumentParser:
 
 
 def print_result(command: str, payload: dict[str, Any], *, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    if as_json or command == "verify":
+        stream = sys.stdout if as_json or payload.get("ok", True) else sys.stderr
+        print(json.dumps(payload, ensure_ascii=False, indent=2), file=stream)
         return
     if command == "status":
         print(f"phase: {payload['phase']}")
@@ -859,7 +923,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "status":
             payload = status_payload(product_repo, guide_repo)
         elif args.command == "verify":
-            payload = verify_package(package_root(guide_repo))
+            payload = verify_checkout(
+                guide_repo,
+                managed_repo=default_guide_repo().resolve(),
+                selection="explicit" if args.guide_repo is not None else "default",
+                expected_commit=args.guide_commit,
+            )
         elif args.command == "sync":
             payload = sync(product_repo, guide_repo, args.guide_commit)
         elif args.command == "build-release":
@@ -884,7 +953,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: {exc}", file=sys.stderr)
         return 1
     print_result(args.command, {"ok": True, **payload}, as_json=args.json)
-    return 0
+    return 0 if payload.get("ok", True) else 1
 
 
 if __name__ == "__main__":

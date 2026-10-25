@@ -18,14 +18,14 @@ description: 检查 agent-friend 产品变更是否需要更新公开用户知�
 3. 按 `references/review-workflow.md` 阅读从公开 metadata 基线到目标产品状态的真实 diff，并沿用户可见入口核实语义。
 4. 得出“需要更新 / 无需更新 / 无法判断”以及证据、受影响 reference 和未决项。`manual` 模式输出后保持只读；`merge-main-and-push` 模式无需更新则返回交付流程，需要更新则继续，无法判断则停止；`package-baseline` 模式记录结论后直接转到“离线基线解析”，不执行下方公开写入与发布步骤。发现公开内容需要更新时只报告，不把自动入口视为公开写入或 release 授权。
 5. `manual` 模式只有用户明确同意更新后才写；`merge-main-and-push` 模式直接按 `references/content-quality.md` 修改已确认的公开知识。不得直接编辑产品内置快照。
-6. 运行公开 Skill validator 与项目 `verify`。验证通过后，按 `references/cross-repo-publish.md` 推进公开提交与 release 事务。
+6. 运行公开 Skill validator 与项目 `verify`。默认不传 `--guide-repo`；确需验证用户指定的非默认 checkout 时，必须同时传 `--guide-commit <预期完整 SHA>`，不得为了绕过门禁直接接受刚读到的未知 HEAD。核对成功或失败输出的 `target`（实际路径、选择来源、HEAD、提交时间、dirty）；该命令只验证工作树内容，不联网确认最新版本，也不自动更新目录。commit 参数绑定工作树基线，不代表 dirty 内容已经提交。验证通过后，按 `references/cross-repo-publish.md` 推进公开提交与 release 事务。
 7. 公开提交已推送且能从 origin 精确确认后，为下一单调 release sequence 生成完整 ZIP 与兼容 manifest；先 draft、上传两项 asset，再 publish，并确认 GitHub API 报告 `immutable=true` 与 asset digest 一致。正常 Guide 发布到此结束，不修改产品 builtin。
 
 ## 离线基线解析
 
 1. 运行 `prepare`，确认受管 checkout clean、origin 正确并 fast-forward 到 `origin/main`。
 2. 用 GitHub Releases API 确认 checkout `HEAD` 对应已发布、非 draft、非 prerelease、`immutable=true` 的最高兼容 release；不得从尚未发布的 main 内容生成 builtin。
-3. 运行 `verify`，向 package-release 返回 checkout、精确 HEAD、snapshot digest 和兼容 release 证据；package 命令必须通过 `--guide-repo`、`--guide-commit` 绑定该输入。客户端自动更新仍以 immutable release 为线上来源。
+3. 运行 `verify --guide-commit <已确认的 release commit>`，核对 `target` 与上一步解析的 checkout/commit 一致，向 package-release 返回 checkout、精确 HEAD、snapshot digest 和兼容 release 证据；非默认 checkout 另传 `--guide-repo`。package 命令必须通过 `--guide-repo`、`--guide-commit` 绑定该输入。客户端自动更新仍以 immutable release 为线上来源。
 4. `local-test` / installer smoke 不在本 Skill 中运行 `sync`；package runner 临时应用并负责恢复。stable / 可分发 trusted-beta 若 baseline 不匹配，由 package runner 在写入前返回 `baseline-update-required`。
 5. 只有用户直接要求持久刷新，或 formal package 已获得覆盖产品提交的当前 Git 授权时，才运行 `sync --guide-commit <HEAD>` materialize changeset；随后运行 Guide 脚本测试和项目规定检查。本 Skill 不自动 commit/push。
 
