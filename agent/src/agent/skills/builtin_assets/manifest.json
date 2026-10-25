@@ -88,6 +88,22 @@
       "snapshot_sha256": "c245d067ef8733199802d46fbcf43e7179de9df66a69cd9f1cc5a6267843ce47",
       "retrieved_at": "2026-10-06",
       "compatibility_patches": []
+    },
+    "diagnose-bug": {
+      "source_repository": "https://github.com/A1m233/my-agentic-stuff",
+      "source_commit": "81574ccbf1b13a6f31e292faca60af095eccca88",
+      "source_path": "skills/diagnose-bug",
+      "snapshot_sha256": "7e047aa6fcb8920201ac2cf6e42b0f2d7dd3b434841c0931d9aa27234bd6af5a",
+      "retrieved_at": "2026-10-18",
+      "compatibility_patches": []
+    },
+    "prepare-bug-handoff": {
+      "source_repository": "https://github.com/A1m233/my-agentic-stuff",
+      "source_commit": "81574ccbf1b13a6f31e292faca60af095eccca88",
+      "source_path": "skills/prepare-bug-handoff",
+      "snapshot_sha256": "e0ca7bd755ce4770a981237c8378d7cba2d85668c7e02cfbcd6bce2e63934458",
+      "retrieved_at": "2026-10-18",
+      "compatibility_patches": []
     }
   }
 }
