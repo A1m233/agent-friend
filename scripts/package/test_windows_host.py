@@ -1,3 +1,4 @@
+import io
 import json
 from types import SimpleNamespace
 
@@ -112,3 +113,15 @@ def test_root_overrides_preserve_paths(monkeypatch):
     assert received == [
         {"state_dir": host.Path("C:/one space"), "releases_dir": host.Path("C:/two space")}
     ]
+
+
+def test_follow_survives_legacy_console_encoding(monkeypatch, tmp_path):
+    (tmp_path / "output.log").write_bytes("✓ 构建完成\r\n".encode())
+    host._write_json(tmp_path / "result.json", {"token": "test", "exitCode": 0})
+    buffer = io.BytesIO()
+    console = io.TextIOWrapper(buffer, encoding="gbk", errors="strict")
+    with monkeypatch.context() as patch:
+        patch.setattr(host.sys, "stdout", console)
+        assert host._follow(tmp_path, "test") == 0
+    console.flush()
+    assert "构建完成" in buffer.getvalue().decode("gbk")

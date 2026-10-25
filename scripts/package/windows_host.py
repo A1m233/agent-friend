@@ -30,6 +30,12 @@ STEPS = {
 MARKER = "AGENT_FRIEND_PACKAGE_NORMAL_HOST"
 
 
+def _emit(text: str) -> None:
+    # Preserve the UTF-8 log on disk; a legacy console must not abort its producer.
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    print(text.encode(encoding, errors="backslashreplace").decode(encoding), end="", flush=True)
+
+
 def _write_json(path: Path, value: dict) -> None:
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(value), encoding="utf-8")
@@ -79,7 +85,7 @@ def _relay(args: list[str]) -> int:
             "releases": str(roots.releases_root),
         },
     )
-    print(f"package_host: switching to Explorer; logs and result: {directory}", flush=True)
+    _emit(f"package_host: switching to Explorer; logs and result: {directory}\n")
     launcher = Path(__file__).with_suffix(".ps1")
     subprocess.run(
         [
@@ -116,7 +122,7 @@ def _follow(directory: Path, token: str) -> int:
                 content = stream.read()
                 offset = stream.tell()
             if content:
-                print(decoder.decode(content), end="", flush=True)
+                _emit(decoder.decode(content))
 
     try:
         while True:
@@ -126,7 +132,7 @@ def _follow(directory: Path, token: str) -> int:
                 if value.get("token") != token or type(value.get("exitCode")) is not int:
                     raise RuntimeError("Package host returned an invalid completion receipt")
                 read_output()
-                print(decoder.decode(b"", final=True), end="", flush=True)
+                _emit(decoder.decode(b"", final=True))
                 return value["exitCode"]
             if status.exists():
                 value = json.loads(status.read_text(encoding="utf-8"))
@@ -145,7 +151,7 @@ def _follow(directory: Path, token: str) -> int:
                 )
             time.sleep(0.5)
     except KeyboardInterrupt:
-        print(f"Package host may still be running; inspect {directory} before resuming", flush=True)
+        _emit(f"Package host may still be running; inspect {directory} before resuming\n")
         raise
 
 
