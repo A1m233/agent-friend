@@ -1,0 +1,4 @@
+interface:
+  display_name: "问题诊断"
+  short_description: "以实际证据为先诊断软件异常、行为回归与本地日志问题"
+  default_prompt: "使用 $diagnose-bug 调查此异常行为或本地日志证据，并报告证据支持力度最强的解释。"

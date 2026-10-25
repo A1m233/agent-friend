@@ -55,8 +55,10 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
 
     assert [(item.source, item.name) for item in snapshot.entries] == [
         ("builtin", "agent-friend-guide"),
+        ("builtin", "diagnose-bug"),
         ("builtin", "doc"),
         ("builtin", "pdf"),
+        ("builtin", "prepare-bug-handoff"),
         ("builtin", "screenshot"),
         ("builtin", "skill-creator"),
         ("builtin", "skill-installer"),
@@ -123,8 +125,10 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
     )
     assert [item.record.name for item in turn.activations] == [
         "agent-friend-guide",
+        "diagnose-bug",
         "doc",
         "pdf",
+        "prepare-bug-handoff",
         "screenshot",
         "skill-creator",
         "skill-installer",
@@ -133,6 +137,39 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
         "shared-skill",
     ]
     assert not turn.activation_issues
+
+
+@pytest.mark.parametrize("name", ["diagnose-bug", "prepare-bug-handoff"])
+def test_builtin_diagnostic_skills_activate_with_complete_resources(
+    tmp_path: Path, name: str
+) -> None:
+    service = SkillCatalogService(
+        personal_root=tmp_path / "personal",
+        shared_root=tmp_path / "shared",
+        watcher_enabled=False,
+    )
+    snapshot = service.initialize()
+    record = next(item for item in snapshot.entries if item.id == f"builtin/{name}")
+    manifest = json.loads((record.package_root.parent / "manifest.json").read_text("utf-8"))
+    source = manifest["skills"][name]
+    assert source["source_repository"] == "https://github.com/A1m233/my-agentic-stuff"
+    assert source["source_path"] == f"skills/{name}"
+    assert source["compatibility_patches"] == []
+    assert source["snapshot_sha256"] == _package_digest(record.package_root)
+
+    turn = service.begin_turn((SkillSelection(record.id, record.version),), model_window=100_000)
+    assert not turn.activation_issues
+    assert len(turn.activations) == 1
+    activation = turn.activations[0]
+    assert activation.contents == record.entry_path.read_text("utf-8")
+    assert _package_digest(activation.resource_root) == source["snapshot_sha256"]
+    assert (activation.resource_root / "agents" / "openai.yaml").is_file()
+    if name == "prepare-bug-handoff":
+        template = activation.resource_root / "references" / "handoff-template.md"
+        assert (
+            template.read_bytes()
+            == (record.package_root / "references" / "handoff-template.md").read_bytes()
+        )
 
 
 def test_builtin_installer_rejects_unexpected_files_in_existing_bundle(

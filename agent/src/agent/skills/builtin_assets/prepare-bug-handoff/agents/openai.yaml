@@ -1,0 +1,4 @@
+interface:
+  display_name: "准备问题交接"
+  short_description: "为负责其它模块的开发者整理有证据支撑的问题交接文档"
+  default_prompt: "使用 $prepare-bug-handoff，把本次调查结果整理给负责该模块的开发者。"
