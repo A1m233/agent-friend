@@ -217,6 +217,152 @@ def test_verify_package_checks_routes_metadata_and_provider_sections(
     assert len(result["snapshotSha256"]) == 64
 
 
+@pytest.mark.parametrize("explicit", [False, True])
+def test_verify_cli_managed_checkout_reports_identity_without_writes_or_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    explicit: bool,
+) -> None:
+    repo, commit = _init_guide_repo(tmp_path)
+    monkeypatch.setattr(guide, "default_guide_repo", lambda: repo)
+    before = {p.relative_to(repo): p.read_bytes() for p in repo.rglob("*") if p.is_file()}
+    original_git = guide.git
+
+    def read_only_git(root: Path, *args: str, **kwargs: object) -> str:
+        assert args[0] in {"rev-parse", "show", "--no-optional-locks", "remote"}
+        return original_git(root, *args, **kwargs)
+
+    monkeypatch.setattr(guide, "git", read_only_git)
+    argv = ["verify", "--json"]
+    if explicit:
+        argv.extend(["--guide-repo", str(repo)])
+    assert guide.main(argv) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["target"] == {
+        "path": str(repo.resolve()),
+        "selection": "explicit" if explicit else "default",
+        "managedPath": str(repo.resolve()),
+        "isManaged": True,
+        "expectedCommit": None,
+        "head": commit,
+        "committedAt": _git(repo, "show", "-s", "--format=%cI", commit),
+        "dirty": False,
+        "origin": _git(repo, "remote", "get-url", "origin"),
+        "scope": "working-tree",
+        "freshness": "not-checked",
+    }
+    assert payload["fileCount"] == 16
+    assert before == {p.relative_to(repo): p.read_bytes() for p in repo.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_verify_cli_rejects_unpinned_override_before_reporting_missing_content(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    json_output: bool,
+) -> None:
+    repo, commit = _init_guide_repo(tmp_path)
+    managed = tmp_path / "managed"
+    monkeypatch.setattr(guide, "default_guide_repo", lambda: managed)
+    (guide.package_root(repo) / "references" / "arknights-avatar-models.md").unlink()
+    argv = ["verify", "--guide-repo", str(repo)]
+    if json_output:
+        argv.append("--json")
+
+    assert guide.main(argv) == 1
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out if json_output else captured.err)
+    assert not (captured.err if json_output else captured.out)
+    assert payload["ok"] is False
+    assert payload["errorStage"] == "checkout-version"
+    assert "requires --guide-commit" in payload["error"]
+    assert str(managed) in payload["error"]
+    assert payload["target"]["head"] == commit
+    assert payload["target"]["path"] == str(repo.resolve())
+    assert payload["target"]["dirty"] is True
+
+
+@pytest.mark.parametrize("expected", ["0" * 40, "main"])
+def test_verify_cli_rejects_mismatched_or_invalid_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    expected: str,
+) -> None:
+    repo, commit = _init_guide_repo(tmp_path)
+    monkeypatch.setattr(guide, "default_guide_repo", lambda: tmp_path / "managed")
+    assert (
+        guide.main(["verify", "--guide-repo", str(repo), "--guide-commit", expected, "--json"]) == 1
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["errorStage"] == "checkout-version"
+    assert payload["target"]["expectedCommit"] == expected
+    assert payload["target"]["head"] == commit
+
+
+def test_verify_cli_allows_pinned_historical_checkout_and_labels_working_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, commit = _init_guide_repo(tmp_path)
+    _git(repo, "commit", "--allow-empty", "-m", "advance guide")
+    _git(repo, "checkout", "--detach", commit)
+    (repo / "uncommitted-note.txt").write_text("local maintenance\n", encoding="utf-8")
+    monkeypatch.setattr(guide, "default_guide_repo", lambda: tmp_path / "managed")
+
+    assert (
+        guide.main(["verify", "--guide-repo", str(repo), "--guide-commit", commit, "--json"]) == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["target"]["head"] == commit
+    assert payload["target"]["isManaged"] is False
+    assert payload["target"]["dirty"] is True
+    assert payload["target"]["scope"] == "working-tree"
+    assert _git(repo, "rev-parse", "HEAD") == commit
+
+
+def test_verify_cli_content_failure_preserves_checked_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, commit = _init_guide_repo(tmp_path)
+    monkeypatch.setattr(guide, "default_guide_repo", lambda: tmp_path / "managed")
+    (guide.package_root(repo) / "references" / "arknights-avatar-models.md").unlink()
+
+    assert (
+        guide.main(["verify", "--guide-repo", str(repo), "--guide-commit", commit, "--json"]) == 1
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["errorStage"] == "package-content"
+    assert "arknights-avatar-models.md" in payload["error"]
+    assert payload["target"]["path"] == str(repo.resolve())
+    assert payload["target"]["head"] == commit
+    assert payload["target"]["dirty"] is True
+
+
+@pytest.mark.parametrize("kind", ["missing", "not-git", "nested"])
+def test_verify_cli_invalid_checkout_still_reports_requested_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], kind: str
+) -> None:
+    if kind == "nested":
+        repo, _ = _init_guide_repo(tmp_path)
+        target = guide.package_root(repo)
+    else:
+        target = tmp_path / "invalid"
+        if kind == "not-git":
+            target.mkdir()
+    monkeypatch.setattr(guide, "default_guide_repo", lambda: tmp_path / "managed")
+    assert guide.main(["verify", "--guide-repo", str(target), "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["errorStage"] == "checkout-identity"
+    assert payload["target"]["path"] == str(target.resolve())
+    assert payload["target"]["head"] is None
+    assert payload["target"]["dirty"] is None
+
+
 def test_verify_package_rejects_digest_drift(tmp_path: Path) -> None:
     repo = tmp_path / "guide"
     repo.mkdir()
