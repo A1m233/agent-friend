@@ -7,6 +7,8 @@ import {
 import { Badge } from "@/components/ui";
 
 const states: Record<string, { label: string; icon: LucideIcon; tone?: string }> = {
+  open: { label: "待办中", icon: Clock },
+  disabled: { label: "已停用", icon: CircleStop },
   active: { label: "已启用", icon: CirclePlay, tone: "text-accent" },
   paused: { label: "已暂停", icon: CirclePause },
   exhausted: { label: "计划已结束", icon: CalendarCheck },

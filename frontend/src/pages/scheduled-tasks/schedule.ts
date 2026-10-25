@@ -94,11 +94,4 @@ export function buildSchedule(
 }
 
 
-export function describeSchedule(schedule: Record<string, unknown>): string {
-  if (schedule.kind === "once") return `执行一次 · ${String(schedule.local_datetime).replace("T", " ")} · ${schedule.timezone}`;
-  if (schedule.kind === "fixed_interval") return `每 ${Number(schedule.interval_seconds) / 3600} 小时`;
-  const names: Record<string, string> = { daily: "天", weekly: "周", monthly: "月" };
-  const days = Array.isArray(schedule.weekdays) ? schedule.weekdays.map(day => ["", "周一", "周二", "周三", "周四", "周五", "周六", "周日"][Number(day)]).join("、") : "";
-  const dates = Array.isArray(schedule.month_days) ? schedule.month_days.join("、") : "";
-  return `每 ${schedule.interval ?? 1} ${names[String(schedule.frequency)] ?? "周期"} · ${days || (dates ? `${dates} 日` : "")}${days || dates ? " · " : ""}${schedule.local_time} · ${schedule.timezone}`;
-}
+export { describeSchedule } from "@/components/scheduling/presentation";

@@ -77,7 +77,7 @@ it("uses the independently confirmed session name and keeps default request conf
   expect(document.querySelector('[aria-label="模型"]')?.textContent).toBe("Model");
   expect(document.querySelector('[aria-label="推理强度"]')?.textContent).toBe("低");
   expect([...host.querySelectorAll("label")].some((el) => el.textContent?.trim() === "时区")).toBe(false);
-  await click("保存任务");
+  await click("保存");
   expect(mock.post).toHaveBeenCalledWith("/v1/sessions", expect.objectContaining({ title: "Conversation name", model: "m", reasoningPreset: "low" }));
   expect(mock.create).toHaveBeenCalledWith(expect.objectContaining({ name: "Task name", target_session_id: "new-id", request_options: { model: null, approval_mode: null, attachments: [] } }));
   expect(mock.create.mock.lastCall?.[0].schedule.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
@@ -89,18 +89,18 @@ it("can change reasoning directly while following a session, then return to foll
   expect(host.textContent).not.toContain("新会话名称");
   await click("更多设置");
   await select("推理强度", "高");
-  await click("保存任务");
+  await click("保存");
   expect(mock.create).toHaveBeenLastCalledWith(expect.objectContaining({ request_options: expect.objectContaining({ model: { model_id: "m", reasoning_preset: "high" } }) }));
   expect(mock.post.mock.calls.some(([url]) => url === "/v1/sessions")).toBe(false);
   await click("恢复会话配置");
-  await click("保存任务");
+  await click("保存");
   expect(mock.create).toHaveBeenLastCalledWith(expect.objectContaining({ request_options: expect.objectContaining({ model: null }) }));
 });
 it("does not create a session for an empty confirmed name", async () => {
   await fill("任务名称", "Task");
   await fill("发送内容", "hello");
   await fill("新会话名称", "   ");
-  await click("保存任务");
+  await click("保存");
   expect(host.textContent).toContain("请填写新会话名称");
   expect(mock.create).not.toHaveBeenCalled();
   expect(mock.post.mock.calls.some(([url]) => url === "/v1/sessions")).toBe(false);
@@ -108,9 +108,9 @@ it("does not create a session for an empty confirmed name", async () => {
 it("requires a date before creating a session for a one-off task", async () => {
   await fill("任务名称", "Task");
   await fill("发送内容", "hello");
-  await select("执行频率", "执行一次");
+  await select("执行频率", "仅一次");
   expect(host.textContent).toContain("请选择执行日期和时间");
-  await click("保存任务");
+  await click("保存");
   expect(mock.create).not.toHaveBeenCalled();
   expect(mock.post.mock.calls.some(([url]) => url === "/v1/sessions")).toBe(false);
 });
@@ -126,7 +126,7 @@ it("keeps custom effort collapsed until requested and saves it for the selected 
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
   await click("使用此强度");
-  await click("保存任务");
+  await click("保存");
   expect(mock.create).toHaveBeenLastCalledWith(expect.objectContaining({ request_options: expect.objectContaining({ model: { model_id: "m", reasoning_preset: "effort:xhigh" } }) }));
 });
 it("has no synthetic follow option in model or reasoning menus", async () => {
@@ -143,9 +143,9 @@ it("reuses the created session and updates its name when retrying a failed task 
   mock.create.mockRejectedValueOnce(new Error("offline"));
   await fill("任务名称", "Task");
   await fill("发送内容", "hello");
-  await click("保存任务");
+  await click("保存");
   await fill("新会话名称", "Corrected name");
-  await click("保存任务");
+  await click("保存");
   expect(mock.post.mock.calls.filter(([url]) => url === "/v1/sessions")).toHaveLength(1);
   expect(mock.rename).toHaveBeenCalledWith("new-id", "Corrected name");
   expect(mock.saved).toHaveBeenCalledTimes(1);
@@ -155,7 +155,7 @@ it.each([
   ["每天", { kind: "recurring", frequency: "daily", interval: 1, local_time: "16:37:00", timezone: "Asia/Shanghai", starts_on: "2030-01-01", weekdays: [] }],
   ["每周", { kind: "recurring", frequency: "weekly", interval: 1, local_time: "16:37:00", timezone: "Asia/Shanghai", starts_on: "2030-01-01", weekdays: [1, 3, 7] }],
   ["工作日", { kind: "recurring", frequency: "weekly", interval: 1, local_time: "16:37:00", timezone: "Asia/Shanghai", starts_on: "2030-01-01", weekdays: [1, 2, 3, 4, 5] }],
-  ["执行一次", { kind: "once", local_datetime: "2030-01-02T03:04:00", timezone: "Asia/Shanghai" }],
+  ["仅一次", { kind: "once", local_datetime: "2030-01-02T03:04:00", timezone: "Asia/Shanghai" }],
 ] as const)("prefills %s and does not reschedule when renaming", async (label, schedule) => {
   const task = {
     id: "edited", name: "Before", instruction: "hello", target_session_id: "s",
@@ -164,7 +164,7 @@ it.each([
   } as unknown as ScheduledTask;
   await act(async () => root.render(createElement(TaskEditor, { key: "edit", task, onSaved: mock.saved, onCancel: vi.fn() })));
   expect(host.querySelector('[aria-label="执行频率"]')?.textContent).toBe(label);
-  if (label === "执行一次") {
+  if (label === "仅一次") {
     expect(host.querySelector('[aria-label="执行日期和时间"]')?.textContent).toBe("2030-01-02 03:04");
   } else {
     expect(host.querySelector('[aria-label="执行小时"]')?.textContent).toBe("16 时");
@@ -172,7 +172,7 @@ it.each([
   }
   if (label === "每周") expect([...host.querySelectorAll('[role="checkbox"][data-state="checked"]')].map((el) => el.parentElement?.textContent)).toEqual(["周一", "周三", "周日"]);
   await fill("任务名称", "After");
-  await click("保存任务");
+  await click("保存");
   expect(mock.update).toHaveBeenCalledWith(task, expect.objectContaining({ name: "After", schedule: undefined }));
   expect(toast.success).toHaveBeenCalledExactlyOnceWith("定时任务已保存");
   expect(host.textContent).not.toContain("保持现有时间安排");
@@ -187,7 +187,7 @@ it("does not show success when updating a task fails", async () => {
   } as ScheduledTask;
   mock.update.mockRejectedValueOnce(new Error("保存失败"));
   await act(async () => root.render(createElement(TaskEditor, { key: "edit", task, onSaved: mock.saved, onCancel: vi.fn() })));
-  await click("保存任务");
+  await click("保存");
   expect(host.textContent).toContain("保存失败");
   expect(mock.saved).not.toHaveBeenCalled();
   expect(toast.success).not.toHaveBeenCalled();

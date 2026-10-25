@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui";
+import { Alert, AlertDescription, Button } from "@/components/ui";
 import { todosApi, type TodoHistory } from "@/services/api/todos";
 import { useConversationStore } from "@/stores/conversation";
 import { useWorkspaceNavigationStore } from "@/lib/workspace/navigation";
@@ -61,7 +61,7 @@ export function History({ todoId, revision }: { todoId: string; revision: number
   }
   return <section className="grid gap-3" aria-label="操作历史">
     <h3 className="text-base font-medium">操作历史</h3>
-    {error && <div role="alert" className="text-sm text-muted">{error}<Button variant="link" onClick={() => setReload((n) => n + 1)}>重试</Button></div>}
+    {error && <Alert variant="destructive"><AlertDescription>{error}<Button variant="link" onClick={() => setReload((n) => n + 1)}>重试</Button></AlertDescription></Alert>}
     {!items.length && !loading && !error && <p className="text-sm text-muted">暂无历史。旧记录的操作来源未知，不补造历史。</p>}
     {items.map((item) => <article key={item.id} className="rounded-lg border border-border p-3">
       <p className="text-sm">{operationSummary(item)}</p>

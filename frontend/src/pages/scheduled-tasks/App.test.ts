@@ -3,6 +3,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ScheduledTask } from "@/services/api/scheduledTasks";
+import { formatTimestamp } from "@/components/scheduling/presentation";
 
 const mocks = vi.hoisted(() => ({ get: vi.fn(), list: vi.fn(), remove: vi.fn(), editor: vi.fn(), history: vi.fn(), taskId: "t" as string | null }));
 vi.mock("@/lib/model-config", () => ({
@@ -96,7 +97,7 @@ it("shows readable model names, closure reason and only actual start time", asyn
     expect(container.textContent).toContain("Readable model");
     expect(container.textContent).not.toContain("custom/connection/model");
     expect(container.textContent).toContain("应用关闭，本次执行已中断");
-    expect(container.textContent).toContain(`开始：${new Date(started).toLocaleString()}`);
+    expect(container.textContent).toContain(`开始：${formatTimestamp(started)}`);
     expect(container.textContent).not.toContain("结束：");
     expect(container.textContent).not.toContain(new Date(defaultHistory.occurrences[0].scheduled_at_utc).toLocaleString());
   } finally {

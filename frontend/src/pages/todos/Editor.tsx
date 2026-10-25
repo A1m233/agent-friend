@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { Button, Input, Textarea, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui";
+import { Alert, AlertDescription, Button, Input, Textarea, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui";
 import { todosApi, type Todo, type TodoReminder } from "@/services/api/todos";
 import { friendlyErrorMessage } from "@/services/http";
 import { isRevisionConflict, statusNames } from "./presentation";
 import { ReminderFields } from "./ReminderFields";
-import { buildReminderSchedule, describeReminder, readReminderForm, type ReminderForm } from "./schedule";
+import { buildReminderSchedule, describeReminder, readReminderForm } from "./schedule";
 
 export type EditorTarget = { kind: "create" } | { kind: "content"; todo: Todo }
   | { kind: "reminder"; todo: Todo; reminder?: TodoReminder };
@@ -19,7 +19,7 @@ export function TodoEditor({ target, active = true, onClose, onSaved }: {
   const [title, setTitle] = useState(original?.title ?? "");
   const [description, setDescription] = useState(original?.description ?? "");
   const [form, setForm] = useState(() => readReminderForm(originalReminder?.schedule));
-  const [initialReminders, setInitialReminders] = useState<ReminderForm[]>([]);
+  const [reminders, setReminders] = useState(() => [{ id: crypto.randomUUID(), form: readReminderForm() }]);
   const [latest, setLatest] = useState<Todo>();
   const [conflicted, setConflicted] = useState(false);
   const [error, setError] = useState("");
@@ -29,7 +29,7 @@ export function TodoEditor({ target, active = true, onClose, onSaved }: {
     setBusy(true); setError("");
     try {
       if (target.kind === "create") {
-        const created = await todosApi.create(title, description, initialReminders.map(buildReminderSchedule));
+        const created = await todosApi.create(title, description, reminders.map((item) => buildReminderSchedule(item.form)));
         onSaved(created.id);
       } else if (target.kind === "content" && baseline) {
         await todosApi.update(baseline, title, description); onSaved(baseline.id);
@@ -56,26 +56,27 @@ export function TodoEditor({ target, active = true, onClose, onSaved }: {
     if (reminder) setReminder(latest.reminders.find((item) => item.id === reminder.id));
     setLatest(undefined); setConflicted(false); setError("");
   }
-  const titleText = target.kind === "create" ? "新建待办" : target.kind === "content" ? "编辑待办" : reminder ? "编辑并启用提醒" : "添加提醒";
+  const titleText = target.kind === "create" ? "新建待办" : target.kind === "content" ? "编辑待办"
+    : reminder ? reminder.status === "active" ? "编辑提醒" : "重新启用提醒" : "添加提醒";
   return <Dialog open={active} onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
     <DialogContent className="max-h-full overflow-y-auto">
       <DialogHeader><DialogTitle>{titleText}</DialogTitle>
-        <DialogDescription>{target.kind === "reminder" ? "本次只保存这一条提醒。" : "内容和提醒分别管理，操作会保留在历史中。"}</DialogDescription>
+        <DialogDescription>{target.kind === "reminder" ? "设置什么时候提醒你。" : target.kind === "create" ? "记下要做的事，设置提醒时间。" : "修改待办的标题和描述。"}</DialogDescription>
       </DialogHeader>
       <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); void save(); }}>
         {target.kind !== "reminder" ? <>
-          <label className="grid gap-1 text-sm">标题<Input aria-label="标题" value={title} maxLength={500} required onChange={(e) => setTitle(e.target.value)} /></label>
-          <label className="grid gap-1 text-sm">描述<Textarea aria-label="描述" value={description} maxLength={20000} onChange={(e) => setDescription(e.target.value)} /></label>
+          <label className="grid gap-2 text-sm">标题<Input aria-label="标题" placeholder="要做什么？例如：提交周报" value={title} maxLength={500} required onChange={(e) => setTitle(e.target.value)} /></label>
+          <label className="grid gap-2 text-sm">描述<Textarea aria-label="描述" placeholder="补充说明、步骤或相关信息（可选）" value={description} maxLength={20000} onChange={(e) => setDescription(e.target.value)} /></label>
         </> : <ReminderFields form={form} onChange={setForm} />}
         {target.kind === "create" && <section className="grid gap-3">
-          {initialReminders.map((item, index) => <div key={index} className="grid gap-2 rounded-lg border border-border p-3">
+          {reminders.map(({ id, form: item }, index) => <div key={id} className="grid gap-2 rounded-lg border border-border p-3">
             <p className="text-sm font-medium">提醒 {index + 1}</p>
-            <ReminderFields form={item} onChange={(next) => setInitialReminders((current) => current.map((old, i) => i === index ? next : old))} />
-            <Button type="button" variant="ghost" onClick={() => setInitialReminders((current) => current.filter((_, i) => i !== index))}>移除此提醒</Button>
+            <ReminderFields form={item} onChange={(next) => setReminders((current) => current.map((old, i) => i === index ? { ...old, form: next } : old))} />
+            <Button type="button" variant="destructive" onClick={() => setReminders((current) => current.filter((_, i) => i !== index))}>移除提醒</Button>
           </div>)}
-          <Button type="button" variant="outline" onClick={() => setInitialReminders((items) => [...items, readReminderForm()])}>添加初始提醒</Button>
+          <Button type="button" variant="outline" onClick={() => setReminders((items) => [...items, { id: crypto.randomUUID(), form: readReminderForm() }])}>添加提醒</Button>
         </section>}
-        {error && <p role="alert" className="text-sm text-muted">{error}</p>}
+        {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
         {conflicted && <section className="grid gap-2 rounded-lg border border-border p-3 text-sm" aria-label="版本冲突">
           <p>这条待办已被更新。你的输入已保留，请查看最新内容后决定是否继续保存。</p>
           {latest ? <>
@@ -86,8 +87,8 @@ export function TodoEditor({ target, active = true, onClose, onSaved }: {
           </> : <Button type="button" variant="outline" onClick={() => void loadLatest()}>读取最新内容</Button>}
         </section>}
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>取消编辑</Button>
-          <Button type="submit" disabled={busy || conflicted || (target.kind !== "reminder" && !title.trim())}>{busy ? "正在保存…" : "保存"}</Button>
+          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>取消</Button>
+          <Button type="submit" loading={busy} disabled={busy || conflicted || (target.kind !== "reminder" && !title.trim())}>保存</Button>
         </div>
       </form>
     </DialogContent>

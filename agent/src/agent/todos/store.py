@@ -96,8 +96,12 @@ class TodoStore:
                 (todo_id,),
             ).fetchall()
             latest = latest_change(conn, todo_id)
+            occurrences = self._last_occurrences(conn, todo_id)
         return TodoDetails(
-            _todo_from_row(row), tuple(_reminder_from_row(r) for r in reminder_rows), latest
+            _todo_from_row(row),
+            tuple(_reminder_from_row(r) for r in reminder_rows),
+            latest,
+            occurrences,
         )
 
     def list_todos(self, query: TodoListQuery) -> list[TodoDetails]:
@@ -131,9 +135,25 @@ class TodoStore:
                         _todo_from_row(row),
                         tuple(_reminder_from_row(item) for item in reminder_rows),
                         latest_change(conn, str(row["id"])),
+                        self._last_occurrences(conn, str(row["id"])),
                     )
                 )
         return result
+
+    @staticmethod
+    def _last_occurrences(conn: sqlite3.Connection, todo_id: str) -> dict[str, datetime]:
+        rows = conn.execute(
+            """SELECT r.id, (
+                SELECT MAX(o.scheduled_at_utc) FROM reminder_occurrences o
+                WHERE o.reminder_id = r.id
+            ) AS scheduled_at FROM reminders r WHERE r.todo_id = ?""",
+            (todo_id,),
+        ).fetchall()
+        return {
+            str(row["id"]): _required_dt(row["scheduled_at"])
+            for row in rows
+            if row["scheduled_at"] is not None
+        }
 
     def history(
         self, todo_id: str, *, before_id: int | None = None, limit: int = 50

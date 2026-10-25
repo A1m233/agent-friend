@@ -1,5 +1,9 @@
 import { buildScheduleChange, describeSchedule, readScheduleForm } from "./schedule";
-import { DateTimeSelection, TimeSelection } from "./components/ScheduleTimeField";
+import { DateTimeSelection, TimeSelection } from "@/components/scheduling/ScheduleTimeField";
+import { WeekdaySelection } from "@/components/scheduling/WeekdaySelection";
+import { FrequencySelection } from "@/components/scheduling/FrequencySelection";
+import { previewSchedule } from "@/components/scheduling/preview";
+import { formatTimestamp } from "@/components/scheduling/presentation";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Paperclip } from "lucide-react";
 import { toast } from "sonner";
@@ -7,7 +11,6 @@ import {
   Button,
   Input,
   Textarea,
-  Checkbox,
   Select,
   SelectTrigger,
   SelectValue,
@@ -160,21 +163,17 @@ export function TaskEditor({
         if (!schedule) {
           setPreview(
             task?.next_fire_at_utc
-              ? new Date(task.next_fire_at_utc).toLocaleString()
+              ? formatTimestamp(task.next_fire_at_utc)
               : "现有计划暂无下次执行",
           );
           return;
         }
-        void http
-          .post<unknown, { next_fire_at_utc: string | null }>(
-            "/v1/scheduled-tasks/preview",
-            { schedule },
-          )
+        void previewSchedule(schedule)
           .then((result) => {
             if (active)
               setPreview(
-                result.next_fire_at_utc
-                  ? new Date(result.next_fire_at_utc).toLocaleString()
+                result
+                  ? formatTimestamp(result)
                   : "没有未来执行时间",
               );
           })
@@ -268,6 +267,7 @@ export function TaskEditor({
       <label className="flex flex-col gap-2 text-sm">
         任务名称
         <Input
+          placeholder="例如：每天整理工作摘要"
           value={name}
           onChange={(e) => setName(e.target.value)}
           maxLength={200}
@@ -363,19 +363,11 @@ export function TaskEditor({
       ))}
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-      <Choice
+      <FrequencySelection
         label="执行频率"
         value={cadence}
         onChange={setCadence}
-        items={[
-          ...(task && initialSchedule.cadence === "existing"
-            ? [{ value: "existing", label: describeSchedule(task.schedule), disabled: true }]
-            : []),
-          { value: "once", label: "执行一次" },
-          { value: "daily", label: "每天" },
-          { value: "weekdays", label: "工作日" },
-          { value: "weekly", label: "每周" },
-        ]}
+        existing={task && initialSchedule.cadence === "existing" ? describeSchedule(task.schedule) : undefined}
       />
       {cadence === "once" && (
         <div className="flex flex-col gap-2 text-sm">
@@ -390,31 +382,7 @@ export function TaskEditor({
         </div>
       )}
       </div>
-      {cadence === "weekly" && (
-        <fieldset className="flex flex-wrap gap-3">
-          <legend className="mb-2 text-sm">重复日期</legend>
-          {["周一", "周二", "周三", "周四", "周五", "周六", "周日"].map(
-            (label, index) => (
-              <label key={index} className="flex items-center gap-1 text-sm">
-                <Checkbox
-                  checked={weekdays.split(",").includes(String(index + 1))}
-                  onCheckedChange={(checked) =>
-                    setWeekdays((current) => {
-                      const selected = current
-                        .split(",")
-                        .filter(Boolean)
-                        .filter((day) => day !== String(index + 1));
-                      if (checked) selected.push(String(index + 1));
-                      return selected.sort().join(",");
-                    })
-                  }
-                />
-                {label}
-              </label>
-            ),
-          )}
-        </fieldset>
-      )}
+      {cadence === "weekly" && <WeekdaySelection value={weekdays} onChange={setWeekdays} />}
       <p aria-live="polite" className="text-xs text-muted">
         预计下次执行：{preview || "计算中…"}{cadence !== "existing" && ` · ${timezone}`}
       </p>
@@ -512,13 +480,11 @@ export function TaskEditor({
           </div>
         </CollapsibleContent>
       </Collapsible>
-      <div className="flex gap-2 pt-2">
-        <Button onClick={() => void save()} disabled={saving || uploading}>
-          {saving ? "保存中…" : "保存任务"}
-        </Button>
+      <div className="flex justify-end gap-2 pt-2">
         <Button variant="outline" onClick={onCancel} disabled={saving}>
           取消
         </Button>
+        <Button loading={saving} onClick={() => void save()} disabled={saving || uploading}>保存</Button>
       </div>
     </div>
   );

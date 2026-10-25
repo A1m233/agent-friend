@@ -5,7 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
-from agent.todos import TodoService, TodoStore
+import pytest
+from agent.todos import DeliveryUpdate, OccurrenceState, TodoService, TodoStore
 from agent_bridge.assembly import BridgeRuntime
 from agent_bridge.routes.todos import register_routes
 from fastapi import FastAPI
@@ -72,6 +73,69 @@ def test_revision_conflict_maps_to_409(tmp_path: Path) -> None:
     )
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "revision_conflict"
+
+
+@pytest.mark.parametrize("state", list(OccurrenceState))
+def test_reminder_times_survive_exhaustion_regardless_of_delivery(
+    tmp_path: Path, state: OccurrenceState
+) -> None:
+    client = _client(tmp_path)
+    todo = client.post(
+        "/v1/todos",
+        json={
+            "title": "周期",
+            "reminders": [
+                {
+                    "kind": "recurring",
+                    "frequency": "daily",
+                    "interval": 1,
+                    "local_time": "09:00:00",
+                    "timezone": "Asia/Shanghai",
+                    "starts_on": "2026-07-29",
+                    "max_occurrences": 2,
+                }
+            ],
+        },
+    ).json()
+    store = TodoStore(tmp_path / "todos.db")
+    for day in (29, 30):
+        instant = datetime(2026, 7, day, 1, tzinfo=UTC)
+        (occurrence_id,) = store.create_due_occurrences(instant)
+        store.update_occurrence(occurrence_id, DeliveryUpdate(state=state), now=instant)
+        detail = client.get(f"/v1/todos/{todo['id']}").json()
+        listed = client.get("/v1/todos").json()["todos"][0]
+        assert detail["reminders"] == listed["reminders"]
+        reminder = detail["reminders"][0]
+        assert reminder["lastOccurrenceAtUtc"] == f"2026-07-{day}T01:00:00Z"
+        assert reminder["onceAtUtc"] is None
+        assert reminder["nextFireAtUtc"] == ("2026-07-30T01:00:00Z" if day == 29 else None)
+    assert reminder["status"] == "exhausted"
+    # Closing invalidates pending delivery but must not erase the historical scheduled time.
+    closed = client.post(f"/v1/todos/{todo['id']}/complete", json={"revision": 1}).json()
+    assert closed["reminders"][0]["lastOccurrenceAtUtc"] == "2026-07-30T01:00:00Z"
+
+
+def test_disabled_once_preserves_original_instant_without_an_occurrence(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    todo = client.post(
+        "/v1/todos",
+        json={
+            "title": "一次性",
+            "reminders": [
+                {
+                    "kind": "once",
+                    "local_datetime": "2026-07-29T09:00:00",
+                    "timezone": "Asia/Shanghai",
+                }
+            ],
+        },
+    ).json()
+    closed = client.post(f"/v1/todos/{todo['id']}/cancel", json={"revision": 1}).json()
+    reminder = closed["reminders"][0]
+    assert reminder["status"] == "disabled"
+    assert reminder["nextFireAtUtc"] is None
+    assert reminder["onceAtUtc"] == "2026-07-29T01:00:00Z"
+    assert reminder["lastOccurrenceAtUtc"] is None
 
 
 def test_public_writes_are_unknown_and_cannot_claim_actor(tmp_path: Path) -> None:

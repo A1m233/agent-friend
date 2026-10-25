@@ -21,6 +21,8 @@ export interface TodoReminder {
   schedule: Record<string, unknown>;
   status: "active" | "disabled" | "exhausted";
   nextFireAtUtc: string | null;
+  onceAtUtc: string | null;
+  lastOccurrenceAtUtc: string | null;
   revision: number;
 }
 export interface Todo {

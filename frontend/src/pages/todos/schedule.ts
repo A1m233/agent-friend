@@ -54,11 +54,20 @@ export function buildReminderSchedule(form: ReminderForm): Record<string, unknow
   };
 }
 
-export function describeReminder(schedule: Record<string, unknown>): string {
-  if (schedule.kind === "once") return `${String(schedule.local_datetime).replace("T", " ")} · ${schedule.timezone}`;
-  const unit = { daily: "天", weekly: "周", monthly: "月" }[String(schedule.frequency)] ?? "周期";
-  const days = schedule.frequency === "weekly" && Array.isArray(schedule.weekdays)
-    ? ` · 周${schedule.weekdays.map((n) => ["", "一", "二", "三", "四", "五", "六", "日"][Number(n)]).join("、")}`
-    : schedule.frequency === "monthly" && Array.isArray(schedule.month_days) ? ` · ${schedule.month_days.join("、")} 日` : "";
-  return `每 ${schedule.interval} ${unit}${days} · ${schedule.local_time} · ${schedule.timezone}`;
+export function reminderCadence(form: ReminderForm): string {
+  if (form.kind === "once") return "once";
+  if (form.interval !== "1" || form.frequency === "monthly") return "custom";
+  if (form.frequency === "weekly" && form.weekdays.split(",").sort().join(",") === "1,2,3,4,5") return "weekdays";
+  return form.frequency;
 }
+
+export function withReminderCadence(form: ReminderForm, cadence: string): ReminderForm {
+  if (cadence === "once") return { ...form, kind: "once" };
+  const startsOn = form.startsOn || new Intl.DateTimeFormat("en-CA", {
+    timeZone: form.timezone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+  if (cadence === "custom") return { ...form, kind: "recurring", startsOn };
+  return { ...form, kind: "recurring", frequency: cadence === "weekdays" ? "weekly" : cadence,
+    interval: "1", weekdays: cadence === "weekdays" ? "1,2,3,4,5" : form.weekdays, startsOn };
+}
+export { describeSchedule as describeReminder } from "@/components/scheduling/presentation";

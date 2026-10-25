@@ -1,3 +1,4 @@
+import { formatTimestamp } from "@/components/scheduling/presentation";
 import type { TodoOperation } from "@/services/api/todos";
 
 export const statusNames = { open: "待办中", completed: "已完成", cancelled: "已取消" };
@@ -8,7 +9,7 @@ export const actionNames: Record<string, string> = {
   reminder_added: "添加提醒", reminder_updated: "修改提醒", reminder_removed: "停用提醒",
   reminder_exhausted: "提醒计划已结束",
 };
-export const formatTime = (value: string) => new Date(value).toLocaleString();
+export const formatTime = formatTimestamp;
 export function operationSummary(operation: TodoOperation | null): string {
   return operation ? `${actorNames[operation.actor]} · ${actionNames[operation.action] ?? "更新待办"} · ${formatTime(operation.occurred_at)}` : "来源未知 · 暂无操作历史";
 }

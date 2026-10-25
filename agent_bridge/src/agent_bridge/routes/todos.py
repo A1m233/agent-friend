@@ -17,6 +17,8 @@ from agent.todos import (
     schedule_to_dict,
 )
 from agent.todos.history import TodoActor
+from agent.todos.models import OnceSchedule
+from agent.todos.recurrence import first_fire_at
 from fastapi import APIRouter, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -309,11 +311,13 @@ def _details(value: TodoDetails) -> dict[str, Any]:
         "updatedAt": _dt(todo.updated_at),
         "completedAt": _dt(todo.completed_at),
         "cancelledAt": _dt(todo.cancelled_at),
-        "reminders": [_reminder(item) for item in value.reminders],
+        "reminders": [
+            _reminder(item, value.last_occurrences.get(item.id)) for item in value.reminders
+        ],
     }
 
 
-def _reminder(value: Reminder) -> dict[str, Any]:
+def _reminder(value: Reminder, last_occurrence: datetime | None = None) -> dict[str, Any]:
     return {
         "id": value.id,
         "todoId": value.todo_id,
@@ -321,6 +325,10 @@ def _reminder(value: Reminder) -> dict[str, Any]:
         "timezone": value.timezone,
         "schedule": schedule_to_dict(value.schedule),
         "nextFireAtUtc": _dt(value.next_fire_at_utc),
+        "onceAtUtc": _dt(first_fire_at(value.schedule))
+        if isinstance(value.schedule, OnceSchedule)
+        else None,
+        "lastOccurrenceAtUtc": _dt(last_occurrence),
         "status": value.status.value,
         "fireCount": value.fire_count,
         "revision": value.revision,

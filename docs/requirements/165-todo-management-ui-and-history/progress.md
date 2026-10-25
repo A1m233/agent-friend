@@ -74,3 +74,52 @@ IN_PROGRESS
 - 新增列表选择不重载、刷新保留条目、迟到详情响应隔离、创建时间展示、桌宠按钮点击及原生路由测试。最终 frontend 188 文件 / 1521 项、生产构建、Rust 格式/测试/release check、diff check 均通过。后端源码未变，沿用已通过的 backend 证据。
 - 证据沿用上述本机目录：`todo165-feedback-metrics.json`、`todo165-feedback-narrow.json`、`todo165-feedback-wide.png`、`todo165-feedback-narrow.png`、`todo165-pet-entry.png`。包含用户实际列表的截图仅存本机。
 - 当前运行态：独立后台 dev shell PID 36920，原生重编译后桌面 PID 50240（21:17:58 启动，晚于最终原生源码修改）；当前 worktree、165 分支、Tauri 模式。按用户要求保留供继续查看，停止入口 `scripts/dev/run.ps1 stop`。本轮交付仅提交并推送 feature 分支，不合入 main。
+
+## 2026-10-25 提醒时间展示调整
+
+- 用户确认并授权实现：列表移除最近操作摘要，保留创建时间；优先下一次有效提醒，没有未来提醒时显示最后一次过去的时间；日期/时刻与分钟起的相对间距并列。已过期红色，未来不足一小时橙色，一小时及以上绿色，已完成/已取消/已停用灰色。操作来源继续在详情历史中查看。
+- 后端读取既有 occurrence 的最后原定时间，与通知投递结果无关；一次性计划沿用既有时区解析。只增加读取投影，不新增数据库字段、依赖、资源或调度行为，本轮打包影响为 standard；不替代前轮尚待完成的安装矩阵。
+- 自动化覆盖多提醒选择、过去/未来优先级、时区偏移、分钟和一小时边界、耗尽与停用、完成/取消淡化；前端网络刷新失败时，文字和颜色仍随时钟推进。REST 测试使用临时数据库覆盖全部 occurrence 状态与周期最后一次，不发起真实 LLM 验证。
+- `scripts/check/run.ps1 --stage frontend`：lint、颜色/组件来源/token 门禁、TypeScript、**189 文件 / 1539 项测试**及生产构建通过。保留既有 CSS highlight、大 chunk 非阻断提示。
+- `scripts/check/run.ps1 --stage backend`：lint、839 个源文件的 mypy 通过；全量 **4239 passed / 5 skipped**。非阻断输出为依赖异步日志清理与测试 ZIP 重复文件警告。
+- 本轮没有修改 Rust；沿用前轮 Rust 检查证据。需求与方案同步已确认规则，尚未提交本轮改动。
+- 真实桌面证据层级：desktop screenshot / desktop DOM via CDP。重启后 worktree 178d、165 分支、Tauri 模式匹配；shell PID 40584，desktop PID 30228（22:49:16），bridge PID 42772（22:49:19），均晚于本轮源码修改。Vite/Bridge/voice/CDP 端口为 1420/18800/18900/9222。
+- 正常数据只读检查：6 条 open 待办均获取到新的时间投影并显示过去提醒；没有修改用户数据。红/橙/绿、停用及完成灰色通过真实 WebView 的临时 GET 响应夹具核对，所有文字在卡片范围内，文档无横向溢出。该颜色夹具只证明 UI 呈现，不作为落盘或通知投递 E2E 证据。
+- 检查后移除所有响应夹具，刷新恢复真实 6 条记录。证据保存在既有本机目录：`todo165-reminder-real.png`、`todo165-reminder-colors.png`、`todo165-reminder-audit.json`。按用户要求保留独立后台 dev 供继续查看，停止入口仍为 `scripts/dev/run.ps1 stop`。
+
+## 2026-10-25 列表完成与新建表单简化
+
+- 按用户要求增加列表圆形勾选完成入口，与正文选择详情相互独立；完成请求携带当前 revision，请求中禁止重复操作，失败保留条目与未勾选状态，成功刷新并说明提醒停用。已完成/已取消条目不在列表直接重开。
+- 用户确认默认提醒时间保持空白。新建直接展开一条提醒，需要选择时间才能保存；移除该条后仍可创建不提醒的待办。移除“初始”文案和实现层说明，表单/详情的移除均改为 destructive 有背景样式。
+- 隐藏时区与夏令时重复时刻输入；新提醒使用设备时区，旧提醒保留 timezone/fold 与秒数，异地提醒仅提供只读时区提示。
+- `scripts/check/run.ps1 --stage frontend`：lint、颜色/组件来源/token 门禁、TypeScript、**189 文件 / 1543 项测试**及生产构建通过，退出码 0。新增覆盖列表完成不选中详情、重复点击与失败回退、默认空白提醒校验、移除后无提醒创建、隐藏时区/fold 后编辑保真。后端与 Rust 未修改，沿用此前验证。
+- 真实桌面沿用 shell 40584 / desktop 30228 / bridge 42772，前端经 HMR 后重新加载。新建表单有且仅有一个空白时间输入，无时区或夏令时编辑控件，无“初始”文案；移除按钮实际呈 danger 文字与背景，窗口中无内容溢出。
+- 快捷完成的 desktop DOM / interaction：圆框 20px，标签命中区域 36×36px，不嵌套正文按钮，中心命中正确，点击后未选中详情。仅使用不存在的临时 Todo ID，真实调用返回 not_found，条目仍未勾选；没有完成任何用户 Todo。成功完成的状态链路由自动化测试覆盖，此次不声称成功持久化 E2E。
+- 临时响应夹具和探针已清理，重新加载后恢复真实 6 条待办。证据：既有本机目录中的 `todo165-create-default-reminder.png`、`todo165-list-complete.png`、`todo165-list-actions-audit.json`。dev 继续保留供用户查看；本轮尚未提交或推送。
+
+## 2026-10-25 反选恢复与操作反馈修正
+
+- 用户指出完成后的圆形勾选不能反选，已改为 completed → reopen；旧提醒仍不自动启用，cancelled 保留详情恢复入口。原有 revision 校验、失败回退与请求中禁用继续生效。
+- 截图中的常驻段落来自页面 notice 状态；改用已有 Sonner 浮动提示，成功 4 秒/失败 6 秒自动消失，同 id 避免堆叠，不占列表布局。保存、完成、恢复、取消和移除均使用一致反馈。
+- 标题、描述和全部提醒输入补齐 placeholder；原生日期/时间在空白未聚焦时提供可见提示层，保留原生 picker、required、秒数与原时间语义。
+- 定向测试 6 文件 / 42 项通过；前端全量 190 文件 / 1549 项测试通过，lint/token/TypeScript 及生产构建通过，退出码 0。新增覆盖反选 revision、失败保持已勾选、取消条目禁用、通知不留在 main、各重复模式 placeholder、日期提示聚焦/输入后隐藏。
+- 真实桌面 DOM / interaction：使用临时 GET 与前端 transition 服务夹具验证 completed revision 3 → reopen → open revision 4 → complete；未调用真实 Todo 写入。提示自动消失，前后搜索框 y 均为 112.8px，main 不含操作提示；通知稳定位置 y=24px，关闭按钮也在窗口内。
+- 新建表单三个输入均有可见提示，空白日期显示“选择提醒日期和时间”；弹窗内容高度与可视高度均为 620px，无溢出。真实用户数据保持不变，临时 GET 与 transition 夹具已还原。
+- 证据沿用本机目录：`todo165-placeholders.png`、`todo165-reopen-toast.png`、`todo165-toggle-toast.png`、`todo165-toggle-placeholder-audit.json`。前端重新加载，backend/Rust 未修改；dev 继续保留，当前改动未提交。
+
+## 2026-10-25 与定时任务统一组件
+
+- 用户授权统一后，将定时任务已有的日历/时分选择器和状态标签迁入 `components/scheduling/`，新增共享星期勾选、频率选择、时间摘要与只读预览适配器。两页共同引用，不复制日历源码，不增加依赖。
+- Todo 原生 date/time 输入及 placeholder 覆盖层已移除；常用频率与定时任务统一，复杂规则仍支持每月、间隔、起始/结束和次数约束。按钮和浮层在 Dialog 中适配，保留旧秒数与时区/fold，结束时间可以清除。多提醒草稿使用稳定 id，避免删除前项造成后项局部状态错配。
+- Todo 表单/页面错误使用 Alert；两页操作反馈统一 Toast，保存按钮加载反馈和取消/保存排列一致，定时任务名称补 placeholder。业务状态机、Todo 两栏与快捷完成、定时任务执行/会话参数分别保留。
+- 预计下次提醒复用真实后端只读预览接口，前端转换 recurring → calendar 并保留全部约束。预览不会保存或执行；自动化验证无效输入不请求、迟到响应隔离以及参数保真。
+- 最终 `scripts/check/run.ps1 --stage frontend` 全部通过：lint、颜色/组件来源/token 门禁、TypeScript、**192 文件 / 1555 项测试**及生产构建，退出码 0。覆盖提醒草稿身份、频率控件稳定性、浮层按钮不提交外层表单、秒数保真和预览竞态。backend/Rust 本轮未变，沿用先前检查。
+- 真实 Tauri DOM / interaction：新建 Todo 弹窗内日历没有 aria-hidden 祖先，pointer-events=auto；实际点击日期、小时、分钟成功，选择 2026-10-26 17:35 后真实后端预览显示同一时刻。每周显示 7 个勾选项，周一/周五实际可选；自定义每 2 月 1/15 日保留，结束时间选择后可清除。
+- 定时任务新建页切换仅一次后也打开同一日历，两个页面均无原生 date/time 输入。本轮只操作未保存表单和只读预览，没有创建、修改或执行用户任务；所有表单已取消，恢复 Todo 列表，独立 dev 继续运行。
+- 证据沿用本机目录：`todo165-shared-calendar.png`、`todo165-shared-weekdays.png`、`todo165-shared-custom.png`、`todo165-scheduled-shared-picker.png`、`todo165-unified-scheduling-audit.json`。当前修改尚未提交或推送。
+
+## 2026-10-26 已完成条目隐藏相对时间
+
+- 按用户截图反馈，仅隐藏已完成待办的“已过期 / 还有多久”等相对时间，保留具体提醒时刻与创建时间；恢复为待办中后重新显示。
+- `scripts/check/run.ps1 --stage frontend`：lint、token、TypeScript、192 文件 / 1555 项测试及生产构建全部通过，退出码 0。
+- 真实桌面只读核对已完成列表：35 条时间记录均保留具体时刻，相对时间计数为 0。证据沿用本机目录：`todo165-completed-absolute-only.png`、`todo165-completed-absolute-only.json`。dev 保持运行，未提交本轮修改。
