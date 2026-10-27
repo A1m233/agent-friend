@@ -14,6 +14,7 @@ export interface RequestOptions {
   approval_mode: "per_request" | "session_auto" | null;
 }
 export interface ScheduledTask {
+  notify_bound_im: boolean;
   id: string;
   name: string;
   instruction: string;
@@ -28,6 +29,7 @@ export interface ScheduledTask {
   skill_id: string | null;
 }
 export interface TaskRun {
+  im_notification?: IMNotification;
   effective_options?: RequestOptions | null;
   id: string;
   state: string;
@@ -42,6 +44,7 @@ export interface TaskRun {
   finished_at: string | null;
 }
 export interface TaskInput {
+  notify_bound_im: boolean;
   name: string;
   instruction: string;
   target_session_id: string;
@@ -50,6 +53,16 @@ export interface TaskInput {
   draft_attachments: { draft_id: string; kind: string }[];
   skill_id?: string | null;
   clear_skill?: boolean;
+}
+export interface IMNotification {
+  state: "disabled" | "pending" | "ready" | "settled" | "skipped" | "failed";
+  reason: string;
+  deliveries: {
+    destination_id: string;
+    state: "pending" | "delivered" | "failed" | "unknown" | "skipped";
+    error_kind: string | null;
+    attempt_count: number;
+  }[];
 }
 export const scheduledTasksApi = {
   list: (offset = 0, limit = 100) =>

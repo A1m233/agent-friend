@@ -15,6 +15,37 @@ class _Catalog:
         return SimpleNamespace(id="persona-id", name=name)
 
 
+def test_notification_flag_roundtrip_and_strict_boolean(tmp_path: Path) -> None:
+    client, service, _ = _client(tmp_path)
+    body = {
+        "target_session_id": "s",
+        "name": "task",
+        "instruction": "work",
+        "schedule": {"kind": "fixed_interval", "interval": 1, "unit": "hour"},
+        "notify_bound_im": True,
+    }
+    result = client.post("/v1/scheduled-tasks", json=body)
+    assert result.status_code == 200
+    task = result.json()
+    assert task["notify_bound_im"] is True
+    renamed = client.patch(
+        f"/v1/scheduled-tasks/{task['id']}", json={"revision": task["revision"], "name": "renamed"}
+    ).json()
+    assert renamed["notify_bound_im"] is True
+    run = client.post(f"/v1/scheduled-tasks/{task['id']}/runs").json()
+    assert run["im_notification"]["state"] == "pending"
+    changed = client.patch(
+        f"/v1/scheduled-tasks/{task['id']}",
+        json={"revision": renamed["revision"], "notify_bound_im": False},
+    ).json()
+    assert changed["notify_bound_im"] is False
+    assert service.store.get_occurrence(run["id"]).task_snapshot.notify_bound_im
+    assert (
+        client.post("/v1/scheduled-tasks", json={**body, "notify_bound_im": "false"}).status_code
+        == 422
+    )
+
+
 def _client(
     tmp_path: Path,
 ) -> tuple[TestClient, ScheduledTaskService, SimpleNamespace]:

@@ -21,7 +21,7 @@ from agent.session_requests import RequestOptions
 from agent.sessions import SessionNotFoundError
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from llm_providers import validate_model_runtime_config
 
@@ -38,6 +38,7 @@ class _Request(BaseModel):
 
 
 class TaskCreateRequest(_Request):
+    notify_bound_im: StrictBool = False
     name: str = Field(min_length=1, max_length=200)
     instruction: str = Field(max_length=20_000)
     schedule: dict[str, Any]
@@ -48,6 +49,7 @@ class TaskCreateRequest(_Request):
 
 
 class TaskPatchRequest(_Request):
+    notify_bound_im: StrictBool | None = None
     revision: int = Field(ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=200)
     instruction: str | None = Field(default=None, max_length=20_000)
@@ -126,6 +128,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     skill_id=payload.skill_id,
                     target_session_id=payload.target_session_id,
                     request_options=options,
+                    notify_bound_im=payload.notify_bound_im,
                 )
                 return task_to_dict(task)
         except (ValueError, KeyError, TypeError) as exc:
@@ -159,6 +162,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     target_session_id=payload.target_session_id,
                     request_options=options,
                     clear_skill=payload.clear_skill,
+                    notify_bound_im=payload.notify_bound_im,
                 )
                 return task_to_dict(task)
         except (ValueError, KeyError, TypeError) as exc:
@@ -285,6 +289,10 @@ def _occurrence_payload(
             )
         )
     payload = occurrence_to_dict(occurrence, waiting_for_approval=waiting)
+    if runtime.scheduled_task_service is not None:
+        payload["im_notification"] = runtime.scheduled_task_service.store.notifications.summary(
+            occurrence.id
+        )
     receipt = (
         runtime.session_request_service.store.get(occurrence.run_id)
         if runtime.session_request_service and occurrence.run_id

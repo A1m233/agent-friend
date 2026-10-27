@@ -167,6 +167,10 @@ class ScheduledTaskManageTool:
                 "description": "可选；只能复制当前 Skill catalog 的精确稳定 skill_id，不能传名称或路径。",
             },
             "clear_skill": {"type": "boolean", "description": "update 时移除已绑定 Skill。"},
+            "notify_bound_im": {
+                "type": "boolean",
+                "description": "仅 create/update：是否在任务结束后向执行会话当前绑定的全部 IM 发送结果。创建默认 false，更新省略则保留。只有用户明确要求结果通知时开启；无绑定时跳过，平台可能拒绝。不开启远程审批，不更改执行权限。",
+            },
             "statuses": {
                 "type": "array",
                 "items": {"type": "string", "enum": ["active", "paused", "exhausted", "deleted"]},
@@ -207,6 +211,7 @@ class ScheduledTaskManageTool:
                 "anyOf": [
                     {"required": ["target_session_id"]},
                     {"required": ["name"]},
+                    {"required": ["notify_bound_im"]},
                     {"required": ["instruction"]},
                     {"required": ["schedule"]},
                     {"required": ["skill_id"]},
@@ -285,6 +290,11 @@ class ScheduledTaskManageTool:
 
     def _invoke(self, args: dict[str, Any]) -> dict[str, Any]:
         operation = _required_string(args, "operation")
+        if "notify_bound_im" in args:
+            if operation not in {"create", "update"}:
+                raise ValueError("notify_bound_im 仅用于 create/update")
+            if not isinstance(args["notify_bound_im"], bool):
+                raise ValueError("notify_bound_im 必须是布尔值")
         if "target_current_session" in args and operation != "create":
             raise ValueError(
                 "target_current_session 仅用于 create；修改任务请使用 target_session_id。"
@@ -305,6 +315,7 @@ class ScheduledTaskManageTool:
                 skill_id=skill_id,
                 origin_session_id=_optional_string(args, _RUNTIME_SESSION_ID),
                 target_session_id=target_session_id,
+                notify_bound_im=args.get("notify_bound_im", False),
             )
             return {"status": "ok", "operation": operation, "task": task_to_dict(task)}
         if operation == "list":
@@ -353,6 +364,7 @@ class ScheduledTaskManageTool:
                 skill_id=skill_id,
                 clear_skill=bool(args.get("clear_skill", False)),
                 target_session_id=_optional_string(args, "target_session_id"),
+                notify_bound_im=args.get("notify_bound_im"),
             )
             return {"status": "ok", "operation": operation, "task": task_to_dict(task)}
         if operation in {"pause", "resume", "delete"}:
@@ -401,7 +413,10 @@ class ScheduledTaskManageTool:
             and occurrence.run_id is not None
         ):
             waiting = self._approval_pending(occurrence.session_id, occurrence.run_id)
-        return occurrence_to_dict(occurrence, waiting_for_approval=waiting)
+        return {
+            **occurrence_to_dict(occurrence, waiting_for_approval=waiting),
+            "im_notification": self._service.store.notifications.summary(occurrence.id),
+        }
 
 
 def _create_target(args: dict[str, Any]) -> str:

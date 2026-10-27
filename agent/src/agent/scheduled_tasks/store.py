@@ -16,6 +16,7 @@ from agent.paths import scheduled_tasks_db_path
 
 from ..scheduling import advance_due_window, schedule_from_dict, schedule_to_dict
 from ..session_requests.models import RequestOptions
+from .delivery import ScheduledNotificationStore
 from .models import (
     ScheduledOccurrence,
     ScheduledOccurrenceClaim,
@@ -44,6 +45,7 @@ class ScheduledTaskStore:
         self._lock = threading.RLock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
+        self.notifications = ScheduledNotificationStore(self._connect, self._transaction)
 
     def create_task(self, task: ScheduledTask) -> ScheduledTask:
         with self._transaction() as conn:
@@ -53,8 +55,8 @@ class ScheduledTaskStore:
                     id, name, instruction, schedule_json, next_fire_at_utc, status,
                     persona_id, persona_name, model_id, skill_id, origin_session_id,
                     fire_count, revision, created_at, updated_at, deleted_at,
-                    target_session_id, request_options_json, pause_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    target_session_id, request_options_json, pause_reason, notify_bound_im
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _task_values(task),
             )
@@ -97,7 +99,7 @@ class ScheduledTaskStore:
                     next_fire_at_utc = ?, status = ?, persona_id = ?, persona_name = ?,
                     model_id = ?, skill_id = ?, origin_session_id = ?, fire_count = ?,
                     revision = ?, updated_at = ?, deleted_at = ?,
-                    target_session_id = ?, request_options_json = ?, pause_reason = ?
+                    target_session_id = ?, request_options_json = ?, pause_reason = ?, notify_bound_im = ?
                 WHERE id = ? AND revision = ?
                 """,
                 (
@@ -118,6 +120,7 @@ class ScheduledTaskStore:
                     task.target_session_id,
                     json.dumps(task.request_options.to_dict(), sort_keys=True),
                     task.pause_reason,
+                    int(task.notify_bound_im),
                     task.id,
                     expected_revision,
                 ),
@@ -529,7 +532,10 @@ class ScheduledTaskStore:
                 _dump_dt(occurrence.finished_at),
             ),
         )
-        return cursor.rowcount == 1
+        inserted = cursor.rowcount == 1
+        if inserted and occurrence.task_snapshot.notify_bound_im:
+            ScheduledNotificationStore.register(conn, occurrence.id)
+        return inserted
 
     def _has_non_terminal_occurrence(self, conn: sqlite3.Connection, task_id: str) -> bool:
         placeholders = ",".join("?" for _ in _NON_TERMINAL_STATES)
@@ -597,6 +603,11 @@ class ScheduledTaskStore:
                 """
             )
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(scheduled_tasks)")}
+            if "notify_bound_im" not in columns:
+                conn.execute(
+                    "ALTER TABLE scheduled_tasks ADD COLUMN notify_bound_im INTEGER NOT NULL DEFAULT 0"
+                )
+            ScheduledNotificationStore.initialize(conn)
             if "target_session_id" not in columns:
                 conn.execute("ALTER TABLE scheduled_tasks ADD COLUMN target_session_id TEXT")
                 conn.execute(
@@ -678,6 +689,7 @@ def _new_occurrence(
         skill_id=task.skill_id,
         target_session_id=task.target_session_id,
         request_options=task.request_options,
+        notify_bound_im=task.notify_bound_im,
     )
     terminal_at = current if state is ScheduledOccurrenceState.TERMINAL else None
     return ScheduledOccurrence(
@@ -724,6 +736,7 @@ def _task_values(task: ScheduledTask) -> tuple[object, ...]:
         task.target_session_id,
         json.dumps(task.request_options.to_dict(), sort_keys=True),
         task.pause_reason,
+        int(task.notify_bound_im),
     )
 
 
@@ -750,6 +763,7 @@ def _task_from_row(row: sqlite3.Row) -> ScheduledTask:
         target_session_id=row["target_session_id"],
         request_options=RequestOptions.from_dict(json.loads(row["request_options_json"])),
         pause_reason=str(row["pause_reason"]),
+        notify_bound_im=bool(row["notify_bound_im"]),
     )
 
 
@@ -793,6 +807,7 @@ def _snapshot_to_dict(snapshot: ScheduledTaskSnapshot) -> dict[str, Any]:
         "skill_id": snapshot.skill_id,
         "target_session_id": snapshot.target_session_id,
         "request_options": snapshot.request_options.to_dict(),
+        "notify_bound_im": snapshot.notify_bound_im,
     }
 
 
@@ -809,6 +824,7 @@ def _snapshot_from_dict(value: dict[str, Any]) -> ScheduledTaskSnapshot:
         skill_id=str(value["skill_id"]) if value.get("skill_id") else None,
         target_session_id=value.get("target_session_id"),
         request_options=RequestOptions.from_dict(value.get("request_options", {})),
+        notify_bound_im=value.get("notify_bound_im") is True,
     )
 
 

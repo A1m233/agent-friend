@@ -63,6 +63,7 @@ class ScheduledTask:
     target_session_id: str | None = None
     request_options: RequestOptions = field(default_factory=RequestOptions)
     pause_reason: str = ""
+    notify_bound_im: bool = False
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,7 @@ class ScheduledTaskSnapshot:
     skill_id: str | None
     target_session_id: str | None = None
     request_options: RequestOptions = field(default_factory=RequestOptions)
+    notify_bound_im: bool = False
 
 
 @dataclass(frozen=True)

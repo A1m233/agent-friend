@@ -59,7 +59,9 @@ class ScheduledTaskService:
         origin_session_id: str | None = None,
         target_session_id: str | None = None,
         request_options: RequestOptions | None = None,
+        notify_bound_im: bool = False,
     ) -> ScheduledTask:
+        _validate_notify(notify_bound_im)
         self._validate_target(target_session_id)
         now = self._now()
         next_fire = _next_future(schedule, now, generated_count=0, once_must_be_future=True)
@@ -80,6 +82,7 @@ class ScheduledTaskService:
             origin_session_id=_optional_text(origin_session_id),
             target_session_id=target_session_id,
             request_options=request_options or RequestOptions(),
+            notify_bound_im=notify_bound_im,
             fire_count=0,
             revision=1,
             created_at=now,
@@ -110,7 +113,10 @@ class ScheduledTaskService:
         clear_skill: bool = False,
         target_session_id: str | None = None,
         request_options: RequestOptions | None = None,
+        notify_bound_im: bool | None = None,
     ) -> ScheduledTask:
+        if notify_bound_im is not None:
+            _validate_notify(notify_bound_im)
         if (
             name is None
             and instruction is None
@@ -122,6 +128,7 @@ class ScheduledTaskService:
             and not clear_skill
             and target_session_id is None
             and request_options is None
+            and notify_bound_im is None
         ):
             raise ScheduledTaskError("invalid_arguments", "update 至少需要一个实际变更字段")
         if clear_skill and skill_id is not None:
@@ -149,6 +156,7 @@ class ScheduledTaskService:
             current,
             target_session_id=target,
             request_options=current.request_options if request_options is None else request_options,
+            notify_bound_im=current.notify_bound_im if notify_bound_im is None else notify_bound_im,
             pause_reason="" if target_session_id else current.pause_reason,
             name=current.name if name is None else _name(name),
             instruction=_instruction(
@@ -325,6 +333,11 @@ def _name(value: str) -> str:
     if len(result) > 200:
         raise ScheduledTaskError("invalid_arguments", "任务名称不能超过 200 个字符")
     return result
+
+
+def _validate_notify(value: bool) -> None:
+    if not isinstance(value, bool):
+        raise ScheduledTaskError("invalid_arguments", "notify_bound_im 必须是布尔值")
 
 
 def _instruction(value: str, options: RequestOptions | None = None) -> str:

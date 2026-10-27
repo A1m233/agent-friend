@@ -189,6 +189,7 @@ it("appends on intersection once, retains loaded rows on refresh, and ignores an
 it("keeps the edited revision frozen when background refresh observes another writer", async () => {
   vi.useFakeTimers();
   const task: ScheduledTask = {
+    notify_bound_im: false,
     id: "t",
     name: "Original",
     instruction: "hello",

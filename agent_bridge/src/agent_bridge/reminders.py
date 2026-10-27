@@ -34,6 +34,7 @@ from .presence import DestinationPolicy, IMPresenceSnapshot, PresenceRegistry, P
 if TYPE_CHECKING:
     from agent.runtime.models import RunHandle
 
+    from .protocols.im.delivery.once import DeliveryAttempt
     from .protocols.im.provider import OutboundSendResult
     from .protocols.im.runtime import IMRuntime
 
@@ -275,6 +276,8 @@ class ReminderDeliveryOrchestrator:
         pet_planned = decision_kind in {"pet", "all"}
 
         if im_destination_id is not None and decision_kind in {"im", "all"}:
+            from .protocols.im.delivery.once import deliver_once
+
             im_fixed = self._todos.ensure_delivery(
                 occurrence.id,
                 ReminderProjectionKind.IM_FIXED,
@@ -288,19 +291,10 @@ class ReminderDeliveryOrchestrator:
                 now=now,
             )
             if im_fixed.state is ReminderDeliveryState.PENDING:
-                _attempt, started = self._todos.begin_delivery_attempt(
-                    occurrence.id,
-                    ReminderProjectionKind.IM_FIXED,
-                    now=now,
+                deliver_once(
+                    [self._im_attempt(occurrence.id, ReminderProjectionKind.IM_FIXED)],
+                    lambda: self._deliver_im_fixed(occurrence, im_destination_id),
                 )
-                if started:
-                    result = self._deliver_im_fixed(occurrence, im_destination_id)
-                    self._record_send_result(
-                        occurrence.id,
-                        ReminderProjectionKind.IM_FIXED,
-                        result,
-                        now=now,
-                    )
 
         if pet_planned:
             pet = self._todos.ensure_delivery(
@@ -521,6 +515,9 @@ class ReminderDeliveryOrchestrator:
         target: _AgentResponseTarget,
         text: str,
     ) -> None:
+        from .protocols.im.delivery.once import deliver_once
+        from .protocols.im.provider import OutboundSendResult
+
         eligible: list[str] = []
         for occurrence_id in occurrence_ids:
             try:
@@ -545,40 +542,32 @@ class ReminderDeliveryOrchestrator:
                     now=self._now(),
                     increment_attempt=False,
                 )
-        started_occurrence_ids: list[str] = []
-        for occurrence_id in eligible:
-            _attempt, started = self._todos.begin_delivery_attempt(
-                occurrence_id,
-                ReminderProjectionKind.IM_AGENT,
-                now=self._now(),
+
+        def send() -> OutboundSendResult:
+            if self._im_runtime is None or target.destination_id is None:
+                return OutboundSendResult("failed", error_kind="im_runtime_unavailable")
+            return self._im_runtime.send_proactive(
+                target.destination_id, text, text_format="markdown"
             )
-            if started:
-                started_occurrence_ids.append(occurrence_id)
-        if not started_occurrence_ids:
-            return
-        if self._im_runtime is None or target.destination_id is None:
-            for occurrence_id in started_occurrence_ids:
-                self._todos.update_delivery(
-                    occurrence_id,
-                    ReminderProjectionKind.IM_AGENT,
-                    state=ReminderDeliveryState.FAILED,
-                    error_kind="im_runtime_unavailable",
-                    now=self._now(),
-                    increment_attempt=False,
-                )
-            return
-        result = self._im_runtime.send_proactive(
-            target.destination_id,
-            text,
-            text_format="markdown",
+
+        deliver_once(
+            [self._im_attempt(item, ReminderProjectionKind.IM_AGENT) for item in eligible],
+            send,
         )
-        for occurrence_id in started_occurrence_ids:
-            self._record_send_result(
-                occurrence_id,
-                ReminderProjectionKind.IM_AGENT,
-                result,
-                now=self._now(),
-            )
+
+    def _im_attempt(
+        self, occurrence_id: str, projection_kind: ReminderProjectionKind
+    ) -> DeliveryAttempt:
+        from .protocols.im.delivery.once import DeliveryAttempt
+
+        return DeliveryAttempt(
+            claim=lambda: self._todos.begin_delivery_attempt(
+                occurrence_id, projection_kind, now=self._now()
+            )[1],
+            settle=lambda result: self._record_send_result(
+                occurrence_id, projection_kind, result, now=self._now()
+            ),
+        )
 
     def _fail_pending_agent_projections(
         self,

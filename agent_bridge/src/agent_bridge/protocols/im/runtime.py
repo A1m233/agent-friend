@@ -253,8 +253,18 @@ class IMRuntime:
         loop = self._event_loop
         if loop is None or loop.is_closed():
             return OutboundSendResult("failed", error_kind="runtime_stopped")
-        future = asyncio.run_coroutine_threadsafe(
-            provider.send(
+
+        async def dispatch() -> OutboundSendResult | None:
+            # Recheck on the sending loop, after any queued work or binding change.
+            current = self._state.get_binding(binding.key)
+            if current is None or current.session_id != session_id:
+                return OutboundSendResult("failed", error_kind="binding_changed")
+            if (
+                self._providers.get((im_type, provider_bind_id)) is not provider
+                or provider.status() != "active"
+            ):
+                return OutboundSendResult("failed", error_kind="provider_unavailable")
+            return await provider.send(
                 OutboundContent(
                     chat_id=chat_id,
                     chat_scope=chat_scope,
@@ -262,9 +272,9 @@ class IMRuntime:
                     reply_to_message_id=None,
                     text_format=text_format,
                 )
-            ),
-            loop,
-        )
+            )
+
+        future = asyncio.run_coroutine_threadsafe(dispatch(), loop)
         try:
             result = future.result(timeout=timeout)
         except TimeoutError:

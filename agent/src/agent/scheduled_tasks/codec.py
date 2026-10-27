@@ -126,6 +126,7 @@ def task_to_dict(task: ScheduledTask) -> dict[str, Any]:
         "target_session_id": task.target_session_id,
         "request_options": task.request_options.to_dict(),
         "pause_reason": task.pause_reason,
+        "notify_bound_im": task.notify_bound_im,
         "needs_target": task.target_session_id is None,
         "fire_count": task.fire_count,
         "revision": task.revision,

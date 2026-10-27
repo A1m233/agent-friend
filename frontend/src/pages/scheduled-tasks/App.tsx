@@ -18,6 +18,7 @@ import {
 import { runsApi } from "@/services/api/runs";
 import { subscribePushInvalidation } from "@/services/pushInvalidation";
 import { TaskEditor } from "./TaskEditor";
+import { IMNotificationStatus } from "./IMNotificationStatus";
 import { StatusBadge } from "@/components/scheduling/StatusBadge";
 import { formatTimestamp } from "@/components/scheduling/presentation";
 import { toast } from "sonner";
@@ -367,6 +368,8 @@ function ScheduledTasksView({ id, active }: { id: string | null; active: boolean
             </dd>
             <dt>Skill</dt>
             <dd>{current.skill_id ?? "未指定"}</dd>
+            <dt>IM 结果通知</dt>
+            <dd>{current.notify_bound_im ? "发送到会话当前绑定的全部 IM" : "关闭"}</dd>
           </dl>
           <div className="rounded-lg border border-border p-4">
             <h2 className="mb-2 font-medium">发送内容</h2>
@@ -406,6 +409,7 @@ function ScheduledTasksView({ id, active }: { id: string | null; active: boolean
                         `执行原因：${run.reason_code}`}
                     </p>
                   )}
+                  <IMNotificationStatus notification={run.im_notification} />
                   <div className="mt-2 flex gap-2">
                     {run.session_id && run.started_at && (
                       <TooltipButton
