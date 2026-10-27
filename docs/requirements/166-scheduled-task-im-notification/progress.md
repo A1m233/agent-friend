@@ -38,6 +38,8 @@ COMPLETED
 | 2026-10-27 | 完成用户授权的真实 Tauri 验收，并停止本任务运行态 | 新任务默认关闭、开启保存、重新编辑、关闭保存、刷新恢复、再次开启均通过；后台任务记录保持一致。历史使用隔离夹具，不代表真实 QQ 已送达。stop 后无 active lease、dev ports are free |
 | 2026-10-27 | 用户授权真实 QQ 接收验收；真实定时运行及平台发送通过 | 22:36:03 自动 scheduled 触发，22:36:12 completed；真实 QQ delivered，有 provider message receipt，attempt_count=1。手机客户端接收待用户确认 |
 | 2026-10-27 | 用户确认真实 QQ 接收“已收到，内容正确”；完成验收 | 对应 AF166-20261027-QQ 通知，补齐 AC-8；总体状态更新为 COMPLETED，尚未提交或合入 main |
+| 2026-10-27 | 提交并合入主干、推送远端，发布公开 Guide r101 | 实现提交 9f2d07b1，主干 merge a2762e43；合并树与已验收实现一致。Guide eea27575 已推送，r101 immutable，兼容范围 0.4.1 至 0.5.0（不含） |
+| 2026-10-27 | 完成本地测试安装包，未安装到 production | 用户授权工作目录改用 D:/agent-friend-packaging；build 20261027T144858Z-a2762e43bf89-d982d1f8，0.4.1 / local-test / ordinary / standard。冻结 doctor 全通过，原生符号已归档，SHA 与清单一致，临时 Guide 基线恢复后工作区 clean |
 
 ## 检查与验收证据
 
@@ -52,4 +54,5 @@ COMPLETED
 - 真实测试任务 `9bc7c60c-eea3-452d-b9a5-35bf4fa8ceba`，occurrence `620de35f-44fd-47b4-a618-3bd0cd628e55`，run `76f31774edbe43eca9a0041ef446e107`；trigger_kind=scheduled，运行 completed，通知 settled，唯一目标 delivered 且有回执，尝试次数 1。最终回复与通知正文均包含 `AF166-20261027-QQ：定时任务已执行完成，这条最终回复应由系统自动发送到绑定的 QQ。`。
 - 真实测试本地证据：`C:/Users/example-user/AppData/Local/Temp/agent-friend-166-live-qq-4a47fb9491fe4fbabc0f8553c7db8d6a/` 下 `task.json`、`history.json`、`events-summary.json`、`completed-dom.txt`、`completed.png`。实际桌面显示“已完成 / QQ 私聊 …F657：已发送”，与 SQLite 及业务会话事件一致；不再是注入夹具。
 - 一次性计划已耗尽，无后续执行；测试 runtime 已 stop，确认无 active lease、dev ports free；已通过 build-storage reconcile 解除停止后遗留的本任务构建占用记录，未删除缓存。未改生产代码。
-- 接收端证据：本机没有已登录的 QQ 接收窗口，手机接收由用户人工确认；用户对上述测试标识明确回复“已收到，内容正确”。结合真实执行、平台回执和桌面历史，AC-8 已通过，总体 COMPLETED；当前代码尚未提交或合入 main。
+- 接收端证据：本机没有已登录的 QQ 接收窗口，手机接收由用户人工确认；用户对上述测试标识明确回复“已收到，内容正确”。结合真实执行、平台回执和桌面历史，AC-8 已通过，总体 COMPLETED。
+- 本地测试制品目录：`C:/Users/example-user/agent-friend-releases/_local-test/0.4.1/windows-x64/ordinary/20261027T144858Z-a2762e43bf89-d982d1f8/`。安装包 419484393 字节，SHA-256 `fc9680ed76640bdbd88eb8c29c0bcb1faf30deb74f285d42eb322ebf53665ad0`；`release.json` 绑定来源提交 a2762e43、Guide r101 的临时基线与 native symbols，标记不可分发。本次仅生成测试包，不声称真实安装或覆盖升级已验证。
