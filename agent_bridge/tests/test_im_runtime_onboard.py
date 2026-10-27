@@ -382,6 +382,34 @@ async def test_send_proactive_propagates_markdown_format(
 
 
 @pytest.mark.asyncio
+async def test_proactive_rechecks_binding_on_dispatch_loop(
+    credentials: CredentialStore, router: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = IMStateStore(tmp_path / "state.json")
+    runtime = IMRuntime(
+        router=router, credentials=credentials, resume_base_dir=tmp_path, state_store=state
+    )
+    provider = _StubProvider(bind_id="A", _status="active")
+    provider.send = AsyncMock(return_value=OutboundSendResult("delivered"))  # type: ignore[method-assign]
+    runtime._providers[("qq", "A")] = provider
+    runtime._event_loop = asyncio.get_running_loop()
+    key = IMBindingKey("qq", "A", "c2c", "A")
+    state.set_binding(key, "original")
+    schedule = asyncio.run_coroutine_threadsafe
+
+    def change_before_dispatch(coro: Any, loop: Any) -> Any:
+        state.set_binding(key, "different-session")
+        return schedule(coro, loop)
+
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", change_before_dispatch)
+    receipt = await asyncio.to_thread(
+        runtime.send_proactive, "qq|A|c2c|A|original", "private result"
+    )
+    assert receipt.error_kind == "binding_changed"
+    provider.send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_start_reconciles_existing_legacy_qq_session_only(
     credentials: CredentialStore,
     router: MagicMock,

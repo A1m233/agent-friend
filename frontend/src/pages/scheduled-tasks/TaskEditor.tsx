@@ -21,6 +21,7 @@ import {
   CollapsibleContent,
   Alert,
   AlertDescription,
+  Switch,
 } from "@/components/ui";
 import { ReasoningSelection } from "@/components/model-config/ReasoningSelection";
 import { useSetting } from "@/lib/settings";
@@ -82,6 +83,7 @@ export function TaskEditor({
   const [name, setName] = useState(task?.name ?? "");
   const [instruction, setInstruction] = useState(task?.instruction ?? "");
   const [target, setTarget] = useState(task?.target_session_id ?? "new");
+  const [notifyBoundIm, setNotifyBoundIm] = useState(task?.notify_bound_im ?? false);
   const [sessionName, setSessionName] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -232,6 +234,7 @@ export function TaskEditor({
         timezone,
       }, task?.schedule);
       const input = {
+        notify_bound_im: notifyBoundIm,
         name,
         instruction,
         skill_id: skillId === "none" ? undefined : skillId,
@@ -402,6 +405,13 @@ export function TaskEditor({
         </label>}
       </div>
       <p className="text-xs text-muted">每次执行都发送到这个会话，归档后暂停任务。</p>
+      <div className="space-y-2">
+        <div className="flex items-center gap-3">
+          <Switch id="notify-bound-im" checked={notifyBoundIm} onCheckedChange={setNotifyBoundIm} aria-describedby="notify-bound-im-help" />
+          <label htmlFor="notify-bound-im" className="text-sm">将结果发送到会话绑定的 IM</label>
+        </div>
+        <p id="notify-bound-im-help" className="text-xs text-muted">发送到执行会话当前绑定的全部 IM；未绑定时跳过。平台可能限制发送，结果仍保存在会话中。</p>
+      </div>
       <Collapsible open={moreOpen} onOpenChange={setMoreOpen}>
         <CollapsibleTrigger asChild>
           <Button variant="outline">

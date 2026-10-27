@@ -244,6 +244,10 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
                     reconciliation_task.cancel()
             if runtime.schedule_coordinator is not None:
                 runtime.schedule_coordinator.stop(timeout=5.0)
+            if runtime.scheduled_run_tracker is not None:
+                notifications = runtime.scheduled_run_tracker.notifications
+                if notifications is not None:
+                    await asyncio.to_thread(notifications.stop)
             if runtime.im_runtime is not None:
                 await runtime.im_runtime.stop(timeout=5.0)
             if runtime.agent_runtime is not None:

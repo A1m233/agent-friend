@@ -59,6 +59,16 @@ async function click(text: string) {
   expect(element, text).toBeTruthy();
   await act(async () => element!.click());
 }
+
+it("defaults IM notifications off and saves an explicit toggle", async () => {
+  const toggle = host.querySelector('#notify-bound-im') as HTMLElement;
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
+  await fill("任务名称", "Notify");
+  await fill("发送内容", "hello");
+  await act(async () => toggle.click());
+  await click("保存");
+  expect(mock.create).toHaveBeenLastCalledWith(expect.objectContaining({ notify_bound_im: true }));
+});
 async function select(label: string, text: string) {
   const trigger = document.querySelector(`[role="combobox"][aria-label="${label}"]`)!;
   await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
@@ -180,6 +190,7 @@ it.each([
 
 it("does not show success when updating a task fails", async () => {
   const task = {
+    notify_bound_im: false,
     id: "edited", name: "Before", instruction: "hello", target_session_id: "s",
     schedule: { kind: "recurring", frequency: "daily", interval: 1, local_time: "09:00:00", timezone: "Asia/Shanghai", starts_on: "2030-01-01", weekdays: [] },
     revision: 1, request_options: { attachments: [], model: null, approval_mode: null },

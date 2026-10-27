@@ -123,6 +123,7 @@ from .runtime_config import (
     resolve_bridge_runtime_config,
 )
 from .scheduled_tasks import ScheduledRunTracker, ScheduledTaskRunOrchestrator
+from .scheduled_tasks.notifications import ScheduledIMNotifications
 from .session_models import SessionModelService
 from .session_requests import SessionRequestService
 from .session_turns import SessionTurnCoordinator
@@ -783,7 +784,11 @@ def build_runtime(
         reminder_delivery: ReminderDeliveryOrchestrator,
     ) -> tuple[ScheduledRunTracker, ScheduleCoordinator]:
         tracker = ScheduledRunTracker(
-            scheduled_task_store, terminal_lookup=request_service.terminal_receipt
+            scheduled_task_store,
+            terminal_lookup=request_service.terminal_receipt,
+            notifications=ScheduledIMNotifications(
+                scheduled_task_store, persistent_store, im_runtime
+            ),
         )
         orchestrator = ScheduledTaskRunOrchestrator(
             store=scheduled_task_store,

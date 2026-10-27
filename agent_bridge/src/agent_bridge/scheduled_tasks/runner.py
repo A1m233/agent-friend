@@ -26,6 +26,7 @@ from agent.skills import SkillCatalogService, SkillSelection, SkillTurnSnapshot
 from agent import SessionManager
 
 from ..session_requests import SessionRequestService
+from .notifications import ScheduledIMNotifications
 
 logger = logging.getLogger(__name__)
 
@@ -179,11 +180,13 @@ class ScheduledRunTracker:
         clock: Clock | None = None,
         poll_seconds: float = 0.2,
         terminal_lookup: Callable[[str], tuple[str, str] | None] | None = None,
+        notifications: ScheduledIMNotifications | None = None,
     ) -> None:
         self._store = store
         self._clock = clock or (lambda: datetime.now(UTC))
         self._poll_seconds = poll_seconds
         self._terminal_lookup = terminal_lookup
+        self.notifications = notifications
         self._condition = threading.Condition()
         self._handles: dict[str, RunHandle] = {}
         self._stopping = False
@@ -194,6 +197,8 @@ class ScheduledRunTracker:
             if self._thread is not None:
                 return {"released_claims": 0, "interrupted_runs": 0}
             recovered = self._store.recover_startup(self._now(), self._terminal_lookup)
+            if self.notifications is not None:
+                self.notifications.start()
             self._handles.clear()
             self._stopping = False
             self._thread = threading.Thread(
@@ -205,10 +210,11 @@ class ScheduledRunTracker:
         return recovered
 
     def stop(self, timeout: float = 5.0) -> bool:
+        notifications_stopped = self.notifications is None or self.notifications.stop(timeout)
         with self._condition:
             thread = self._thread
             if thread is None:
-                return True
+                return notifications_stopped
             self._stopping = True
             self._condition.notify_all()
         thread.join(timeout=timeout)
@@ -219,9 +225,11 @@ class ScheduledRunTracker:
                 self._thread = None
             for occurrence_id, handle in tracked:
                 self._persist_snapshot(occurrence_id, handle)
+            if self.notifications is not None:
+                self.notifications.wake()
             with self._condition:
                 self._handles.clear()
-        return stopped
+        return stopped and notifications_stopped
 
     def track(self, occurrence_id: str, handle: RunHandle) -> None:
         with self._condition:
@@ -262,6 +270,8 @@ class ScheduledRunTracker:
                     ScheduledOccurrenceState.RUNNING,
                 ),
             )
+            if self.notifications is not None:
+                self.notifications.wake()
         except ScheduledTaskError:
             logger.exception("failed to persist scheduled run snapshot: %s", occurrence_id)
         finally:
