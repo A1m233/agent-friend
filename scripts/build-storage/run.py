@@ -32,6 +32,9 @@ def main() -> int:
         ),
     )
     parser.add_argument("--scan", action="store_true")
+    parser.add_argument(
+        "--root", action="append", type=Path, help="Additional discovery root (read-only)."
+    )
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--category", action="append", choices=CATEGORIES)
@@ -46,9 +49,18 @@ def main() -> int:
     parser.add_argument("--object-id")
     parser.add_argument("--reason")
     parser.add_argument("--path", type=Path)
+    parser.add_argument("--cargo-evidence", action="store_true")
+    parser.add_argument(
+        "--only-object-id", action="append", help="Narrow GC to these exact registered object IDs."
+    )
     parser.add_argument("--operation-id")
     parser.add_argument("--confirm-stopped", action="store_true")
+    parser.add_argument("--outcome", choices=("stopped", "cancelled", "failed"), default="failed")
     args = parser.parse_args()
+    if args.cargo_evidence and args.command != "adopt":
+        parser.error("--cargo-evidence requires adopt")
+    if args.only_object_id and args.command != "gc":
+        parser.error("--only-object-id requires gc")
     if args.command == "benchmark":
         from benchmark import run
 
@@ -60,13 +72,15 @@ def main() -> int:
     if args.command == "reconcile":
         if not args.operation_id or not args.confirm_stopped or not args.reason:
             parser.error("reconcile requires --operation-id, --confirm-stopped and --reason")
-        result = storage.reconcile(args.operation_id, reason=args.reason)
+        result = storage.reconcile(args.operation_id, reason=args.reason, outcome=args.outcome)
     elif args.command == "adopt":
         from build_storage.execution import adopt_legacy_package
 
         if args.path is None:
             parser.error("adopt requires --path")
-        result = adopt_legacy_package(storage, args.path, apply=args.apply)
+        result = adopt_legacy_package(
+            storage, args.path, apply=args.apply, allow_cargo_evidence=args.cargo_evidence
+        )
     elif args.command == "configure":
         changes = {}
         if args.build_root is not None:
@@ -89,9 +103,22 @@ def main() -> int:
         result = {"schemaVersion": 1, "objectId": args.object_id, "updated": True}
     elif args.command == "gc":
         report = plan(storage, scan=args.scan or args.apply, categories=args.category)
+        if args.only_object_id:
+            for object_id in args.only_object_id:
+                if not storage.record_path(object_id).is_file():
+                    parser.error(f"unknown object ID: {object_id}")
+            report["candidates"] = [
+                c for c in report["candidates"] if c["object"]["id"] in args.only_object_id
+            ]
         result = collect(storage, report) if args.apply else report
     else:
-        result = storage.inventory(scan=args.scan, categories=args.category)
+        from build_storage.discovery import discover
+
+        result = (
+            storage.inventory(scan=args.scan, categories=args.category)
+            if args.category and not args.root
+            else discover(storage, scan=args.scan, roots=args.root)
+        )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 1 if result.get("failed") or result.get("complete") is False else 0
 

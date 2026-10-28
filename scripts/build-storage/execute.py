@@ -15,6 +15,7 @@ def main() -> int:
     parser.add_argument("category", choices=("dev", "rust-check", "runtime-regression"))
     parser.add_argument("--cwd", type=Path)
     parser.add_argument("--target-dir", type=Path)
+    parser.add_argument("--runtime-owner-pid", type=int)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command
@@ -28,6 +29,7 @@ def main() -> int:
         command,
         target=args.target_dir,
         cwd=args.cwd,
+        runtime_owner_pid=args.runtime_owner_pid,
     )
 
 

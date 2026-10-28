@@ -9,6 +9,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 GUARD_PATH = ROOT / "scripts" / "dev" / "runtime_guard.py"
+sys.path.append(str(ROOT / "scripts/_lib"))
 
 
 def load_guard() -> Any:
@@ -65,6 +66,8 @@ def configure_guard(
 
     def stop_process_tree(pid: int) -> bool:
         stopped.append(pid)
+        targets = {pid, *guard.descendant_pids(pid, {p.pid: p for p in processes})}
+        processes[:] = [p for p in processes if p.pid not in targets]
         return True
 
     monkeypatch.setattr(guard, "runtime_state_dir", lambda: tmp_path)
@@ -227,6 +230,7 @@ def test_status_stop_and_release(monkeypatch: Any, tmp_path: Path) -> None:
 
     status = manager.status()
     stop = manager.stop()
+    configure_guard(monkeypatch, tmp_path, processes=[process(111, "owner-a", "bash run.sh")])
     write_lease(tmp_path, pid=111, start_id="owner-a", worktree="/tmp/wt/agent-friend")
     release = manager.release(111)
 
@@ -236,6 +240,75 @@ def test_status_stop_and_release(monkeypatch: Any, tmp_path: Path) -> None:
     assert stopped == [111]
     assert release.code == 0
     assert not (tmp_path / "lease.json").exists()
+
+
+def test_stop_does_not_release_storage_when_child_survives(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    processes = [process(111, "owner", "bash run.sh"), process(112, "child", "cargo", ppid=111)]
+    configure_guard(monkeypatch, tmp_path, processes=processes)
+    write_lease(tmp_path, pid=111, start_id="owner", worktree=str(tmp_path / "repo"))
+    lease_path = tmp_path / "lease.json"
+    lease = json.loads(lease_path.read_text())
+    lease["storageOperationId"] = "a" * 32
+    lease_path.write_text(json.dumps(lease))
+
+    def stop_parent_only(pid: int) -> bool:
+        processes[:] = [p for p in processes if p.pid != pid]
+        return True
+
+    monkeypatch.setattr(guard, "stop_process_tree", stop_parent_only)
+    manager = guard.RuntimeManager(make_context(tmp_path))
+    assert manager.stop().code == 1
+    assert json.loads(lease_path.read_text())["stopUnconfirmed"]
+    assert manager.stop().code == 1  # Stale parent still does not prove child exit.
+
+
+def test_stop_reconciles_only_the_bound_operation(monkeypatch: Any, tmp_path: Path) -> None:
+    import build_storage
+
+    processes = [process(111, "owner", "bash run.sh"), process(112, "child", "cargo", ppid=111)]
+    configure_guard(monkeypatch, tmp_path, processes=processes)
+    write_lease(tmp_path, pid=111, start_id="owner", worktree=str(tmp_path / "repo"))
+    lease_path = tmp_path / "lease.json"
+    lease = json.loads(lease_path.read_text())
+    lease["storageOperationId"] = "a" * 32
+    lease_path.write_text(json.dumps(lease))
+    calls = []
+
+    class FakeStorage:
+        def __init__(self, repo: Path) -> None:
+            assert repo == tmp_path / "repo"
+
+        def reconcile(self, operation: str, **kwargs: Any) -> None:
+            calls.append((operation, kwargs))
+
+    monkeypatch.setattr(build_storage, "Storage", FakeStorage)
+    assert guard.RuntimeManager(make_context(tmp_path)).stop().code == 0
+    assert calls[0][0] == "a" * 32
+    assert calls[0][1]["outcome"] == "stopped"
+    assert not lease_path.exists()
+
+
+def test_operation_binding_requires_owner_identity_and_ancestry(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    import os
+
+    import pytest
+
+    repo = tmp_path / "repo"
+    processes = [
+        process(111, "owner", "bash run.sh"),
+        process(os.getpid(), "wrapper", "python", ppid=111),
+    ]
+    configure_guard(monkeypatch, tmp_path, processes=processes)
+    write_lease(tmp_path, pid=111, start_id="owner", worktree=str(repo))
+    guard.bind_storage_operation(repo, 111, "a" * 32)
+    assert json.loads((tmp_path / "lease.json").read_text())["storageOperationId"] == "a" * 32
+    processes[:] = [process(111, "reused", "unrelated")]
+    with pytest.raises(RuntimeError, match="lease"):
+        guard.bind_storage_operation(repo, 111, "b" * 32)
 
 
 def test_release_cli_accepts_runtime_context_and_removes_lease(

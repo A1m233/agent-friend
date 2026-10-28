@@ -292,9 +292,13 @@ NSIS 模板适配对受控 payload 的规范绝对路径使用 Windows 扩展长
 
 `configure --automatic on/off` 与 `automaticCategories` 只控制构建结束后的可选维护，默认关闭；类别可选择 `package-cache`、`package-build`、`dev`、`rust-check`、`runtime-regression`。默认预算 80 GiB；可选维护/显式 GC 的低水位为 60 GiB、闲置缓存期限为 7 天；失败/等待续跑工作区默认保留 48 小时。体积是逻辑文件大小，实际释放量以删除后重新读取的卷空间为准。
 
-`package workspace-status` / `workspace-gc` 是 package 类别的兼容入口；快速盘点只读记录，不递归读取所有缓存。`--scan` 显式更新体积，stderr 显示进度；取消或读取失败会标记不完整，不当成零占用。仓库内旧 target、虚拟环境和全局依赖缓存不被自动接管。
+`package workspace-status` 复用统一目录盘点，`workspace-gc` 仍仅回收 package 类别。`build-storage inventory --root <PATH>` 可增加只读发现根；默认合并受管记录、当前与历史已知根，说明未管和可接管范围。快速查询仅有限枚举布局，不递归读取所有缓存；`--scan` 显式更新体积，取消或读取失败标记不完整，不当成零占用。重叠根不重复计数，未知目录不取得删除资格。仓库内旧 target、虚拟环境和全局依赖缓存不被自动接管。
 
 旧 package 目录先执行 `package run.ps1 workspace-adopt --path <ABSOLUTE_PATH>` 预览；核实目标后加 `--apply`。接管后默认 pin，确认旧构建进程及其后代全部退出再 unpin。未知目录、错误 identity、链接或 junction 都拒绝接管删除。
+
+原 workspace receipt 缺失时，纯 `build-cache/cargo-target` 可用 `workspace-adopt --path <PATH> --cargo-evidence` 预览。脚本校验固定目录布局、当前仓库身份、Cargo 标记及有限 `.d` 记录中的唯一源码根，并要求源码路径哈希匹配 worktree ID；有效归属证据先保存到稳定控制目录，再允许显式 `--apply` 登记。该参数不回退损坏的既有 receipt，不表示进程已停止；解除 pin 前仍须确认使用者。build-storage 的 `adopt` 同样支持此参数。
+
+`build-storage run.* gc --only-object-id <ID> [--only-object-id <ID> ...]` 仅预览指定对象中的策略候选；加 `--apply` 后复用标准 collector。达到容量/空间目标会停止，pin/保留期/运行保护不可绕过；没有匹配对象时报错。Windows/macOS/Linux 双端入口语义相同。
 
 纯冻结验证使用 `package run.* runtime-verify --local-test` 并传既有必需的 Guide/verification 参数；成功后归档报告并回收工作区。`runtime` 保持分步续跑用途，后续仍必须提供精确 `--reuse-build-id`。完整安装包及 symbols 保留在 release 根。
 
@@ -302,6 +306,14 @@ NSIS 模板适配对受控 payload 的规范绝对路径使用 Windows 扩展长
 
 Windows 源码与构建根分属不同卷时，Tauri 封装使用源码卷上的临时 junction 读取资源，实际 payload 仍留在受管构建卷；正常结束只移除已核实的链接，不递归删除其目标。通用接管和缓存删除仍拒绝链接。
 
-异常退出后，运行记录和空间预留可能继续受保护。只有人工确认整个子进程树已停止，才能执行 `build-storage run.* reconcile --operation-id <ID> --confirm-stopped --reason <核实依据>`。命令不会杀进程，也不会删除失败现场。
+异常退出后，运行记录和空间预留可能继续受保护。只有人工确认整个子进程树已停止，才能执行 `build-storage run.* reconcile --operation-id <ID> --confirm-stopped --reason <核实依据> [--outcome stopped|cancelled|failed]`，默认 failed。重复对账不会重新续期。dev 标准入口关联精确 operation，stop 在确认捕获的进程身份退出后自动记录 stopped；不能确认时保留保护。命令不会杀进程，也不会直接删除现场。
+
+### 本地测试安装包保留
+
+`package run.* artifact-status` 查看制品及保护原因。`artifact-configure --automatic on --keep-count 3 --keep-days 14` 默认预览策略影响，加 `--apply` 才保存；自动维护只在成功构建后执行。默认关闭，按 platform/distribution/profile 分组，最近 3 份或 14 天内均保留（数量是保底，不是硬上限）。
+
+历史包通过 `artifact-adopt --path <精确制品目录>` 预览，显式 `--apply` 登记；新生成 local-test 由发布入口登记。未登记、损坏和未知制品不自动删除。`artifact-pin --path <目录> --reason <原因>` 保护人工验收或验证依赖，`artifact-unpin --path <目录>` 解除；installer-smoke profile 始终保护。
+
+`artifact-gc` 预览，`artifact-gc --apply` 执行显式清理，不要求启用自动策略；执行复用 release-root 锁并复核最新身份与保留状态。正式包及 `_symbols` 不进入目标。删除日志持久化在稳定控制目录，部分失败用 `artifact-retry --path <精确目录> --apply` 复核后续删，未知新增内容阻止重试。以上命令均支持 `--releases-dir`，不加载构建依赖。Windows 用 `.\scripts\package\run.ps1`，macOS/Linux 用 `./scripts/package/run.sh`。
 
 `build-storage run.* benchmark` 只在自动移除的隔离 fixture 中比较快速盘点与递归计数，输出环境、样本规模和耗时；不扫描或清理真实缓存。`package run.* plan --purpose runtime-verify|runtime|installer|all|installer-smoke-build` 展示对应用途与生命周期；顶层 `allowed` 合并空间、并发预留与缓存预算，不应只读 `space.allowed`。计划不执行回收，也不代替实际构建时的安全回收与验证门禁。

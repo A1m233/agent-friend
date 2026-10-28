@@ -233,12 +233,16 @@ class Storage:
             record["pin"] = reason
             write_json(p, record)
 
-    def reconcile(self, operation_id: str, *, reason: str) -> dict[str, Any]:
+    def reconcile(
+        self, operation_id: str, *, reason: str, outcome: str = "failed"
+    ) -> dict[str, Any]:
         """Explicit operator assertion after checking the entire child process tree has stopped."""
         if len(operation_id) != 32 or any(c not in "0123456789abcdef" for c in operation_id):
             raise ValueError("invalid operation ID")
         if not reason.strip():
             raise ValueError("reconciliation requires the operator's stopped-process evidence")
+        if outcome not in {"stopped", "cancelled", "failed"}:
+            raise ValueError("invalid reconciliation outcome")
         records = [read_json(p) for p in self.records.glob("*.json")]
         affected = [r for r in records if r.get("operationId") == operation_id]
         reservation = self.control / "reservations" / f"{operation_id}.json"
@@ -253,19 +257,31 @@ class Storage:
                 self._validate(current)
                 if current.get("operationId") != operation_id:
                     raise Busy("operation changed during reconciliation")
+            completed = []
             for row in affected:
+                row = read_json(self.record_path(row["id"]))
+                if row["state"] != "running":
+                    continue  # Already finalized; never renew retention on repeated reconciliation.
+                ended = time.time()
+                self.archive(row, outcome, [])
                 row.update(
-                    state="failed",
+                    state="idle" if outcome == "stopped" else "failed",
+                    outcome=outcome,
+                    endedAt=ended,
+                    lastUsedAt=ended,
                     ownerPid=None,
                     reconciliation=reason,
-                    retainUntil=time.time() + self.config["retentionHours"] * 3600,
+                    retainUntil=None
+                    if outcome == "stopped"
+                    else ended + self.config["retentionHours"] * 3600,
                 )
                 write_json(self.record_path(row["id"]), row)
+                completed.append(row["id"])
             reservation.unlink(missing_ok=True)
         return {
             "schemaVersion": 1,
             "operationId": operation_id,
-            "reconciled": [r["id"] for r in affected],
+            "reconciled": completed,
         }
 
     @contextmanager
@@ -288,6 +304,8 @@ class Storage:
                 purpose=purpose,
                 ownerPid=os.getpid(),
                 operationId=getattr(self, "operation_id", None) or uuid.uuid4().hex,
+                outcome=None,
+                endedAt=None,
                 lastUsedAt=time.time(),
                 generation=record["generation"] + 1,
             )
@@ -310,6 +328,8 @@ class Storage:
                     else "failed",
                     lastUsedAt=time.time(),
                     ownerPid=None,
+                    outcome="succeeded" if succeeded else "cancelled" if interrupted else "failed",
+                    endedAt=time.time() if not interrupted else None,
                     retainUntil=time.time() + self.config["retentionHours"] * 3600
                     if retain or not succeeded
                     else None,
@@ -333,6 +353,20 @@ class Storage:
             "operationId": record.get("operationId"),
             "outcome": outcome,
             "recordedAt": time.time(),
+            "object": {
+                k: record.get(k)
+                for k in (
+                    "id",
+                    "path",
+                    "repoId",
+                    "category",
+                    "worktree",
+                    "generation",
+                    "purpose",
+                    "outcome",
+                    "endedAt",
+                )
+            },
             "error": str(sys.exc_info()[1])[:4096] if sys.exc_info()[1] is not None else None,
             "evidence": {},
         }
@@ -352,6 +386,8 @@ class Storage:
             if previous["objectId"] != report["objectId"]:
                 raise ValueError("report belongs to a different build object")
             report["evidence"] = {**previous["evidence"], **report["evidence"]}
+            if not files:
+                report["outcome"] = previous["outcome"]
         write_json(destination, report)
         return destination
 
@@ -386,6 +422,22 @@ class Storage:
                 raise Busy("object is protected")
             target = self._validate(record)
             tree_size(target)  # Reject nested reparse points before any recursive mutation.
+            # Persist provenance before touching files. Failure here leaves the whole object intact.
+            evidence = (
+                [
+                    target / name
+                    for name in (
+                        "config/build-identity.json",
+                        "config/install-profile.json",
+                        "config/guide-baseline.json",
+                        "package-timings.json",
+                        "runtime-verification.json",
+                    )
+                ]
+                if record["category"] == "package-build"
+                else []
+            )
+            self.archive(record, record.get("outcome") or record["state"], evidence)
             before = volume(target)[1]
             try:
                 # Preserve ownership until all other children are removed, so partial cleanup retries work.

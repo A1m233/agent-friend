@@ -46,7 +46,7 @@ env override `AGENT_FRIEND_DATA_DIR` / `AGENT_FRIEND_LOG_DIR` **仅供测试/rep
 
 - 正式安装包及其 SHA / manifest、共享下载缓存、PyInstaller work、Tauri staging 和 Cargo target 默认都不得写入仓库或任意 worktree。
 - agent-friend 完整安装包统一通过 `scripts/package/run.sh` / `run.ps1` 构建；不要把裸 `pnpm tauri build` 的壳产物当成完整产品安装包。
-- 打包、开发、Rust 检查和专项回归的可再生构建目录统一接入 `scripts/build-storage/` 与 `scripts/_lib/build_storage/`；持久配置、对象保护和回收策略以代码输出为准。安装包（含 local-test）、manifest、native symbols 和必要证据不随缓存回收；旧目录不得隐式接管。
+- 打包、开发、Rust 检查和专项回归的可再生构建目录统一接入 `scripts/build-storage/` 与 `scripts/_lib/build_storage/`；持久配置、对象保护和回收策略以代码输出为准。安装包（含 local-test）、manifest、native symbols 和必要证据不随缓存回收；旧目录不得隐式接管。本地测试包的独立保留策略由 `scripts/package/` 的 `artifact-*` 入口管理，默认不启用，历史包须显式纳入；正式包和 native symbols 不在淘汰范围。
 - 具体默认目录、override、worktree/build 隔离和版本 / 制品规则由 `scripts/package/paths.py`、`versioning.py`、`releases.py` 及 `scripts/package/run.py` 统一实现，Rule 和 Skill 不另写一套路径拼接或比较算法。
 - 修改打包路径或制品布局时，必须同步评估 package tests、`scripts/README.md` 与项目 `package-release` Skill；不要通过在调用处手拼绝对路径绕过统一入口。
 - 仓库内旧 `package-output/`、`scripts/package/.cache/`、`frontend/src-tauri/package-runtime/` 和 `frontend/src-tauri/target/` 只保留防御性 ignore / 兼容清理语义，不是当前默认输出位置。

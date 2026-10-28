@@ -458,3 +458,76 @@ def test_admission_reports_unreserved_space_shortfall(storage, tmp_path, monkeyp
         assert preview["space"]["volumes"][0]["shortfallBytes"] == 20
         with pytest.raises(RuntimeError, match="build admission blocked"):
             admit(storage, [("next", tmp_path, 60)])
+
+
+@pytest.mark.parametrize("outcome", ["stopped", "cancelled", "failed"])
+def test_reconcile_is_idempotent_and_preserves_outcome(storage, tmp_path, outcome):
+    with pytest.raises(KeyboardInterrupt), storage.use(tmp_path / "cache", "dev"):
+        raise KeyboardInterrupt
+    row = storage.inventory()["objects"][0]
+    storage.reconcile(row["operationId"], reason="verified full process tree", outcome=outcome)
+    first = read_json(storage.record_path(row["id"]))
+    storage.reconcile(row["operationId"], reason="same assertion", outcome="failed")
+    assert read_json(storage.record_path(row["id"])) == first
+    assert first["outcome"] == outcome
+    assert (first["retainUntil"] is None) == (outcome == "stopped")
+
+
+def test_delete_does_not_proceed_when_evidence_cannot_be_saved(storage, tmp_path, monkeypatch):
+    row = object_with_bytes(storage, tmp_path, "cache")
+
+    def failed(*a):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(storage, "archive", failed)
+    with pytest.raises(OSError):
+        storage.delete(row)
+    assert (tmp_path / "cache/data").exists()
+
+
+def test_discovery_counts_nested_managed_and_unmanaged_once(storage, tmp_path, monkeypatch):
+    from build_storage.discovery import discover
+
+    root = tmp_path / "build"
+    object_with_bytes(storage, root, "owned", 100)
+    (root / "old").mkdir()
+    (root / "old/data").write_bytes(b"x" * 17)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "absent"))
+    monkeypatch.setattr("build_storage.discovery.default_build_root", lambda: root)
+    report = discover(storage, scan=True, roots=[root, root / "owned"])
+    assert report["summary"]["knownLogicalBytes"] == 117
+    assert report["summary"]["unmanagedLogicalBytes"] == 17
+    assert report["complete"]
+    assert not (root / "old" / MARKER).exists()
+
+
+def test_discovery_unknown_size_and_cancel_are_explicit(storage, tmp_path, monkeypatch):
+    from build_storage.discovery import discover
+
+    root = tmp_path / "build"
+    root.mkdir()
+    (root / "file").write_bytes(b"data")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "absent"))
+    monkeypatch.setattr("build_storage.discovery.default_build_root", lambda: root)
+    assert discover(storage)["summary"]["unknownOrStaleCount"] == 1
+
+    def interrupt(*a):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("build_storage.discovery.tree_size", interrupt)
+    assert not discover(storage, scan=True)["complete"]
+
+
+def test_failed_build_gc_archives_identity_before_deleting(storage, tmp_path):
+    target = tmp_path / "failed-build"
+    with pytest.raises(RuntimeError), storage.use(target, "package-build"):
+        (target / "config").mkdir()
+        (target / "config/build-identity.json").write_text('{"buildId":"exact"}', encoding="utf-8")
+        raise RuntimeError("build failed before normal archive")
+    row = storage.inventory()["objects"][0]
+    row["retainUntil"] = 1
+    write_json(storage.record_path(row["id"]), row)
+    storage.delete(row)
+    report = read_json(next((storage.control / "reports" / storage.repo_id).glob("*.json")))
+    assert report["evidence"]["build-identity.json"] == '{"buildId":"exact"}'
+    assert not target.exists()
