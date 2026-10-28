@@ -246,6 +246,8 @@ _ERROR_CODES = {
     "rate_limit_error": (LLMRateLimitError, "rate_limit"),
     "invalid_request_error": (LLMBadRequestError, "request"),
     "invalid_request": (LLMBadRequestError, "request"),
+    # Compatible gateways also use this code with HTTP 400 / invalid_request_error.
+    "model_not_found": (LLMModelUnavailableError, "model_unavailable"),
     "content_policy_violation": (LLMContentPolicyError, "content_policy"),
     # Also emitted inside HTTP 200 streams; this is a provider-reported timeout,
     # not evidence that one of our local timeout timers expired.

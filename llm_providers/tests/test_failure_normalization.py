@@ -10,6 +10,7 @@ from llm_providers.errors import (
     LLMAuthError,
     LLMBadRequestError,
     LLMContextWindowError,
+    LLMModelUnavailableError,
     LLMPaymentRequiredError,
     LLMPermissionError,
     LLMProviderError,
@@ -36,6 +37,7 @@ class HttpFailure(Exception):
         ("rate_limit_exceeded", 429, LLMRateLimitError),
         ("context_length_exceeded", 400, LLMContextWindowError),
         ("invalid_request_error", 400, LLMBadRequestError),
+        ("model_not_found", 400, LLMModelUnavailableError),
         ("server_is_overloaded", 503, LLMTransientProviderError),
         ("engine_overloaded_error", 429, LLMTransientProviderError),
         ("request_timeout", 408, LLMTransientProviderError),
@@ -76,6 +78,35 @@ def test_unknown_error_preserves_digest_not_untrusted_text() -> None:
             raise map_provider_error(raw) from None
     except LLMProviderError:
         assert "sk-secret" not in traceback.format_exc()
+
+
+@pytest.mark.parametrize("provider_id", ["custom/fixture", "openai", "openrouter"])
+@pytest.mark.parametrize("status", [400, 404])
+def test_model_not_found_keeps_safe_route_evidence(provider_id: str, status: int) -> None:
+    mapped = map_provider_error(HttpFailure("model_not_found", status), provider_id=provider_id)
+
+    assert isinstance(mapped, LLMModelUnavailableError)
+    assert mapped.availability_code == "model_not_found"
+    assert mapped.retryable is False
+    assert mapped.status_code == status
+    assert mapped.error_evidence is not None
+    assert mapped.error_evidence.code == "model_not_found"
+    assert mapped.error_evidence.category == "model_unavailable"
+    assert mapped.error_evidence.error_type == "invalid_request_error"
+    assert "private" not in json.dumps(asdict(mapped.error_evidence)) + str(mapped)
+
+
+@pytest.mark.parametrize("status", [400, 404])
+def test_custom_route_requires_explicit_model_error_code(status: int) -> None:
+    mapped = map_provider_error(
+        HttpFailure("invalid_request_error", status), provider_id="custom/fixture"
+    )
+    assert isinstance(mapped, LLMBadRequestError)
+
+
+def test_authentication_takes_precedence_over_model_not_found() -> None:
+    mapped = map_provider_error(HttpFailure("model_not_found", 401), provider_id="custom/fixture")
+    assert isinstance(mapped, LLMAuthError)
 
 
 def test_stream_request_timeout_keeps_provider_code_without_inventing_local_timeout() -> None:

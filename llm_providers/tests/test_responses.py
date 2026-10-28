@@ -16,6 +16,7 @@ from llm_providers.errors import (
     LLMAuthError,
     LLMBadRequestError,
     LLMIncompleteResponseError,
+    LLMModelUnavailableError,
     LLMOutputBudgetExhaustedError,
     LLMProviderError,
     LLMRateLimitError,
@@ -252,12 +253,15 @@ def text_events(phase: str | None = "final_answer") -> list[dict[str, Any]]:
 def http_mock(monkeypatch: pytest.MonkeyPatch) -> Any:
     requests: list[httpx.Request] = []
 
-    def install(events: list[dict[str, Any]], status: int = 200) -> list[httpx.Request]:
+    def install(
+        events: list[dict[str, Any]], status: int = 200, error: dict[str, str] | None = None
+    ) -> list[httpx.Request]:
         def handler(request: httpx.Request) -> httpx.Response:
             requests.append(request)
             if status != 200:
                 return httpx.Response(
-                    status, json={"error": {"type": "invalid_api_key", "message": "fixture"}}
+                    status,
+                    json={"error": error or {"type": "invalid_api_key", "message": "fixture"}},
                 )
             if json.loads(request.content).get("stream") is False:
                 return httpx.Response(
@@ -683,6 +687,47 @@ def test_http_auth_error_does_not_fallback(http_mock: Any) -> None:
             )
         )
     assert len(requests) == 1
+
+
+@pytest.mark.parametrize("streaming", [True, False])
+def test_http_model_not_found_does_not_retry_or_expose_provider_text(
+    http_mock: Any, caplog: pytest.LogCaptureFixture, streaming: bool
+) -> None:
+    caplog.set_level("INFO", logger="llm_providers.call_observation")
+    requests = http_mock(
+        [],
+        400,
+        error={
+            "type": "invalid_request_error",
+            "code": "model_not_found",
+            "message": "unknown provider for model private-model",
+            "param": "model",
+        },
+    )
+    spec = replace(
+        build_provider_spec(provider_id="deepseek", api_key="fixture"),
+        provider_id="custom/fixture",
+    )
+    client = LLMClient(spec, network_retries=2, network_retry_backoff_seconds=0)
+    request = ModelRequest(messages=[{"role": "user", "content": "hi"}])
+    with pytest.raises(LLMModelUnavailableError) as caught:
+        if streaming:
+            list(client.stream(request))
+        else:
+            client.generate(request)
+
+    assert caught.value.availability_code == "model_not_found"
+    assert len(requests) == 1
+    record = next(
+        json.loads(item.message.split("model_call_observation ", 1)[1])
+        for item in caplog.records
+        if "model_call_observation " in item.message
+    )
+    assert record["stop_reason"] == "not_retryable"
+    assert record["retry_plans"] == 0
+    assert record["error"]["code"] == "model_not_found"
+    assert record["error"]["category"] == "model_unavailable"
+    assert "private-model" not in caplog.text + str(caught.value)
 
 
 def test_unknown_item_fails_but_completed_phase_can_change() -> None:

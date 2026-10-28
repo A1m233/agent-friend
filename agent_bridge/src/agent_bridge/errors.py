@@ -288,14 +288,18 @@ def map_exception(exc: BaseException) -> ProtocolError:
             recoverable=False,
         )
     if isinstance(exc, LLMModelUnavailableError):
+        if exc.availability_code == "model_not_configured":
+            message = "所选模型已不可用，请重新选择模型。"
+        elif exc.availability_code == "model_not_found":
+            message = (
+                "当前连接找不到所选模型的可用路由。请检查模型名称与连接配置，或在服务恢复后重试。"
+            )
+        else:
+            message = "当前模型没有满足必要能力与隐私约束的可用路由，请稍后重试或切换模型。"
         return ProtocolError(
             http_status=503,
             code="model_route_unavailable",
-            message=(
-                "所选模型已不可用，请重新选择模型。"
-                if exc.availability_code == "model_not_configured"
-                else "当前模型没有满足必要能力与隐私约束的可用路由，请稍后重试或切换模型。"
-            ),
+            message=message,
             recoverable=exc.retryable,
         )
     if isinstance(exc, LLMStreamInterruptedAfterOutputError):
