@@ -373,7 +373,7 @@ if [ "$MODE" = "tauri" ]; then
         --log "$DEV_TAURI_LOG" \
         --cwd "$ROOT/frontend" \
         --prefix "[app] " \
-        -- uv run python "$ROOT/scripts/build-storage/execute.py" --cwd "$ROOT/frontend" dev -- node "$ROOT/frontend/node_modules/@tauri-apps/cli/tauri.js" dev ${ARGS[@]+"${ARGS[@]}"} &
+        -- uv run python "$ROOT/scripts/build-storage/execute.py" --runtime-owner-pid "$$" --cwd "$ROOT/frontend" dev -- node "$ROOT/frontend/node_modules/@tauri-apps/cli/tauri.js" dev ${ARGS[@]+"${ARGS[@]}"} &
     wait
     exit $?
 fi
@@ -434,7 +434,7 @@ else
         --log "$DEV_TAURI_LOG" \
         --cwd "$ROOT/frontend" \
         --prefix "[app] " \
-        -- uv run python "$ROOT/scripts/build-storage/execute.py" --cwd "$ROOT/frontend" dev -- node "$ROOT/frontend/node_modules/@tauri-apps/cli/tauri.js" dev ${ARGS[@]+"${ARGS[@]}"} &
+        -- uv run python "$ROOT/scripts/build-storage/execute.py" --runtime-owner-pid "$$" --cwd "$ROOT/frontend" dev -- node "$ROOT/frontend/node_modules/@tauri-apps/cli/tauri.js" dev ${ARGS[@]+"${ARGS[@]}"} &
 fi
 
 if [ "$VOICE_MODE" = "off" ]; then

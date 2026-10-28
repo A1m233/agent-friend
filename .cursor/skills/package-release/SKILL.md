@@ -15,6 +15,13 @@ Windows 使用：
 .\scripts\package\run.ps1 version-status
 .\scripts\package\run.ps1 workspace-status [--scan]
 .\scripts\package\run.ps1 workspace-gc [--scan] [--apply]
+.\scripts\package\run.ps1 artifact-status
+.\scripts\package\run.ps1 artifact-configure [--automatic on|off] [--keep-count N] [--keep-days N] [--apply]
+.\scripts\package\run.ps1 artifact-adopt --path <EXACT_DIRECTORY> [--apply]
+.\scripts\package\run.ps1 artifact-pin --path <EXACT_DIRECTORY> --reason <REASON>
+.\scripts\package\run.ps1 artifact-unpin --path <EXACT_DIRECTORY>
+.\scripts\package\run.ps1 artifact-gc [--apply]
+.\scripts\package\run.ps1 artifact-retry --path <EXACT_DIRECTORY> [--apply]
 .\scripts\package\run.ps1 plan [--purpose <STEP>] [--state-dir <PATH>] [--releases-dir <PATH>]
 .\scripts\package\run.ps1 version-set <semver>
 .\scripts\package\run.ps1 trusted-beta-configure <next-stable-semver>
@@ -79,11 +86,22 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
 - 开发、Rust 检查和专项回归缓存使用 `scripts/build-storage/run.*` 的统一管理入口；具体参数与范围以该入口和 `scripts/README.md` 为准，不自行拼接删除路径。
 - 请求构建即覆盖本次必要的安全缓存回收：标准入口自动处理本仓库已登记、空闲且未受 pin/保留期/锁保护的可再生成构建对象，满足本次卷空间与预算要求即停止。Agent 调用标准入口并简短回报结果，不手工拼路径删除，也不为常规回收再次询问。
 - `automaticCategories` / `configure --automatic` 只控制构建结束后的可选维护，默认关闭；它按闲置期限与低水位回收，与构建前按需回收分开。构建请求不隐含修改这一持久配置。
-- 旧目录只能先盘点和识别；`workspace-adopt --path <精确目录>` 默认预览，显式 `--apply` 后登记并保护。确认旧消费者已停止后才按对象 ID 解除保护，不凭目录年龄推断空闲。
+- 旧目录只能先盘点和识别；`workspace-adopt --path <精确目录>` 默认预览，显式 `--apply` 后登记并保护。缺少原工作区凭据的纯 Cargo 缓存，可显式加 `--cargo-evidence`：脚本核验编译记录与仓库/源码路径身份并归档证据，不补造原凭据；损坏或冲突的已有凭据不走此回退。确认旧消费者已停止后才按对象 ID 解除保护，不凭目录年龄推断空闲。
+- 仅清理明确选定对象时，使用 `build-storage run.* gc --only-object-id <ID>`（可重复）；默认预览，`--apply` 才执行。它只收窄候选，仍遵守既有保护与容量策略，不手写删除循环或临时修改预算强迫回收。
 - `runtime-verify` 用于纯冻结验证，成功后保留报告并回收本次中间目录；`runtime` 用于等待 `installer --reuse-build-id`，按脚本给出的期限保留。失败现场和显式 pin 也遵循同一可查询记录。
 - 构建与清理采用稳定控制目录中的互斥保护；更换 state root 不能绕过。锁冲突只报告，不删除 lock 或强杀未知进程。
 - 空间门槛、预算、保留期限及实际可回收量全部以脚本计划为准；运行中对象保持保护，有有效容量预留时以已有体积加预留增长量估算，不把暂时过期的统计直接当作零或全局故障。安全回收后仍不足或无法确认占用时报告具体缺口/保护原因，未经授权不换盘、接管未知目录或解除保护。
 - 中断操作按 `build-storage status` 的对象和 reservation 记录定位；只有核实整棵子进程树停止后，才使用显式 reconcile 入口解除保护。不得把 PID 消失当作所有后代已经退出。
+
+## 本地测试制品保留
+
+`artifact-*` 是轻量制品管理路径，不构建、不发布、不刷新 Guide；与 workspace GC 分开。默认关闭自动淘汰，具体保留参数和候选以脚本输出为准。
+
+- 先 `artifact-status` 查看登记、未管、固定保留、验证保护和删除残留；`artifact-configure` 默认预览变更后的影响，明确授权后才加 `--apply`。构建请求不隐含启用持久策略。
+- 旧测试包先 `artifact-adopt --path <精确制品目录>` 预览，授权后 `--apply` 纳入；启用策略不追溯接管旧包。新生成 local-test 自动登记，只有已启用策略才在成功构建后维护。
+- 正在人工验收、需要跨会话保留或用作验证依赖的 production-profile 测试包，先按精确目录 `artifact-pin`；不再依赖时显式 unpin。installer-smoke profile 始终受保护。
+- 用户要求清理测试包时查看 `artifact-gc`，核对具体候选后按授权执行 `--apply`；保留正式包、native symbols 和未登记/身份不明制品。读取失败或缺少可靠身份时停止，不手工删目录绕过。
+- 部分删除失败查看删除记录，`artifact-retry --path <精确目录> --apply` 仅重试记录中已授权且身份仍匹配的残留。必要证据先持久化，再删大文件；实际回收以卷空间变化为准。
 
 ## 模式边界
 

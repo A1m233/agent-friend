@@ -10,6 +10,17 @@ from windows_host import maybe_relay
 
 ROOT = Path(__file__).resolve().parents[2]
 MANAGEMENT = {"workspace-status", "workspace-gc", "workspace-adopt", "plan"}
+MANAGEMENT.update(
+    {
+        "artifact-status",
+        "artifact-configure",
+        "artifact-adopt",
+        "artifact-pin",
+        "artifact-unpin",
+        "artifact-gc",
+        "artifact-retry",
+    }
+)
 BUILD = {"runtime", "runtime-verify", "installer", "all", "installer-smoke-build"}
 
 

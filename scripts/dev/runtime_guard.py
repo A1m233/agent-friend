@@ -139,6 +139,8 @@ class RuntimeManager:
                     return CommandResult(1, self._active_owner_lines(lease))
                 if active and takeover:
                     lines += self._stop_lease_owner(lease, reason="takeover")
+                    if self._load_lease() and self._load_lease().get("stopUnconfirmed"):
+                        return CommandResult(1, lines)
                 else:
                     lines.append("  [WARN] dev runtime lease 已失效，已安全回收 stale lease。")
                 self._remove_lease()
@@ -243,8 +245,18 @@ class RuntimeManager:
             lease = self._load_lease()
             if lease and self._lease_active(lease):
                 lines += self._stop_lease_owner(lease, reason="stop")
+                current = self._load_lease()
+                if current and current.get("stopUnconfirmed"):
+                    return CommandResult(1, lines)
                 self._remove_lease()
             elif lease:
+                if lease.get("storageOperationId"):
+                    return CommandResult(
+                        1,
+                        [
+                            "  [WARN] stale runtime has unresolved build storage; verify descendants and reconcile explicitly."
+                        ],
+                    )
                 lines.append("  [WARN] dev runtime lease 已失效，已移除 stale lease。")
                 self._remove_lease()
 
@@ -361,9 +373,34 @@ class RuntimeManager:
     def _stop_lease_owner(self, lease: dict[str, Any], *, reason: str) -> list[str]:
         pid = int(lease["ownerPid"])
         lines = [f"===> {reason}: stopping active dev runtime PID={pid}"]
-        if stop_process_tree(pid):
+        # Capture identities before terminating the wrapper; a dead parent alone proves nothing.
+        processes = {p.pid: p for p in list_processes()}
+        targets = [pid, *descendant_pids(pid, processes)]
+        starts = {p: process_start_id(p) for p in targets}
+        if starts.get(pid) != lease.get("ownerStartId"):
+            lease["stopUnconfirmed"] = True
+            self.lease_path.write_text(json.dumps(lease), encoding="utf-8")
+            return [*lines, "  [WARN] owner identity changed before stop; nothing stopped"]
+        stopped = stop_process_tree(pid)
+        confirmed = (
+            stopped
+            and all(starts.values())
+            and all(process_start_id(p) != start for p, start in starts.items())
+        )
+        if confirmed:
+            if lease.get("storageOperationId"):
+                sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_lib"))
+                from build_storage import Storage
+
+                Storage(Path(lease["worktree"])).reconcile(
+                    lease["storageOperationId"],
+                    outcome="stopped",
+                    reason="dev guard verified captured process identities exited",
+                )
             lines.append(f"  [OK] stopped PID={pid}")
         else:
+            lease["stopUnconfirmed"] = True
+            self.lease_path.write_text(json.dumps(lease), encoding="utf-8")
             lines.append(f"  [WARN] PID={pid} stop command did not fully confirm exit")
         return lines
 
@@ -380,6 +417,28 @@ class RuntimeManager:
             else:
                 lines.append(f"  [WARN] PID={owner.pid} stop command did not fully confirm exit")
         return lines
+
+
+def bind_storage_operation(repo: Path, owner_pid: int, operation_id: str) -> None:
+    """Called by the managed dev wrapper before launching any compiler children."""
+    state = runtime_state_dir()
+    with RuntimeLock(state / "lock"):
+        lease_path = state / "lease.json"
+        lease = json.loads(lease_path.read_text(encoding="utf-8"))
+        processes = {p.pid: p for p in list_processes()}
+        if (
+            Path(lease["worktree"]).resolve() != repo.resolve()
+            or lease["ownerPid"] != owner_pid
+            or not lease.get("ownerStartId")
+            or process_start_id(owner_pid) != lease["ownerStartId"]
+            or os.getpid() not in descendant_pids(owner_pid, processes)
+            or lease.get("stopUnconfirmed")
+        ):
+            raise RuntimeError("dev storage operation does not belong to the active runtime lease")
+        lease["storageOperationId"] = operation_id
+        temporary = lease_path.with_name(f"lease.{uuid.uuid4().hex}.tmp")
+        temporary.write_text(json.dumps(lease), encoding="utf-8")
+        os.replace(temporary, lease_path)
 
 
 class RuntimeLock:
@@ -898,7 +957,7 @@ def stop_process_tree(pid: int) -> bool:
             capture_output=True,
             text=True,
         )
-        return result.returncode == 0 or not process_start_id(pid)
+        return result.returncode == 0
     return stop_process_tree_posix(pid)
 
 

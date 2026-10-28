@@ -125,6 +125,35 @@ def finalize(paths: Any, *, remove: bool) -> None:
     storage = Storage(paths.roots.repo_root)
     complete_build(storage, paths.build_dir, remove=remove, outcome="passed")
     maintain(storage)
+    # Existing success hook runs inside package_guard after publication and evidence capture.
+    from release_retention import Retention
+
+    retention = Retention(storage, paths.roots.releases_root)
+    published = [
+        r
+        for r in retention.inventory()["objects"]
+        if r.get("manifest", {}).get("build_id") == paths.build_id
+    ]
+    if len(published) > 1:
+        raise ValueError("ambiguous published local-test build identity")
+    if published:
+        report = maintain_releases(paths.roots, Path(published[0]["path"]))
+        print("local_test_retention: " + json.dumps(report, ensure_ascii=False))
+        if report.get("failed"):
+            raise RuntimeError(
+                "installer published, but local-test maintenance failed; inspect report"
+            )
+
+
+def maintain_releases(roots: Any, directory: Path) -> dict[str, Any]:
+    """Caller holds package_guard, including the release-root lock, after successful publication."""
+    from release_retention import Retention
+
+    retention = Retention(Storage(roots.repo_root), roots.releases_root)
+    retention.register(directory, apply=True, locked=True)
+    if not retention.state()["enabled"]:
+        return {"enabled": False, "deleted": []}
+    return retention.collect(retention.inventory(), locked=True)
 
 
 def emit_plan(roots: Any, *, purpose: str = "all") -> None:
