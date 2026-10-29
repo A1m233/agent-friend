@@ -33,7 +33,7 @@
 
 ## 当前状态
 
-项目处于持续开发阶段，包含桌面应用、对话引擎、长期记忆、工具执行和多入口接入。当前正在准备公开源码；第三方发行授权和 Git 历史清理尚未全部完成，源码许可证不代表完整安装包已经具备公开发行条件。
+项目处于持续开发阶段，包含桌面应用、对话引擎、长期记忆、工具执行和多入口接入。源码已公开；第三方发行授权核对尚未全部完成，源码许可证不代表完整安装包已经具备公开发行条件。具体范围见 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
 技术栈已锁定（见 [`docs/decisions/0002-incubation-tech-stack`](docs/decisions/0002-incubation-tech-stack/README.md)）：Python 3.12 + uv workspace + LiteLLM + SQLite + FastAPI(HTTP/SSE)。
 
