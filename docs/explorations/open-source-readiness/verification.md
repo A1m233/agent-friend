@@ -1,0 +1,18 @@
+# 开源准备验证记录
+
+日期：2026-10-29。基线 `635b81079d4ca9b6ae5b6aba3055b8ef9ea0e87e`，验证对象为本次隐私清理、Apache-2.0 声明、Showcase 脱敏配置和说明更新。未调整产品功能或依赖版本。
+
+| 检查 | 结果 |
+| --- | --- |
+| `scripts/check/run.ps1 --stage backend` | 通过：lint、typecheck；pytest 4,336 passed、5 skipped。输出 8 条 warning，退出时另有 B 站 SDK 的 event loop 清理异常，命令退出码 0；不将这些输出描述为无告警 |
+| `scripts/frontend/install.ps1 --frozen-lockfile` | 通过；使用本机已有依赖缓存，不是干净机器验证 |
+| `scripts/check/run.ps1 --stage frontend` | 通过：lint/typecheck、193 个测试文件中的 1,558 个测试、生产构建。构建有 CSS 与 chunk size 警告 |
+| `scripts/check/run.ps1 --stage rust` | 通过：格式检查、Rust 测试、release check。有已有未使用项警告 |
+| 包元信息比较 | 14 份清单的结构性变更仅为 Apache-2.0 license 字段；依赖锁文件无变化 |
+| 当前源文件扫描 | 3,788 个文件的快照；已知凭据/账号值和个人标识无命中；变更 JSON 可解析；重命名截图像素不变 |
+| Gitleaks 8.30.1 | 上述快照有 169 个命中，逐项核对均为文件 SHA-256 值；不存在未分类命中。这不是对所有未知凭据的绝对保证 |
+| 文档与 diff | 新说明相对链接有效；`git diff --check` 通过 |
+
+后续仅补充上游关停与验证结果等文档说明，未改变已验证代码。未执行真实 LLM 评测、桌面视觉验收、安装包构建或干净机器安装。检查通过不代表第三方发行许可已取得。
+
+本地历史预演覆盖远端快照中的 194 个分支、1,198 个提交，替换已知内容并移除私人文档；远端未修改。预演不含本次后续源码提交，Git 作者邮箱映射亦未完成，不能直接作为最终公开历史推送。公开前仍须形成包含最终内容、完整身份映射与最新远端基线的候选历史，复核后再应用。

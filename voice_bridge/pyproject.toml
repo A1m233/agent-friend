@@ -1,4 +1,5 @@
 [project]
+license = "Apache-2.0"
 name = "voice-bridge"
 version = "0.1.0"
 description = "agent-friend · 语音通话控制平面 + 火山 RTC LLM 入站代理（007 voice-call）"

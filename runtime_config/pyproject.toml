@@ -1,4 +1,5 @@
 [project]
+license = "Apache-2.0"
 name = "runtime-config"
 version = "0.1.0"
 description = "agent-friend · 运行时配置与凭据来源装配"

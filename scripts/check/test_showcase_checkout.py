@@ -26,6 +26,32 @@ def _load_snapshot_module() -> ModuleType:
 RUN = _load_snapshot_module()
 
 
+def test_private_identity_can_be_configured_without_embedding_owner_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SHOWCASE_PRIVATE_USER", "private-account-fixture")
+    monkeypatch.setenv("SHOWCASE_PRIVATE_DISPLAY_NAME", "Private Display Fixture")
+    configured = _load_snapshot_module()
+    text = r"C:\Users\private-account-fixture\notes Private Display Fixture"
+    for pattern, replacement in configured.SOURCE_SAFE_REPLACEMENTS:
+        text = pattern.sub(replacement, text)
+    assert "private-account-fixture" not in text
+    assert "Private Display Fixture" not in text
+    assert "example-user" in text
+
+
+def test_empty_private_identity_settings_do_not_match_every_string(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SHOWCASE_PRIVATE_USER", " ")
+    monkeypatch.setenv("SHOWCASE_PRIVATE_DISPLAY_NAME", "")
+    configured = _load_snapshot_module()
+    assert Path.home().name == configured.PRIVATE_USER
+    for _, category, pattern in configured.SCAN_PATTERNS:
+        if category == "private name":
+            assert pattern.search("ordinary public documentation") is None
+
+
 def _git(checkout: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", "-C", str(checkout), *args],

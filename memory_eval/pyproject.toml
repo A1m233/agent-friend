@@ -1,4 +1,5 @@
 [project]
+license = "Apache-2.0"
 name = "memory-eval"
 version = "0.1.0"
 description = "agent-friend · memory 召回质量评测（PoC，基于 LoCoMo）"

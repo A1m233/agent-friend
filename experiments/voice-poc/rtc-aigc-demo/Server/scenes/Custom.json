@@ -4,18 +4,18 @@
     "name": "agent-friend voice-poc"
   },
   "AccountConfig": {
-    "accessKeyId": "example-account-value",
-    "secretKey": "example-account-value"
+    "accessKeyId": "",
+    "secretKey": ""
   },
   "RTCConfig": {
-    "AppId": "example-account-value",
-    "AppKey": "example-account-value",
+    "AppId": "",
+    "AppKey": "",
     "RoomId": "",
     "UserId": "",
     "Token": ""
   },
   "VoiceChat": {
-    "AppId": "example-account-value",
+    "AppId": "",
     "RoomId": "",
     "TaskId": "",
     "AgentConfig": {
@@ -32,8 +32,8 @@
         "ProviderParams": {
           "Mode": "bigmodel",
           "StreamMode": 0,
-          "AppId": "example-account-value",
-          "AccessToken": "example-account-value"
+          "AppId": "",
+          "AccessToken": ""
         },
         "VADConfig": {
           "SilenceTime": 300,
@@ -44,7 +44,7 @@
         "Provider": "volcano",
         "ProviderParams": {
           "app": {
-            "appid": "example-account-value",
+            "appid": "",
             "cluster": "volcano_tts"
           },
           "audio": {
@@ -57,7 +57,7 @@
       },
       "LLMConfig": {
         "Mode": "ArkV3",
-        "EndPointId": "example-account-value",
+        "EndPointId": "",
         "SystemMessages": [
           "你是 agent-friend 语音 spike 模式下的临时助手，说话简洁自然、像真人聊天，单次回复尽量在 30 字以内。"
         ],

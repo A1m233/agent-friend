@@ -1,4 +1,5 @@
 [project]
+license = "Apache-2.0"
 name = "tools"
 version = "0.1.0"
 description = "agent-friend · 开发/调试/评估工具集合"

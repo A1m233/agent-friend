@@ -1,4 +1,5 @@
 [project]
+license = "Apache-2.0"
 name = "agent-friend"
 version = "0.1.0"
 description = "一个虚拟朋友定位的 AI 项目"

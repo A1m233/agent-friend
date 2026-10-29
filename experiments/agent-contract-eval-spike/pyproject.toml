@@ -1,4 +1,5 @@
 [project]
+license = "Apache-2.0"
 name = "agent-contract-eval-spike"
 version = "0.1.0"
 description = "agent 行为契约评测 spike — 验证「契约 + 强模型扩 variation + deterministic assertion」这套方法是否可行"

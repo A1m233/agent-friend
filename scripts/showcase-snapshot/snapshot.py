@@ -19,6 +19,8 @@ SENTINEL = ".agent-friend-showcase-snapshot"
 
 
 EXACT_ROOT_FILES = {
+    "LICENSE",
+    "NOTICE",
     ".gitignore",
     ".python-version",
     "AGENTS.md",
@@ -173,10 +175,12 @@ EXTRA_WORKTREE_PREFIXES = (
     ".claude/skills",
 )
 
-PRIVATE_USER = "example" + "-user"
-PRIVATE_DISPLAY_NAME = "Alex"
+PRIVATE_USER = os.environ.get("SHOWCASE_PRIVATE_USER", "").strip() or Path.home().name
+PRIVATE_DISPLAY_NAME = (
+    os.environ.get("SHOWCASE_PRIVATE_DISPLAY_NAME", "").strip() or "private-display-name"
+)
 PRIVATE_MAC_HOME = "/Users/" + PRIVATE_USER
-PRIVATE_WIN_HOME = r"C:\Users" + "\\" + "example-user"
+PRIVATE_WIN_HOME = r"C:\Users" + "\\" + PRIVATE_USER
 
 SOURCE_SAFE_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(re.escape(PRIVATE_DISPLAY_NAME), re.IGNORECASE), "<example-user>"),
@@ -389,6 +393,10 @@ def public_readme() -> str:
 - 不包含本地凭据、私有数据、生成缓存和真实厂商 demo 配置
 - 保留必要的 Coding Agent 工作流配置，用于展示工程协作和 harness 设计
 - 通过 allowlist-first 的 snapshot pipeline 生成，并附带扫描报告
+
+## 许可证
+
+自有代码与文档采用 [Apache-2.0](LICENSE)，版权声明见 [NOTICE](NOTICE)。第三方代码、运行库、模型、媒体和数据集保留各自许可；请查阅各目录随附的 LICENSE / NOTICE 和来源清单，Apache-2.0 不授予这些材料的额外使用或分发权限。
 
 ## 这个项目在做什么
 

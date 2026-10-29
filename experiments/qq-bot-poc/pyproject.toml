@@ -1,4 +1,5 @@
 [project]
+license = "Apache-2.0"
 name = "qq-bot-poc"
 version = "0.1.0"
 description = "QQ Bot OpenAPI 链路验证 spike — 验证 local-first agent 直连可行性"

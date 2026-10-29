@@ -34,6 +34,8 @@ $RECYCLE.BIN/
 .claude/settings.local.json
 
 # ===== Secrets / Env =====
+# Personal preparation notes are kept outside the public source tree.
+/INTERVIEW.md
 .env
 .env.*
 !.env.example
