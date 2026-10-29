@@ -2,28 +2,6 @@
 
 一个陪伴式 AI 项目。长期形态是常驻桌面的 AI 朋友（桌宠），支持语音、长期记忆、用户自定义人格。
 
-## 许可证
-
-本项目自有代码与文档采用 **[Apache License 2.0](LICENSE)**，版权声明见 [NOTICE](NOTICE)。允许在遵守许可证的前提下使用、修改、分发和商业使用，包括闭源衍生；分发时须保留适用的许可证及声明，并按协议标明修改。该许可不授予项目商标使用权。
-
-第三方代码、依赖、运行库、模型、图片、音频及数据集保留各自的版权与许可，**不因本仓库或包元信息标注 Apache-2.0 而改为 Apache-2.0**。主要随仓材料的许可入口如下：
-
-当前保留 B 站集成。包含 `bilibili-api-python` 的 Python 引擎组合按适用的 GPLv3-or-later 条件准备分发，自有源码保留 Apache-2.0 声明；不能把这个组合仅按 Apache 条件再分发。具体范围、源码交付义务和未完成的整包核对见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
-
-| 材料 | 许可与来源入口 |
-| --- | --- |
-| 内置第三方 Skills | [来源清单](agent/src/agent/skills/builtin_assets/manifest.json)及各 Skill 目录的许可证 |
-| Vendored Tauri runtime | [Apache-2.0](frontend/src-tauri/vendor/tauri-runtime-wry/LICENSE_APACHE-2.0) / [MIT](frontend/src-tauri/vendor/tauri-runtime-wry/LICENSE_MIT) |
-| 火山引擎语音 demo | [BSD-3-Clause 许可](experiments/voice-poc/rtc-aigc-demo/LICENSE) |
-| Live2D Cubism Core | [专有软件许可入口](frontend/public/live2d-models/CUBISM_CORE_LICENSE.md) |
-| Hiyori 样例模型 | [素材及样例模型许可入口](frontend/public/live2d-models/hiyori/LICENSE.md) |
-| 明日方舟模型及测试样例 | [模型 NOTICE](frontend/public/spine-models/ark-models/NOTICE.md)、[测试样例 NOTICE](frontend/public/spine-spike-fixtures/ark-amiya/NOTICE.md) |
-| Spine 运行库依赖 | 所使用版本随附的许可证及 [Spine 官方许可](https://esotericsoftware.com/spine-runtimes-license) |
-| B 站连接器依赖 | 保留 `bilibili-api-python 17.4.1`：GPL-3.0-or-later；[许可全文](licenses/GPL-3.0.txt)与[组合分发说明](THIRD_PARTY_NOTICES.md)；[上游已宣布关停](https://github.com/Nemo2011/bilibili-api) |
-| Live2D 封装库 | `easy-live2d 0.4.4`：MPL-2.0；与 Cubism Core、样例模型的许可分别适用 |
-
-评测中的第三方截图、媒体和外部基准数据也不属于本项目自有素材。上述索引不是全部传递依赖的许可证清单；构建或分发完整应用时，仍须满足对应版本及使用方式的第三方授权条件。选择 Apache-2.0 不表示这些发行条件已经核验完成。
-
 ## 想法
 
 - 以类似桌宠的形态出现在桌面上
@@ -33,7 +11,7 @@
 
 ## 当前状态
 
-项目处于持续开发阶段，包含桌面应用、对话引擎、长期记忆、工具执行和多入口接入。源码已公开；第三方发行授权核对尚未全部完成，源码许可证不代表完整安装包已经具备公开发行条件。具体范围见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+项目处于持续开发阶段，包含桌面应用、对话引擎、长期记忆、工具执行和多入口接入。
 
 技术栈已锁定（见 [`docs/decisions/0002-incubation-tech-stack`](docs/decisions/0002-incubation-tech-stack/README.md)）：Python 3.12 + uv workspace + LiteLLM + SQLite + FastAPI(HTTP/SSE)。
 
@@ -91,3 +69,7 @@ macOS / Linux：
 自动化检查可分别运行 `scripts/check/run.* --stage backend`、`--stage frontend` 和 `--stage rust`；Windows 使用 `.ps1`，macOS / Linux 使用 `.sh`。真实模型评测需自行配置并另行执行，不属于仅凭静态检查即可证明的能力。
 
 脚本清单见 [`scripts/README.md`](scripts/README.md)。用户数据（会话 / 人格 / 记忆）落在系统标准用户数据目录（见 [`0002 §3.19`](docs/decisions/0002-incubation-tech-stack/README.md)）。
+
+## 许可证
+
+自有代码采用 [Apache-2.0](LICENSE)。第三方组件与素材的许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。

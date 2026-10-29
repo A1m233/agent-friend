@@ -32,8 +32,21 @@ Bilibili platform or resolve the platform-related claims shown by upstream.
 
 ## Other components
 
-The [README license index](README.md#许可证) lists identified runtime, model,
-media and vendored-code notices. It is not an exhaustive dependency inventory.
+The following index lists identified runtime, model, media and vendored-code
+notices. It is not an exhaustive dependency inventory.
+
+| 材料 | 许可与来源入口 |
+| --- | --- |
+| 内置第三方 Skills | [来源清单](agent/src/agent/skills/builtin_assets/manifest.json)及各 Skill 目录的许可证 |
+| Vendored Tauri runtime | [Apache-2.0](frontend/src-tauri/vendor/tauri-runtime-wry/LICENSE_APACHE-2.0) / [MIT](frontend/src-tauri/vendor/tauri-runtime-wry/LICENSE_MIT) |
+| 火山引擎语音 demo | [BSD-3-Clause 许可](experiments/voice-poc/rtc-aigc-demo/LICENSE) |
+| Live2D Cubism Core | [专有软件许可入口](frontend/public/live2d-models/CUBISM_CORE_LICENSE.md) |
+| Hiyori 样例模型 | [素材及样例模型许可入口](frontend/public/live2d-models/hiyori/LICENSE.md) |
+| 明日方舟模型及测试样例 | [模型 NOTICE](frontend/public/spine-models/ark-models/NOTICE.md)、[测试样例 NOTICE](frontend/public/spine-spike-fixtures/ark-amiya/NOTICE.md) |
+| Spine 运行库依赖 | 所使用版本随附的许可证及 [Spine 官方许可](https://esotericsoftware.com/spine-runtimes-license) |
+| B 站连接器依赖 | 保留 `bilibili-api-python 17.4.1`：GPL-3.0-or-later；[许可全文](licenses/GPL-3.0.txt)与[组合分发说明](#bilibili-integration)；[上游已宣布关停](https://github.com/Nemo2011/bilibili-api) |
+| Live2D 封装库 | `easy-live2d 0.4.4`：MPL-2.0；与 Cubism Core、样例模型的许可分别适用 |
+
 MPL components require their applicable source and notice obligations to be met.
 Live2D Core and Spine Runtimes retain their own terms; model and media rights
 are separate from the engine's software licenses.
