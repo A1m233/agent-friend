@@ -27,6 +27,8 @@ Credential revocation status is outside this file cleanup. No credential was
 tested against its provider during cleanup.
 
 Git author/committer email addresses are a separate publication surface. The
-local history preview does not yet establish that those identities are suitable
-for publication; the owner's personal email also needs a verified public
-identity mapping before any rewritten history is published.
+owner's historical private identities are included in the isolated rewrite
+scope, using the verified GitHub account's public noreply identity. Local
+candidate verification records are kept outside this repository. These records
+must be checked against the final candidate and current remote refs before any
+rewritten history is published; this document does not apply a remote rewrite.

@@ -5,7 +5,7 @@ Set-Location (Join-Path $PSScriptRoot "..\..")
 
 # --verify-checkout scans without writes; --sync-checkout requires a clean checkout.
 # Optional SHOWCASE_PRIVATE_USER / SHOWCASE_PRIVATE_DISPLAY_NAME configure personal redaction.
-# Snapshots retain the root LICENSE and NOTICE alongside third-party license files.
+# Snapshots retain LICENSE, NOTICE, THIRD_PARTY_NOTICES.md and licenses/.
 
 $Uv = Get-Command uv -ErrorAction SilentlyContinue
 if ($Uv) {

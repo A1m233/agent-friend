@@ -21,6 +21,7 @@ SENTINEL = ".agent-friend-showcase-snapshot"
 EXACT_ROOT_FILES = {
     "LICENSE",
     "NOTICE",
+    "THIRD_PARTY_NOTICES.md",
     ".gitignore",
     ".python-version",
     "AGENTS.md",
@@ -44,6 +45,7 @@ EXACT_FRONTEND_FILES = {
 }
 
 ALLOW_PREFIXES = (
+    "licenses/",
     ".cursor/rules/",
     ".cursor/skills/",
     ".Codex/skills/",
@@ -397,6 +399,8 @@ def public_readme() -> str:
 ## 许可证
 
 自有代码与文档采用 [Apache-2.0](LICENSE)，版权声明见 [NOTICE](NOTICE)。第三方代码、运行库、模型、媒体和数据集保留各自许可；请查阅各目录随附的 LICENSE / NOTICE 和来源清单，Apache-2.0 不授予这些材料的额外使用或分发权限。
+
+当前保留 GPL-3.0-or-later 的 B 站依赖；包含它的 Python 引擎组合不能仅按 Apache 条件再分发。参见 [第三方声明与分发范围](THIRD_PARTY_NOTICES.md)和 [GPLv3 全文](licenses/GPL-3.0.txt)。
 
 ## 这个项目在做什么
 

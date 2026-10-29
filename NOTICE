@@ -10,3 +10,5 @@ not relicense those materials or grant additional rights to them. Preserve
 their applicable license and notice files when redistributing them.
 
 See the licensing section in README.md for third-party license locations.
+See THIRD_PARTY_NOTICES.md for the retained GPL Bilibili dependency and the
+distribution obligations of the combined Python engine.

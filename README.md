@@ -8,6 +8,8 @@
 
 第三方代码、依赖、运行库、模型、图片、音频及数据集保留各自的版权与许可，**不因本仓库或包元信息标注 Apache-2.0 而改为 Apache-2.0**。主要随仓材料的许可入口如下：
 
+当前保留 B 站集成。包含 `bilibili-api-python` 的 Python 引擎组合按适用的 GPLv3-or-later 条件准备分发，自有源码保留 Apache-2.0 声明；不能把这个组合仅按 Apache 条件再分发。具体范围、源码交付义务和未完成的整包核对见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
 | 材料 | 许可与来源入口 |
 | --- | --- |
 | 内置第三方 Skills | [来源清单](agent/src/agent/skills/builtin_assets/manifest.json)及各 Skill 目录的许可证 |
@@ -17,7 +19,7 @@
 | Hiyori 样例模型 | [素材及样例模型许可入口](frontend/public/live2d-models/hiyori/LICENSE.md) |
 | 明日方舟模型及测试样例 | [模型 NOTICE](frontend/public/spine-models/ark-models/NOTICE.md)、[测试样例 NOTICE](frontend/public/spine-spike-fixtures/ark-amiya/NOTICE.md) |
 | Spine 运行库依赖 | 所使用版本随附的许可证及 [Spine 官方许可](https://esotericsoftware.com/spine-runtimes-license) |
-| B 站连接器依赖 | `bilibili-api-python 17.4.1`：GPL-3.0-or-later；当前由引擎直接导入并纳入打包，完整应用发行不能仅按 Apache-2.0 说明；[上游已宣布关停](https://github.com/Nemo2011/bilibili-api)，公开版集成范围待定 |
+| B 站连接器依赖 | 保留 `bilibili-api-python 17.4.1`：GPL-3.0-or-later；[许可全文](licenses/GPL-3.0.txt)与[组合分发说明](THIRD_PARTY_NOTICES.md)；[上游已宣布关停](https://github.com/Nemo2011/bilibili-api) |
 | Live2D 封装库 | `easy-live2d 0.4.4`：MPL-2.0；与 Cubism Core、样例模型的许可分别适用 |
 
 评测中的第三方截图、媒体和外部基准数据也不属于本项目自有素材。上述索引不是全部传递依赖的许可证清单；构建或分发完整应用时，仍须满足对应版本及使用方式的第三方授权条件。选择 Apache-2.0 不表示这些发行条件已经核验完成。
