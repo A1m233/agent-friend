@@ -387,6 +387,9 @@ def _make_persistent_session_manager(
         metadata_store=metadata_store,
         session_change_broker=session_change_broker,
         message_renderer=(multimodal_adapter.render_message if multimodal_adapter else None),
+        message_budget_renderer=(
+            multimodal_adapter.render_budget_message if multimodal_adapter else None
+        ),
         session_file_service=SessionFileService(store, attachment_store, command_workspaces_dir())
         if attachment_store
         else None,

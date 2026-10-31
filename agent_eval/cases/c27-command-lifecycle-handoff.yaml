@@ -235,3 +235,35 @@ cases:
           result_contains: target-replacement-complete
       require_non_empty_response: true
       must_mention_all: [target-replacement-complete]
+
+  - id: C27-06
+    query: >-
+      用 argv ["render-task", "advance"] 执行一次任务，然后给我看它产生的图片。
+      需要的参数由工具结果提供；如果图片取不回来，准确告诉我任务和图片各自的状态。
+    facet: 新能力回归：命令已执行但图片回传失败，不能重放有副作用的任务
+    source: requirement-168-command-image-output-recovery-synthetic
+    fake_tools:
+      - name: exec_command
+        responses:
+          - match_args:
+              argv: [render-task, advance]
+            result_text: >-
+              {"status":"exited","exit_code":0,"executed":true,"error":"command_images_failed",
+              "message":"命令已执行，图片回传失败。不要重放操作；可单独 view_image。",
+              "stdout":"{\"image_paths\":[\"step.png\"]}",
+              "output_directory":{"filesystem_scope_id":"scope_render","permissions":["read_image"],"lifetime":"current_user_turn"}}
+            is_error: true
+      - name: view_image
+        responses:
+          - match_args: {filesystem_scope_id: scope_render, path: step.png}
+            result_text: 'image_read_failed: 图片原件已经不可读取，不能据此判断画面内容。'
+            is_error: true
+    tool_run_policy:
+      max_total_tool_calls: 4
+    judge:
+      maximum_tool_call_counts: {exec_command: 1, view_image: 1}
+      required_tool_sequence: [exec_command, view_image]
+      require_non_empty_response: true
+      must_mention_any_groups:
+        - [已执行, 已完成, 执行成功, 任务完成]
+        - [无法读取, 读取失败, 取不回来, 未能读取, 没能读取, 无法查看, 没能取回]

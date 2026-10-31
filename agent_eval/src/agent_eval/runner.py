@@ -478,6 +478,11 @@ def _build_manager(
             if attachment_store is not None
             else None
         ),
+        message_budget_renderer=(
+            MultimodalInputAdapter(open_asset=attachment_store.open).render_budget_message
+            if attachment_store is not None
+            else None
+        ),
         skill_service=skill_service,
     )
 

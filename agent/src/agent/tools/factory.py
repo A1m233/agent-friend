@@ -168,6 +168,15 @@ def make_default_registry(
 
     if command_runtime is not None:
         from ..command_runtime import make_command_tools
+        from ..command_runtime.image_output import CommandImageOutput
+
+        image_output = (
+            CommandImageOutput(
+                FilesystemService(filesystem_policy), ImageReadingService(attachment_store)
+            )
+            if attachment_store is not None
+            else None
+        )
 
         tools.extend(
             make_command_tools(
@@ -175,6 +184,7 @@ def make_default_registry(
                 approval_broker,
                 execution_environment_manager,
                 tool_execution_evidence_store,
+                image_output,
             )
         )
 

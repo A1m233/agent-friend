@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 
-from ..attachments.models import TOOL_IMAGE_MAX_COUNT
 from ..messages import Message
 from .budget import CHARS_TO_TOKENS, estimate_request_tokens, estimate_tokens
 from .protocol import RuntimeContext, ToolContextEditRecord
@@ -19,6 +18,13 @@ TOOL_EDIT_LOW_WATER_MAX_TOKENS = 32_000
 TOOL_EDIT_MIN_BATCH_TOKENS = 16_000
 TOOL_EDIT_RECENT_HISTORY_BATCH_COUNT = 3
 TOOL_CONTEXT_EDIT_POLICY_VERSION = 2
+
+# Retention is independent of the per-result ceiling. Replay in chronological
+# order makes evictions stable when new history is appended or a session reopens.
+TOOL_IMAGE_HISTORY_HIGH = 10
+TOOL_IMAGE_HISTORY_LOW = 4
+TOOL_IMAGE_HISTORY_HIGH_BYTES = 32 * 1024 * 1024
+TOOL_IMAGE_HISTORY_LOW_BYTES = 16 * 1024 * 1024
 
 # 040 上线前的事件没有 ``context_retention`` 元数据。只为已知只读、可重放工具
 # 提供兼容判定；新事件以工具实现声明并落盘的元数据为准。未知工具默认 pinned。
@@ -371,21 +377,33 @@ def project_tool_results(
 
 
 def bound_tool_images(messages: list[Message]) -> tuple[list[Message], int]:
-    """Hard request resource ceiling, independent of the chosen text budget strategy."""
+    """Append within a bounded segment, then evict an old prefix as one batch.
+
+    Preserve complete result groups, especially a newly returned dialogue batch.
+    This is image eviction, not a generated summary; raw assets remain recoverable.
+    """
     projected = list(messages)
     omitted = 0
-    remaining_images = TOOL_IMAGE_MAX_COUNT
-    for index in range(len(projected) - 1, -1, -1):
-        message = projected[index]
-        if len(message.images) > remaining_images:
-            projected[index] = _project_message(
-                message,
-                "[tool image omitted: request image count budget]",
-                stage="image_budget",
-                original_tokens=estimate_tokens([message]),
+    retained: list[int] = []
+    count = size = 0
+    for index, message in enumerate(messages):
+        if not message.images:
+            continue
+        retained.append(index)
+        count += len(message.images)
+        size += sum(ref.size_bytes for ref in message.images)
+        if count <= TOOL_IMAGE_HISTORY_HIGH and size <= TOOL_IMAGE_HISTORY_HIGH_BYTES:
+            continue
+        while len(retained) > 1 and (
+            count > TOOL_IMAGE_HISTORY_LOW or size > TOOL_IMAGE_HISTORY_LOW_BYTES
+        ):
+            old_index = retained.pop(0)
+            old = messages[old_index]
+            count -= len(old.images)
+            size -= sum(ref.size_bytes for ref in old.images)
+            projected[old_index] = _project_message(
+                old, old.content, stage="image_budget", original_tokens=estimate_tokens([old])
             )
             omitted += 1
-        else:
-            remaining_images -= len(message.images)
 
     return projected, omitted

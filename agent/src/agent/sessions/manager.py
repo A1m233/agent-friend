@@ -153,6 +153,7 @@ class SessionManager:
         metadata_store: SessionMetadataStore | None = None,
         session_change_broker: SessionChangeBroker | None = None,
         message_renderer: MessageRenderer | None = None,
+        message_budget_renderer: MessageRenderer | None = None,
         message_projector: MessageProjector | None = None,
         session_file_service: SessionFileService | None = None,
         skill_service: SkillCatalogService | None = None,
@@ -173,6 +174,7 @@ class SessionManager:
         self._metadata_store = metadata_store
         self._session_change_broker = session_change_broker
         self._message_renderer = message_renderer
+        self._message_budget_renderer = message_budget_renderer
         self._message_projector = message_projector
         self._session_file_service = session_file_service
         self._skill_service = skill_service
@@ -771,6 +773,7 @@ class SessionManager:
                 tool_run_context_factory=tool_run_context_factory,
                 post_turn_external=post_turn_external,
                 message_renderer=self._message_renderer,
+                message_budget_renderer=self._message_budget_renderer,
                 message_projector=self._message_projector,
                 session_file_service=self._session_file_service,
                 skill_service=self._skill_service,

@@ -5,6 +5,8 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
+from llm_providers.multimodal.limits import TOOL_RESULT_MAX_IMAGE_BYTES, TOOL_RESULT_MAX_IMAGES
+
 AttachmentKind = Literal["image", "document"]
 
 
@@ -33,13 +35,15 @@ class AttachmentRef:
 
 
 TOOL_IMAGE_MAX_BYTES = 8 * 1024 * 1024
-TOOL_IMAGE_MAX_COUNT = 4
+TOOL_IMAGE_MAX_COUNT = TOOL_RESULT_MAX_IMAGES
 TOOL_IMAGE_MEDIA_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
 
 
 def validate_image_refs(images: Sequence[AttachmentRef]) -> None:
     if len(images) > TOOL_IMAGE_MAX_COUNT:
         raise ValueError("too many tool images")
+    if sum(ref.size_bytes for ref in images) > TOOL_RESULT_MAX_IMAGE_BYTES:
+        raise ValueError("tool images exceed total byte budget")
     for ref in images:
         if (
             ref.kind != "image"

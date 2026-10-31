@@ -467,6 +467,7 @@ class Conversation:
         time_provider: TimeProvider | None = None,
         approval_mode_provider: Callable[[], SessionApprovalModeState] | None = None,
         tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
+        message_budget_renderer: MessageRenderer | None = None,
     ):
         self._session = session
         self._store = store
@@ -485,6 +486,7 @@ class Conversation:
         self._tool_post_hook = tool_post_hook
         self._post_turn_external = post_turn_external
         self._message_renderer = message_renderer
+        self._message_budget_renderer = message_budget_renderer
         self._generated_image_store = session_file_service.assets if session_file_service else None
         from .attachments.input_projection import project_file_message
         from .session_files.inputs import SessionFileInputs
@@ -3490,12 +3492,26 @@ class Conversation:
         )
         return event
 
-    def _render_context_message(self, message: Message) -> dict[str, Any]:
+    def _project_context_message(self, message: Message) -> Message:
+        from .context.command_projection import project_successful_command
+
         message = self._message_projector(message)
+        if (
+            self._tool_registry is not None
+            and _RECOVER_TOOL_RESULT_TOOL_NAME in self._tool_registry
+        ):
+            message = project_successful_command(message)
+        return message
+
+    def _render_context_message(
+        self, message: Message, *, for_budget: bool = False
+    ) -> dict[str, Any]:
+        message = self._project_context_message(message)
+        renderer = self._message_budget_renderer if for_budget else self._message_renderer
         rendered = (
             message.to_openai()
-            if self._message_renderer is None
-            else self._message_renderer(message, self._active_llm_client())
+            if renderer is None
+            else renderer(message, self._active_llm_client())
         )
         raw_reasoning = message.meta.get("provider_reasoning_state")
         if isinstance(raw_reasoning, dict):
@@ -3561,7 +3577,7 @@ class Conversation:
         from .context.budget import estimate_attachment_allowance
 
         calibration_key = self._input_calibration_key(messages)
-        messages = [self._message_projector(message) for message in messages]
+        messages = [self._project_context_message(message) for message in messages]
         factor = self._calibration_by_input.get(calibration_key, 1.0)
 
         def fallback() -> int:
@@ -3569,8 +3585,15 @@ class Conversation:
                 (estimate_tokens(messages) + estimate_tool_schema_tokens(tools)) * factor
             )
 
-        # Rendering attachments can upload files. Budget candidate selection must
-        # remain pure and must not upload content that will subsequently be cut.
+        # Only an explicitly local renderer may run during candidate selection.
+        # It produces the same image blocks as sending, so already-measured images
+        # match the usage anchor instead of receiving another fixed allowance.
+        if self._message_budget_renderer is not None:
+            rendered = [
+                self._render_context_message(message, for_budget=True) for message in messages
+            ]
+            return self._estimate_rendered_input(rendered, tools, calibration_key=calibration_key)
+        # Custom renderers may upload: retain the conservative, no-I/O fallback.
         if any(message.attachments or message.images for message in messages):
             if self._usage_anchor is None or self._usage_anchor.version < 3:
                 return InputEstimate(fallback(), "full_estimate", "attachments_pending_render")
@@ -3669,7 +3692,7 @@ class Conversation:
         """把本轮组装的度量观测刷进 :attr:`last_context_notes`（AC-1.3）。"""
         from .context import estimate_tokens
 
-        projected_messages = [self._message_projector(message) for message in build.messages]
+        projected_messages = [self._project_context_message(message) for message in build.messages]
         calibration_key = self._input_calibration_key(build.messages)
         notes: dict[str, Any] = {
             "attachment_input_projection": INPUT_PROJECTION_VERSION,
@@ -5368,7 +5391,11 @@ class Conversation:
     ) -> dict[str, Any]:
         """给内置工具补运行时隐藏上下文；不改变 LLM 原始 tool args。"""
         invocation_args = dict(args)
-        if name == "view_image" or (name == "recover_tool_result" and args.get("mode") == "images"):
+        if (
+            name == "view_image"
+            or (name == "exec_command" and "output_images" in args)
+            or (name == "recover_tool_result" and args.get("mode") == "images")
+        ):
             invocation_args[IMAGE_INPUT_SUPPORTED_ARG] = (
                 self._message_renderer is not None
                 and supports_tool_images(self._active_llm_client())

@@ -1517,6 +1517,66 @@ def test_command_tool_uses_shared_approval_and_buffered_semantics(
         assert "不能证明宿主机" in payload["sandbox_observation_note"]
 
 
+@pytest.mark.parametrize("present", [True, False])
+def test_buffered_command_returns_images_without_a_second_model_call(
+    runtime: CommandRuntime, tmp_path: Path, present: bool
+) -> None:
+    from agent.attachments import AttachmentStore
+    from agent.command_runtime.image_output import CommandImageOutput
+    from agent.filesystem import FilesystemService, ProtectedPathPolicy
+    from agent.image_reading import ImageReadingService
+    from agent.tools.protocol import IMAGE_INPUT_SUPPORTED_ARG
+    from PIL import Image
+
+    if present:
+        Image.new("RGB", (8, 8), "red").save(tmp_path / "frame.png")
+    context = ToolRunContext.create("")
+    scope = context.filesystem_authorizations.grant_scope(
+        root=tmp_path, root_kind="directory", permissions=frozenset({"read_image"})
+    )
+    broker = ApprovalBroker()
+    policy = ProtectedPathPolicy(product_roots=(), personal_skill_roots=(), builtin_skill_roots=())
+    tool = ExecCommandTool(
+        runtime,
+        broker,
+        image_output=CommandImageOutput(
+            FilesystemService(policy), ImageReadingService(AttachmentStore(tmp_path / "assets"))
+        ),
+    )
+    args = {
+        "cmd": "fake:image-output",
+        "workdir": str(tmp_path.resolve()),
+        "output_images": {"filesystem_scope_id": scope.scope_id},
+        COMMAND_SESSION_ID_ARG: "session-a",
+        COMMAND_RUN_ID_ARG: "run-a",
+        COMMAND_TOOL_CALL_ID_ARG: "call-image",
+        COMMAND_SURFACE_ARG: "desktop_chat",
+        COMMAND_RUN_CONTEXT_ARG: context,
+        IMAGE_INPUT_SUPPORTED_ARG: True,
+    }
+    results = []
+    worker = threading.Thread(target=lambda: results.append(tool.invoke(args)))
+    worker.start()
+    request = _wait_for_request(broker)
+    assert broker.decide(
+        request.request_id,
+        CommandApprovalDecision(allow=True),
+        session_id="session-a",
+        run_id="run-a",
+        expected_kind="command",
+    )
+    worker.join(5)
+    assert not worker.is_alive()
+    result = results[0]
+    assert bool(result.images) is present
+    assert result.is_error is not present
+    payload = json.loads(result.text)
+    assert payload["exit_code"] == 0
+    if not present:
+        assert payload["error"] == "command_images_failed" and payload["executed"] is True
+        assert "不要重放" in payload["message"]
+
+
 def test_buffered_command_persists_host_observed_output_evidence(
     runtime: CommandRuntime,
     tmp_path: Path,
