@@ -115,7 +115,7 @@ Windows `dev/run.*` 会通过 `desktop-application/run.* ensure` 构建并绑定
 
 `session-latency/run.* restore --session-id ID --baseline-ref HEAD --output PATH` 只读加载一次本机会话，在同一输入上比较 Git 基线与当前 rollout 恢复，报告时间和完整恢复结果摘要；不执行回合、不调用模型。基线先跑且加载器统一使用当前版本，不能冒充独立随机实验；仅从可信项目 Git revision 加载基线代码。原始会话不写入报告。
 
-`context-recovery-smoke/run.*` 的 `--connection-name NAME` 指定已核验的 CPA 连接显示名（默认 CPA）。Windows/WebView2 桌面验收另用 `--desktop-stage open MODEL_REF` 创建专用验收会话，后续 `inspect|oversize|edit-oversize|reload|evidence|recover|success SESSION_ID` 连接已核验的真实 Tauri CDP；必须在隔离数据目录启动 runtime。`recover` 另须 `--allow-llm`，产生 1 轮 CPA 对话，产品启用的通知/记忆可能产生配套调用，执行前须一并计入授权量。其它阶段不主动发起真实模型请求；不将本 runner 用于已有用户会话。桌面 JSON/截图写入系统临时目录，跨平台入口语义一致。
+`context-recovery-smoke/run.*` 的 `--connection-name NAME` 指定已核验的 CPA 连接显示名（默认 CPA）。Windows/WebView2 桌面验收另用 `--desktop-stage open MODEL_REF` 创建专用验收会话，后续 `inspect|oversize|edit-oversize|reload|evidence|recover|success SESSION_ID` 连接已核验的真实 Tauri CDP；必须在隔离数据目录启动 runtime。`recover` 另须 `--allow-llm`，产生 1 轮 CPA 对话，产品启用的通知/记忆可能产生配套调用，执行前须一并计入授权量。其它阶段不主动发起真实模型请求；不将本 runner 用于已有用户会话。桌面 JSON/截图写入系统临时目录，跨平台入口语义一致。长会话合成夹具在候选选择与最终准入中使用同一预算压力，避免两处判定不一致。
 
 `context-recovery-smoke/run.* --scenario long-session --allow-llm --connection-name NAME --model REF --reasoning-preset effort:low --output NEW_PRIVATE_JSON` 运行 144 的三个合成场景，默认模式仍保持 137 行为。普通请求、摘要和冷恢复共享最多 8 次 provider 调用，禁用内部重试；预计 6 次，异常立即保留失败报告。逻辑窗口最多 20,000 token；首场景由夹具在真实工具事务闭合后强制压缩，报告标为 `synthetic_force_at_completed_tool_boundary`，用于观察真实摘要承接，不代表真实满窗或自动压力复现。唯一工具只增加内存计数，不执行外部动作；失败场景明确为合成的 provider 调用前失败。报告校验最新目标/约束、已完成/运行中/未知/待处理状态、无重复工具副作用和 checkpoint 冷复用，保留源码哈希、模型配置、实际请求数、合成摘要/回答；输出拒绝仓库内路径及覆盖，临时会话建于该项目外输出目录并在结束后清理。不启动 UI、后台记忆或通知，不凭 fake 测试宣称真实模型已通过；实际运行仍须获得本次真实调用授权。
 

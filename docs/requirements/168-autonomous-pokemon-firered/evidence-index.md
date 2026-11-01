@@ -3,6 +3,7 @@
 ## 用途与当前判断
 
 - 通用 harness：完整摘要单次请求、Skill 结构化 argv 的确定性验证见 E-026，真实运行验证见 E-028；最新游戏状态见 E-027。
+- 第五批后的当前页优化与阶段合入检查见E-029；尚未对该新笔记策略再次进行真实游玩。
 
 本索引记录 AF 独立游玩中文版《宝可梦 火红》的现状、外部能力与资源候选。需求范围见 [requirement.md](./requirement.md)。
 
@@ -411,3 +412,11 @@
 - 一次summary请求attempt1，输出上限16384，provider实际input710252/output3592 token，成功结束；生成97763.737ms，整个context_build104445ms。没有分段、容量错误或省略来源，提交压缩结果后AF恢复游玩。
 - E-025旧机制一次压缩用了3次摘要、生成203.768秒、整体214.641秒；两次历史不同，不能声称严格约50%提速。本次只确认单次完整请求机制及此样本容量接受，摘要长期信息保真、所有窗口均可容纳仍未证明。
 - 第4轮102主循环请求之外另计此1次摘要；不能混入重复模型调用或把后台其它请求当成已统计。5轮Skill绑定argv实际执行，含中文JSON和多来源更新，未出现旧cmd重复转义问题。本批未为此再修改通用源码。
+
+### E-029 · 当前页与阶段合入验证
+
+- 用户批准当前页、减少重复核验、合并写入和聚焦查询，要求先合入现有能力阶段。实现提交69245389；此前通用改动cb4334f0。journal复用为AF自行整页替换的当前页，knowledge可原子合写data/text，默认输出party/bag、当前页和经验索引，旧记录仍可定向或all读取。工具不迁移或判断游戏事实，未修改真实笔记和存档。
+- 123项Pokemon专项与Skill结构/格式检查通过；新测试覆盖整页替换、批量单revision、无半写入、索引定向查阅、旧内容保留和歧义参数拒绝。现有revision97只读对照默认3490字符、全部10869字符，文件字节不变。字符减少不等于模型token或时延同比下降；未新增付费运行，不宣称重复核验行为已实测改善。
+- 全仓检查首次仅一项合成恢复smoke失败，报告summary_result_over_budget。反事实证明夹具的request_assessment与candidate_assessment_factory没有共享人工预算压力；修正夹具后原6次fake调用、状态保真及冷恢复断言通过，不改生产运行逻辑。全量4522通过/5跳过加失败项复验1通过；backend --lf含lint/mypy通过。前端1558测试/生产构建、Rust测试/release check通过。
+- Guide旧来源5ea12689经开源清理commit-map精确映射7727e35d，生产源码相同且新hash为当前主干祖先。按同一来源连续性复核产品变化后仅更新metadata至69245389；Guide487ce944、r103发布并确认immutable和asset digest，正文content digest未变，兼容0.4.1至0.5.0之前。旧release未改写。
+- runtime-only成功：build20261101T133822Z-692453894bf4-9e7871e2，Guide r103临时输入，doctor与冻结bridge/voice通过；Windows read-access为实际能力检查。持久报告在标准build-control/reports仓库域内，文件5f1e1c63fc4fa2b4ecd6393e-4f01f0e13f1f416c9c6445fd6afc28ec.json；runtime inventory SHA256 92233f29f05045f61172a49f99319ff432b6aba3cafae795a2e86f6779bb4376。产物中间目录已回收，源码builtin恢复。没有安装器构建、真实覆盖安装或新游戏运行。
