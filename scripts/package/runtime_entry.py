@@ -1665,6 +1665,12 @@ def _smoke_managed_execution_environment() -> dict[str, Any]:
         return {"status": "not-configured", "source_mode": True}
     with tempfile.TemporaryDirectory(prefix="agent-friend-managed-environment-doctor-") as value:
         temporary = Path(value)
+        from agent.execution_environment.windows_read_access import prepare_read_access
+
+        acl_probe = temporary / "acl-probe"
+        acl_probe.mkdir()
+        prepare_read_access([acl_probe])
+        prepare_read_access([acl_probe])
         provider = PythonEnvironmentProvider.from_runtime(
             data_root=temporary / "data",
             environment_root=Path(configured_root),
@@ -1755,6 +1761,7 @@ def _smoke_managed_execution_environment() -> dict[str, Any]:
             "local_wheel": True,
             "pdf_native_tools": native_details,
             "office_files": office_details,
+            "windows_read_access": os.name == "nt",
         }
 
 

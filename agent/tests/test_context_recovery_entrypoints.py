@@ -105,13 +105,17 @@ class _LongTaskModel(RecoveringModel):
         )
 
 
+@pytest.mark.parametrize("local_budget_renderer", [False, True])
 def test_one_user_tool_loop_compacts_and_finishes_without_reexecuting_results(
     tmp_path: Path,
+    local_budget_renderer: bool,
 ) -> None:
     model = _LongTaskModel(context_window=20_000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=model, context_manager=SummarizingContextManager()
     )
+    if local_budget_renderer:
+        conv._message_budget_renderer = lambda message, _: message.to_openai()
     action = _RecordingAction()
     conv._tool_registry = ToolRegistry([action])
     conv._rollout_recorder = SessionRolloutRecorder(store, session)

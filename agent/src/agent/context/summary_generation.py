@@ -1,6 +1,7 @@
 """Collect a complete summary while the transport can observe upstream progress."""
 
 import logging
+from time import perf_counter
 
 from llm_providers.errors import (
     LLMEmptyResponseError,
@@ -14,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 def generate_summary(model: LanguageModel, request: ModelRequest) -> ModelResponse:
+    started = perf_counter()
+    outcome = "failed"
     # Only the validated terminal response becomes a summary. Reasoning,
     # commentary and partial text remain private, but streaming lets the
     # transport refresh its idle timeout while the provider is making progress.
@@ -31,11 +34,13 @@ def generate_summary(model: LanguageModel, request: ModelRequest) -> ModelRespon
             if request.control.cancel_check is not None:
                 request.control.cancel_check()
             if isinstance(event, LLMTurnDone):
-                return ModelResponse(
+                response = ModelResponse(
                     text=final_response_text(event),
                     usage=event.usage,
                     diagnostics=event.diagnostics,
                 )
+                outcome = "completed"
+                return response
         raise LLMIncompleteResponseError("missing_terminal")
     except (LLMIncompleteResponseError, LLMEmptyResponseError) as exc:
         logger.warning(
@@ -50,3 +55,11 @@ def generate_summary(model: LanguageModel, request: ModelRequest) -> ModelRespon
         close = getattr(events, "close", None)
         if callable(close):
             close()
+        logger.info(
+            "summary_generation_done session=%s run=%s attempt=%s duration_ms=%.3f outcome=%s",
+            trace.session_id if trace else None,
+            trace.run_id if trace else None,
+            trace.call_index if trace else None,
+            (perf_counter() - started) * 1000,
+            outcome,
+        )

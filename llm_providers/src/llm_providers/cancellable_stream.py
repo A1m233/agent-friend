@@ -13,17 +13,20 @@ import logging
 import queue
 import threading
 import time
+from collections import Counter
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .call_observation import current_call
+from .stream_progress import progress_category
 from .timeouts import ModelTimeoutPolicy
 
 logger = logging.getLogger(__name__)
 
 _CANCEL_POLL_SECONDS = 0.05
 _STREAM_END = object()
+_PROGRESS_LOG_SECONDS = 30.0
 
 
 class StreamIdleTimeoutExceeded(TimeoutError):
@@ -95,6 +98,11 @@ class CancellableAsyncStream:
         self._last_activity_at = time.monotonic()
         self._stage_started_at = self._last_activity_at
         self._last_activity: str | None = None
+        self._progress_lock = threading.Lock()
+        self._progress_counts: Counter[str] = Counter()
+        self._last_progress_at: float | None = None
+        self._last_progress_category: str | None = None
+        self._last_progress_log_at = self._last_activity_at
         observation = current_call.get()
         self._call_id = observation.call_id if observation else None
         self._task_lock = threading.Lock()
@@ -142,6 +150,8 @@ class CancellableAsyncStream:
     def _check_control(self) -> None:
         try:
             self._cancel_check()
+            if time.monotonic() - self._last_progress_log_at >= _PROGRESS_LOG_SECONDS:
+                self._log_progress("waiting")
             policy = self._timeout_policy
             stage = "stream_idle" if self._opened_successfully else "awaiting_response"
             timeout_seconds = (
@@ -166,6 +176,28 @@ class CancellableAsyncStream:
         except BaseException:
             self.close()
             raise
+
+    def _log_progress(self, phase: str) -> None:
+        now = time.monotonic()
+        with self._progress_lock:
+            counts = dict(self._progress_counts)
+            progress_at = self._last_progress_at
+            category = self._last_progress_category
+        self._last_progress_log_at = now
+        logger.info(
+            "model_stream_progress call_id=%s phase=%s stage=%s stage_elapsed_ms=%s "
+            "last_sdk_event_age_ms=%s last_content_progress_age_ms=%s "
+            "last_content_category=%s queued_events=%s event_counts=%s",
+            self._call_id,
+            phase,
+            "stream_idle" if self._opened_successfully else "awaiting_response",
+            round((now - self._stage_started_at) * 1000),
+            round((now - self._last_activity_at) * 1000),
+            round((now - progress_at) * 1000) if progress_at is not None else None,
+            category,
+            self._items.qsize(),
+            counts,
+        )
 
     def close(self) -> None:
         if self._closed.is_set():
@@ -217,6 +249,12 @@ class CancellableAsyncStream:
                 self._last_activity_at = time.monotonic()
                 # Do not log provider-controlled event names or content.
                 self._last_activity = "sdk_event"
+                category, has_progress = progress_category(chunk)
+                with self._progress_lock:
+                    self._progress_counts[category] += 1
+                    if has_progress:
+                        self._last_progress_at = self._last_activity_at
+                        self._last_progress_category = category
                 self._items.put(chunk)
         except asyncio.CancelledError as exc:
             if not self._closed.is_set():
@@ -224,6 +262,7 @@ class CancellableAsyncStream:
         except BaseException as exc:
             self._record_failure(exc)
         finally:
+            self._log_progress("producer_finished")
             # Cleanup has its own outcome, not stream silence that could trigger retry.
             self._response_done.set()
             with self._task_lock:

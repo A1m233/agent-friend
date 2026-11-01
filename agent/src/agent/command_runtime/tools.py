@@ -413,7 +413,8 @@ class ExecCommandTool:
         "内置 screenshot 是宿主管理的例外：默认输出到本次会话截图目录，"
         "不申请 home 可写；成功结果 output_directory 返回当前轮 read_image scope。"
         "直接启动一个程序及其参数时优先使用 argv；只有确实需要 shell 内建命令、管道、"
-        "重定向、变量展开等 shell 解释，或运行 Skill-bound 脚本时才使用 cmd。"
+        "重定向、变量展开等 shell 解释时才使用 cmd。Skill-bound 脚本也优先使用 argv，"
+        "将 skill.entry 作为独立参数，JSON/空格/引号直接放在对应参数中，不再 shell 转义。"
         "sandboxed 模式中的 python/python3 会稳定解析到产品管理、按会话隔离的 Python，"
         "不依赖用户 PATH；pip/pip3/python -m pip/uv pip 会规范化为同一受管 package"
         " operation。registry 安装必须申请 read_write 和 network=enabled；已授权本地 .whl"
@@ -442,7 +443,9 @@ class ExecCommandTool:
                     "结构化进程参数，第一个元素是绝对可执行文件或宿主 PATH 中的程序名。"
                     "直接启动单个 CLI 时优先使用本字段；每个参数独立成一个数组"
                     "元素，因此正则中的 |、含空格路径和引号不会被 shell 再解释。"
-                    "含空格的 Windows 路径必须用本字段。"
+                    "含空格的 Windows 路径必须用本字段。绑定 Skill 时将 skill.entry 的包内"
+                    '相对路径作为独立参数，例如 ["python","scripts/run.py","--data","JSON内容"]；'
+                    "宿主定位快照入口，不填写安装绝对路径。"
                 ),
             },
             "cmd": {
@@ -451,7 +454,7 @@ class ExecCommandTool:
                 "maxLength": MAX_COMMAND_CHARS,
                 "description": (
                     "需要 shell 解释的完整命令字符串，只用于 shell 内建命令、管道、重定向、"
-                    "变量展开或 Skill-bound 脚本；普通单程序及参数优先使用 argv。Windows 中"
+                    "变量展开；普通单程序及 Skill-bound 脚本优先使用 argv。Windows 中"
                     "本字段由 cmd.exe 解释；PowerShell cmdlet 必须显式通过可用的"
                     " pwsh.exe -NoProfile -Command 调用，并把脚本作为一个带双引号的参数。"
                     "Skill-bound 命令必须引用 skill.entry 的包内相对路径，不能包含 Skill"
@@ -635,15 +638,7 @@ class ExecCommandTool:
             },
             {
                 "if": {"required": ["skill"]},
-                "then": {
-                    "required": ["cmd"],
-                    "not": {
-                        "anyOf": [
-                            {"required": ["argv"]},
-                            {"required": ["workdir"]},
-                        ]
-                    },
-                },
+                "then": {"not": {"required": ["workdir"]}},
             },
         ],
         "not": {"required": ["workdir", "skill"]},
@@ -1360,9 +1355,8 @@ class ExecCommandTool:
             requested_workdir = workdir
             display_workdir = relative_workdir.as_posix()
             cwd_source = "skill_snapshot"
-            if not isinstance(cmd, str):
-                raise ValueError("Skill-bound 命令必须使用 cmd")
-            cmd = self._rewrite_skill_entry(cmd, skill_snapshot)
+            if isinstance(cmd, str):
+                cmd = self._rewrite_skill_entry(cmd, skill_snapshot)
             roots = (*roots, (skill_snapshot.snapshot_root, False))
             skill_binding = CommandSkillBinding(
                 skill_id=skill_snapshot.skill_id,
@@ -1396,13 +1390,18 @@ class ExecCommandTool:
         managed: ResolvedManagedCommand | None = None
         if parsed_argv is not None:
             semantic_argv = tuple(parsed_argv)
+            launch_argv = (
+                self._rewrite_skill_argv(semantic_argv, skill_snapshot)
+                if skill_snapshot is not None
+                else semantic_argv
+            )
             managed = self._resolve_managed_command(
-                semantic_argv,
+                launch_argv,
                 execution=execution,
                 session_id=session_id,
                 run_id=run_id,
             )
-            argv = managed.argv if managed is not None else self._structured_argv(semantic_argv)
+            argv = managed.argv if managed is not None else self._structured_argv(launch_argv)
             if execution == "sandboxed" and Path(argv[0]).name.casefold() in {
                 "powershell",
                 "powershell.exe",
@@ -1503,10 +1502,16 @@ class ExecCommandTool:
             # bundled sibling helpers remain importable without inheriting an
             # arbitrary host PYTHONPATH.
             environment_overrides["PYTHONPATH"] = str(skill_snapshot.entry_path.parent)
+        display_argv = managed.display_argv if managed is not None else argv
+        if skill_snapshot is not None and parsed_argv is not None:
+            display_argv = tuple(
+                skill_snapshot.entry if token == str(skill_snapshot.entry_path) else token
+                for token in display_argv
+            )
         return (
             CommandApprovalDetails(
                 cmd=display_cmd,
-                argv=managed.display_argv if managed is not None else argv,
+                argv=display_argv,
                 execution=execution,
                 workdir=display_workdir,
                 cwd_source=cwd_source,  # type: ignore[arg-type]
@@ -1519,7 +1524,12 @@ class ExecCommandTool:
                 interactive=mode == "streaming",
                 skill=skill_binding,
                 execution_environment=(managed.public_summary() if managed is not None else None),
-                launch_argv=(managed.argv if managed is not None else None),
+                launch_argv=(
+                    argv
+                    if managed is not None
+                    or (skill_snapshot is not None and parsed_argv is not None)
+                    else None
+                ),
                 launch_workdir=str(workdir),
                 environment_overrides=environment_overrides,
                 managed_command=managed,
@@ -1725,6 +1735,22 @@ class ExecCommandTool:
                 "skill_workdir_invalid", "Skill workdir is not a directory in the snapshot"
             )
         return rewritten
+
+    @staticmethod
+    def _rewrite_skill_argv(
+        argv: tuple[str, ...], snapshot: SkillExecutionSnapshot
+    ) -> tuple[str, ...]:
+        # Match a whole path token only. Never replace substrings inside JSON,
+        # script text or other data arguments, and do not parse a second shell.
+        spellings = {snapshot.entry, snapshot.entry.replace("/", "\\")}
+        spellings.update({f"./{snapshot.entry}", ".\\" + snapshot.entry.replace("/", "\\")})
+        entry_index = next((index for index, token in enumerate(argv) if token in spellings), None)
+        if entry_index is None:
+            raise CommandRuntimeError(
+                "skill_entry_not_used",
+                "argv 必须包含独立的 skill.entry 包内相对路径参数；不要拼成命令字符串或填写安装路径。",
+            )
+        return (*argv[:entry_index], str(snapshot.entry_path), *argv[entry_index + 1 :])
 
     @staticmethod
     def _rewrite_skill_entry(cmd: str, snapshot: SkillExecutionSnapshot) -> str:

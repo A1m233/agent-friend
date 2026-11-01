@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
@@ -35,7 +35,126 @@ from llm_providers import (
     LLMTurnDone,
     ModelRequest,
     ModelResponse,
+    OperationRequestLineageTracker,
 )
+
+
+def test_summary_selection_renders_each_record_once_and_preserves_exact_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent.context import task_compaction
+    from agent.context.summary_prompt import build_summary_messages
+
+    model = SummaryModel(context_window=1_000_000)
+    history = _task(groups=300, size=300)
+    history.extend(
+        [
+            Message(role="assistant", content=""),
+            Message(role="system", content="catalog", meta={"synthetic": "skill_catalog_state"}),
+            Message(role="system", content="private projection", meta={"model_only": True}),
+        ]
+    )
+    runtime = _runtime(model, history[0])
+    control = runtime.compaction_control
+    assert control is not None
+    expected_source = render_transcript([m for m in history if not m.meta.get("model_only")])
+    expected = build_summary_messages(
+        "【资料分区：当前业务目标来源】\n"
+        + render_transcript([history[0]])
+        + "\n\n【资料分区：接续的原始记录】\n"
+        + expected_source,
+        target_tokens=1000,
+    )
+    rendered_count = 0
+    original = render_transcript
+
+    def tracked(messages: list[Message]) -> str:
+        nonlocal rendered_count
+        rendered_count += len(messages)
+        return original(messages)
+
+    monkeypatch.setattr(task_compaction, "render_transcript", tracked)
+    task_compaction._summarize_prefix(
+        history, runtime, control, 1000, 1, OperationRequestLineageTracker()
+    )
+    assert len(model.requests) == 1
+    assert model.requests[0].messages == expected
+    assert rendered_count <= len(history) + 2
+
+
+def test_selection_owns_fresh_assessor_and_keeps_cancellation_and_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from agent.context.task_compaction import _select_prefix
+
+    model = SummaryModel()
+    history = _task(groups=8, size=100)
+    runtime = _runtime(model, history[0])
+    control = runtime.compaction_control
+    assert control is not None and runtime.request_assessment is not None
+    expected = _select_prefix(history, lambda items: items, runtime, control, 512, False)
+    plain = runtime.request_assessment
+    calls: list[int] = []
+
+    def factory() -> Callable[[list[Message]], InputEstimate]:
+        index = len(calls)
+        calls.append(0)
+
+        def assess(items: list[Message]) -> InputEstimate:
+            calls[index] += 1
+            return plain(items)
+
+        return assess
+
+    runtime.candidate_assessment_factory = factory
+    with caplog.at_level(logging.INFO, logger="agent.context.task_compaction"):
+        for _ in range(2):
+            actual = _select_prefix(history, lambda items: items, runtime, control, 512, False)
+            assert (actual[0], actual[2]) == (expected[0], expected[2])
+    assert calls[0] == calls[1] > 1
+    assert runtime.request_assessment is plain
+    assert "context_compaction_selection" in caplog.text
+    assert "outcome=selected" in caplog.text
+    assert "evidence-" not in caplog.text
+
+    class Cancelled(Exception):
+        pass
+
+    checks = 0
+
+    def cancel() -> None:
+        nonlocal checks
+        checks += 1
+        if checks == 4:
+            raise Cancelled()
+
+    runtime.cancel_check = cancel
+    original = [m.to_dict() for m in history]
+    with caplog.at_level(logging.INFO), pytest.raises(Cancelled):
+        _select_prefix(history, lambda items: items, runtime, control, 512, False)
+    assert calls[2] < calls[0]
+    assert [m.to_dict() for m in history] == original
+    assert "outcome=failed" in caplog.text
+    assert model.requests == []
+
+
+def test_compaction_logs_separate_local_preparation_from_summary_call(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    model = SummaryModel()
+    history = _task()
+    runtime = _runtime(model, history[0])
+    with caplog.at_level(logging.INFO):
+        SummarizingContextManager().build_messages(history, "system", runtime=runtime)
+    assert "context_compaction_selection" in caplog.text
+    assert "context_compaction_summary_prepared" in caplog.text
+    assert "summary_generation_done" in caplog.text
+    assert "outcome=completed" in caplog.text
+    assert "evidence-" not in caplog.text
 
 
 @dataclass
@@ -198,16 +317,16 @@ def test_pending_transaction_and_unknown_adapter_never_start_a_summary() -> None
     assert not model.requests
 
 
-def test_sequential_summary_covers_every_source_group_with_one_shared_budget() -> None:
+def test_single_summary_covers_every_source_group_despite_large_estimate() -> None:
     model = SummaryModel()
     history = _task(groups=9)
     runtime = _runtime(model, history[0])
     result = SummarizingContextManager().build_messages(history, "sys", runtime=runtime)
-    assert 1 < len(model.requests) <= 3
+    assert len(model.requests) == 1
     transcripts = "\n".join(str(request.messages) for request in model.requests)
     for index in range(9):
         assert f"evidence-{index}:" in transcripts
-    assert "此前已归纳的连续前缀" in str(model.requests[1].messages)
+    assert "此前已归纳的连续前缀" not in transcripts
     assert result.new_compaction is not None and result.new_compaction.omitted_before_count == 0
     assert runtime.compaction_control is not None
     runtime.compaction_control.summary_requests = 4
@@ -227,8 +346,8 @@ def test_summary_provider_input_separates_host_task_from_user_goal_and_history()
     )
 
     assert result.new_compaction is not None
-    assert result.new_compaction.summary_prompt_version == 6
-    assert 1 < len(model.requests) <= 3
+    assert result.new_compaction.summary_prompt_version == 7
+    assert len(model.requests) == 1
     for request in model.requests:
         assert [message["role"] for message in request.messages] == ["system", "user"]
         system, source = (message["content"] for message in request.messages)
@@ -243,22 +362,28 @@ def test_summary_provider_input_separates_host_task_from_user_goal_and_history()
         assert "请严格按系统指令里的两段式格式输出" not in source
         assert "不得由旧话题替代" not in source
         assert "必须继续保留其事实与来源" not in source
-    assert (
-        f"【资料分区：此前已归纳的连续前缀】\n{previous}"
-        in model.requests[1].messages[1]["content"]
-    )
+    assert previous not in model.requests[0].messages[1]["content"]
 
 
-def test_capacity_repartition_and_transient_retry_share_four_requests() -> None:
+def test_capacity_failure_never_repartitions_source_after_transient_retry() -> None:
     model = SummaryModel(outcomes=[LLMNetworkError("offline"), LLMContextWindowError("too large")])
     history = _task(groups=12)
+    original = copy.deepcopy(history)
     runtime = _runtime(model, history[0])
     with pytest.raises(ContextCompactionUnavailableError) as error:
         SummarizingContextManager().build_messages(history, "sys", runtime=runtime)
-    assert error.value.reason in {"summary_attempt_limit", "summary_segment_limit"}
-    assert len(model.requests) == 4
+    assert error.value.reason == "summary_context_window_exceeded"
+    assert len(model.requests) == 2
+    assert model.requests[0].messages == model.requests[1].messages
+    assert history == original
+    for index in range(12):
+        assert f"evidence-{index}:" in str(model.requests[0].messages)
     assert runtime.compaction_control is not None
-    assert runtime.compaction_control.summary_requests == 4
+    assert runtime.compaction_control.summary_requests == 2
+    assert runtime.compaction_control.summarized_source == ()
+    with pytest.raises(ContextCompactionUnavailableError):
+        SummarizingContextManager().build_messages(history, "sys", runtime=runtime)
+    assert len(model.requests) == 2
 
 
 @pytest.mark.parametrize("repeated", [False, True])
@@ -397,7 +522,7 @@ def test_transcript_keeps_actual_tool_arguments_and_refs() -> None:
     assert "source_message_ref=user" in transcript
 
 
-def test_cancellation_discards_all_in_memory_summary_segments() -> None:
+def test_cancellation_never_caches_uncommitted_summary() -> None:
     class Cancelled(RuntimeError):
         pass
 
@@ -417,7 +542,7 @@ def test_cancellation_discards_all_in_memory_summary_segments() -> None:
     assert len(model.requests) == 1
     assert (
         runtime.compaction_control is not None
-        and runtime.compaction_control.successful_segments == 0
+        and runtime.compaction_control.summarized_source == ()
     )
 
 

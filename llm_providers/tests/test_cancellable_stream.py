@@ -9,7 +9,66 @@ from llm_providers.cancellable_stream import (
     StreamIdleTimeoutExceeded,
     open_cancellable_stream,
 )
+from llm_providers.stream_progress import progress_category
 from llm_providers.timeouts import ModelCallDeadlineExceeded, controlled_cancel
+
+
+@pytest.mark.parametrize(
+    "chunk, expected",
+    [
+        (
+            {"type": "response.function_call_arguments.delta", "delta": "private arguments"},
+            ("tool_arguments", True),
+        ),
+        ({"type": "response.output_text.delta", "delta": ""}, ("empty_delta", False)),
+        ({"type": "ping"}, ("heartbeat", False)),
+        ({"type": "untrusted-secret-name"}, ("unclassified", False)),
+        ({"choices": [{"delta": {"reasoning_content": "private thought"}}]}, ("reasoning", True)),
+        ({"choices": [{"delta": {}}]}, ("empty_delta", False)),
+    ],
+)
+def test_progress_categories_do_not_expose_content(
+    chunk: object, expected: tuple[str, bool]
+) -> None:
+    assert progress_category(chunk) == expected
+
+
+def test_slow_stream_logs_heartbeat_separately_without_changing_cancel(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    from llm_providers import cancellable_stream
+
+    monkeypatch.setattr(cancellable_stream, "_PROGRESS_LOG_SECONDS", 0.02)
+    caplog.set_level("INFO", logger="llm_providers.cancellable_stream")
+
+    class Source:
+        request_id: str | None = None
+        closed = False
+
+        async def open(self) -> AsyncIterator[object]:
+            async def chunks() -> AsyncIterator[object]:
+                yield {"type": "response.function_call_arguments.delta", "delta": "SECRET_BODY"}
+                while True:
+                    yield {"type": "ping"}
+                    await asyncio.sleep(0.01)
+
+            return chunks()
+
+        async def close(self) -> None:
+            self.closed = True
+
+    source = Source()
+    cancel = controlled_cancel(None, time.monotonic() + 0.15)
+    assert cancel is not None
+    stream = open_cancellable_stream(source, cancel, timeout_seconds=0.5)
+    with pytest.raises(ModelCallDeadlineExceeded):
+        list(stream)
+    assert source.closed
+    assert "model_stream_progress" in caplog.text and "heartbeat" in caplog.text
+    assert "tool_arguments" in caplog.text and "last_content_progress_age_ms" in caplog.text
+    assert "SECRET_BODY" not in caplog.text
 
 
 class _StallingSource:

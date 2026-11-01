@@ -11,6 +11,7 @@ from agent.context.protocol import BuildResult, RuntimeContext
 from agent.context.summary_budget import summary_generation_tokens, summary_target_tokens
 from agent.messages import Message
 from llm_providers.errors import (
+    LLMContextWindowError,
     LLMEmptyResponseError,
     LLMIncompleteResponseError,
     LLMNetworkError,
@@ -89,7 +90,7 @@ def test_failed_repair_preserves_history_and_specific_reason(
     assert history == original
     if runtime.compaction_control is not None:
         assert runtime.compaction_control.summary_text == ""
-        assert runtime.compaction_control.successful_segments == 0
+        assert runtime.compaction_control.summarized_source == ()
 
 
 @pytest.mark.parametrize("task", [False, True])
@@ -103,17 +104,35 @@ def test_model_ceiling_does_not_retry_with_the_same_budget(task: bool) -> None:
     assert [r.settings["max_tokens"] for r in model.requests] == [8192]
 
 
-def test_budget_respects_remaining_window_and_calibration() -> None:
+@pytest.mark.parametrize("task", [False, True])
+def test_capacity_error_stops_after_one_call_without_fallback(
+    task: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = SummaryModel(outcomes=[LLMContextWindowError("too large")])
+    history, runtime = _scenario(task, model)
+    original = copy.deepcopy(history)
+    manager = SummarizingContextManager()
+
+    def unexpected_fallback(*args: object, **kwargs: object) -> None:
+        pytest.fail("capacity failure must not enter a shrinking fallback")
+
+    monkeypatch.setattr(manager, "_fallback_result", unexpected_fallback)
+    with pytest.raises(ContextCompactionUnavailableError) as caught:
+        manager.build_messages(history, "system", runtime=runtime)
+    assert caught.value.reason == "summary_context_window_exceeded"
+    assert len(model.requests) == 1
+    assert history == original
+
+
+def test_output_limit_is_independent_of_input_estimation_and_trigger() -> None:
     model = SummaryModel()
-    runtime = _runtime(model, 10_000, calibration_factor=2)
-    messages = [{"role": "user", "content": "x" * 4000}]
-    # 6K calibrated input, 1K safety buffer, 3K remaining.
-    assert summary_generation_tokens(messages, runtime) == 3000
-    assert summary_generation_tokens(messages, runtime, expanded=True) == 3000
+    runtime = _runtime(model, 200_000, calibration_factor=100)
+    runtime.budget = replace(runtime.budget, emergency_ratio=0.001)
+    assert summary_generation_tokens(runtime) == 16_384
+    assert summary_generation_tokens(runtime, expanded=True) == 32_768
     model.capabilities = LanguageModelCapabilities(max_output_tokens=2000)
-    assert summary_generation_tokens(messages, runtime) == 2000
-    assert summary_target_tokens(runtime) == 512
-    assert summary_generation_tokens([{"content": "x" * 20_000}], runtime) == 0
+    assert summary_generation_tokens(runtime) == 2000
+    assert summary_target_tokens(runtime) == 4096
 
 
 @pytest.mark.parametrize("task", [False, True])

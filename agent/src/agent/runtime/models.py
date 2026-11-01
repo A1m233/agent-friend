@@ -21,7 +21,7 @@ from .inbox import AgentEvent
 
 if TYPE_CHECKING:
     from ..conversation import Conversation
-    from ..conversation_events import ConversationEvent
+    from ..conversation_events import ConversationEvent, TurnDone
 
 
 class RunPriority(IntEnum):
@@ -200,6 +200,17 @@ class RunHandle:
         self._on_change = on_change
         self._before_finish: Callable[[RunTerminal], None] | None = None
         self._finishing = False
+        self._retained_usage: TurnDone | None = None
+
+    def retain_turn_usage(self, usage: TurnDone) -> None:
+        """Store counts without declaring the turn complete or emitting TurnDone."""
+        with self._lock:
+            if self._terminal is not None or self._finishing:
+                return
+            self._retained_usage = usage
+            self._version += 1
+            snapshot = self._snapshot_locked()
+        self._publish(snapshot)
 
     def set_terminal_callback(self, callback: Callable[[RunTerminal], None]) -> None:
         """Bind durable finalization before publishing the unique terminal snapshot."""
@@ -274,25 +285,36 @@ class RunHandle:
         reason_code: str = "",
         error: BaseException | None = None,
         turn_status: TurnStatus | None = None,
-        total_tool_calls: int = 0,
-        tool_call_items: int = 0,
-        model_calls: int = 0,
-        model_continuations: int = 0,
+        total_tool_calls: int | None = None,
+        tool_call_items: int | None = None,
+        model_calls: int | None = None,
+        model_continuations: int | None = None,
         budget_dimension: str | None = None,
     ) -> bool:
         with self._lock:
             if self._status is RunStatus.TERMINAL or self._finishing:
                 return False
             self._finishing = True
+            usage = self._retained_usage
             terminal = RunTerminal(
                 outcome=outcome,
                 turn_status=turn_status,
                 reason_code=reason_code,
-                total_tool_calls=total_tool_calls,
-                tool_call_items=tool_call_items,
-                model_calls=model_calls,
-                model_continuations=model_continuations,
-                budget_dimension=budget_dimension,
+                total_tool_calls=total_tool_calls
+                if total_tool_calls is not None
+                else (usage.total_tool_calls if usage else 0),
+                tool_call_items=tool_call_items
+                if tool_call_items is not None
+                else (usage.tool_call_items if usage else 0),
+                model_calls=model_calls
+                if model_calls is not None
+                else (usage.model_calls if usage else 0),
+                model_continuations=model_continuations
+                if model_continuations is not None
+                else (usage.model_continuations if usage else 0),
+                budget_dimension=budget_dimension
+                if budget_dimension is not None
+                else (usage.budget_dimension if usage else None),
                 error=error,
             )
             before_finish = self._before_finish
@@ -370,6 +392,7 @@ class RunHandle:
 
     def _snapshot_locked(self) -> RunSnapshot:
         terminal = self._terminal
+        usage = terminal or self._retained_usage
         origin = self.request.metadata.get("protocol")
         if origin is None and self.request.event.__class__.__name__ == "SystemTriggerEvent":
             origin = "system_trigger"
@@ -394,11 +417,11 @@ class RunHandle:
             presentation=getattr(self.request.event, "presentation", "conversation"),
             output_visibility=getattr(self.request.event, "output_visibility", "user"),
             turn_status=terminal.turn_status if terminal is not None else None,
-            total_tool_calls=terminal.total_tool_calls if terminal is not None else 0,
-            tool_call_items=terminal.tool_call_items if terminal is not None else 0,
-            model_calls=terminal.model_calls if terminal is not None else 0,
-            model_continuations=terminal.model_continuations if terminal is not None else 0,
-            budget_dimension=terminal.budget_dimension if terminal is not None else None,
+            total_tool_calls=usage.total_tool_calls if usage is not None else 0,
+            tool_call_items=usage.tool_call_items if usage is not None else 0,
+            model_calls=usage.model_calls if usage is not None else 0,
+            model_continuations=usage.model_continuations if usage is not None else 0,
+            budget_dimension=usage.budget_dimension if usage is not None else None,
         )
 
     def _publish(self, snapshot: RunSnapshot) -> None:

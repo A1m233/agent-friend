@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from collections.abc import Callable
+from dataclasses import replace
 from hashlib import sha256
+from time import perf_counter
 from uuid import uuid4
 
 from llm_providers.errors import LLMIncompleteResponseError, LLMOutputBudgetExhaustedError
@@ -25,12 +28,11 @@ from llm_providers import (
 )
 
 from ..messages import Message
-from .budget import assess_request_budget, estimate_request_tokens, estimate_tokens
+from .budget import assess_request_budget, estimate_request_tokens
 from .checkpoints import checkpoint_prefix_digest, summary_message
 from .errors import ContextCompactionUnavailableError
 from .protocol import (
     MAX_SUMMARY_REQUESTS,
-    MAX_SUMMARY_SEGMENTS,
     BuildResult,
     CompactionControl,
     CompactionRecord,
@@ -56,8 +58,10 @@ from .turns import (
     recent_turn_start_candidates,
     safe_compaction_boundaries,
 )
+from .usage_anchor import InputEstimate
 
 Assemble = Callable[[list[Message]], list[Message]]
+logger = logging.getLogger(__name__)
 
 
 def _failure(reason: str) -> ContextCompactionUnavailableError:
@@ -96,6 +100,62 @@ def _anchor_for_prefix(prefix: list[Message], control: CompactionControl) -> Mes
 
 
 def _select_prefix(
+    history: list[Message],
+    assemble: Assemble,
+    runtime: RuntimeContext,
+    control: CompactionControl,
+    target_tokens: int,
+    has_new_user_input: bool,
+) -> tuple[int, Message | None, bool]:
+    started = perf_counter()
+    assessments = 0
+    assessment_seconds = 0.0
+    outcome = "failed"
+    selected_cut = 0
+    try:
+        runtime.check_cancelled()
+        assessor = (
+            runtime.candidate_assessment_factory()
+            if runtime.candidate_assessment_factory is not None
+            else lambda messages: assess_request_budget(messages, runtime)
+        )
+
+        def assess(messages: list[Message]) -> InputEstimate:
+            nonlocal assessments, assessment_seconds
+            assessments += 1
+            assessment_started = perf_counter()
+            try:
+                return assessor(messages)
+            finally:
+                assessment_seconds += perf_counter() - assessment_started
+
+        selected = _select_prefix_candidate(
+            history,
+            assemble,
+            replace(runtime, request_assessment=assess),
+            control,
+            target_tokens,
+            has_new_user_input,
+        )
+        selected_cut = selected[0]
+        outcome = "selected"
+        return selected
+    finally:
+        logger.info(
+            "context_compaction_selection session=%s run=%s duration_ms=%.3f "
+            "assessment_ms=%.3f assessments=%s history_messages=%s selected_cut=%s outcome=%s",
+            runtime.session_id,
+            runtime.run_id,
+            (perf_counter() - started) * 1000,
+            assessment_seconds * 1000,
+            assessments,
+            len(history),
+            selected_cut,
+            outcome,
+        )
+
+
+def _select_prefix_candidate(
     history: list[Message],
     assemble: Assemble,
     runtime: RuntimeContext,
@@ -168,22 +228,13 @@ def _select_prefix(
 
 
 def _summary_request(
-    source: list[Message], previous: str, goal: Message | None, target_tokens: int
+    source_text: str, goal: Message | None, target_tokens: int
 ) -> list[dict[str, str]]:
     sections = []
     if goal is not None:
         sections.append("【资料分区：当前业务目标来源】\n" + render_transcript([goal]))
-    if previous:
-        sections.append("【资料分区：此前已归纳的连续前缀】\n" + previous)
-    sections.append("【资料分区：接续的原始记录】\n" + render_transcript(source))
+    sections.append("【资料分区：接续的原始记录】\n" + source_text)
     return build_summary_messages("\n\n".join(sections), target_tokens=target_tokens)
-
-
-def _request_tokens(messages: list[dict[str, str]], runtime: RuntimeContext) -> int:
-    return math.ceil(
-        estimate_tokens([Message(role="system", content=item["content"]) for item in messages])
-        * runtime.calibration_factor
-    )
 
 
 def _summarize_prefix(
@@ -194,11 +245,10 @@ def _summarize_prefix(
     prompt_version: int,
     lineage_tracker: OperationRequestLineageTracker,
 ) -> str:
+    preparation_started = perf_counter()
     # Boundaries are computed before excluding model-only projection items. No
     # omitted task transaction may be silently claimed as summarized coverage.
-    ends = safe_compaction_boundaries(prefix)
-    cursor = 0
-    previous = ""
+    safe_compaction_boundaries(prefix)
     source_keys = tuple(
         sha256(
             json.dumps(message.to_dict(), ensure_ascii=False, sort_keys=True).encode()
@@ -210,49 +260,38 @@ def _summarize_prefix(
         if control.current_user
         else ""
     )
-    completed_count = len(control.summarized_source)
     if (
         control.summary_text
-        and completed_count in ends
-        and source_keys[:completed_count] == control.summarized_source
+        and source_keys == control.summarized_source
         and control.summary_goal_fingerprint == goal_fingerprint
     ):
-        # Provider capacity recovery can reuse an uncommitted, verified summary
-        # prefix. It remains transient and consumes no fresh request allowance.
-        cursor = completed_count
-        previous = control.summary_text
-    ratio = 1.0
+        # Reuse only a summary of this exact complete source, never an earlier
+        # partial prefix. Candidate admission/commit still runs below.
+        return control.summary_text
     transient_retry_used = False
     retry_fingerprint: str | None = None
-    while cursor < len(prefix):
+    # Render each record once. Re-rendering every growing candidate made a long
+    # history quadratic before the first summary request even started.
+    rendered: list[str] = []
+    for message in prefix:
+        runtime.check_cancelled()
+        text = "" if message.meta.get("model_only") else render_transcript([message])
+        rendered.append(text)
+    request_messages = _summary_request(
+        "\n".join(text for text in rendered if text), control.current_user, target_tokens
+    )
+    fingerprint = sha256(
+        json.dumps(request_messages, ensure_ascii=False, sort_keys=True).encode()
+    ).hexdigest()
+    while True:
         runtime.check_cancelled()
         if control.summary_requests >= MAX_SUMMARY_REQUESTS:
             raise _failure("summary_attempt_limit")
-        if control.successful_segments >= MAX_SUMMARY_SEGMENTS:
-            raise _failure("summary_segment_limit")
-        chosen = cursor
-        request_messages: list[dict[str, str]] = []
-        budget = int(runtime.budget.trigger_threshold * ratio)
-        for end in ends:
-            if end <= cursor:
-                continue
-            source = [
-                message for message in prefix[cursor:end] if not message.meta.get("model_only")
-            ]
-            candidate = _summary_request(source, previous, control.current_user, target_tokens)
-            if _request_tokens(candidate, runtime) > budget:
-                break
-            chosen, request_messages = end, candidate
-        if chosen == cursor:
-            raise _failure("summary_input_too_large")
         generation_tokens = summary_generation_tokens(
-            request_messages, runtime, expanded=control.summary_output_retry_used
+            runtime, expanded=control.summary_output_retry_used
         )
         if generation_tokens <= 0:
-            raise _failure("summary_input_too_large")
-        fingerprint = sha256(
-            json.dumps(request_messages, ensure_ascii=False, sort_keys=True).encode()
-        ).hexdigest()
+            raise _failure("summary_output_budget_exhausted")
         if fingerprint in control.attempted_inputs and fingerprint != retry_fingerprint:
             raise _failure("compaction_no_progress")
         retry_fingerprint = None
@@ -263,6 +302,17 @@ def _summarize_prefix(
             operation="context_compaction",
             call_kind="summary_generation",
             prompt_contract_revision=str(prompt_version),
+        )
+        logger.info(
+            "context_compaction_summary_prepared session=%s run=%s attempt=%s "
+            "duration_ms=%.3f source_start=%s source_end=%s input_chars=%s",
+            runtime.session_id,
+            runtime.run_id,
+            control.summary_requests,
+            (perf_counter() - preparation_started) * 1000,
+            0,
+            len(prefix),
+            sum(len(message["content"]) for message in request_messages),
         )
         try:
             response = generate_summary(
@@ -291,10 +341,9 @@ def _summarize_prefix(
             )
             runtime.check_cancelled()
             lineage_tracker.complete(lineage, response)
-        except LLMContextWindowError:
+        except LLMContextWindowError as exc:
             runtime.check_cancelled()
-            ratio *= 0.75
-            continue
+            raise _failure("summary_context_window_exceeded") from exc
         except (LLMNetworkError, LLMTransientProviderError) as exc:
             runtime.check_cancelled()
             if transient_retry_used:
@@ -308,7 +357,7 @@ def _summarize_prefix(
         except (LLMIncompleteResponseError, LLMOutputBudgetExhaustedError) as exc:
             runtime.check_cancelled()
             exhausted = summary_output_exhausted(exc)
-            expanded_tokens = summary_generation_tokens(request_messages, runtime, expanded=True)
+            expanded_tokens = summary_generation_tokens(runtime, expanded=True)
             if (
                 exhausted
                 and not control.summary_output_retry_used
@@ -332,15 +381,16 @@ def _summarize_prefix(
             # must escape unchanged, including cancellation during stream reads.
             runtime.check_cancelled()
             raise _failure("llm_error") from exc
-        previous = strip_analysis(response.text).strip()
-        if not previous:
+        finally:
+            # Subsequent preparation timings exclude provider wait and retries.
+            preparation_started = perf_counter()
+        summary = strip_analysis(response.text).strip()
+        if not summary:
             raise _failure("empty_summary")
-        control.successful_segments += 1
-        cursor = chosen
-        control.summarized_source = source_keys[:cursor]
-        control.summary_text = previous
+        control.summarized_source = source_keys
+        control.summary_text = summary
         control.summary_goal_fingerprint = goal_fingerprint
-    return previous
+        return summary
 
 
 def compact_task_history(
@@ -423,10 +473,10 @@ def compact_task_history(
         notes={
             "context_strategy": "summarizing",
             "compacted": True,
-            "summary_input": "sequential_full",
+            "summary_input": "full_prefix",
             "token_estimate": assessment.tokens,
             "summary_attempts": control.summary_requests,
-            "summary_segments": control.successful_segments,
+            "summary_segments": 1,
             "summary_target_tokens": target_tokens,
             "summary_output_retry_used": control.summary_output_retry_used,
             "task_internal_compaction": task_internal,

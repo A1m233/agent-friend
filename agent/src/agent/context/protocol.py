@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from .usage_anchor import InputEstimate
 
 MAX_SUMMARY_REQUESTS = 4
-MAX_SUMMARY_SEGMENTS = 3
 
 
 @dataclass
@@ -47,7 +46,6 @@ class CompactionControl:
     current_user: Message | None = None
     source_fingerprint: str = ""
     summary_requests: int = 0
-    successful_segments: int = 0
     attempted_inputs: set[str] = field(default_factory=set)
     candidate_fingerprint: str = ""
     summarized_source: tuple[str, ...] = ()
@@ -207,6 +205,11 @@ class RuntimeContext:
     run_id: str | None = None
     request_estimator: Callable[[list[Message]], int] | None = None
     request_assessment: Callable[[list[Message]], InputEstimate] | None = None
+    # A fresh local assessor for one synchronous, immutable candidate search.
+    # Ordinary/final admission continues to use request_assessment above.
+    candidate_assessment_factory: Callable[[], Callable[[list[Message]], InputEstimate]] | None = (
+        None
+    )
     compaction_control: CompactionControl | None = None
     session_id: str | None = None
     surface: str | None = None

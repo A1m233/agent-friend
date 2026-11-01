@@ -915,6 +915,115 @@ def test_conversation_forwards_cancel_check_while_waiting_for_model_stream(
     assert assistant.meta["run_id"] == request.run_id
 
 
+@pytest.mark.parametrize("cancel", [True, False])
+def test_runtime_retains_counts_after_partial_run_and_resets_next_run(
+    tmp_path: Path, cancel: bool
+) -> None:
+    entered, release = threading.Event(), threading.Event()
+
+    class Tool:
+        name: ClassVar[str] = "counted_tool"
+        description: ClassVar[str] = "Return once"
+        parameters_schema: ClassVar[dict[str, Any]] = {"type": "object", "properties": {}}
+
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            return ToolResult("executed")
+
+    class Model(_ScriptedLLMClient):
+        def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+            if self.turn_idx == 1:
+                self.turn_idx += 1
+                entered.set()
+                assert request.control.cancel_check is not None
+                while not release.wait(0.01):
+                    request.control.cancel_check()
+                raise RuntimeError("provider failure after a completed tool")
+            yield from super().stream(request)
+
+    model = Model(
+        script=[
+            [
+                LLMToolCallDelta(0, "counted-1", "counted_tool", "{}"),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [],
+            [LLMTextDelta(text="continued"), LLMTurnDone()],
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=model, tool_registry=ToolRegistry([Tool()]))
+    runtime = AgentRuntime(conversation_factory=lambda _: conv)
+    runtime.start()
+    try:
+        handle = runtime.submit(UserEvent(session_id=conv.session.session_id, user_input="run"))
+        assert entered.wait(5)
+        if cancel:
+            handle.cancel()
+        else:
+            release.set()
+        list(handle.events())
+        terminal = handle.snapshot()
+        assert terminal.outcome == (RunOutcome.CANCELLED if cancel else RunOutcome.FAILED)
+        assert (terminal.model_calls, terminal.total_tool_calls, terminal.tool_call_items) == (
+            2,
+            1,
+            1,
+        )
+        assert terminal.model_continuations == 1
+        following = runtime.submit(
+            UserEvent(session_id=conv.session.session_id, user_input="continue")
+        )
+        list(following.events())
+        assert following.snapshot().outcome == RunOutcome.COMPLETED
+        assert following.snapshot().model_calls == 1
+        assert following.snapshot().total_tool_calls == 0
+    finally:
+        release.set()
+        runtime.stop()
+
+
+def test_cancel_while_publishing_tool_result_retains_usage_and_closes_generator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered, release = threading.Event(), threading.Event()
+    tool = _BlockingTool()
+    tool.release.set()
+    model = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(0, "publish-1", "blocking_tool", "{}"),
+                LLMTurnDone(stop_reason="tool_use"),
+            ]
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=model, tool_registry=ToolRegistry([tool]))
+    runtime = AgentRuntime(conversation_factory=lambda _: conv)
+    original = runtime._listeners.fan_out_event
+
+    def publish(*args: Any, **kwargs: Any) -> None:
+        original(*args, **kwargs)
+        if isinstance(args[1], ToolCallResult):
+            entered.set()
+            assert release.wait(5)
+            handle.token.raise_if_cancelled()
+
+    monkeypatch.setattr(runtime._listeners, "fan_out_event", publish)
+    runtime.start()
+    try:
+        handle = runtime.submit(UserEvent(session_id=conv.session.session_id, user_input="run"))
+        assert entered.wait(5)
+        handle.cancel()
+        release.set()
+        list(handle.events())
+        assert handle.snapshot().outcome == RunOutcome.CANCELLED
+        assert handle.snapshot().model_calls == 1
+        assert handle.snapshot().total_tool_calls == 1
+        assert conv._active_tool_run_state is None
+        assert conv._run_usage_callback is None
+    finally:
+        release.set()
+        runtime.stop()
+
+
 def test_cancelled_tool_is_closed_before_same_process_followup(tmp_path: Path) -> None:
     from agent.runtime import RunRequest
     from agent.runtime.cancellation import CancelReason, RunCancelled

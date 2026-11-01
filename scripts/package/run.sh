@@ -4,6 +4,7 @@
 # Session uploads are verified, copied, reopened, and cleaned offline by runtime doctor.
 # Scheduled inputs verify fixed targets and durable request interruption without model calls.
 # QQ approval smoke uses local transport only; real client acceptance remains separate.
+# Runtime doctor also exercises Windows read-ACL preparation and reuse on a temporary directory.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
