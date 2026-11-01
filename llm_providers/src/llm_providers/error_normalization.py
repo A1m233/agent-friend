@@ -326,6 +326,10 @@ def map_provider_error(error: Exception, *, provider_id: str | None = None) -> L
         cls, category = LLMTransientProviderError, "service_unavailable"
     elif isinstance(error, openai.BadRequestError) or metadata.status_code in {400, 404, 422}:
         cls, category = LLMBadRequestError, "request"
+    if cls is LLMBadRequestError and metadata.status_code == 408:
+        # Gateways may label HTTP timeouts as generic invalid_request errors.
+        # Preserve specific classifications, but let these use bounded timeout retries.
+        cls, category = LLMTransientProviderError, "timeout"
     message = metadata.message or str(error)
     if cls is LLMBadRequestError and is_image_input_rejection(message):
         cls, category = LLMImageInputUnsupportedError, "image_input_unsupported"
