@@ -17,6 +17,7 @@ from typing import Any, ClassVar, cast
 from uuid import uuid4
 
 from ..approvals import ApprovalBroker
+from ..attachments import AttachmentError, AttachmentRef
 from ..execution_environment import (
     ExecutionEnvironmentManager,
     ManagedEnvironmentError,
@@ -24,6 +25,7 @@ from ..execution_environment import (
 )
 from ..execution_environment.native import NativeTools
 from ..filesystem.policy import resolve_locator
+from ..filesystem.service import FilesystemError
 from ..paths import command_workspaces_dir, skills_dir
 from ..sessions.tool_execution_evidence import ToolExecutionEvidenceStore
 from ..skills.models import SkillTurnSnapshot
@@ -36,6 +38,7 @@ from ..skills.update_receipts import (
 from ..tool_runtime.context import ToolRunContext
 from ..tool_runtime.control import TOOL_INVOCATION_CONTROL_ARG, ToolInvocationControl
 from ..tools.protocol import Tool, ToolResult
+from .image_output import CommandImageOutput
 from .models import (
     CommandAdditionalRoot,
     CommandApprovalDetails,
@@ -392,6 +395,9 @@ class ExecCommandTool:
         "关键根递归删除或目标无法确定的强制递归删除仍受独立灾难性策略约束；若返回"
         "catastrophic_action_blocked_in_session_auto，不要原样重试或改写命令绕过，"
         "应请用户切回每次授权并重新检查准确请求。"
+        "需要命令直接返回图片时可传 output_images 的当前轮 read_image scope；仅限 buffered，"
+        "脚本 stdout 须为含 image_paths 相对路径数组的 JSON，最多 8 张。命令已执行但图片"
+        "收集失败时不得重放有副作用的命令，应修正授权或单独 view_image。"
         "普通命令可省略 workdir，此时使用当前会话跨轮次保留的受治理目录；显式"
         " workdir 必须是已存在的绝对路径且只覆盖本次命令。Skill-bound 命令省略顶层"
         " workdir，并在 skill.workdir 使用包内相对目录（默认包根）；不要猜测或读取"
@@ -407,7 +413,8 @@ class ExecCommandTool:
         "内置 screenshot 是宿主管理的例外：默认输出到本次会话截图目录，"
         "不申请 home 可写；成功结果 output_directory 返回当前轮 read_image scope。"
         "直接启动一个程序及其参数时优先使用 argv；只有确实需要 shell 内建命令、管道、"
-        "重定向、变量展开等 shell 解释，或运行 Skill-bound 脚本时才使用 cmd。"
+        "重定向、变量展开等 shell 解释时才使用 cmd。Skill-bound 脚本也优先使用 argv，"
+        "将 skill.entry 作为独立参数，JSON/空格/引号直接放在对应参数中，不再 shell 转义。"
         "sandboxed 模式中的 python/python3 会稳定解析到产品管理、按会话隔离的 Python，"
         "不依赖用户 PATH；pip/pip3/python -m pip/uv pip 会规范化为同一受管 package"
         " operation。registry 安装必须申请 read_write 和 network=enabled；已授权本地 .whl"
@@ -436,7 +443,9 @@ class ExecCommandTool:
                     "结构化进程参数，第一个元素是绝对可执行文件或宿主 PATH 中的程序名。"
                     "直接启动单个 CLI 时优先使用本字段；每个参数独立成一个数组"
                     "元素，因此正则中的 |、含空格路径和引号不会被 shell 再解释。"
-                    "含空格的 Windows 路径必须用本字段。"
+                    "含空格的 Windows 路径必须用本字段。绑定 Skill 时将 skill.entry 的包内"
+                    '相对路径作为独立参数，例如 ["python","scripts/run.py","--data","JSON内容"]；'
+                    "宿主定位快照入口，不填写安装绝对路径。"
                 ),
             },
             "cmd": {
@@ -445,12 +454,25 @@ class ExecCommandTool:
                 "maxLength": MAX_COMMAND_CHARS,
                 "description": (
                     "需要 shell 解释的完整命令字符串，只用于 shell 内建命令、管道、重定向、"
-                    "变量展开或 Skill-bound 脚本；普通单程序及参数优先使用 argv。Windows 中"
+                    "变量展开；普通单程序及 Skill-bound 脚本优先使用 argv。Windows 中"
                     "本字段由 cmd.exe 解释；PowerShell cmdlet 必须显式通过可用的"
                     " pwsh.exe -NoProfile -Command 调用，并把脚本作为一个带双引号的参数。"
                     "Skill-bound 命令必须引用 skill.entry 的包内相对路径，不能包含 Skill"
                     "安装目录或其它内部绝对路径。"
                 ),
+            },
+            "output_images": {
+                "type": "object",
+                "description": "buffered 命令完成后读取 stdout JSON 的 image_paths 并直接返回图片；文件须在已授权 read_image 范围内。",
+                "properties": {
+                    "filesystem_scope_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "本轮 request_filesystem_access 返回的 read_image scope；不是 skill_id 或旧轮 scope。",
+                    }
+                },
+                "required": ["filesystem_scope_id"],
+                "additionalProperties": False,
             },
             "workdir": {
                 "type": "string",
@@ -611,16 +633,12 @@ class ExecCommandTool:
         ],
         "allOf": [
             {
+                "if": {"required": ["output_images"]},
+                "then": {"properties": {"mode": {"const": "buffered"}}},
+            },
+            {
                 "if": {"required": ["skill"]},
-                "then": {
-                    "required": ["cmd"],
-                    "not": {
-                        "anyOf": [
-                            {"required": ["argv"]},
-                            {"required": ["workdir"]},
-                        ]
-                    },
-                },
+                "then": {"not": {"required": ["workdir"]}},
             },
         ],
         "not": {"required": ["workdir", "skill"]},
@@ -637,6 +655,7 @@ class ExecCommandTool:
         session_workspaces_root: Path | None = None,
         execution_environment_manager: ExecutionEnvironmentManager | None = None,
         tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
+        image_output: CommandImageOutput | None = None,
     ) -> None:
         self._runtime = runtime
         self._broker = broker
@@ -648,6 +667,7 @@ class ExecCommandTool:
         ).resolve()
         self._execution_environment_manager = execution_environment_manager
         self._tool_execution_evidence_store = tool_execution_evidence_store
+        self._image_output = image_output
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
         if "execution" in args:
@@ -684,6 +704,11 @@ class ExecCommandTool:
         try:
             approval_reason = _optional_command_reason(args.get("reason"))
             context = self._context(args)
+            image_scope = None
+            if "output_images" in args:
+                if execution != "sandboxed" or self._image_output is None:
+                    raise ValueError("当前命令入口未提供图片回传能力；命令未执行。")
+                image_scope = self._image_output.validate(args, context)
             session_id, run_id, tool_call_id = self._ownership(args)
             details, workdir, roots, run_temp, path_identities = self._parse(
                 args,
@@ -812,6 +837,8 @@ class ExecCommandTool:
             else None
         )
         launch_started = time.monotonic()
+        read_access_seconds = 0.0
+        start_rpc_seconds = 0.0
         control = args.get(TOOL_INVOCATION_CONTROL_ARG)
         recovery_control = (
             control if isinstance(control, ToolInvocationControl) else ToolInvocationControl()
@@ -849,7 +876,9 @@ class ExecCommandTool:
                     environment_roots = [self._native_tools.root]
                     if details.managed_command is not None:
                         environment_roots.extend(details.managed_command.read_only_roots)
+                    read_access_started = time.monotonic()
                     prepare_read_access(environment_roots)
+                    read_access_seconds = time.monotonic() - read_access_started
                 if (
                     sandbox is not None
                     and details.cwd_source == "session_managed"
@@ -884,6 +913,7 @@ class ExecCommandTool:
                         "resident_only",
                         evidence_ref,
                     )
+                start_rpc_started = time.monotonic()
                 snapshot = self._runtime.start_process(
                     process_id=process_id,
                     argv=details.launch_argv or details.argv,
@@ -905,6 +935,7 @@ class ExecCommandTool:
                     tool_name=self.name,
                     evidence_ref=evidence_ref,
                 )
+                start_rpc_seconds = time.monotonic() - start_rpc_started
         except CommandRuntimeError as exc:
             if exc.code == "process_start_outcome_unknown" and process_id is not None:
                 uncertain_id = process_id
@@ -1003,8 +1034,22 @@ class ExecCommandTool:
                 },
             )
         result_payload = _bounded_process_result(snapshot)
+        launch_timings = {
+            "read_access_seconds": round(read_access_seconds, 3),
+            "start_rpc_seconds": round(start_rpc_seconds, 3),
+        }
+        logger.info(
+            "command_launch_profile session_id=%s run_id=%s tool_call_id=%s "
+            "read_access_ms=%d start_rpc_ms=%d",
+            session_id,
+            run_id,
+            tool_call_id,
+            round(read_access_seconds * 1000),
+            round(start_rpc_seconds * 1000),
+        )
         result_payload.update(
             {
+                "launch_timings": launch_timings,
                 "execution": details.execution,
                 "approval": _approval_audit(request),
                 "approval_wait_seconds": round(approval_wait_seconds, 3),
@@ -1083,13 +1128,27 @@ class ExecCommandTool:
                 "请使用 pwsh.exe 或 powershell.exe 的 -Command 单脚本参数重试。"
             )
             result_error = True
-        return _result(
+        images: tuple[AttachmentRef, ...] = ()
+        if not result_error and image_scope is not None and self._image_output is not None:
+            try:
+                images = self._image_output.collect(result_payload, context, image_scope)
+            except (ValueError, OSError, FilesystemError, AttachmentError) as exc:
+                result_payload.update(
+                    error="command_images_failed",
+                    message=f"命令已执行，图片回传失败：{exc}。不要重放操作；修正授权后可单独 view_image。",
+                    executed=True,
+                )
+                result_error = True
+        result = _result(
             result_payload,
             error=result_error,
             diagnostic_meta={
                 **_process_diagnostic_meta(snapshot),
                 **consume_process_update(context, snapshot),
             },
+        )
+        return ToolResult(
+            text=result.text, is_error=result.is_error, meta=result.meta, images=images
         )
 
     @staticmethod
@@ -1296,9 +1355,8 @@ class ExecCommandTool:
             requested_workdir = workdir
             display_workdir = relative_workdir.as_posix()
             cwd_source = "skill_snapshot"
-            if not isinstance(cmd, str):
-                raise ValueError("Skill-bound 命令必须使用 cmd")
-            cmd = self._rewrite_skill_entry(cmd, skill_snapshot)
+            if isinstance(cmd, str):
+                cmd = self._rewrite_skill_entry(cmd, skill_snapshot)
             roots = (*roots, (skill_snapshot.snapshot_root, False))
             skill_binding = CommandSkillBinding(
                 skill_id=skill_snapshot.skill_id,
@@ -1332,13 +1390,18 @@ class ExecCommandTool:
         managed: ResolvedManagedCommand | None = None
         if parsed_argv is not None:
             semantic_argv = tuple(parsed_argv)
+            launch_argv = (
+                self._rewrite_skill_argv(semantic_argv, skill_snapshot)
+                if skill_snapshot is not None
+                else semantic_argv
+            )
             managed = self._resolve_managed_command(
-                semantic_argv,
+                launch_argv,
                 execution=execution,
                 session_id=session_id,
                 run_id=run_id,
             )
-            argv = managed.argv if managed is not None else self._structured_argv(semantic_argv)
+            argv = managed.argv if managed is not None else self._structured_argv(launch_argv)
             if execution == "sandboxed" and Path(argv[0]).name.casefold() in {
                 "powershell",
                 "powershell.exe",
@@ -1439,10 +1502,16 @@ class ExecCommandTool:
             # bundled sibling helpers remain importable without inheriting an
             # arbitrary host PYTHONPATH.
             environment_overrides["PYTHONPATH"] = str(skill_snapshot.entry_path.parent)
+        display_argv = managed.display_argv if managed is not None else argv
+        if skill_snapshot is not None and parsed_argv is not None:
+            display_argv = tuple(
+                skill_snapshot.entry if token == str(skill_snapshot.entry_path) else token
+                for token in display_argv
+            )
         return (
             CommandApprovalDetails(
                 cmd=display_cmd,
-                argv=managed.display_argv if managed is not None else argv,
+                argv=display_argv,
                 execution=execution,
                 workdir=display_workdir,
                 cwd_source=cwd_source,  # type: ignore[arg-type]
@@ -1455,7 +1524,12 @@ class ExecCommandTool:
                 interactive=mode == "streaming",
                 skill=skill_binding,
                 execution_environment=(managed.public_summary() if managed is not None else None),
-                launch_argv=(managed.argv if managed is not None else None),
+                launch_argv=(
+                    argv
+                    if managed is not None
+                    or (skill_snapshot is not None and parsed_argv is not None)
+                    else None
+                ),
                 launch_workdir=str(workdir),
                 environment_overrides=environment_overrides,
                 managed_command=managed,
@@ -1661,6 +1735,22 @@ class ExecCommandTool:
                 "skill_workdir_invalid", "Skill workdir is not a directory in the snapshot"
             )
         return rewritten
+
+    @staticmethod
+    def _rewrite_skill_argv(
+        argv: tuple[str, ...], snapshot: SkillExecutionSnapshot
+    ) -> tuple[str, ...]:
+        # Match a whole path token only. Never replace substrings inside JSON,
+        # script text or other data arguments, and do not parse a second shell.
+        spellings = {snapshot.entry, snapshot.entry.replace("/", "\\")}
+        spellings.update({f"./{snapshot.entry}", ".\\" + snapshot.entry.replace("/", "\\")})
+        entry_index = next((index for index, token in enumerate(argv) if token in spellings), None)
+        if entry_index is None:
+            raise CommandRuntimeError(
+                "skill_entry_not_used",
+                "argv 必须包含独立的 skill.entry 包内相对路径参数；不要拼成命令字符串或填写安装路径。",
+            )
+        return (*argv[:entry_index], str(snapshot.entry_path), *argv[entry_index + 1 :])
 
     @staticmethod
     def _rewrite_skill_entry(cmd: str, snapshot: SkillExecutionSnapshot) -> str:
@@ -2349,6 +2439,7 @@ def make_command_tools(
     broker: ApprovalBroker | None,
     execution_environment_manager: ExecutionEnvironmentManager | None = None,
     tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
+    image_output: CommandImageOutput | None = None,
 ) -> list[Tool]:
     return [
         ExecCommandTool(
@@ -2356,6 +2447,7 @@ def make_command_tools(
             broker,
             execution_environment_manager=execution_environment_manager,
             tool_execution_evidence_store=tool_execution_evidence_store,
+            image_output=image_output,
         ),
         HostProcessStartTool(
             runtime,

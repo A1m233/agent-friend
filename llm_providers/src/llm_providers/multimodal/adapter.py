@@ -11,6 +11,7 @@ from ..catalog import DEEPSEEK_VISION_LITELLM_MODEL, model_capabilities
 from ..client import LLMClient
 from ..errors import LLMBadRequestError
 from ..protocol import LanguageModel
+from .limits import TOOL_RESULT_MAX_IMAGE_BYTES, TOOL_RESULT_MAX_IMAGES
 from .tool_images import supports_tool_images
 
 
@@ -31,6 +32,14 @@ class MultimodalInputAdapter:
     def _data_url(media_type: str, data: bytes) -> str:
         return f"data:{media_type};base64," + base64.b64encode(data).decode("ascii")
 
+    def render_budget_message(self, message: Any, client: LanguageModel) -> dict[str, Any]:
+        """Local asset reads only, identical to sending; never uploads or calls a provider.
+
+        User documents must already be projected to references. Keep this explicit
+        contract separate from arbitrary user-supplied message renderers.
+        """
+        return self.render_message(message, client)
+
     def _render_tool_images(self, message: Any, client: LanguageModel) -> dict[str, Any]:
         if message.role != "tool":
             raise LLMBadRequestError("image_source_invalid: images require tool origin")
@@ -47,11 +56,13 @@ class MultimodalInputAdapter:
             self._canonical_model_id(concrete)
         )
         images = message.images
-        if len(images) > min(4, caps.max_attachments_per_turn):
+        if len(images) > min(TOOL_RESULT_MAX_IMAGES, caps.max_attachments_per_turn):
             raise LLMBadRequestError("image_count_exceeded: too many tool images")
         content: list[dict[str, Any]] = [{"type": "text", "text": text}]
         limit = min(8 * 1024 * 1024, caps.max_attachment_bytes)
-        if sum(item.size_bytes for item in images) > caps.max_total_attachment_bytes:
+        if sum(item.size_bytes for item in images) > min(
+            TOOL_RESULT_MAX_IMAGE_BYTES, caps.max_total_attachment_bytes
+        ):
             raise LLMBadRequestError("image_total_size_exceeded")
         for ref in images:
             if ref.kind != "image" or ref.media_type not in caps.accepted_media_types:

@@ -49,6 +49,34 @@ def components(
     return result
 
 
+class ComponentCache:
+    """Memoize component identities only within one frozen candidate search.
+
+    Keep source objects alive: object IDs alone can be reused after collection.
+    Occurrences are never deduplicated in the returned list.
+    """
+
+    def __init__(self) -> None:
+        self._messages: dict[int, tuple[dict[str, Any], list[tuple[str, dict[str, Any]]]]] = {}
+        self._tools: dict[int, tuple[dict[str, Any], tuple[str, dict[str, Any]]]] = {}
+
+    def components(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None
+    ) -> list[tuple[str, dict[str, Any]]]:
+        result = []
+        for message in messages:
+            key = id(message)
+            if key not in self._messages:
+                self._messages[key] = (message, components([message], None))
+            result.extend(self._messages[key][1])
+        for tool in tools or []:
+            key = id(tool)
+            if key not in self._tools:
+                self._tools[key] = (tool, components([], [tool])[0])
+            result.append(self._tools[key][1])
+        return result
+
+
 def valid_digest(value: Any) -> bool:
     return (
         isinstance(value, str)

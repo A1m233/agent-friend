@@ -25,7 +25,7 @@ import logging
 import queue
 import threading
 from collections import OrderedDict
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Iterator
 from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar, Protocol, runtime_checkable
@@ -33,7 +33,7 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 from memory import Memory
 
 from ..conversation import Conversation
-from ..conversation_events import TurnDone
+from ..conversation_events import ConversationEvent, TurnDone
 from ..latency import RunLatencyContext, log_run_latency, monotonic_ms, observe_run_phase
 from ..memory_feed import project_post_turn_observation
 from ..sessions.changes import reset_session_mutation_context, set_session_mutation_context
@@ -737,6 +737,8 @@ class AgentRuntime:
         outcome = RunOutcome.FAILED
         error: BaseException | None = None
         execution_result: RunExecutionResult | None = None
+        events_iter: Iterator[ConversationEvent] | None = None
+        conv.set_run_usage_callback(handle.retain_turn_usage)
         try:
             handle.token.raise_if_cancelled()
             if started_at is not None:
@@ -837,6 +839,12 @@ class AgentRuntime:
             raise
         finally:
             try:
+                # Cancellation may happen while publishing an already yielded
+                # event, outside Conversation's next(). Close before unbinding
+                # usage/cleanup callbacks so partial execution is retained too.
+                close = getattr(events_iter, "close", None)
+                if callable(close):
+                    close()
                 self._last_dispatch_finished_at = datetime.now(UTC)
                 self._hooks.run_post_turn(
                     PostTurnContext(
@@ -862,6 +870,7 @@ class AgentRuntime:
                     first_text_ms=run_latency.first_text_elapsed_ms,
                 )
                 conv.set_run_latency_context(None)
+                conv.set_run_usage_callback(None)
                 conv.set_input_accepted_callback(None)
                 reset_session_mutation_context(mutation_token)
 

@@ -181,7 +181,13 @@ class FixtureBoundaryCompaction(SummarizingContextManager):
                 )
             return assessment
 
-        kwargs["runtime"] = replace(runtime, request_assessment=fixture_pressure)
+        # Synthetic pressure must apply to both candidate selection and final
+        # admission; the production candidate factory otherwise sees real costs.
+        kwargs["runtime"] = replace(
+            runtime,
+            request_assessment=fixture_pressure,
+            candidate_assessment_factory=lambda: fixture_pressure,
+        )
         previous_mode = control.mode
         control.mode = "compact_then_resume"
         try:

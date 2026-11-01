@@ -112,6 +112,7 @@ from .context import (
     stream_build_messages,
 )
 from .context.budget import assess_request_budget, estimate_request_tokens
+from .context.candidate_budget import CandidateBudgetCache
 from .context.checkpoints import bind_business_boundary, compaction_payload
 from .context.errors import ContextCompactionUnavailableError
 from .context.protocol import CompactionControl
@@ -467,6 +468,7 @@ class Conversation:
         time_provider: TimeProvider | None = None,
         approval_mode_provider: Callable[[], SessionApprovalModeState] | None = None,
         tool_execution_evidence_store: ToolExecutionEvidenceStore | None = None,
+        message_budget_renderer: MessageRenderer | None = None,
     ):
         self._session = session
         self._store = store
@@ -485,6 +487,7 @@ class Conversation:
         self._tool_post_hook = tool_post_hook
         self._post_turn_external = post_turn_external
         self._message_renderer = message_renderer
+        self._message_budget_renderer = message_budget_renderer
         self._generated_image_store = session_file_service.assets if session_file_service else None
         from .attachments.input_projection import project_file_message
         from .session_files.inputs import SessionFileInputs
@@ -518,6 +521,7 @@ class Conversation:
         self._tool_run_policy = tool_run_policy or _resolve_tool_run_policy()
         self._tool_batch_executor = ToolBatchExecutor(self._tool_run_policy.max_parallel_read_tools)
         self._active_tool_run_state: ToolRunState | None = None
+        self._run_usage_callback: Callable[[TurnDone], None] | None = None
         self._active_tool_run_context: ToolRunContext | None = None
         self._filesystem_scope_context_id: str | None = None
         self._announced_filesystem_scope_ids: set[str] = set()
@@ -596,6 +600,10 @@ class Conversation:
     def set_run_latency_context(self, context: RunLatencyContext | None) -> None:
         """Attach the runtime-owned, content-free timeline for the active run."""
         self._run_latency_context = context
+
+    def set_run_usage_callback(self, callback: Callable[[TurnDone], None] | None) -> None:
+        """Retain execution counts even when cancellation prevents a TurnDone event."""
+        self._run_usage_callback = callback
 
     def set_input_accepted_callback(self, callback: Callable[[], None] | None) -> None:
         """Report durable input acceptance independently of run admission."""
@@ -1195,6 +1203,8 @@ class Conversation:
             )
         finally:
             exc_info = sys.exc_info()
+            if self._run_usage_callback is not None:
+                self._run_usage_callback(self._turn_done(tool_run_state))
             interrupted = exc_info[0] is not None
             if interrupted:
                 self._on_interrupt(
@@ -1424,6 +1434,8 @@ class Conversation:
             )
         finally:
             interrupted = sys.exc_info()[0] is not None
+            if self._run_usage_callback is not None:
+                self._run_usage_callback(self._turn_done(tool_run_state))
             if interrupted:
                 exc = sys.exc_info()[1]
                 self._on_interrupt(
@@ -3160,6 +3172,19 @@ class Conversation:
             if new_user_input is not None and runtime.compaction_control is not None
             else None
         )
+
+        def candidate_assessment_factory() -> Callable[[list[Message]], InputEstimate]:
+            prepared = (
+                budget_runtime.candidate_assessment_factory()
+                if budget_runtime.candidate_assessment_factory is not None
+                else lambda messages: assess_request_budget(messages, budget_runtime)
+            )
+            # Candidate search must see the same bound user and host context as
+            # ordinary/final admission, including facts reinserted after a cut.
+            return lambda messages: prepared(
+                projection.apply(bind_current_request(messages, source_user))
+            )
+
         runtime = replace(
             runtime,
             request_estimator=lambda messages: estimate_request_tokens(
@@ -3168,6 +3193,7 @@ class Conversation:
             request_assessment=lambda messages: assess_request_budget(
                 projection.apply(bind_current_request(messages, source_user)), budget_runtime
             ),
+            candidate_assessment_factory=candidate_assessment_factory,
         )
         skill_additions = [
             m
@@ -3387,6 +3413,7 @@ class Conversation:
                 self._estimate_context_input(messages, tool_specs).tokens
             ),
             request_assessment=lambda messages: self._estimate_context_input(messages, tool_specs),
+            candidate_assessment_factory=lambda: self._candidate_context_assessor(tool_specs),
             compaction_control=self._current_compaction_control(),
             trigger_reason=self._context_trigger_reason,
             run_id=(
@@ -3490,12 +3517,26 @@ class Conversation:
         )
         return event
 
-    def _render_context_message(self, message: Message) -> dict[str, Any]:
+    def _project_context_message(self, message: Message) -> Message:
+        from .context.command_projection import project_successful_command
+
         message = self._message_projector(message)
+        if (
+            self._tool_registry is not None
+            and _RECOVER_TOOL_RESULT_TOOL_NAME in self._tool_registry
+        ):
+            message = project_successful_command(message)
+        return message
+
+    def _render_context_message(
+        self, message: Message, *, for_budget: bool = False
+    ) -> dict[str, Any]:
+        message = self._project_context_message(message)
+        renderer = self._message_budget_renderer if for_budget else self._message_renderer
         rendered = (
             message.to_openai()
-            if self._message_renderer is None
-            else self._message_renderer(message, self._active_llm_client())
+            if renderer is None
+            else renderer(message, self._active_llm_client())
         )
         raw_reasoning = message.meta.get("provider_reasoning_state")
         if isinstance(raw_reasoning, dict):
@@ -3554,14 +3595,52 @@ class Conversation:
             }
         )
 
+    def _candidate_context_assessor(
+        self, tools: list[dict[str, Any]] | None
+    ) -> Callable[[list[Message]], InputEstimate]:
+        """Prepare only local candidate inputs, scoped to one immutable search."""
+        cache: CandidateBudgetCache | None = None
+        identity: object = None
+
+        def assess(messages: list[Message]) -> InputEstimate:
+            nonlocal cache, identity
+            client = self._active_llm_client()
+            current = (
+                id(client),
+                self._active_model_config(),
+                self._run_id_override,
+                self._usage_scope(tools),
+                id(self._usage_anchor),
+                id(self._message_projector),
+                id(self._message_budget_renderer),
+                getattr(client, "tool_images_rejected", False),
+            )
+            if current != identity:
+                identity = current
+                cache = (
+                    CandidateBudgetCache() if self._message_budget_renderer is not None else None
+                )
+            return self._estimate_context_input(messages, tools, preparation=cache)
+
+        return assess
+
     def _estimate_context_input(
-        self, messages: list[Message], tools: list[dict[str, Any]] | None
+        self,
+        messages: list[Message],
+        tools: list[dict[str, Any]] | None,
+        *,
+        preparation: CandidateBudgetCache | None = None,
     ) -> InputEstimate:
         from .context import estimate_tokens
         from .context.budget import estimate_attachment_allowance
 
         calibration_key = self._input_calibration_key(messages)
-        messages = [self._message_projector(message) for message in messages]
+        messages = [
+            preparation.project(message, self._project_context_message)
+            if preparation
+            else self._project_context_message(message)
+            for message in messages
+        ]
         factor = self._calibration_by_input.get(calibration_key, 1.0)
 
         def fallback() -> int:
@@ -3569,8 +3648,22 @@ class Conversation:
                 (estimate_tokens(messages) + estimate_tool_schema_tokens(tools)) * factor
             )
 
-        # Rendering attachments can upload files. Budget candidate selection must
-        # remain pure and must not upload content that will subsequently be cut.
+        # Only an explicitly local renderer may run during candidate selection.
+        # It produces the same image blocks as sending, so already-measured images
+        # match the usage anchor instead of receiving another fixed allowance.
+        if self._message_budget_renderer is not None:
+            rendered = [
+                preparation.render(
+                    message, lambda item: self._render_context_message(item, for_budget=True)
+                )
+                if preparation
+                else self._render_context_message(message, for_budget=True)
+                for message in messages
+            ]
+            return self._estimate_rendered_input(
+                rendered, tools, calibration_key=calibration_key, preparation=preparation
+            )
+        # Custom renderers may upload: retain the conservative, no-I/O fallback.
         if any(message.attachments or message.images for message in messages):
             if self._usage_anchor is None or self._usage_anchor.version < 3:
                 return InputEstimate(fallback(), "full_estimate", "attachments_pending_render")
@@ -3609,6 +3702,7 @@ class Conversation:
         *,
         fallback_floor: int | Callable[[], int] = 0,
         calibration_key: str | None = None,
+        preparation: CandidateBudgetCache | None = None,
     ) -> InputEstimate:
         messages = self._project_image_transport(messages)
         key = calibration_key or self._input_calibration_key(self._last_built_model_messages or [])
@@ -3630,6 +3724,7 @@ class Conversation:
                         tools,
                         unknown_token_reserve=max(1, self._active_llm_client().context_window),
                         anchor=self._usage_anchor if compatible else None,
+                        cache=preparation.budget if preparation else None,
                     )
                     * factor
                 ),
@@ -3653,6 +3748,7 @@ class Conversation:
                 self._last_input_tokens,
                 emergency_ratio=self._context_emergency_ratio,
             ).trigger_threshold,
+            cache=preparation.budget if preparation else None,
         )
         return (
             replace(result, reason="opaque_provider_continuation")
@@ -3669,7 +3765,7 @@ class Conversation:
         """把本轮组装的度量观测刷进 :attr:`last_context_notes`（AC-1.3）。"""
         from .context import estimate_tokens
 
-        projected_messages = [self._message_projector(message) for message in build.messages]
+        projected_messages = [self._project_context_message(message) for message in build.messages]
         calibration_key = self._input_calibration_key(build.messages)
         notes: dict[str, Any] = {
             "attachment_input_projection": INPUT_PROJECTION_VERSION,
@@ -5368,7 +5464,11 @@ class Conversation:
     ) -> dict[str, Any]:
         """给内置工具补运行时隐藏上下文；不改变 LLM 原始 tool args。"""
         invocation_args = dict(args)
-        if name == "view_image" or (name == "recover_tool_result" and args.get("mode") == "images"):
+        if (
+            name == "view_image"
+            or (name == "exec_command" and "output_images" in args)
+            or (name == "recover_tool_result" and args.get("mode") == "images")
+        ):
             invocation_args[IMAGE_INPUT_SUPPORTED_ARG] = (
                 self._message_renderer is not None
                 and supports_tool_images(self._active_llm_client())

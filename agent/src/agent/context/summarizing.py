@@ -5,8 +5,8 @@
 - **平时折叠**：用 ``runtime.prior_summary``（由 ``Conversation`` 从
   :meth:`Session.latest_compaction` 派生）把已覆盖的旧消息替换为一条 summary
   system 消息，省 token；估算仍在阈值内则直接返回。
-- **超阈值触发摘要**：按 token 预算选择 recent tail 和可发送的连续摘要来源，不拆
-  user/tool turn；首次历史已经过大时明确记录未进入摘要的旧 turn 数。
+- **超阈值触发摘要**：按主请求预算选择 recent tail，不拆 user/tool turn；选中的
+  完整前缀一次提交摘要，不按输入估算分段或丢弃更旧来源。
 - **摘要后二次验算**：只有 summary + recent tail 仍满足主请求预算，才生成
   :class:`CompactionRecord` 候选。
 - **circuit breaker**：同一 run 内限制连续失败；新 run / 模型可重新尝试。
@@ -20,7 +20,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from collections.abc import Generator
 from dataclasses import dataclass
 from typing import cast
@@ -41,7 +40,7 @@ from llm_providers import (
 
 from ..attachments import AttachmentError, AttachmentRef
 from ..messages import Message
-from .budget import assess_request_budget, estimate_request_tokens, estimate_tokens
+from .budget import assess_request_budget, estimate_request_tokens
 from .checkpoints import checkpoint_prefix_digest, summary_message
 from .errors import (
     ContextBaseOverBudgetError,
@@ -83,8 +82,7 @@ SUMMARY_RECENT_TAIL_TURNS = 2
 POST_COMPACTION_TARGET_RATIO = 0.7
 """压缩后目标占用相对触发阈值的比例，给后续 turn 与 usage 校准留出余量。"""
 
-SUMMARY_PROMPT_VERSION = 6
-MAX_SUMMARY_CONTEXT_RETRIES = 2
+SUMMARY_PROMPT_VERSION = 7
 SUMMARY_NETWORK_RETRIES = 0
 logger = logging.getLogger(__name__)
 
@@ -350,32 +348,22 @@ class SummarizingContextManager:
             message for message in older if not message.meta.get("model_only", False)
         ]
         raw = ""
-        summary_source: list[Message] = []
+        summary_source = summarizable_older
         attempts = 0
-        context_retries = 0
         output_retry_used = False
-        input_kind = "bounded_full"
-        # Two input-size repairs and one output-budget repair share four calls.
-        for attempt in range(MAX_SUMMARY_CONTEXT_RETRIES + 2):
+        input_kind = "full_prefix"
+        request_messages = build_summary_messages(
+            render_transcript(summary_source), target_tokens=target_tokens
+        )
+        # Only output exhaustion can retry here, with identical source coverage.
+        for attempt in range(2):
             runtime.check_cancelled()
             attempts = attempt + 1
-            ratio = 0.75**context_retries
-            summary_source = self._bounded_summary_source(
-                summarizable_older,
-                runtime,
-                ratio=ratio,
-            )
-            if not summary_source:
-                return self._fallback_result(
-                    history, parts, runtime, reason="summary_input_too_large"
-                )
-            summary_text = render_transcript(summary_source)
-            request_messages = build_summary_messages(summary_text, target_tokens=target_tokens)
-            generation_tokens = summary_generation_tokens(
-                request_messages, runtime, expanded=output_retry_used
-            )
+            generation_tokens = summary_generation_tokens(runtime, expanded=output_retry_used)
             if generation_tokens <= 0:
-                return self._on_failure(history, parts, runtime, reason="summary_input_too_large")
+                return self._on_failure(
+                    history, parts, runtime, reason="summary_output_budget_exhausted"
+                )
             lineage = self._prompt_cache_lineage.begin(
                 session_id=runtime.session_id,
                 operation="context_compaction",
@@ -414,17 +402,13 @@ class SummarizingContextManager:
                 break
             except LLMContextWindowError:
                 runtime.check_cancelled()
-                if context_retries >= MAX_SUMMARY_CONTEXT_RETRIES:
-                    return self._on_failure(
-                        history, parts, runtime, reason="summary_context_window_exceeded"
-                    )
-                context_retries += 1
+                return self._on_failure(
+                    history, parts, runtime, reason="summary_context_window_exceeded"
+                )
             except (LLMIncompleteResponseError, LLMOutputBudgetExhaustedError) as exc:
                 runtime.check_cancelled()
                 exhausted = summary_output_exhausted(exc)
-                expanded_tokens = summary_generation_tokens(
-                    request_messages, runtime, expanded=True
-                )
+                expanded_tokens = summary_generation_tokens(runtime, expanded=True)
                 if exhausted and not output_retry_used and expanded_tokens > generation_tokens:
                     output_retry_used = True
                     logger.info(
@@ -530,10 +514,7 @@ class SummarizingContextManager:
                 "summary_target_tokens": target_tokens,
                 "summary_generation_tokens": generation_tokens,
                 "summary_output_retry_used": output_retry_used,
-                "summary_input_tokens": estimate_tokens(
-                    [Message(role="system", content=item["content"]) for item in request_messages]
-                ),
-                "summary_input_budget": runtime.budget.trigger_threshold,
+                "summary_input_chars": sum(len(item["content"]) for item in request_messages),
                 "tool_results_truncated": projection.truncated,
                 "tool_results_omitted": 0,
                 "tool_results_cleared": projection.cleared,
@@ -554,6 +535,10 @@ class SummarizingContextManager:
         self._consecutive_failures += 1
         if self._consecutive_failures >= self._max_failures:
             self._tripped = True
+        if reason == "summary_context_window_exceeded":
+            raise ContextCompactionUnavailableError(
+                "完整摘要请求超过模型容量，已保留原历史。", reason=reason
+            )
         return self._fallback_result(history, parts, runtime, reason=reason)
 
     def _fallback_result(
@@ -628,52 +613,6 @@ class SummarizingContextManager:
             *([anchor] if anchor is not None else []),
             *preserve_latest_skill_catalog(history, history[idx + 1 :]),
         ]
-
-    def _bounded_summary_source(
-        self,
-        older: list[Message],
-        runtime: RuntimeContext,
-        *,
-        ratio: float,
-    ) -> list[Message]:
-        """在摘要调用预算内选择连续的最新完整旧 turn。"""
-        budget = int(runtime.budget.trigger_threshold * ratio)
-        candidates = recent_turn_start_candidates(older)
-        if candidates and candidates[-1] == len(older):
-            candidates = candidates[:-1]
-        if not candidates and older:
-            candidates = [0]
-        first_user = next(
-            (index for index, message in enumerate(older) if message.role == "user"), len(older)
-        )
-        for start in candidates:
-            runtime.check_cancelled()
-            # The current model view can already contain a prior summary. Preserve
-            # it even when a bounded recent source omits intervening raw turns.
-            pinned = [
-                message
-                for index, message in enumerate(older[:start])
-                if message.meta.get("synthetic") == "context_summary"
-                or (
-                    index < first_user
-                    and message.role == "system"
-                    and message.meta.get("synthetic") != "skill_catalog_state"
-                )
-            ]
-            source = [*pinned, *older[start:]]
-            transcript = render_transcript(source)
-            request = build_summary_messages(
-                transcript, target_tokens=summary_target_tokens(runtime)
-            )
-            summary_messages = [
-                Message(role=message["role"], content=message["content"]) for message in request
-            ]
-            summary_request_tokens = math.ceil(
-                estimate_tokens(summary_messages) * runtime.calibration_factor
-            )
-            if summary_request_tokens <= budget:
-                return source
-        return []
 
     def _recent_tail_cut(
         self,

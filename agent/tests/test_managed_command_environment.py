@@ -249,15 +249,20 @@ def test_parse_uses_managed_alias_without_host_path_and_hides_internal_roots(
     context.close_commands()
 
 
+@pytest.mark.parametrize("structured", [False, True])
 def test_skill_bound_managed_python_exposes_only_snapshot_entry_directory(
     runtime: CommandRuntime,
     environment_manager: ExecutionEnvironmentManager,
     tmp_path: Path,
+    structured: bool,
 ) -> None:
     package = tmp_path / "skill"
     scripts = package / "scripts"
     scripts.mkdir(parents=True)
-    (scripts / "run.py").write_text("from helper import value\n", encoding="utf-8")
+    (scripts / "run.py").write_text(
+        "from helper import value\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
     (scripts / "helper.py").write_text("value = 1\n", encoding="utf-8")
     context = ToolRunContext.create("")
     args: dict[str, object] = {
@@ -271,6 +276,11 @@ def test_skill_bound_managed_python_exposes_only_snapshot_entry_directory(
         COMMAND_RUN_CONTEXT_ARG: context,
         COMMAND_SKILL_SNAPSHOT_ARG: _skill_turn(package),
     }
+    payload = json.dumps({"name": '中文 引号 " \\ $() ` & |', "entry": "scripts/run.py"})
+    if structured:
+        args.pop("cmd")
+        args["argv"] = ["python", "scripts/run.py", "--data", payload]
+        args["skill"] = {"entry": "scripts/run.py", "workdir": "scripts"}
     tool = ExecCommandTool(
         runtime,
         ApprovalBroker(),
@@ -291,6 +301,10 @@ def test_skill_bound_managed_python_exposes_only_snapshot_entry_directory(
     expected_entry = Path(details.launch_workdir) / details.launch_argv[1]
     assert details.environment_overrides["PYTHONPATH"] == str(expected_entry.parent)
     assert details.environment_overrides["PYTHONNOUSERSITE"] == "1"
+    if structured:
+        assert details.argv == ("python", "scripts/run.py", "--data", payload)
+        assert details.launch_argv[2:] == ("--data", payload)
+        assert Path(details.launch_argv[1]).is_absolute()
     completed = subprocess.run(
         details.launch_argv,
         cwd=details.launch_workdir,
@@ -303,6 +317,7 @@ def test_skill_bound_managed_python_exposes_only_snapshot_entry_directory(
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == (["--data", payload] if structured else [])
     context.close_commands()
 
 

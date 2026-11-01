@@ -956,7 +956,7 @@ def test_exec_command_contract_explains_windows_shell_and_host_path_derivation()
         "直接启动单个 CLI" in ExecCommandTool.parameters_schema["properties"]["argv"]["description"]
     )
     assert (
-        "普通单程序及参数优先使用 argv"
+        "Skill-bound 脚本优先使用 argv"
         in ExecCommandTool.parameters_schema["properties"]["cmd"]["description"]
     )
 
@@ -1517,6 +1517,66 @@ def test_command_tool_uses_shared_approval_and_buffered_semantics(
         assert "不能证明宿主机" in payload["sandbox_observation_note"]
 
 
+@pytest.mark.parametrize("present", [True, False])
+def test_buffered_command_returns_images_without_a_second_model_call(
+    runtime: CommandRuntime, tmp_path: Path, present: bool
+) -> None:
+    from agent.attachments import AttachmentStore
+    from agent.command_runtime.image_output import CommandImageOutput
+    from agent.filesystem import FilesystemService, ProtectedPathPolicy
+    from agent.image_reading import ImageReadingService
+    from agent.tools.protocol import IMAGE_INPUT_SUPPORTED_ARG
+    from PIL import Image
+
+    if present:
+        Image.new("RGB", (8, 8), "red").save(tmp_path / "frame.png")
+    context = ToolRunContext.create("")
+    scope = context.filesystem_authorizations.grant_scope(
+        root=tmp_path, root_kind="directory", permissions=frozenset({"read_image"})
+    )
+    broker = ApprovalBroker()
+    policy = ProtectedPathPolicy(product_roots=(), personal_skill_roots=(), builtin_skill_roots=())
+    tool = ExecCommandTool(
+        runtime,
+        broker,
+        image_output=CommandImageOutput(
+            FilesystemService(policy), ImageReadingService(AttachmentStore(tmp_path / "assets"))
+        ),
+    )
+    args = {
+        "cmd": "fake:image-output",
+        "workdir": str(tmp_path.resolve()),
+        "output_images": {"filesystem_scope_id": scope.scope_id},
+        COMMAND_SESSION_ID_ARG: "session-a",
+        COMMAND_RUN_ID_ARG: "run-a",
+        COMMAND_TOOL_CALL_ID_ARG: "call-image",
+        COMMAND_SURFACE_ARG: "desktop_chat",
+        COMMAND_RUN_CONTEXT_ARG: context,
+        IMAGE_INPUT_SUPPORTED_ARG: True,
+    }
+    results = []
+    worker = threading.Thread(target=lambda: results.append(tool.invoke(args)))
+    worker.start()
+    request = _wait_for_request(broker)
+    assert broker.decide(
+        request.request_id,
+        CommandApprovalDecision(allow=True),
+        session_id="session-a",
+        run_id="run-a",
+        expected_kind="command",
+    )
+    worker.join(5)
+    assert not worker.is_alive()
+    result = results[0]
+    assert bool(result.images) is present
+    assert result.is_error is not present
+    payload = json.loads(result.text)
+    assert payload["exit_code"] == 0
+    if not present:
+        assert payload["error"] == "command_images_failed" and payload["executed"] is True
+        assert "不要重放" in payload["message"]
+
+
 def test_buffered_command_persists_host_observed_output_evidence(
     runtime: CommandRuntime,
     tmp_path: Path,
@@ -1971,8 +2031,9 @@ def test_skill_paths_require_structured_binding(runtime: CommandRuntime, tmp_pat
     assert json.loads(result.text)["error"] == "skill_binding_required"
 
 
+@pytest.mark.parametrize("structured", [False, True])
 def test_screenshot_binding_uses_narrow_output_and_current_turn_image_scope(
-    runtime: CommandRuntime, tmp_path: Path
+    runtime: CommandRuntime, tmp_path: Path, structured: bool
 ) -> None:
     from agent.command_runtime.screenshot_output import (
         SCREENSHOT_OUTPUT_ENV,
@@ -1994,6 +2055,9 @@ def test_screenshot_binding_uses_narrow_output_and_current_turn_image_scope(
         "reason": "capture",
         COMMAND_SKILL_SNAPSHOT_ARG: _turn_snapshot(activation),
     }
+    if structured:
+        args.pop("cmd")
+        args["argv"] = [sys.executable, "scripts/take_screenshot.ps1"]
     try:
         details, _, roots, _, _ = tool._parse(args, context, session_id="s", run_id="r")
         output = Path(details.environment_overrides[SCREENSHOT_OUTPUT_ENV])
@@ -2022,14 +2086,16 @@ def test_screenshot_binding_uses_narrow_output_and_current_turn_image_scope(
             if key not in {"skill", COMMAND_SKILL_SNAPSHOT_ARG}
         }
         ordinary["cmd"] = "echo ordinary"
+        ordinary.pop("argv", None)
         _, _, ordinary_roots, _, _ = tool._parse(ordinary, context, session_id="s", run_id="r")
         assert (Path.home().resolve(), True) in ordinary_roots
     finally:
         context.close_commands()
 
 
+@pytest.mark.parametrize("structured", [False, True])
 def test_skill_binding_approval_contains_content_fingerprint(
-    runtime: CommandRuntime, tmp_path: Path
+    runtime: CommandRuntime, tmp_path: Path, structured: bool
 ) -> None:
     package = tmp_path / "skill"
     package.mkdir()
@@ -2040,7 +2106,7 @@ def test_skill_binding_approval_contains_content_fingerprint(
     context = ToolRunContext.create("")
     result_box = []
     args = {
-        "cmd": "python run.py",
+        **({"argv": [sys.executable, "run.py"]} if structured else {"cmd": "python run.py"}),
         "skill": {"skill_id": activation.record.id, "entry": "run.py", "workdir": "."},
         "reason": "run activated helper",
         COMMAND_SESSION_ID_ARG: "session-a",
@@ -2058,6 +2124,10 @@ def test_skill_binding_approval_contains_content_fingerprint(
     assert request.details.skill.workdir == "."
     assert request.details.workdir == "."
     assert len(request.details.skill.fingerprint) == 64
+    if structured:
+        assert request.details.argv[1] == "run.py"
+        assert request.details.launch_argv is not None
+        assert Path(request.details.launch_argv[1]).is_file()
     snapshots = tuple(runtime.execution_root.glob("run-*/skills/skill-*"))
     assert len(snapshots) == 1
     assert snapshots[0].is_relative_to(runtime.execution_root)
@@ -2243,8 +2313,9 @@ def test_per_request_skill_replacement_preserves_risk_facts_and_single_decision(
     context.close_commands()
 
 
+@pytest.mark.parametrize("structured", [False, True])
 def test_single_active_skill_binding_is_inferred_without_copying_skill_id(
-    runtime: CommandRuntime, tmp_path: Path
+    runtime: CommandRuntime, tmp_path: Path, structured: bool
 ) -> None:
     package = tmp_path / "skill"
     package.mkdir()
@@ -2253,7 +2324,7 @@ def test_single_active_skill_binding_is_inferred_without_copying_skill_id(
     broker = ApprovalBroker()
     result_box = []
     args = {
-        "cmd": "python run.py",
+        **({"argv": [sys.executable, "run.py"]} if structured else {"cmd": "python run.py"}),
         "skill": {"entry": "run.py", "workdir": "."},
         "reason": "run the only activated Skill helper",
         COMMAND_SESSION_ID_ARG: "session-a",
@@ -2315,12 +2386,14 @@ def test_skill_binding_error_distinguishes_filesystem_scope_from_skill_id(
     assert "earlier turn's activation" in payload["message"]
 
 
+@pytest.mark.parametrize("structured", [False, True])
 def test_skill_binding_without_current_turn_activation_directs_skill_read(
     runtime: CommandRuntime,
+    structured: bool,
 ) -> None:
     result = ExecCommandTool(runtime, ApprovalBroker()).invoke(
         {
-            "cmd": "python run.py",
+            **({"argv": [sys.executable, "run.py"]} if structured else {"cmd": "python run.py"}),
             "skill": {"entry": "run.py", "workdir": "."},
             "reason": "run helper",
             COMMAND_SESSION_ID_ARG: "session-a",
@@ -2361,6 +2434,79 @@ def test_exec_command_schema_mechanically_separates_workdir_and_skill_binding(
     )
     assert invalid is not None
     assert invalid.is_error
+
+
+@pytest.mark.parametrize("entry_arg", ["scripts/run.py", "./scripts/run.py", "scripts\\run.py"])
+def test_skill_argv_keeps_data_and_binds_immutable_entry(
+    runtime: CommandRuntime, tmp_path: Path, entry_arg: str
+) -> None:
+    package = tmp_path / "skill with spaces"
+    script = package / "scripts" / "run.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("print('original')", encoding="utf-8")
+    activation = _activation(package)
+    context = ToolRunContext.create("")
+    tool = ExecCommandTool(runtime, ApprovalBroker())
+    payload = '{"entry":"scripts/run.py","text":"中文 $() & |"}'
+    args = {
+        "argv": [sys.executable, entry_arg, "--data", payload, "scripts/run.py"],
+        "skill": {"entry": "scripts/run.py", "workdir": "scripts"},
+        COMMAND_SKILL_SNAPSHOT_ARG: _turn_snapshot(activation),
+    }
+    try:
+        details, workdir, roots, _, _ = tool._parse(args, context, session_id="s", run_id="r")
+        assert details.launch_argv is not None
+        entry_path = Path(details.launch_argv[1])
+        assert entry_path == workdir / "run.py"
+        assert details.launch_argv[2:] == ("--data", payload, "scripts/run.py")
+        assert details.argv[1:] == ("scripts/run.py", "--data", payload, "scripts/run.py")
+        assert (workdir.parent, False) in roots
+        script.write_text("print('changed')", encoding="utf-8")
+        again, *_ = tool._parse(args, context, session_id="s", run_id="r")
+        assert again.launch_argv == details.launch_argv
+        assert entry_path.read_text(encoding="utf-8") == "print('original')"
+    finally:
+        context.close_commands()
+
+
+@pytest.mark.parametrize("embedded", [False, True])
+def test_skill_argv_rejects_missing_entry_or_entry_embedded_in_data(
+    runtime: CommandRuntime, tmp_path: Path, embedded: bool
+) -> None:
+    package = tmp_path / "skill"
+    package.mkdir()
+    (package / "run.py").write_text("print('ok')", encoding="utf-8")
+    context = ToolRunContext.create("")
+    try:
+        with pytest.raises(CommandRuntimeError) as error:
+            ExecCommandTool(runtime, ApprovalBroker())._parse(
+                {
+                    "argv": [sys.executable, "-c", '{"entry":"run.py"}' if embedded else "pass"],
+                    "skill": {"entry": "run.py"},
+                    COMMAND_SKILL_SNAPSHOT_ARG: _turn_snapshot(_activation(package)),
+                },
+                context,
+                session_id="s",
+                run_id="r",
+            )
+        assert error.value.code == "skill_entry_not_used"
+    finally:
+        context.close_commands()
+
+
+def test_skill_argv_schema_preserves_binding_and_command_exclusivity(
+    runtime: CommandRuntime,
+) -> None:
+    registry = ToolRegistry([ExecCommandTool(runtime, None)])
+    for invalid_args in (
+        {"argv": ["python", "run.py"], "cmd": "python run.py", "skill": {"entry": "run.py"}},
+        {"argv": ["python", "run.py"], "workdir": "C:/explicit", "skill": {"entry": "run.py"}},
+        {"skill": {"entry": "run.py"}},
+    ):
+        assert registry.validate("exec_command", invalid_args) is not None
+    wire = registry.to_openai_tools()[0]["function"]["parameters"]
+    assert "argv" in wire["properties"]
+    assert "Skill" in wire["properties"]["argv"]["description"]
 
 
 def test_host_process_start_schema_is_separate_and_structured(
@@ -2435,6 +2581,11 @@ def test_exec_command_schema_keeps_sandboxed_shell_and_direct_argv_distinct(
             "cmd": "python scripts/run.py",
             "skill": {"entry": "scripts/run.py"},
             "reason": "run an activated Skill helper",
+        },
+        {
+            "argv": ["python", "scripts/run.py", "--data", '{"name":"中文"}'],
+            "skill": {"entry": "scripts/run.py"},
+            "reason": "run an activated Skill helper with exact arguments",
         },
     ):
         assert registry.validate("exec_command", valid_args) is None

@@ -17,7 +17,7 @@ from .budget import (
     TOOL_IMAGE_TOKENS,
     estimate_tool_schema_tokens,
 )
-from .usage_components import components, valid_digest
+from .usage_components import ComponentCache, components, valid_digest
 from .usage_components import digest as digest
 
 
@@ -295,6 +295,30 @@ class InputEstimate:
         }
 
 
+class InputBudgetCache(ComponentCache):
+    """Local evidence preparation; never persists or alters the usage anchor.
+
+    Component costs depend on their content and the exact output reasoning bound.
+    Matching occurrence counts and whole-request ceilings still run per candidate.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._costs: dict[tuple[str, str | None, int | None], int | None] = {}
+
+    def cost(self, key: str, payload: dict[str, Any], anchor: UsageAnchor) -> int | None:
+        identity = (key, anchor.output_reasoning_digest, anchor.output_reasoning_tokens)
+        if identity not in self._costs:
+            self._costs[identity] = _component_cost(payload, anchor)
+        return self._costs[identity]
+
+
+def _component_cost(payload: dict[str, Any], anchor: UsageAnchor) -> int | None:
+    if "_tool_schema" in payload:
+        return estimate_tool_schema_tokens([payload["_tool_schema"]])
+    return _estimate_delta([payload], anchor)
+
+
 def estimate_input(
     messages: list[dict[str, Any]],
     *,
@@ -305,6 +329,7 @@ def estimate_input(
     tools: list[dict[str, Any]] | None = None,
     unknown_token_reserve: int = 1_000_000,
     fallback_threshold: int | None = None,
+    cache: InputBudgetCache | None = None,
 ) -> InputEstimate:
     def full_estimate(reason: str, compatible: UsageAnchor | None = None) -> InputEstimate:
         fallback = fallback_tokens() if callable(fallback_tokens) else fallback_tokens
@@ -312,12 +337,15 @@ def estimate_input(
         remaining = Counter(bound.component_digests)
         unknown = 0
         retained_opaque = False
-        for key, payload in components(messages, tools):
+        for key, payload in (
+            cache.components(messages, tools) if cache else components(messages, tools)
+        ):
+            cost = cache.cost(key, payload, bound) if cache else _component_cost(payload, bound)
             if remaining[key] > 0:
                 remaining[key] -= 1
-                if "_tool_schema" not in payload and _estimate_delta([payload], bound) is None:
+                if cost is None:
                     retained_opaque = True
-            elif "_tool_schema" not in payload and _estimate_delta([payload], bound) is None:
+            elif cost is None:
                 unknown += 1
         return InputEstimate(
             fallback,
@@ -334,7 +362,13 @@ def estimate_input(
             if anchor.compatibility_scope != compatibility_scope:
                 return full_estimate("request_scope_changed")
             return _estimate_components(
-                messages, tools, anchor, fallback_tokens, unknown_token_reserve, fallback_threshold
+                messages,
+                tools,
+                anchor,
+                fallback_tokens,
+                unknown_token_reserve,
+                fallback_threshold,
+                cache,
             )
         reason = "request_scope_changed"
         if anchor.scope == scope:
@@ -364,22 +398,20 @@ def _estimate_components(
     fallback_tokens: int | Callable[[], int],
     unknown_token_reserve: int,
     fallback_threshold: int | None,
+    cache: InputBudgetCache | None = None,
 ) -> InputEstimate:
     remaining = Counter(anchor.component_digests)
     added = reused = delta = unknown = 0
     retained_opaque = False
-    for key, payload in components(messages, tools):
+    for key, payload in cache.components(messages, tools) if cache else components(messages, tools):
+        cost = cache.cost(key, payload, anchor) if cache else _component_cost(payload, anchor)
         if remaining[key] > 0:
             remaining[key] -= 1
             reused += 1
-            if "_tool_schema" not in payload and _estimate_delta([payload], anchor) is None:
+            if cost is None:
                 retained_opaque = True
             continue
         added += 1
-        if "_tool_schema" in payload:
-            delta += estimate_tool_schema_tokens([payload["_tool_schema"]])
-            continue
-        cost = _estimate_delta([payload], anchor)
         if cost is None:
             # Ciphertext length is not a bound on the underlying reasoning.
             # This is unknown, not another measured full context window.
@@ -434,6 +466,7 @@ def estimate_full_input(
     *,
     unknown_token_reserve: int,
     anchor: UsageAnchor | None = None,
+    cache: InputBudgetCache | None = None,
 ) -> int:
     """Independent candidate estimate without pricing opaque reasoning ciphertext.
 
@@ -447,14 +480,11 @@ def estimate_full_input(
     tokens = 0
     retained_opaque = False
     unknown = False
-    for key, payload in components(messages, tools):
+    for key, payload in cache.components(messages, tools) if cache else components(messages, tools):
         matched = remaining[key] > 0
         if matched:
             remaining[key] -= 1
-        if "_tool_schema" in payload:
-            tokens += estimate_tool_schema_tokens([payload["_tool_schema"]])
-            continue
-        cost = _estimate_delta([payload], bound)
+        cost = cache.cost(key, payload, bound) if cache else _component_cost(payload, bound)
         if cost is not None:
             tokens += cost
         elif matched:

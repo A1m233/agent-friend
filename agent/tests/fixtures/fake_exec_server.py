@@ -94,6 +94,10 @@ for raw_line in sys.stdin:
             threading.Thread(
                 target=finish, args=(process_id, b"buffered output"), daemon=True
             ).start()
+        elif command == "fake:image-output":
+            threading.Thread(
+                target=finish, args=(process_id, b'{"image_paths":["frame.png"]}'), daemon=True
+            ).start()
         elif command == "fake:large":
             threading.Thread(target=finish, args=(process_id, b"x" * 128), daemon=True).start()
     elif method == "fs/getMetadata":

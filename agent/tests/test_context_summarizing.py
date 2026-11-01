@@ -446,7 +446,7 @@ def test_over_threshold_triggers_summary_and_keeps_recent_tail() -> None:
     assert result.new_compaction.covered_through_uuid == "a9"
     assert result.new_compaction.model == "deepseek/test"
     assert result.notes["compacted"] is True
-    assert result.notes["summary_input"] == "bounded_full"
+    assert result.notes["summary_input"] == "full_prefix"
     joined = _joined(result.messages)
     # 摘要前缀在、最老轮被折掉、最近 tail 逐字保留
     assert "压缩后的结构化摘要" in joined
@@ -648,7 +648,7 @@ def test_compaction_leaves_headroom_for_usage_calibration_and_next_turn() -> Non
     assert llm.complete_calls == 1
 
 
-def test_first_huge_compaction_uses_bounded_recent_source() -> None:
+def test_first_huge_compaction_sends_complete_selected_source() -> None:
     llm = _FakeLLM()
     cm = SummarizingContextManager()
     history = _turns(6, 500)  # 较旧部分很大
@@ -660,8 +660,9 @@ def test_first_huge_compaction_uses_bounded_recent_source() -> None:
         runtime=_runtime(llm, window=2400, prior=prior),
     )
     assert result.new_compaction is not None
-    assert result.notes["summary_input"] == "bounded_full"
-    assert result.new_compaction.omitted_before_count > 0
+    assert result.notes["summary_input"] == "full_prefix"
+    assert result.new_compaction.omitted_before_count == 0
+    assert llm.complete_calls == 1
 
 
 def test_circuit_breaker_trips_after_max_failures() -> None:
@@ -759,22 +760,21 @@ def test_summary_outage_does_not_hide_base_budget_error(monkeypatch: pytest.Monk
         )
 
 
-def test_summary_context_error_retries_with_smaller_complete_turn_source() -> None:
+def test_summary_context_error_preserves_history_without_shrinking_or_retry() -> None:
     llm = _SummaryContextRetryLLM()
     cm = SummarizingContextManager()
     history = _turns(40, 100)
 
-    result = cm.build_messages(
-        history=history,
-        system_prompt="sys",
-        runtime=_runtime(llm, window=4000),
-    )
-
-    assert result.new_compaction is not None
-    assert llm.complete_calls == 3
-    assert llm.summary_input_lengths[0] > llm.summary_input_lengths[1]
-    assert llm.summary_input_lengths[1] > llm.summary_input_lengths[2]
-    assert result.new_compaction.summary_attempts == 3
+    original = [message.to_dict() for message in history]
+    with pytest.raises(ContextCompactionUnavailableError) as error:
+        cm.build_messages(
+            history=history,
+            system_prompt="sys",
+            runtime=_runtime(llm, window=4000),
+        )
+    assert error.value.reason == "summary_context_window_exceeded"
+    assert llm.complete_calls == 1
+    assert [message.to_dict() for message in history] == original
 
 
 def test_indivisible_current_turn_over_budget_fails_closed() -> None:
@@ -979,7 +979,7 @@ def test_compaction_model_only_boundary_survives_verified_rollout_restart(tmp_pa
 
 
 @pytest.mark.parametrize("marked", [True, False])
-def test_repeated_compaction_keeps_prior_summary_in_bounded_input(marked: bool) -> None:
+def test_repeated_compaction_keeps_prior_summary_and_all_new_source(marked: bool) -> None:
     llm = _FakeLLM(context_window=8_000)
     manager = SummarizingContextManager()
     remembered = summary_message(
@@ -992,7 +992,11 @@ def test_repeated_compaction_keeps_prior_summary_in_bounded_input(marked: bool) 
     assert result.new_compaction is not None
     assert llm.complete_calls == 1
     assert "EARLIER_FACT_MUST_SURVIVE" in str(llm.generate_requests[0].messages[-1]["content"])
-    assert result.new_compaction.omitted_before_count > 0
+    assert result.new_compaction.omitted_before_count == 0
+    source = str(llm.generate_requests[0].messages[-1]["content"])
+    for index in range(74):
+        assert f"source_message_ref=u{index}" in source
+        assert f"source_message_ref=a{index}" in source
 
 
 def test_unsupported_summary_parameter_is_blocked_only_for_same_run_and_model(

@@ -191,10 +191,10 @@ def test_hard_image_count_cap_is_projection_only(tmp_path: Path) -> None:
         .image
     )
     messages = [
-        Message(role="tool", content="", images=(image,), uuid=str(index)) for index in range(6)
+        Message(role="tool", content="", images=(image,), uuid=str(index)) for index in range(18)
     ]
     projected, omitted = bound_tool_images(messages)
-    assert omitted == 2
+    assert omitted == 14
     assert sum(len(item.images) for item in projected) == 4
     assert all(item.images for item in messages)
     assert not projected[0].images and projected[-1].images

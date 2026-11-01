@@ -4,6 +4,7 @@ $ErrorActionPreference = "Stop"
 # Session uploads are verified, copied, reopened, and cleaned offline by runtime doctor.
 # Scheduled inputs verify fixed targets and durable request interruption without model calls.
 # QQ approval smoke uses local transport only; real client acceptance remains separate.
+# Runtime doctor also exercises Windows read-ACL preparation and reuse on a temporary directory.
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Set-Location (Join-Path $PSScriptRoot "..\..")
 # Package writes preflight shell paths and relay through same-user Explorer if redirected.

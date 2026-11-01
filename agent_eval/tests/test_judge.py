@@ -1212,6 +1212,34 @@ def test_c27_controls_allow_wait_and_reject_wrong_handle() -> None:
     assert "missing successful tool call terminate_command" in verdict.reason
 
 
+def test_c27_image_collection_failure_does_not_repeat_side_effect() -> None:
+    contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C27")
+    case = next(item for item in contract.cases if item.id == "C27-06")
+    command = ToolCallTrace(
+        name="exec_command",
+        args={"argv": ["render-task", "advance"]},
+        result_text='{"error":"command_images_failed","executed":true}',
+        is_error=True,
+    )
+    image = ToolCallTrace(
+        name="view_image",
+        args={"filesystem_scope_id": "scope_render", "path": "step.png"},
+        result_text="image_read_failed",
+        is_error=True,
+    )
+    trace = Trace(
+        case_id=case.id,
+        tool_calls=[command, image],
+        final_text="任务已执行，但图片读取失败。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, trace).passed
+    assert not judge_case(
+        case, contract, replace(trace, tool_calls=[command, command, image])
+    ).passed
+    assert not judge_case(case, contract, replace(trace, tool_calls=[command])).passed
+
+
 def test_c27_completed_control_accepts_semantic_summary_and_rejects_extra_tools() -> None:
     contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C27")
     case = next(item for item in contract.cases if item.id == "C27-04")
