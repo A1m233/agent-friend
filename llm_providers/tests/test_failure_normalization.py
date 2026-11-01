@@ -109,6 +109,55 @@ def test_authentication_takes_precedence_over_model_not_found() -> None:
     assert isinstance(mapped, LLMAuthError)
 
 
+@pytest.mark.parametrize("code", [None, "invalid_request_error", "invalid_request"])
+@pytest.mark.parametrize("kind", ["invalid_request_error", "invalid_request"])
+@pytest.mark.parametrize("status", [400, 408, 422])
+def test_http_timeout_overrides_only_generic_request_errors(
+    code: str | None, kind: str, status: int
+) -> None:
+    original = HttpFailure("invalid_request_error", status)
+    if code is None:
+        del original.body["error"]["code"]
+    else:
+        original.body["error"]["code"] = code
+    original.body["error"]["type"] = kind
+
+    mapped = map_provider_error(original)
+
+    expected = LLMTransientProviderError if status == 408 else LLMBadRequestError
+    assert type(mapped) is expected
+    evidence = mapped.error_evidence
+    assert evidence is not None
+    assert evidence.category == ("timeout" if status == 408 else "request")
+    assert evidence.source == "http"
+    assert evidence.status_code == status
+    assert evidence.code == code
+    assert evidence.error_type == kind
+    assert evidence.timeout_stage is None
+    assert evidence.timeout_seconds is None
+    assert "private" not in json.dumps(asdict(evidence)) + str(mapped)
+
+
+@pytest.mark.parametrize(
+    "code,expected",
+    [
+        ("invalid_api_key", LLMAuthError),
+        ("permission_denied", LLMPermissionError),
+        ("insufficient_quota", LLMPaymentRequiredError),
+        ("context_length_exceeded", LLMContextWindowError),
+        ("model_not_found", LLMModelUnavailableError),
+    ],
+)
+def test_http_timeout_preserves_specific_provider_errors(
+    code: str, expected: type[Exception]
+) -> None:
+    mapped = map_provider_error(HttpFailure(code, 408))
+    assert type(mapped) is expected
+    assert mapped.error_evidence is not None
+    assert mapped.error_evidence.status_code == 408
+    assert mapped.error_evidence.code == code
+
+
 def test_stream_request_timeout_keeps_provider_code_without_inventing_local_timeout() -> None:
     # CPA uses this public code for a stream that ends before response.completed.
     # It does not establish that a local timer expired or an HTTP 408 was received.

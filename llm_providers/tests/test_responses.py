@@ -690,6 +690,42 @@ def test_http_auth_error_does_not_fallback(http_mock: Any) -> None:
 
 
 @pytest.mark.parametrize("streaming", [True, False])
+@pytest.mark.parametrize("status", [400, 408])
+def test_http_generic_request_timeout_uses_bounded_retries(
+    http_mock: Any, caplog: pytest.LogCaptureFixture, streaming: bool, status: int
+) -> None:
+    caplog.set_level("INFO", logger="llm_providers.call_observation")
+    requests = http_mock(
+        [], status, error={"type": "invalid_request_error", "message": "private sk-secret"}
+    )
+    client = LLMClient(
+        build_provider_spec(provider_id="deepseek", api_key="fixture"),
+        network_retry_backoff_seconds=0,
+    )
+    request = ModelRequest(messages=[], control=ModelCallControl(retry_limit=2))
+    expected = LLMTransientProviderError if status == 408 else LLMBadRequestError
+    with pytest.raises(expected):
+        if streaming:
+            list(client.stream(request))
+        else:
+            client.generate(request)
+
+    assert len(requests) == (3 if status == 408 else 1)
+    record = next(
+        json.loads(item.message.split("model_call_observation ", 1)[1])
+        for item in caplog.records
+        if "model_call_observation " in item.message
+    )
+    assert record["http_attempts"] == len(requests)
+    assert record["retry_plans"] == (2 if status == 408 else 0)
+    assert record["stop_reason"] == ("retry_exhausted" if status == 408 else "not_retryable")
+    assert record["error"]["category"] == ("timeout" if status == 408 else "request")
+    assert record["error"]["status_code"] == status
+    assert record["error"]["error_type"] == "invalid_request_error"
+    assert "private" not in caplog.text and "sk-secret" not in caplog.text
+
+
+@pytest.mark.parametrize("streaming", [True, False])
 def test_http_model_not_found_does_not_retry_or_expose_provider_text(
     http_mock: Any, caplog: pytest.LogCaptureFixture, streaming: bool
 ) -> None:
