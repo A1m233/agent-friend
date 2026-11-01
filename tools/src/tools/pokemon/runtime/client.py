@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .knowledge import Knowledge
 from .protocol import GameError, atomic_json, atomic_text, controller_lock, steps_wire
 
 ID = re.compile(r"^[0-9a-f]{32}$")
@@ -75,6 +76,7 @@ class GameClient:
         steps: object = None,
         cancel_check: Callable[[], bool] | None = None,
         restore_id: str | None = None,
+        preserve_experience: bool = False,
     ) -> dict[str, Any]:
         if kind not in {"observe", "act", "checkpoint", "restore"}:
             raise GameError("invalid_operation", "仅支持 observe、act、checkpoint。")
@@ -113,7 +115,14 @@ class GameClient:
                 "started_at": start,
                 "previous_observation_id": state.get("observation_id"),
                 "steps": steps,
+                "restore_id": restore_id,
             }
+            if kind == "restore":
+                record["preserve_experience"] = preserve_experience
+            knowledge = Knowledge(self.root)
+            current_knowledge = knowledge.load()
+            record["knowledge_epoch"] = current_knowledge["epoch"]
+            record["knowledge_timeline"] = current_knowledge.get("timeline", "initial")
             atomic_json(self.root / "operations" / f"{op}.json", record)
             state["pending"] = op
             atomic_json(self.root / "state.json", state)
@@ -187,6 +196,15 @@ class GameClient:
             record["save_sha256"] = hashlib.sha256(save.read_bytes()).hexdigest()
             record["save_path"] = str(save)
             record["checkpoint_scope"] = "emulator_only_not_af_context"
+            Knowledge(self.root).checkpoint(op)
+            record["knowledge_snapshot"] = f"knowledge-checkpoints/{op}.json"
+        if result["status"] == "completed" and record["kind"] == "restore":
+            Knowledge(self.root).restore(
+                record["restore_id"], preserve_experience=record.get("preserve_experience", False)
+            )
+            restored = Knowledge(self.root).load()
+            record["knowledge_epoch"] = restored["epoch"]
+            record["knowledge_timeline"] = restored["timeline"]
         atomic_json(self.root / "operations" / f"{op}.json", record)
         # Every terminal command invalidates the preceding image, even a partial cancellation.
         state.update(pending=None, observation_id=result.get("observation_id"), last_operation=op)

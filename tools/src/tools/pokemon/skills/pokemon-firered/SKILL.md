@@ -5,23 +5,26 @@ description: 在 AF 中独立游玩已配置的中文版宝可梦火红，观察
 
 # 自主游玩宝可梦火红
 
-从获准起点独立推进，以击败冠军并进入名人堂为目标。遵守本轮时限；没有预算先确认。只根据画面与自己的探索记录决策，不读 RAM、攻略，不使用金手指或另起模型玩家。
+像正常玩家一样自主推进，以击败冠军并进入名人堂为目标。可以存档、读档重试，包括捕捉、战斗失败后调整策略；保留自己的探索经验。游戏当前状态以实际画面和个人记录为依据，不查攻略、不读取游戏内部状态、不使用金手指或另起模型玩家。遵守本轮时限；没有预算先确认。
 
+续玩先读 [记录与复用说明](references/records-and-workflows.md)，用 knowledge 看当前页、队伍/背包和经验索引，需要旧路线再定向查询。你负责观察、判断、规划和更新；工具只保存和查阅，不知道游戏真实状态。当前目标、位置/战斗、下一步统一维护在 journal 当前页，可与结构化变化一次写入。明确的领取、治疗或使用完成画面已经是证据；缺失或不确定的信息影响下一步决定时才额外开菜单，不为收尾汇报重复核验。看到重要变化顺手记，不必每次按键写记录或每步查询；详细记录契约见引用说明。
+
+knowledge/notes 不操作游戏。inspect/use-item/switch/move/route 执行你录制并选定的流程；意图和目标由你决定。
 ## 开始与图片回传
 
-绑定 Skill 的 exec_command 使用 cmd，不能同时传 argv。绑定当前可信 skill_id，entry 为 scripts/game.py；不猜安装路径，不用 shell 控制符或 python -c。脚本使用 AF 受管 Python 已提供的 Pillow。
+绑定 Skill 的 exec_command 使用结构化 argv，每个参数独立一个元素；JSON 字符串直接作为一个参数，不做 shell 转义。不要同时传 cmd。绑定当前可信 skill_id，entry 为 scripts/game.py；不猜安装路径，不用 shell 控制符或 python -c。脚本使用 AF 受管 Python 已提供的 Pillow。
 
 先执行一次 status：
 
 ```json
-{"cmd":"python scripts/game.py status","skill":{"skill_id":"<当前可信 Skill ID>","entry":"scripts/game.py"},"access":{"filesystem":"read_write","network":"disabled"},"timeout_seconds":30}
+{"argv":["python","scripts/game.py","status"],"skill":{"skill_id":"<当前可信 Skill ID>","entry":"scripts/game.py"},"access":{"filesystem":"read_write","network":"disabled"},"timeout_seconds":30}
 ```
 
 它返回 paused、pending、instance_root、screens_root。后续操作：
 
 1. 为命令 access.additional_roots 添加 instance_root 的 read_write 范围，仍由宿主授权。
 2. 用 request_filesystem_access 为 screens_root 申请目录级 read_image scope，保存可信 filesystem_scope_id；同一轮复用，不重复申请。
-3. 用户明确开始或恢复后执行 begin。begin、observe、act、wait、dialogue、checkpoint、finish 均添加 `output_images: {"filesystem_scope_id":"<图片 scope>"}`。脚本输出 image_paths，宿主在同次工具结果中返回原始图片；直接根据这些图片继续，无需再调用 view_image。
+3. 用户明确开始或恢复后执行 begin。begin、observe、act、wait、dialogue、checkpoint、finish、load 均添加 `output_images: {"filesystem_scope_id":"<图片 scope>"}`。脚本输出 image_paths，宿主在同次工具结果中返回原始图片；直接根据这些图片继续，无需再调用 view_image。
 4. status、pause、resume 没有图片，不传 output_images。pending 非空先 observe 对账，不能重放旧操作。
 
 output_images 只用于 buffered 命令。若命令已执行但图片回传失败，不重新执行动作；使用已有 scope 和结果中的 image_paths 单独 view_image。若宿主未支持此字段，说明需更新并重启 dev，不能声称已直接看图。
@@ -29,6 +32,8 @@ output_images 只用于 buffered 命令。若命令已执行但图片回传失�
 ## 移动、交互与验证
 
 所有操作使用最近实际看过的最终画面的 observation_id。例子为接在 python scripts/game.py 后的简单参数：
+
+选择框中的按键会先重新观察并等待画面稳定，仅忽略已识别的数量框箭头装饰动画，仍核对数量、价格、文字和其余画面；choice_changed_or_unsettled / input_applied=false 表示未执行所请求按键，先读新图再决定，不能将它录成成功流程。你已选择 A/B 后，工具仅松键等待旧选择框退场或改变，不自动连按 B。
 
 - `act --observation-id <编号> --tap A`：按住 8 帧，松开 24 帧。
 - `act --observation-id <编号> --step RIGHT:16 --expect 靠近门口`：有序执行并记录预期；expect 最多 200 字，含空格时正确引用。
@@ -60,12 +65,14 @@ visual.recent_attempts 只记录尝试，不是成功路线；repeat_matches_rec
 - text_unchanged：蓝底文字持续未变；这是不确定性提示，不是确认箭头或选择许可，由你看图决定等待还是确认。
 - image_budget / frame_budget：本批达到上限，读完图片再决定是否继续。
 
-识别器适配当前火红白色对白框、蓝底战斗文字和底部战斗菜单；原图仍是决策依据。招式、行动、学习技能、进化、命名、购买及其它选择必须由你操作，不能调用 dialogue 代选；未知皮肤也交还你。B 在菜单中是取消键。普通对话结束后长串 A 可能重新触发 NPC，勿这样跳对话。OCR 已离线试验但未用于控制，返回值不含 OCR 识别结果。
+识别器适配当前火红白色对白框、蓝底战斗文字和底部战斗菜单；原图仍是决策依据。招式、行动、学习技能、进化、命名、购买及其它选择必须由你决定，不能调用 dialogue 代选；未知皮肤也交还你。B 在菜单中是取消键。普通对话结束后长串 A 可能重新触发 NPC，勿这样跳对话。可选 ocr 只辅助读图，不自动决定按键或写知识。
 
 ## 保存、暂停与恢复
 
-budget_remaining_seconds 是本轮余量。提前约一分钟 finish，不能延长或另起后台任务。finish 成功后直接简短汇报已核实的进度和存档，不再调用工具翻查旧结果；未核实的奖励细节明确说明未知，留待下一次获准游玩时检查。finish 合并 checkpoint 与 pause，失败也请求暂停；checkpoint 只保存不暂停，两者都不要求手填观察编号。
+可以在重要尝试前 checkpoint 保存，按需要 `saves` 查询最近存档，再 `load --checkpoint-id <存档编号>` 读档。saves 只读，不传 output_images；load 传 output_images，使用返回的新 observation_id 继续。checkpoint_id 来自 checkpoint/finish 或 saves，不是普通截图编号。这里是模拟器快捷存读档，也可通过游戏菜单正常保存/继续。读档保留你学到的路线、失败经验和对话上下文；队伍/背包记录恢复到存档时，旧存档缺记录则未知，探索经验继续保留，由你区分尝试经验与读档后的当前进度。抓神兽等重试属于正常游玩，不需要另请宿主批准；仍受当前轮预算约束。
 
-快照仅覆盖模拟器，不等于 AF 上下文已配对恢复。用户只要求暂停时直接 pause。stale_observation 先 observe 并看图；action_unknown 保持暂停并对账，不重放；controller_busy 等待原控制者结束；ROM、图片、回执或资源不匹配则停止报告。
+budget_remaining_seconds 是本轮余量。budget_missing/budget_exhausted 时保持暂停，交还宿主，不能通过 begin/resume 或 --help 绕过预算。提前约一分钟 finish，不能延长或另起后台任务。finish 成功后直接简短汇报已核实的进度和存档，不再调用工具翻查旧结果；未核实的奖励细节明确说明未知，留待下一次获准游玩时检查。finish 合并 checkpoint 与 pause，失败也请求暂停；checkpoint 只保存不暂停，两者都不要求手填观察编号。
+
+快照覆盖模拟器及玩家记录，不等于 AF 上下文已配对恢复。用户只要求暂停时直接 pause。stale_observation 先 observe 并看图；action_unknown 保持暂停并对账，不重放；controller_busy 等待原控制者结束；ROM、图片、回执或资源不匹配则停止报告。
 
 看到冠军胜利和名人堂后保存截图与 checkpoint，报告待核验。没有真实画面及有效存档证据不能宣称通关；本轮结束后不得声称仍在后台续玩。

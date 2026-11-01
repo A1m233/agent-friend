@@ -24,9 +24,14 @@ def main() -> int:
     sub.add_parser("update")
     p = sub.add_parser("watch-desktop")
     p.add_argument("--session-id", required=True)
+    p.add_argument("--run-id")
+    p.add_argument("--runtime-id")
     p.add_argument("--max-seconds", type=int, required=True)
     p.add_argument("--output", type=Path, required=True)
     sub.add_parser("doctor")
+    p = sub.add_parser("ocr-serve")
+    p.add_argument("--max-seconds", type=int, required=True)
+    sub.add_parser("ocr-stop")
     p = sub.add_parser("ocr-check")
     p.add_argument("--samples", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
@@ -40,7 +45,15 @@ def main() -> int:
     sub.add_parser("launch")
     sub.add_parser("test")
     p = sub.add_parser("verify-visual")
+    p.add_argument(
+        "--player-load",
+        action="store_true",
+        help="无按键验证玩家读档保留经验，finally 恢复原记录。",
+    )
     p.add_argument("--instance", type=Path)
+    p.add_argument(
+        "--inspection-workflow", help="从已确认世界画面检查已有 inspect 流程，finally 恢复原状态。"
+    )
     p.add_argument(
         "--movement", action="store_true", help="还测试一次向右短步和无按键等待，最后恢复。"
     )
@@ -151,7 +164,33 @@ def main() -> int:
                 binding = json.loads((skill_path / "binding.json").read_text(encoding="utf-8"))
                 root = Path(binding["instance_root"])
             client = GameClient(root)
-            if args.command == "watch-desktop":
+            if args.command == "ocr-serve":
+                script = Path(__file__).resolve().parents[4] / "scripts/pokemon/ocr_service.py"
+                return subprocess.run(
+                    [
+                        "uv",
+                        "run",
+                        "--no-project",
+                        "--with",
+                        "rapidocr-onnxruntime==1.4.4",
+                        "--with",
+                        "pillow",
+                        "python",
+                        "-X",
+                        "utf8",
+                        str(script),
+                        "--instance",
+                        str(root),
+                        "--max-seconds",
+                        str(args.max_seconds),
+                    ],
+                    check=False,
+                ).returncode
+            elif args.command == "ocr-stop":
+                (root / "ocr").mkdir(exist_ok=True)
+                (root / "ocr" / "stop").touch()
+                result = {"status": "stop_requested"}
+            elif args.command == "watch-desktop":
                 from .desktop_pilot import watch
 
                 result = watch(
@@ -159,6 +198,8 @@ def main() -> int:
                     session_id=args.session_id,
                     max_seconds=args.max_seconds,
                     output=args.output,
+                    expected_run_id=args.run_id,
+                    expected_runtime_id=args.runtime_id,
                 )
             elif args.command == "refresh-test-adapter":
                 from .emulator_check import refresh_adapter
@@ -171,7 +212,12 @@ def main() -> int:
             elif args.command == "verify-visual":
                 from .visual_check import verify as verify_visual
 
-                result = verify_visual(root, movement=args.movement)
+                result = verify_visual(
+                    root,
+                    movement=args.movement,
+                    inspection_workflow=args.inspection_workflow,
+                    player_load=args.player_load,
+                )
             elif args.command == "verify-emulator":
                 from .emulator_check import verify
 

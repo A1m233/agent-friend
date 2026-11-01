@@ -69,11 +69,7 @@ class VisualActions:
                 return result, current, False
             # Choice borders appear before their explanatory text finishes.
             # Only wait with released keys; remember even a transient choice.
-            same = (
-                previous.kind == current.kind and previous.text_pixels == current.text_pixels
-                if current.kind == "choice_or_overlay"
-                else current.similar(previous)
-            )
+            same = current.similar(previous)
             confirmation = (
                 confirmation_scene_stable
                 and current.kind == "battle_text"
@@ -178,7 +174,54 @@ class VisualActions:
         before = (
             read_frame(before_path) if before_path is not None and before_path.is_file() else None
         )
-        result = self.act({"observation_id": observation_id}, steps)
+        result: dict[str, Any] = {"observation_id": observation_id}
+        if (
+            before is not None
+            and before.kind == "choice_or_overlay"
+            and any(s["keys"] for s in steps)
+        ):
+            result = self.fresh_observation(observation_id)
+            result, ready, stable = self.settle(result, 180)
+            if not stable or not ready.similar(before):
+                return {
+                    **result,
+                    "input_applied": False,
+                    "image_paths": [Path(result["screenshot"]).name],
+                    "visual": {
+                        "kind": ready.kind,
+                        "settled": stable,
+                        "decision_ready": False,
+                        "stop_reason": "choice_changed_or_unsettled",
+                        "frames_total": self.frames,
+                    },
+                }
+            self.choice_seen = False
+        result = self.act(result, steps)
+        if (
+            before is not None
+            and before.kind == "choice_or_overlay"
+            and any(set(step["keys"]) & {"A", "B"} for step in steps)
+        ):
+            # A selected choice can remain painted during its exit animation.
+            # Wait with released keys, never repeat the selection on the old UI.
+            for _ in range(min(180, self.frame_limit - self.frames) // SAMPLE_FRAMES):
+                pending_choice = read_frame(Path(result["screenshot"]))
+                if (
+                    pending_choice.kind != before.kind
+                    or pending_choice.text_pixels != before.text_pixels
+                ):
+                    break
+                try:
+                    result = self.act(result, [{"keys": [], "frames": SAMPLE_FRAMES}])
+                except GameError as exc:
+                    if exc.code not in {
+                        "macro_time_limit",
+                        "budget_exhausted",
+                        "macro_frame_limit",
+                    }:
+                        raise
+                    break
+            self.choice_seen = False
         result, frame, stable, paths, reason = self.decision(
             result, MAX_FRAMES if wait_only else 180
         )

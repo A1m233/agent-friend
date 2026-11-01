@@ -368,3 +368,62 @@ def test_desktop_watch_scopes_cancellation_and_always_pauses(
         assert len(result["calls"]) == 2
         assert result["observed_model_calls"] == 1
         assert result["calls_match_final"]
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+def test_pinned_watch_recovers_transient_timeout_and_fails_closed(
+    instance: Path, tmp_path: Path, monkeypatch, persistent: bool
+) -> None:
+    import io
+
+    from tools.pokemon import desktop_pilot
+
+    monkeypatch.setattr(desktop_pilot, "log_dir", lambda: tmp_path)
+    monkeypatch.setattr(desktop_pilot.time, "monotonic", lambda: 0)
+    monkeypatch.setattr(desktop_pilot.time, "sleep", lambda value: None)
+    calls = []
+    run = {
+        "run_id": "known",
+        "session_id": "chosen",
+        "control_scope": "desktop_text",
+        "runtime_instance_id": "runtime",
+        "status": "terminal",
+        "model_calls": 0,
+    }
+
+    def urlopen(request, timeout):
+        calls.append(request.get_method())
+        if request.get_method() == "GET" and (persistent or len(calls) == 1):
+            raise TimeoutError("temporary local API stall")
+        return io.StringIO(json.dumps(run))
+
+    monkeypatch.setattr(desktop_pilot.urllib.request, "urlopen", urlopen)
+    kwargs = dict(
+        session_id="chosen",
+        expected_run_id="known",
+        expected_runtime_id="runtime",
+        max_seconds=30,
+        output=tmp_path / "watch.json",
+    )
+    if persistent:
+        with pytest.raises(TimeoutError):
+            desktop_pilot.watch(instance, **kwargs)
+        assert calls == ["GET", "GET", "GET", "POST"]
+        assert json.loads((instance / "desktop-budget.json").read_text())["deadline"] == 0
+    else:
+        result = desktop_pilot.watch(instance, **kwargs)
+        assert result["stop_reason"] == "run_terminal"
+        assert len(result["api_observation_errors"]) == 1
+        assert not (instance / "desktop-budget.json").exists()
+    assert (instance / "paused").exists()
+    assert (instance / "desktop-watch-required.json").exists()
+
+
+def test_missing_budget_after_watch_never_resumes_game(instance: Path, capsys) -> None:
+    from tools.pokemon.runtime.commands import main
+
+    atomic_json(instance / "desktop-watch-required.json", {"required": True})
+    assert main(instance / "unused.json", ["begin", "--instance", str(instance)]) == 1
+    assert json.loads(capsys.readouterr().out)["code"] == "budget_missing"
+    assert (instance / "paused").exists()
+    assert not (instance / "request.txt").exists()

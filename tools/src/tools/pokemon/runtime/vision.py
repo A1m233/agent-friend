@@ -12,6 +12,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from .choice_animation import quantity_arrows, same_quantity_scene
 from .protocol import GameError
 
 
@@ -26,13 +27,18 @@ class Frame:
     scene_pixels: bytes = b""
     advance_arrow: bool = False
     text_ink_pixels: int = 0
+    quantity_arrows: tuple[tuple[int, int], ...] = ()
 
     def similar(self, other: Frame) -> bool:
         if self.kind != other.kind or self.blank or other.blank:
             return False
         if self.kind in {"dialogue", "battle_text"}:
             return self.text_pixels == other.text_pixels
-        if self.kind in {"battle_menu", "choice_or_overlay"}:
+        if self.kind == "choice_or_overlay":
+            return self.signature == other.signature or same_quantity_scene(
+                self.pixels, other.pixels, self.quantity_arrows, other.quantity_arrows
+            )
+        if self.kind == "battle_menu":
             return self.ready_pixels == other.ready_pixels
         # Coarse cells suppress grass/water/sprite animation, not a scrolling scene.
         changed = sum(
@@ -156,6 +162,12 @@ def area_intro(data: bytes) -> bool:
     return dark >= 3040 and light >= 1100
 
 
+def party_palette(light: int, dark: int) -> bool:
+    # Filled party slots replace teal background. Keep recognition valid as the
+    # roster grows; the left/bottom striped area remains even with six members.
+    return light >= 2000 and dark >= 2000
+
+
 def read_frame(path: Path) -> Frame:
     if path.stat().st_size > 1024 * 1024:
         raise GameError("invalid_frame", "游戏截图超过 1 MiB，停止识别。")
@@ -191,7 +203,7 @@ def read_frame(path: Path) -> Frame:
     battle_text = battle_blue >= 5000 and battle_gold >= 1000
     # Party HP notifications share the purple/white bottom panel. Their
     # distinctive teal background must not turn them into battle menus.
-    party_background = party_light >= 4000 and party_dark >= 4000
+    party_background = party_palette(party_light, party_dark)
     battle_menu = white_bottom >= 2500 and menu_border >= 500 and not party_background
     kind = (
         "choice_or_overlay"
@@ -213,7 +225,14 @@ def read_frame(path: Path) -> Frame:
             i = (y * 240 + x) * 3
             if (x, y) in arrow:
                 masked[i : i + 3] = background
-            text.extend(masked[i : i + 3])
+            # The white box's rounded bottom-right corner exposes three map
+            # pixels. Water there can animate while every text pixel is fixed.
+            # Normalize only that exterior corner, never the text or a choice.
+            text.extend(
+                b"\xff\xff\xff"
+                if kind == "dialogue" and y == 154 and x >= 229
+                else masked[i : i + 3]
+            )
     return Frame(
         kind,
         hashlib.sha256(masked).hexdigest(),
@@ -224,4 +243,5 @@ def read_frame(path: Path) -> Frame:
         rgb.resize((30, 20), Image.Resampling.BOX).tobytes(),
         bool(arrow),
         sum(min(text[i : i + 3]) >= 200 for i in range(0, len(text), 3)),
+        quantity_arrows(data) if kind == "choice_or_overlay" else (),
     )

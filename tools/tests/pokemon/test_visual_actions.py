@@ -122,6 +122,26 @@ def test_frame_rejects_unknown_size_and_waits_for_text(tmp_path: Path) -> None:
         read_frame(p)
 
 
+def test_dialogue_rounded_corner_water_does_not_hide_text_changes(tmp_path: Path) -> None:
+    path = tmp_path / "water.png"
+    screen(path)
+    with Image.open(path) as image:
+        draw = ImageDraw.Draw(image)
+        draw.line((229, 154, 231, 154), fill=(49, 99, 181))
+        image.save(path)
+    first = read_frame(path)
+    with Image.open(path) as image:
+        draw = ImageDraw.Draw(image)
+        draw.line((229, 154, 231, 154), fill=(66, 123, 189))
+        image.save(path)
+    assert first.similar(read_frame(path))
+    with Image.open(path) as image:
+        # Adjacent text pixels must remain strict, even for a one-pixel change.
+        image.putpixel((228, 154), (0, 0, 0))
+        image.save(path)
+    assert not first.similar(read_frame(path))
+
+
 def test_ready_menu_ignores_sprite_animation_but_not_menu_change(tmp_path: Path) -> None:
     path = tmp_path / "menu.png"
     im = Image.new("RGB", (240, 160), (100, 110, 90))
@@ -186,16 +206,32 @@ def test_visual_smoke_restores_exploration_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from tools.pokemon import visual_check
+    from tools.pokemon.runtime.knowledge import Knowledge
+
+    class CheckpointClient(FakeClient):
+        def request(self, kind: str, **kwargs: Any) -> dict[str, Any]:
+            result = super().request(kind, **kwargs)
+            source = result["observation_id"]
+            screens_root = self.root / "screens"
+            screens_root.mkdir(exist_ok=True)
+            (screens_root / f"{source}.png").write_bytes(Path(result["screenshot"]).read_bytes())
+            if kind == "checkpoint":
+                Knowledge(self.root).checkpoint(result["operation_id"])
+            elif kind == "restore":
+                Knowledge(self.root).restore(kwargs["restore_id"])
+            return result
 
     path = tmp_path / "page.png"
     screen(path, dialogue=False)
-    client = FakeClient(tmp_path, [path])
+    client = CheckpointClient(tmp_path, [path])
+    client.hex_ids = True
     client.paused = True
     history = tmp_path / "visual-history.json"
     history.write_text("[]\n", encoding="utf-8")
     monkeypatch.setattr(visual_check, "GameClient", lambda root: client)
     report = visual_check.verify(tmp_path, movement=True)
     assert report["paused"]
+    assert report["player_knowledge_restored"]
     assert history.read_text(encoding="utf-8") == "[]\n"
 
 
@@ -682,6 +718,182 @@ def test_choice_waits_for_text_but_never_resumes_dialogue(tmp_path: Path, vanish
     assert result["screenshot"] == str(paths[1 if vanishes else 2])
     if not vanishes:
         assert client.samples >= 6
+
+
+def test_choice_waits_for_scene_animation_with_unchanged_text(tmp_path: Path) -> None:
+    paths = [tmp_path / f"scene-{i}.png" for i in range(4)]
+    for i, path in enumerate(paths):
+        screen(path, choice=True)
+        with Image.open(path) as im:
+            ImageDraw.Draw(im).rectangle((10 + i * 15, 20, 20 + i * 15, 25), fill="red")
+            im.save(path)
+
+    class MovingScene(FakeClient):
+        samples = 0
+
+        def request(self, kind: str, **kwargs: Any) -> dict[str, Any]:
+            if kind == "act":
+                self.samples += 1
+                self.page = min(self.samples, 3)
+            return super().request(kind, **kwargs)
+
+    client = MovingScene(tmp_path, paths)
+    result = VisualActions(client).dialogue("0")
+    assert client.samples >= 5
+    assert result["screenshot"] == str(paths[-1])
+    assert not client.presses
+
+
+@pytest.mark.parametrize("closes", [True, False])
+def test_choice_acceptance_waits_for_exit_without_pressing_again(
+    tmp_path: Path, closes: bool
+) -> None:
+    folder = tmp_path / "screens"
+    folder.mkdir()
+    paths = [folder / f"{i:032x}.png" for i in range(2)]
+    screen(paths[0], choice=True)
+    screen(paths[1], dialogue=False)
+
+    class AcceptedChoice(FakeClient):
+        accepted = False
+        exit_samples = 0
+
+        def request(self, kind: str, **kwargs: Any) -> dict[str, Any]:
+            steps = kwargs.get("steps", [])
+            if kind == "act":
+                for step in steps:
+                    if step["keys"]:
+                        self.presses.append(step["keys"])
+                        self.accepted = True
+                if self.accepted and not any(step["keys"] for step in steps):
+                    self.exit_samples += 1
+                    if closes and self.exit_samples >= 5:
+                        self.page = 1
+            self.index += 1
+            return {
+                "status": "completed",
+                "observation_id": self.status()["observation_id"],
+                "screenshot": str(paths[self.page]),
+            }
+
+    client = AcceptedChoice(tmp_path, paths)
+    client.hex_ids = True
+    result = VisualActions(client).movement(
+        f"{0:032x}", [{"keys": ["B"], "frames": 8}, {"keys": [], "frames": 24}], "decline switch"
+    )
+    assert client.presses == [["B"]]
+    assert result["visual"]["kind"] == ("other" if closes else "choice_or_overlay")
+    assert result["visual"]["frames_total"] < 600
+
+
+def test_changed_choice_before_input_returns_without_press_or_trace(tmp_path: Path) -> None:
+    from tools.pokemon.runtime.workflows import trace_action
+
+    folder = tmp_path / "screens"
+    folder.mkdir()
+    paths = [folder / f"{i:032x}.png" for i in range(2)]
+    screen(paths[0], choice=True)
+    screen(paths[1], dialogue=False)
+
+    class DisappearingChoice(FakeClient):
+        def request(self, kind: str, **kwargs: Any) -> dict[str, Any]:
+            if kind == "act":
+                self.page = 1
+            return super().request(kind, **kwargs)
+
+    client = DisappearingChoice(tmp_path, paths)
+    client.hex_ids = True
+    steps = [{"keys": ["B"], "frames": 8}]
+    result = VisualActions(client).movement(f"{0:032x}", steps, "cancel choice")
+    assert result["input_applied"] is False
+    assert not client.presses
+    trace_action(tmp_path, f"{0:032x}", result, steps)
+    assert not (tmp_path / "skill-traces").exists()
+
+
+def quantity_screen(path: Path, phase: int = 0) -> None:
+    # Independent pixel fixture for the orange spinner, not a game-state parser.
+    screen(path, choice=True)
+    rows = (
+        "......DD......",
+        ".....DOOD.....",
+        "....DOOOOD....",
+        "...DOOOOOOD...",
+        "..DOOOOOOOOD..",
+        ".DOOOOOOOOOOD.",
+        "DOOOODDDDOOOOD",
+        "DOODD....DDOOD",
+        ".DD........DD.",
+    )
+    with Image.open(path) as im:
+        draw = ImageDraw.Draw(im)
+        draw.rectangle((130, 60, 235, 111), fill="white")
+        draw.rectangle((140, 86, 146, 92), fill="black")
+        for top, pattern in ((67 - phase, rows), (100 + phase, rows[::-1])):
+            for y, row in enumerate(pattern):
+                for x, c in enumerate(row):
+                    if c != ".":
+                        im.putpixel((145 + x, top + y), (132, 33, 0) if c == "D" else (255, 82, 0))
+        im.save(path)
+
+
+@pytest.mark.parametrize("changed", [None, "quantity", "price", "text", "scene", "shape"])
+def test_quantity_animation_does_not_hide_content_changes(
+    tmp_path: Path, changed: str | None
+) -> None:
+    paths = [tmp_path / f"spinner-{i}.png" for i in range(2)]
+    quantity_screen(paths[0])
+    quantity_screen(paths[1], phase=2)
+    if changed:
+        point = {
+            "quantity": (141, 88),
+            "price": (211, 88),
+            "text": (40, 130),
+            "scene": (30, 30),
+            "shape": (151, 65),
+        }[changed]
+        with Image.open(paths[1]) as im:
+            im.putpixel(point, (0, 0, 255))
+            im.save(paths[1])
+    assert read_frame(paths[0]).similar(read_frame(paths[1])) is (changed is None)
+
+
+@pytest.mark.parametrize("key", ["RIGHT", "B"])
+def test_quantity_animation_allows_one_requested_input(tmp_path: Path, key: str) -> None:
+    folder = tmp_path / "screens"
+    folder.mkdir()
+    paths = [folder / f"{i:032x}.png" for i in range(2)]
+    for i, path in enumerate(paths):
+        quantity_screen(path, phase=i * 2)
+
+    class AnimatedQuantity(FakeClient):
+        def request(self, kind: str, **kwargs: Any) -> dict[str, Any]:
+            result = super().request(kind, **kwargs)
+            self.page = self.index % 2
+            return {**result, "screenshot": str(paths[self.page])}
+
+    client = AnimatedQuantity(tmp_path, paths)
+    client.hex_ids = True
+    result = VisualActions(client).movement(f"{0:032x}", [{"keys": [key], "frames": 8}], "select")
+    assert result.get("input_applied") is not False
+    assert client.presses == [[key]]
+
+
+def test_quantity_change_before_input_is_rejected(tmp_path: Path) -> None:
+    folder = tmp_path / "screens"
+    folder.mkdir()
+    paths = [folder / f"{i:032x}.png" for i in range(2)]
+    for path in paths:
+        quantity_screen(path)
+    with Image.open(paths[1]) as im:
+        ImageDraw.Draw(im).rectangle((141, 86, 149, 92), fill="black")
+        im.save(paths[1])
+    client = FakeClient(tmp_path, paths)
+    client.hex_ids = True
+    client.page = 1
+    result = VisualActions(client).movement(f"{0:032x}", [{"keys": ["A"], "frames": 8}], "buy")
+    assert result["input_applied"] is False
+    assert not client.presses
 
 
 @pytest.mark.parametrize("blank", [False, True])

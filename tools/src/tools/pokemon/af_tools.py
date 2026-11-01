@@ -11,6 +11,7 @@ from agent.image_reading import ImageReadingService
 from agent.tools.protocol import ToolResult
 
 from .runtime.client import GameClient
+from .runtime.knowledge import notes
 from .runtime.protocol import KEYS, GameError, atomic_json
 
 OBSERVATION = {
@@ -123,13 +124,15 @@ class PokemonNotes:
     }
 
     def __init__(self, root: Path) -> None:
-        self.path = root / "notes.json"
+        self.root = root
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
-        if "text" in args:
-            atomic_json(self.path, {"text": args["text"]})
-        data = self.path.read_text(encoding="utf-8") if self.path.exists() else '{"text":""}'
-        return ToolResult(text=data)
+        try:
+            return ToolResult(
+                text=json.dumps(notes(self.root, args.get("text")), ensure_ascii=False)
+            )
+        except GameError as exc:
+            return ToolResult(text=str(exc), is_error=True)
 
 
 class PokemonFinish:

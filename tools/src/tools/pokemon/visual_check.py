@@ -9,10 +9,21 @@ from uuid import uuid4
 
 from .runtime.actions import VisualActions
 from .runtime.client import GameClient
+from .runtime.knowledge import Knowledge
 from .runtime.protocol import GameError, atomic_json, atomic_text, controller_lock
+from .runtime.saves import load_save
+from .runtime.workflows import replay
 
 
-def verify(root: Path, *, movement: bool = False) -> dict[str, Any]:
+def verify(
+    root: Path,
+    *,
+    movement: bool = False,
+    inspection_workflow: str | None = None,
+    player_load: bool = False,
+) -> dict[str, Any]:
+    if sum((movement, bool(inspection_workflow), player_load)) > 1:
+        raise GameError("conflicting_smoke", "movement、inspection、player-load 分开验证。")
     client = GameClient(root)
     if not client.status()["paused"] or client.status().get("pending"):
         raise GameError("smoke_requires_paused", "先暂停并完成对账；不会接管正在游玩的实例。")
@@ -28,10 +39,34 @@ def verify(root: Path, *, movement: bool = False) -> dict[str, Any]:
         report["checkpoint"] = checkpoint
         history_path = root / "visual-history.json"
         history_before = history_path.read_text(encoding="utf-8") if history_path.exists() else None
+        knowledge_before = Knowledge(root).load()
         try:
             client.resume()
             initial = client.request("observe")
-            report["dialogue"] = VisualActions(client).dialogue(initial["observation_id"])
+            Knowledge(root).update(
+                {"notes": {"smoke": {"purpose": "temporary no-LLM verification"}}},
+                initial["observation_id"],
+            )
+            if player_load:
+                initial = load_save(client, checkpoint["operation_id"])
+                report["player_load"] = initial
+                report["player_load_experience_retained"] = "smoke" in Knowledge(root).load()[
+                    "sections"
+                ].get("notes", {})
+            report["dialogue"] = (
+                {**initial, "dialogue": {"stop_reason": "player_load_only", "advance_presses": 0}}
+                if player_load
+                else VisualActions(client).dialogue(initial["observation_id"])
+            )
+            if inspection_workflow:
+                menu = VisualActions(client).movement(
+                    report["dialogue"]["observation_id"],
+                    [{"keys": ["START"], "frames": 8}, {"keys": [], "frames": 24}],
+                    "从已确认世界画面打开主菜单，检查已录制的队伍查看流程",
+                )
+                report["inspection"] = replay(
+                    client, inspection_workflow, menu["observation_id"], "inspect"
+                )
             if movement:
                 report["movement"] = VisualActions(client).movement(
                     report["dialogue"]["observation_id"],
@@ -55,6 +90,11 @@ def verify(root: Path, *, movement: bool = False) -> dict[str, Any]:
                 else:
                     atomic_text(history_path, history_before)
                 report["exploration_history_restored"] = True
+                restored_knowledge = Knowledge(root).load()
+                report["player_knowledge_restored"] = all(
+                    restored_knowledge[key] == knowledge_before[key]
+                    for key in ("sections", "workflows", "epoch")
+                )
                 report["finished_at"] = time.time()
                 report["paused"] = client.status()["paused"]
                 atomic_json(output, report)
@@ -64,6 +104,9 @@ def verify(root: Path, *, movement: bool = False) -> dict[str, Any]:
         "dialogue": report["dialogue"]["dialogue"],
         "restored": report["restore"]["status"],
         "paused": report["paused"],
+        "player_knowledge_restored": report["player_knowledge_restored"],
         "movement_images": len(report.get("movement", {}).get("image_paths", [])),
         "wait_ready": report.get("wait", {}).get("visual", {}).get("settled"),
+        "inspection": report.get("inspection", {}).get("workflow"),
+        "player_load_experience_retained": report.get("player_load_experience_retained"),
     }

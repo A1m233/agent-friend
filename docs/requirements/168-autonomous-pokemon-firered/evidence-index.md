@@ -2,11 +2,13 @@
 
 ## 用途与当前判断
 
+- 通用 harness：完整摘要单次请求、Skill 结构化 argv 的确定性验证见 E-026，真实运行验证见 E-028；最新游戏状态见 E-027。
+
 本索引记录 AF 独立游玩中文版《宝可梦 火红》的现状、外部能力与资源候选。需求范围见 [requirement.md](./requirement.md)。
 
-- 最新状态：用户授权追加5轮“试玩→分析→修复”，每轮最多30分钟；仅Pokemon专用tool/个人Skill可自动修复，需要修改AF通用harness时暂停等方案确认。本次5轮已全部完成并完成允许范围内的修复，见E-020；以下E-019保留此前第六轮的历史结论。
+- 最新状态：第五批loop-e五轮完成，北桥五人及火箭队已击败，帮助正辉恢复人形并取得船票；BUD28级73/73，全队治疗后暂停于华蓝南侧。未通关。玩家笔记与对白圆角修复见E-027，本批没有新增通用harness修复。
 
-- 需求与方案已确认，个人 Skill、外置控制器和 AF 源码长跑入口已实现；累计十一轮真实 AF 个人 Skill 试玩（此前六轮、本次五轮）。已取得灰色徽章和跑步鞋，BUD14级、SKY3级、独角虫5级；最新停在尼比中心护士治疗选项，尚未确认治疗或通关。本次证据见E-020，历史流式长停顿与取消计数缺口见E-019。
+- 需求与方案已确认，个人 Skill、外置控制器和 AF 源码长跑入口已实现。E-020保留第一批五轮末的尼比中心状态，E-023保留第三批月见山状态；当前存档与游戏进度以E-027为准。历史流式长停顿与取消计数缺口见E-019。
 - AF 有图像工具结果、会话持久化和后台运行基础，可以作为接入起点；这不是长时间游玩已经验证通过的证据。
 - mGBA 0.10.5 源码能力已得到 E-006/E-007 的 Windows 基础实测补充；完整长跑恢复仍需真实 AF 验证。
 - 公开 GPT Plays Pokémon FireRed 是旧版辅助框架，不是近期纯视觉成绩对应的实现；其非商业许可证限制必须保留。
@@ -251,12 +253,14 @@
 
 ## 未决问题与下一项证据
 
+- 2026-11-01 更新：两项获准通用修复已完成源码验证（E-026）及本批真实验证（E-028）；玩家笔记已按用户确认调整，五轮结束（E-027）。更大输入、摘要信息保真与长期通关效果仍不能由单次成功外推。
+
 - 本次5轮授权已用完，不覆盖新的真实模型运行。通用AF层的压缩耗时、取消计数投影缺口和权限准备成本仅保留证据；若选择修复，须先给用户确认方案，未通过游戏工具绕过。长期上下文/存档配对恢复、游戏内存读与完整通关仍待验收。
 
 
 ## Artifact 与敏感性
 
-- 已有本地代码、自动化报告、截图、模拟器快照和十一轮真实桌面模型试玩；没有完整通关记录。
+- 已有本地代码、自动化报告、截图、模拟器快照和多轮有界真实 AF 试玩；没有完整通关记录。
 - 中文候选仅在仓库外；未复制上游 GPT 玩家代码进入产品，未创建外部 fork。
 - 后续运行原始材料按用户数据与日志既有路径管理，索引保留校验和及最小证据；ROM、凭据和完整私人对话不进入 Git。
 
@@ -298,3 +302,112 @@
 - 用户中途要求不用 computer-use；其后只用本地 REST、日志、截图文件完成监控和收尾，未用 UI 自动化。游戏操作始终来自 AF 的个人 Skill。会话沿用已存在的 session_auto，Coding Agent 没有切换审批模式。
 - 私有原始材料仍在 E-008 同实例：两个 `desktop-pilot-optimized*.json`；`optimized-pilot-{false-start,corrected}-20261031-{events.json,latency.log,summary.json}`；上述候选 hash；对应 operations/screens/saves。`optimized-pilot-evidence-manifest-20261031.json` 校验 113 个文件。完整原始工具输入输出仅在本机，不进入 Git。
 - 判断：`confirmed` 接入、批量动作、正常保存暂停和本次进展；`directional` 调用契约改善。不是受控 A/B：两轮时长、审批状态、历史上下文和游戏起点不同；不能宣称固定提速倍数或外推通关时长。下一步优先验证动作与图片同次返回，减少转场及重复对话往返，再进入战斗和长跑恢复。需求保持 IN_PROGRESS。
+
+### E-021 · 五轮之后的通用 harness 修复
+
+- 授权与来源：用户明确同意通用层修复，要求先提交推送；检查点`0514a0f5`已推送。以下修改位于该检查点之后，不能用E-020五轮实测宣称已验证。
+- 取消计数根因：scheduler异常分支调用finish_once未传计数，默认0覆盖实际执行；真实第4轮82主请求/81工具与API0/0直接对照。修复使用Conversation执行状态的计数快照，涵盖模型等待中取消、执行后异常、事件分发中取消和下一轮计数重置。
+- 权限准备证据：5轮412个命令启动样本，read_access合计891.476秒，约占总游玩10.3%。原prepare_read_access每次对宿主选定root调用icacls。新实现只缓存成功的准备结果，目录身份/mtime/DACL变化或5分钟到期失效，失败不缓存；DACL不可读仍失败关闭。只核对root DACL，不声称逐文件递归检查所有子项；OS权限仍在实际访问时执行，周期重做覆盖未立即观测到的环境变化。
+- 离线性能：私有`harness-benchmark-20261031.json`，基线为0514a0f5，1201条同一消息，原分段准备0.777581秒、候选0.029059秒，送往fake模型的请求完全相同。临时目录真实ACL准备首次0.032912秒，缓存0.000591/0.000612秒。临时目录规模不同于生产环境，不外推14分51秒全部消失；286秒压缩中的217.570秒是三段模型请求，未由此消除。
+- 长响应：只增加无内容进度分类观测，明确区分heartbeat/empty_delta/text/reasoning/tool_arguments/item/terminal/unclassified。未知事件不能被判定为无进展；保留既有空闲、取消和deadline行为。本轮无真实provider调用，尚未确认此前长响应的外部根因。
+- 冻结影响：新增Windows原生DACL读取，按package-sensitive执行runtime-only验证，doctor新增临时目录实际准备与复用。Guide基线r102（immutable，commit3841ce5d36dbd0632813390d9e5cca075acc5c64，兼容0.4.1至0.5.0之前，snapshot a9dd5618403f5ca702d6898ea8c953eafd7c3ecafe9fa7721b0462192feafaa9）。公开来源历史与当前分支不构成祖先关系，未重设或发布来源锚点；其已复核产品源码与本需求起点89162a44在各生产模块无diff，仅以已发布兼容release作为临时离线输入。此次改动不新增公开操作/设置要求，Guide保持只读。
+- 验证状态：首批89项专项通过；完整后端lint/mypy通过，4453 passed / 5 skipped（pytest590.96秒）。冻结构建`20261031T134548Z-0514a0f50b54-79676ed4`按用户最新要求在launcher编译阶段主动停止，临时Guide输入已恢复；未完成doctor/capability smoke，延至合入前最终候选统一验证，不以PyInstaller完成替代验收。私有构建日志位于package runner返回的host-runs/b04915d47a3d40baa8d97366c15383f4/output.log，退出码1来自主动取消编译。没有额外付费试玩。
+
+### E-022 · 通用修复后的真实一轮与游戏能力缺口
+
+- 用户授权新的5轮循环后，于第1轮中明确要求本轮结束即停，改为能力分析；只执行一轮，未自动修复。运行身份、存档与结果见progress；不是通关验收，也不是同起点受控A/B。
+- 私有产物沿用E-008实例：`loop-b-five-20261031.json`（授权及停止记录、源码hash）、`loop-b-runtime-20261031.json`、`loop-b-01-{request,ack,watch,events,snapshot,summary,latency,stream-progress,evidence-manifest}-20261031.*`。manifest核对191个文件，含模型可见图片与最终快照；原始日志/命令/正文仅本机，不加入Git。watch唯一call_index=91，与终态统计一致；有一次相同请求重试标记，不把原始request_started行数当作逻辑调用数。
+- 观察：90次工具调用零错误；14次confirm-text、65次act、3次dialogue、3次wait。两次用药菜单链分别为工具48–54与75–81（至少14次，第一段完全退出还涉及55），队伍/PP核对及退出为82–87（6次）。当前操作层级造成可见往返成本，不代表所有20次都能无风险合并为一次。
+- 权限准备88样本总18.768秒，中位0.000秒（日志舍入），6次>1秒；前一批第5轮86样本总185.938秒。新实现命中后为0–16毫秒，周期重做约数秒；支持该边界开销下降，不能外推整体通关提速比例。模型请求91条完成记录，累计1084.204秒、中位11.266秒、最大24.163秒；本轮无摘要，长停顿原因与取消路径仍未由本轮触发验证。
+- 换宠提示样本：767162374f0040d38bdea6a85bbd5051→809ba5608361438eac62de12e6b40de1、53e638f168ff4d3bb3e59a894372edef→61b5519edc304b4f9771899d6f21fd75、420ed0a0e1374d71b456386cf008a2ca→e93f68f6ace34fa7a43e99e8ca5514a6。第一次B后仍显示提示、对手精灵球图标变化，第二次B继续。是否返回过早、游戏两步交互或其它原因尚未确认；不推断为模型理解失败，不添加自动连B。
+- 能力边界：`runtime/commands.py`仅暴露status/begin/observe/act/dialogue/confirm-text/wait/checkpoint/finish/pause/resume；`actions.py`仅回传最近3次尝试。`af_tools.py::PokemonNotes`确实存在，但由`runner.py`注册，未接入当前安装的个人Skill命令入口。本轮无笔记写入工具调用；不等同于AF通用上下文完全没有记忆或规划。
+- 外部只读对照：Clad3815公开`server/src/ai/promptBuilder.js`第396–410行向模型装配队伍、背包、目标和记忆；`firered_bridge/player/{party,bag}.py`直接读模拟器内存，`server/prompts/game.txt`要求中长期目标与知识维护。GitHub fetch返回文件修改时间2026-02-15，只作为公开旧版能力证据。用户引用的新版本作者X链接本次返回403，镜像不可访问，无法据此确认约21小时版本的具体工具、输入或预置路线。
+- 当前结论：本轮动作目标连贯，且复用了已走过的街道；不能概括为无规划乱走。更直接的缺口是菜单信息获取/操作宏、当前个人Skill中的持久游戏笔记与成功路线复用。纯视觉采集与白名单只读状态是不同方案，当前没有批准改变已确认的纯画面约束；只分析，不实施。
+
+### E-023 · 纯视觉知识/操作复用与第三批循环
+
+- 用户明确禁止游戏程序状态读取，授权实现画面来源的知识查询、菜单流程、路线复用及OCR辅助，并继续五轮、每轮最多30分钟；新通用harness修复仍需另行确认。
+- 代码与安装身份：`loop-c-five-20261031.json`及逐段code记录；个人包通过update校验/备份安装。字段记录与截图/操作epoch关联，恢复另起知识时间线，避免未来截图补写。录制从真实个人CLI操作trace取得步骤，复用前后检查图像区域；不读取ROM/内存/存档语义。
+- 确定性：91项宝可梦测试、lint/mypy876文件；Skill格式检查和guidance audit。真实无模型恢复报告 `visual-smoke-254d25f2188d4b498e9898d62e6e99cc.json`；已看过的招式页 `5e095d25dd1e4401bcc36082c6f24364.png` 与OCR hash `b533bce68a5d17cc891d6ca0324851f938e0327c0b6ef8b04ea48de9f0468463`，1.718秒，BUD/等级识别置信度低，招式/PP文本与原图可对照。仅为单页可用性，不外推OCR整体准确率。
+- 首段观察器失败：私有 `loop-c-01-watch-20261031.json`显示18秒时超时，run_id尚未发现，预算被清除；AF事件表明其发现预算缺失后没有推进游戏。宿主取消后API保留8模型/7工具，证明此次取消统计未清零。持续失联的失效预算和预绑定取消由新增确定性测试覆盖。
+- 每轮保存request/ack/watch/events/snapshot/summary和终态manifest。`scripts/pokemon-report`只读指定run，不读取完整会话、不发起模型、不审批；报告命令用量、工具错误和最终回复，私有正文不进Git。第1轮续段沿用原截止，全部结果见progress后续记录。
+
+- 第2轮终态 `loop-c-02-{events,snapshot,summary,manifest}.json` 及 `loop-c-02-latency.log`：93模型/92工具、0错误、74 strict_extension/19 rebase，累计输入40003994/cached39705600，属逐请求累加，不代表唯一上下文或精确费用。队伍inspect在宝可梦中心成功两步回放，来源图6f24a8bb75d5483d8daced97d201b729支持HP更新。选择框样本da66fcfc069c48558031a1834917e441→9c4fb0c4e13d418987b1b3550b30ae59后，第二次B调用实际input_applied=false返回battle_menu，排除了“该样本必须第二次B才继续”。
+- 第二轮起mGBA从约60 FPS改为120 FPS，UI观察120.4 FPS；配置选项依据[0.10.5官方Qt实现](https://github.com/mgba-emu/mgba/blob/0.10.5/src/platform/qt/Window.cpp#L1499)。仅一次模拟器菜单设置采用computer-use，按键/观察/监控仍用原工具；无游戏内部状态读取。不同阶段与多改动共同变化，不能由单轮直接归因整体速度收益。
+- 2026-11-01用户修订正常游玩边界，允许存读档；后续候选增加玩家load及经验保留测试，旧两轮请求原件保留，不倒改“不回档”的历史事实。存档内容只校验hash并交给模拟器加载，party/bag来自AF此前维护的记录，不解析存档提取游戏信息。
+
+- 第3–5轮私有证据分别为loop-c-03、loop-c-04b、loop-c-05的request/ack/watch/events/snapshot/summary/manifest/code；loop-c-04只armed、未提交模型运行即按用户要求暂停，不算游玩轮次。第三轮77/76、第四轮118/117、第五轮113/112（游玩模型/工具），均零工具错误，终态源码hash无漂移；第四轮另3次摘要。每轮进度、存档hash、恢复身份及局限见progress。
+- 第4轮摘要耗273.242秒，3请求输入315510/320898/45951、生成耗67.612/82.499/63.252秒；游玩模型计数不包含这些请求，报告不得漏算。首段摘要前约59.6秒仍需单独定位，未认定热点或改阈值。原日志按该run绑定，未混入其它session。
+- 真实OCR bad case：`bca9a27081204b7f94a71073513d009c.png`的46/50被AF看成16/50，后续只恢复4点证伪并修正；`cdd6564217d441e2990c97364e459cef.png`的33/50在全图OCR为88F50。`loop-c-04b-ocr-check.json`固定4裁剪×2缩放，8项均不可靠，不支持自动读数。`loop-c-04b-zoom-probe.json`验证原图+像素放大与source保持；第5轮AF真实ocr调用`3e881c9a3b5e4a95a1311b42bd532c15`后核实派拉斯15/31。
+- 第5轮流程停止样本：`258c2cd1ffc14088a9ad6c9c86291b30.png`为PP黄色的同招式菜单；`3e881c9a3b5e4a95a1311b42bd532c15.png`为五只队伍（两种背景色3697/3769像素，低于原4000门槛）。后补修复与反事实通过记录`loop-c-05-guards-probe.json`单独列示，不倒算为第5轮运行候选。最终105专项+lint/mypy+Skill校验通过，未追加第6轮或冻结包。
+
+### E-024 · 摘要前一分钟的预算准备开销与用户批准修复
+
+- 类型：runtime-observed、code-supported、offline replay；2026-11-01。补充E-023第四轮的耗时归因，不改写该轮运行源码。run `6233b78b-c891-4c63-adae-49360140f4ad` 的11:00:54.302开始整理至11:01:53.876首次摘要生成间隔59.574秒，后续三次模型生成合计213.363秒。
+- 私有证据位于E-008实例的 `compaction-diagnosis/`：snapshot、baseline、profiled、cached、cached-cost、production、production-verification JSON及探针、剖析和MANIFEST.sha256。原历史和正文仅本机保存；Git只记录汇总。`findings.json`保留诊断时旧源码hash，`production-verification.json`记录 `0514a0f5 + overlay` 的最终相关源码hash；不是clean commit实测。
+- 复现：恢复当时1084条模型历史，初始656214 token及选中边界UUID均与现场一致。底层边界选择63.595秒，其中1095次预算计算63.378秒；第一次摘要正文准备0.041秒。剖析显示607439次消息渲染、2831000次内容digest、4380次图片读取；带profiler的96.088秒含探针开销，不与无profiler时间直接比较。
+- 用户确认后实现单次选择内的消息投影/本地图像渲染/组件指纹/成本复用，保留原候选顺序和预算结果。正式代码离线选择1.991秒、图片读取4次、正文准备0.043秒；全部1095项预算证据及选中边界与baseline逐项一致。探针复用前次可信usage scope，测量边界是底层选前缀，不含历史恢复、外层动态环境组装或模型生成，不能据此宣称真实端到端提速32倍。
+- 集成中一次长任务回归失败：候选factory起初绕过外层host context/source绑定；关闭新factory的对照通过。已将factory与普通评估统一套用该投影，并将真实Conversation工具循环恢复测试参数化覆盖有/无本地budget renderer。该失败不归因给模型或旧实现；修正后235项相关测试、lint及mypy880文件通过。
+- 验证入口：`scripts/check/run.* --stage backend`，pytest范围为candidate_budget、task_compaction、usage_anchor、budget_evidence、image_budget、summarizing、summary_generation、recovery_entrypoints/recovery_consistency、responses_usage、fifo、usage_continuity、budget、assembly、dynamic_context_cache_continuity、checkpoints、long_session_recovery对应测试文件。覆盖重复不透明片段、不同usage版本/配置、图片失效、取消、工具组完整性、源码模型历史恢复和阶段日志。
+- 判断：重复预算准备是原停顿主因，strongly-supported；本快照候选预算等价和性能改善confirmed，状态active。仍只有一份历史及单次无profiler对照，真实AF压缩后的墙钟收益未运行验证。本次零新模型调用，dev未启动、游戏未推进；冻结验证继续留到合入前。
+
+### E-025 · 第四批五轮与数量菜单、记录说明修复
+
+- 类型：真实AF个人Skill运行、截图反事实、确定性测试；2026-11-01。用户明确授权5轮、每轮最多1800秒，仅自动修宝可梦tool/skill。全批沿用Astra high、800000窗口、120 FPS；允许正常存读档，不查攻略、不解析游戏内部状态。未使用computer-use，无第6轮。
+- 历史来源：`0514a0f50b54ba4c931d7ffe9485753be8753c91 + overlay`，非clean commit。Tauri当前worktree启动，bridge `78ba25aa51bf41f59629cb656e790d17` 于12:34:27 +08启动，晚于E-024源码；本批未修改通用AF源码。每轮独立code hash、request、ack、watch、events、snapshot、summary、manifest及latency均保留在E-008私有实例根，前缀`loop-d-01`至`loop-d-05`；总账`loop-d-five-20261101.json`。源码无轮内漂移。
+
+| 轮次 | run_id | 游玩模型/工具 | 观察时长（秒） | 主要进度与停止 |
+| --- | --- | --- | --- | --- |
+| 1 | ab8bcc0c-c459-40d2-9450-35917c5e969b | 107/106 | 1761.875 | 击败登山男和下层火箭队，BUD20；月见山西侧通道保存 |
+| 2 | 8dba8289-56e9-4827-8ff1-0da44e276abf | 89/88 | 1769.094 | 击败火箭队与化石理科男，取得贝之化石；学种子机关枪，BUD21 |
+| 3 | 50e267ba-d761-4b29-a19f-3bac8c741d95 | 72/71 | 1491.406 | 出月见山、拾TM05、抵华蓝并治疗；数量框拦截三次后提前保存 |
+| 4 | f5f245a2-25b5-4478-bb56-16446edfeea8 | 98/97 | 1747.453 | 购10精灵球/3超级药水，击败道馆两训练家及小霞；蓝色徽章/TM03，BUD23 |
+| 5 | a91f1923-ceca-4d4e-b31d-9a957ec8d5a3 | 116/115 | 1748.984 | 击败北桥头BOB获1288元，BUD24；回中心全队治疗并保存 |
+
+- 总计8518.812秒（观察器墙钟，包括初始化/等待），482游玩模型、另3摘要请求，477工具；1次command_failed，其余均返回。五轮均正常completed，finish均在预算内；第3轮因专用工具阻塞提前结束。观察器API短暂读取超时依次1/1/1/2/3次，均恢复，日志观察错误0；不能把这些重试当成模型/游戏工具错误。
+- **数量框缺陷（confirmed，Tool→Model）**：第3轮三次输入均被choice_changed_or_unsettled拒绝，包括取消B。5张真实图的差异仅在橙色上下箭头，104/160像素，数量x01、总价200、钱5828均未变。旧全图signature永远无法稳定；等待偶然返回稳定也不能通过下一次预检查。原件及因果记录`loop-d-03-quantity-diagnosis.json`。
+- 修复只识别精确配色/形状且对齐的上下箭头，比较时忽略两帧箭头实际覆盖像素；其余场景、数量、价格、文字仍严格比较。按键前也比较完整选择内容，不只比较对白。5真实图25对反事实通过；新增9项回归覆盖动画、错误形状、数量/价格/正文/背景改变及只发送一次指定输入。114项Pokemon测试、全后端lint/mypy881文件通过。第4轮×01→×10截图`7f21574bc66f482c8e0c6c2ee3c49381`及实际购药/退出验证修复，未自动购买或取消。
+- **记录说明缺口**：第4轮工具86向cmd重复加入反斜线，argparse拒绝；同时误把--section/--entity当作写入JSON层级。AF退回notes并承认结构化旧值，未虚报写入成功。随后仅澄清CLI help和records引用的嵌套JSON、单引号与外层工具JSON转义，主Skill同步箭头判定说明。双模式命令解析、Skill扫描/格式检查、lint通过；第5轮按真实来源写入revision66–74，修复前后证据分开，不把notes当成已修复旧表。
+- **通用预算优化真实观测**：第4轮1090条历史、1107次候选评估；selection9.818855秒（assessment8.856450秒），首段准备0.075199秒。三次摘要模型生成76.658489/64.875823/62.234146秒，后两段准备0.006839/0.002540秒，整个context_build214.641秒。原日志另存`loop-d-04-compaction.log`，因为阶段日志用run=而普通latency用run_id=。相较E-024旧运行摘要前59.574秒，支持现场本地等待缩短；历史不同，不能当作受控整体提速，离线1.991秒也不能替代完整运行的9.819秒。
+- 第5轮旧move两次因招式组变动停止；AF自行录制bud-tackle-razor-set，两次复用均到击倒确认页停止，按图接管，没有从头重放。第1/2轮的击倒停止也属正常边界。未据此放宽流程检查。4号路绕行、第一次学习器/购物菜单多次调用保留为效率观察，尚不足以认定控制器缺陷。
+- 模型报告中的18级对手物种称呼与截图`aea6648b57ba49a6a074a2d931e8b019`文字不一致；只确认桥头胜利，不拿自然语言报告作精确物种证据。BOB赠物名称AF未最终核实，保留未知。最后一轮用3超级药水，未补购；无捕获、伙伴倒下或玩家读档。
+- 最终save `f26f16680e1246009fcd58ae7b2dbb2c`，SHA256 `911ed7ed7172650462cfa6cdea019545638975b8f2daced55b85178ab7aeec5e`。BUD24级64/64，SKY15/15、独角虫20/20、小拳石26/26、派拉斯31/31，均正常；停华蓝中心队伍总览。paused=true、pending=null、预算已清除；未通关，不预测剩余通关时长。冻结/全仓合入验收未执行，未提交推送。
+
+### E-026 · 完整摘要单次提交与 Skill 结构化 argv
+
+- 类型：代码与确定性测试，`code-supported`；2026-11-01 Windows 源码环境。用户明确授权两项通用修复，宝可梦侧保持原状。
+- 锚点：`0514a0f50b54ba4c931d7ffe9485753be8753c91` 加当前未提交 overlay；11 份实现/测试文件 SHA256 记录于本机私有实例目录 `general-harness-single-summary-argv-code.json`（实例与 E-025 相同），不是 clean commit，也不覆盖历史运行锚点。
+- 实现：`context/task_compaction.py` 与 `context/summarizing.py` 统一完整来源请求；`summary_budget.py` 仅限制输出、不估算输入；`command_runtime/tools.py` 增加 Skill argv 快照绑定。新策略取代 E-025 运行时使用的摘要分段行为，不改写那次三次请求的观察事实。
+- 验证：`scripts/test/run.ps1` 执行 `agent/tests/test_context_summary_budget.py`、`test_context_task_compaction.py`、`test_context_summarizing.py`、`test_command_runtime.py`、`test_managed_command_environment.py`、`test_context_recovery_entrypoints.py`、`test_context_candidate_budget.py`，239 项通过；追加两项纯容量错误回归后只复跑 summary_budget 文件，22 项通过。不同用例合计 241 项，网络/输出重试均使用 fake model，没有外部模型请求。`scripts/lint/run.ps1` 全绿（1076），`scripts/typecheck/run.ps1` 全绿（881）。
+- 覆盖：长来源即使字符估算大于窗口仍一次提交；旧摘要与全部新来源保留；真实容量错误一次失败、无缩减/fallback；重试来源一致、取消与恢复不提交损坏历史。Skill argv 在当前轮激活、schema、审批、不可变快照、相对工作目录、图片 scope 与受管 Python 路径上可用；本地脚本实际打印 argv，JSON 和特殊字符原样往返。
+- 范围核验：loop-d-05 代码快照内 27 份宝可梦源文件 hash 全部匹配；未修改个人 Skill 包、ROM/存档或运行状态。
+- 置信度：机制 `confirmed`，实际 provider 容量接受、摘要质量与端到端时延 `unconfirmed`；无新付费运行、冻结验证或通关结论。首次测试中的旧断言失败已修订并复验，不当作产品新故障或性能证据。
+- 决策影响：当前正常摘要路径一次调用；Skill 可直接传结构化参数，后续游戏笔记工具的设计讨论可使用该通用能力。对账：设计与进度均已同步；未提交推送，用户要求先讨论宝可梦侧再推进。
+
+### E-027 · 玩家笔记与第五批五轮
+
+- 类型：源码、确定性测试、真实AF个人Skill运行、截图对照；2026-11-01。用户批准取消自动过期、由AF维护记录，随后5轮各不超过1800秒；沿用Astra high、800000窗口、120 FPS及E-025末存档。禁止攻略/游戏内部状态读取，允许玩家存读档；未使用computer-use。
+- 来源：0514a0f50b54ba4c931d7ffe9485753be8753c91加未提交overlay。当前worktree Tauri/bridge运行身份ebfaaeafc8d34159a25de67da7b328b6。私有实例沿用E-008，逐轮loop-e-01至05的request/ack/runtime/code/watch/events/snapshot/summary/manifest/latency保留；总账loop-e-five-20261101.json，最终候选loop-e-final-code.json。第1轮监控脚本status显示调整造成code_drift，游戏runtime未变；第2至5轮无轮内源码变动。
+- 实现：schema2统一结构化记录和journal，删除按操作自动stale；来源可选/可多图，支持局部批量、删除、版本历史、按需元数据及旧笔记迁移。AF自行记录变化、未知和计划，工具不推断游戏事实。Skill改用argv；存档仍配对记录，读档保留经验的既有边界不变。个人包标准update并备份，未加入builtin安装包。
+
+| 轮次 | run_id | 主循环模型/工具 | 观察秒数 | 主要结果 |
+| --- | --- | --- | --- | --- |
+| 1 | 72fce4f1-6dd6-4946-9040-bc9de0c31679 | 106/105 | 1757.438 | 购5超级药水，胜北桥第一人，第二人战中保存 |
+| 2 | 2e53bb05-4f40-4b44-94b2-c8644233dff0 | 94/93 | 1741.859 | 北桥五人全部击败，BUD25，用1超级药水 |
+| 3 | 41c29914-624a-4649-aaa9-61706e3f3ec4 | 88/87 | 1756.703 | 金色珠、击败火箭队及东侧3训练家，BUD26 |
+| 4 | 8c5e6e9a-abe9-470b-93da-5bb13b27ca42 | 102/101 | 1762.453 | 回城治疗后胜3训练家，BUD27，下场战中保存 |
+| 5 | 89f481d2-9e80-4e80-a543-1b5f932e6d3f | 105/104 | 1775.672 | 再完成3场、帮助正辉、取得船票，BUD28并全队治疗 |
+
+- 合计8794.125秒、495主循环模型请求及另1摘要请求、490工具。唯一工具错误是第1轮漏additional_roots，沙箱在游戏输入前拒绝，AF补齐后恢复；未出现记录JSON转义错误。不是全部后台计费量统计。5轮均正常completed，finish余量64/78/65/55/48秒；无第6轮。
+- **对白圆角缺陷confirmed（Tool→Model）**：第2轮两组相邻截图正文一致，仅文字比较区右下(229–231,154)露出动画水面，导致unstable。loop-e-02-dialogue-corner-probe.json保留因果证据；只规范化这3个框外像素，不改阈值。真实两对图通过，邻近(228,154)实际文字变化仍拒绝。随后第3/4/5轮6/7/8次dialogue均无unstable，不外推所有对白场景。
+- 第5轮7次普通地图unstable均为kind=other，截图可见花朵/NPC移动；AF继续操作。loop-e-05-world-animation-probe.json保留差异，不据此放宽全图稳定判断。第3轮成功恢复图片；第4轮恢复的是Skill参考文本，首次工具名前缀过滤未命中后成功，不能仅由recover工具名推断图片丢失。没有新确认的通用harness缺陷。
+- 记录revision74→97；第5轮真实合并多个来源更新队伍/背包。最终队伍截图009d633e40114c038539bb6a5b1f2dfd确认BUD28级73/73、SKY15/15、独角虫20/20、小拳石30/30、派拉斯31/31；99228a34307440d986c3a42508ea45c6确认船票。药水1/超级药水4。AF仍在治疗或阶段结束时主动查看菜单；取消自动过期不等于禁止合理核验，也不能保证记录永不遗漏。
+- 最终存档d62d80bc76bc4c17ae18182762937bb4，SHA256 0872c81f28edda100dd1fc86216a37858439c0444e405c6482f340540f5db08a。暂停于华蓝南侧围栏，未到枯叶/船上/名人堂。paused存在、pending=null、预算文件清除；OCR/dev已stop，status无active lease、端口空闲，模拟器保持暂停。
+- 验证：初版117项，圆角修复后118项Pokemon专项通过；最终lint1077文件、mypy881文件、Skill扫描及格式校验通过。没有新增通用修复、提交推送、冻结构建或全仓合入验收。运行起点/历史各不相同，不作为受控性能A/B或通关速度预测。
+
+### E-028 · 单次完整摘要的真实接受与恢复
+
+- 补充E-026，保留其确定性验证时的历史边界。E-027第4轮，日志loop-e-04-compaction.log：候选历史1058条、选中来源0–1046，共1881623字符；选择6207.753ms、准备59.092ms。
+- 一次summary请求attempt1，输出上限16384，provider实际input710252/output3592 token，成功结束；生成97763.737ms，整个context_build104445ms。没有分段、容量错误或省略来源，提交压缩结果后AF恢复游玩。
+- E-025旧机制一次压缩用了3次摘要、生成203.768秒、整体214.641秒；两次历史不同，不能声称严格约50%提速。本次只确认单次完整请求机制及此样本容量接受，摘要长期信息保真、所有窗口均可容纳仍未证明。
+- 第4轮102主循环请求之外另计此1次摘要；不能混入重复模型调用或把后台其它请求当成已统计。5轮Skill绑定argv实际执行，含中文JSON和多来源更新，未出现旧cmd重复转义问题。本批未为此再修改通用源码。
