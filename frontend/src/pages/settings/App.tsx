@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import { Moon, Sun } from "lucide-react";
 import { FeedbackIcon } from "@/components/app/FeedbackIcon";
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   Sidebar,
   SidebarContent,
   SidebarGroup,
@@ -61,6 +62,7 @@ export function SettingsApp({
   } | null>(null);
   const [runtimeGroup, setRuntimeGroup] = useState<RuntimeConfigGroup | undefined>();
   const lastNavigationRequestId = useRef(0);
+  const [replyStyle, setReplyStyle] = useSetting("imReplyStyle");
   const [theme, setTheme] = useSetting("theme");
   const [voiceTunnelConsentAccepted, setVoiceTunnelConsentAccepted] = useSetting(
     "voiceTunnelConsentAccepted",
@@ -159,6 +161,22 @@ export function SettingsApp({
                 description="屏幕熄灭不等于电脑休眠。屏幕关闭后，Agent 和 QQ 仍可继续运行；电脑进入休眠后，Agent 和 QQ 会暂停运行。合盖是否休眠由系统设置决定（大多数笔记本默认合盖即休眠），agent-friend 不会自动修改合盖行为。"
               >
                 <BackgroundOnlineSetting />
+              </SettingsGroup>
+            </SettingsPageLayout>
+          ) : section === "chat" ? (
+            <SettingsPageLayout title="对话">
+              <SettingsGroup title="即时消息" description="用于普通 QQ 回复和 AF 主动发来的消息。自然聊天会口语化表达并按需分条，原样发送保留会话原文。">
+                <SettingsRow label="IM 回复风格">
+                  <Select value={replyStyle} onValueChange={(value) => {
+                    if (value === "natural" || value === "original") void setReplyStyle(value);
+                  }}>
+                    <SelectTrigger aria-label="IM 回复风格" className="w-36"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="natural">自然聊天</SelectItem>
+                      <SelectItem value="original">原样发送</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </SettingsRow>
               </SettingsGroup>
             </SettingsPageLayout>
           ) : section === "companionship" ? (

@@ -90,6 +90,6 @@
 | E-025 | af169-retry-desktop-03，af169-presentation-04 | 实际 WebView 点击精确重审，真实文件工具读取隔离文件；搜索显示主动消息正文，独立气泡显示同一正文，通知记录 presented。隔离 bridge，模拟模型/裁决/初始拒绝推送。 |
 | E-026 | af-169-bili-followup-01、af169-bili-revisit-01 | 有来源与理由的 B 站投递 1 条，已分享同一来源及用户要求减少联系的情境 0 条。不同合成情境，不能推出每次的决定。 |
 | E-027 | af-169-continuity-01、af-169-compaction-03 | 实际抽取、落盘和重开，双向跨会话调用记忆、遗忘后回顾未恢复旧事实。真实摘要与 checkpoint 重开保留未完成事项。结果为代表样本。 |
-| E-028 | guide-content.patch，r104 本地候选 | 本地候选已同步随机间隔和设置入口，内容摘要 02973182ebd5532757e59c15a69f21c6ccbd5f3cd41d246e3d092db23f1695c8。用户确认本期只验本地 Guide。 |
+| E-028 | guide-content.patch，r104 本地候选 | 本地候选已核对对话设置、主动 QQ 通知、只读活动入口、系统输入时间线索和授权模式，内容摘要 04991304ff02da89c87e627bae9d5c10e5d50b036a96739573cce6d0146de9ac。用户确认本期只验本地 Guide。 |
 | E-029 | af169-unattended-01.json，test_companionship_runtime.py | 无前台输入、无手动 tick 的独立进程实际等待 603.6 秒，正常唤醒一次且保持安静；模拟错过两天的 bridge 重建后只处理一次。模拟模型、关闭 IM，不能合并推断为真实手机回复或特定系统合盖行为。 |
 | E-030 | af169-frozen-verification-02.json，af169-freeze-input-overlay-02.zip | 本次修订后冻结运行时 build 20261103T032834Z-3606c9fa79b3-dcfc3fee 的 doctor、bridge、voice 通过；运行时 inventory SHA256 为 3f580f735dc916173c52d5c884216476b56c82ad3fb223a0221bd93017131d5a。保持开发桌面在线。 |

@@ -4,6 +4,7 @@ import { isTauri } from "@/utils/tauri";
 import type { RuntimeConfigGroup } from "@/lib/runtime-config";
 
 export type SettingsTarget =
+  | "chat"
   | "companionship"
   | "general"
   | "notifications"
@@ -20,6 +21,7 @@ export type PrimarySettingsTarget = Exclude<SettingsTarget, "feedback">;
 
 export const PRIMARY_SETTINGS_SECTIONS = [
   { key: "persona", label: "人格" },
+  { key: "chat", label: "对话" },
   { key: "pet", label: "桌宠" },
   { key: "companionship", label: "自主陪伴" },
   { key: "general", label: "通用" },

@@ -10,7 +10,6 @@ import { Check, MessageSquarePlus, Plug, RefreshCcw, Trash2 } from "lucide-react
 import QRCode from "qrcode";
 
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   Badge,
   Button,
   Spinner,
@@ -30,7 +29,7 @@ import {
 import type { SessionSummary } from "@/types/meta";
 import { subscribeActiveChatSession } from "@/lib/active-chat-session";
 import { emitSessionsChanged } from "@/stores/sessions";
-import { useSetting } from "@/lib/settings";
+import { openSettings } from "@/lib/settings/navigation";
 import { cn } from "@/utils/cn";
 
 interface Props {
@@ -41,7 +40,6 @@ const POLL_INTERVAL_PENDING_MS = 250;
 const POLL_INTERVAL_QR_READY_MS = 1000;
 
 export function IMConnectPanel({ active = true }: Props) {
-  const [replyStyle, setReplyStyle] = useSetting("imReplyStyle");
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(false);
   const [unbindingKey, setUnbindingKey] = useState<string | null>(null);
@@ -274,30 +272,16 @@ export function IMConnectPanel({ active = true }: Props) {
   return (
     <div className="flex h-full flex-col bg-bg text-fg">
       <header className="border-b border-border px-4 py-3">
-        <h1 className="text-lg font-semibold text-fg">接入 IM</h1>
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-lg font-semibold text-fg">接入 IM</h1>
+          <Button variant="link" size="sm" onClick={() => void openSettings({ target: "chat" })}>调整回复风格</Button>
+        </div>
         <p className="mt-1 text-sm text-fg/70">
           在 IM 里也能跟我聊。同人格，共享记忆。
         </p>
       </header>
 
       <main ref={mainRef} className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto p-4">
-        <section className="space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-sm font-medium">IM 回复风格</span>
-            <Select value={replyStyle} onValueChange={(value) => {
-              if (value === "natural" || value === "original") void setReplyStyle(value);
-            }}>
-              <SelectTrigger aria-label="IM 回复风格" className="w-36"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="natural">自然聊天</SelectItem>
-                <SelectItem value="original">原样发送</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <p className="text-xs text-muted">{replyStyle === "natural"
-            ? "普通回复和主动分享会用更口语的方式表达，按需要分成几条发送。"
-            : "直接发送 AF 的原回复，保留措辞和段落。"}</p>
-        </section>
         <section>
           <header className="mb-2 flex items-center justify-between">
             <span className="text-xs uppercase tracking-wide text-fg/60">
