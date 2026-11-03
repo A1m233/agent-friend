@@ -306,6 +306,19 @@ def make_default_registry(
         )
 
     if session_store is not None:
+        from ..sessions.access import ConversationAccessService
+        from .builtin.conversation_access import ListConversationsTool, ReadConversationTool
+        from .builtin.conversation_access.delivery import SendConversationMessageTool
+
+        access = ConversationAccessService(session_store, session_catalog)
+        tools.extend((ListConversationsTool(access), ReadConversationTool(access)))
+        tools.append(SendConversationMessageTool())
+        from .builtin.conversation_access.companionship import (
+            ManageCompanionshipTool,
+            ScheduleNextWakeTool,
+        )
+
+        tools.extend((ManageCompanionshipTool(), ScheduleNextWakeTool()))
         tools.append(ToolResultRecoveryTool(session_store, tool_execution_evidence_store))
         tools.append(InspectToolCallsTool(session_store))
 

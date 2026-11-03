@@ -907,9 +907,25 @@ def main() -> int:
 
     session_metadata_store = SessionMetadataStore(SESSIONS_DIR / "metadata.json")
     session_catalog = SessionCatalog(store, session_metadata_store)
+    from agent.approvals import ApprovalBroker
+    from agent.approvals.automatic import AutomaticApprovals
+    from agent.approvals.policy import authorization_policy
+    from agent.approvals.reviewer import review_pending_action
+    from agent.approvals.risk import CatastrophicActionPolicy
+
+    from runtime_config import DesktopSettingsReader
+
+    settings_reader = DesktopSettingsReader()
+    approval_broker = ApprovalBroker(
+        mode_store=session_metadata_store, risk_policy=CatastrophicActionPolicy()
+    )
+    approval_broker.automatic = AutomaticApprovals(
+        policy=lambda: authorization_policy(settings_reader.read()), review=review_pending_action
+    )
     tool_registry = make_default_registry(
         session_store=store,
         session_catalog=session_catalog,
+        approval_broker=approval_broker,
     )
 
     memory_debug = bool(os.environ.get(MEMORY_DEBUG_ENV))
@@ -933,6 +949,7 @@ def main() -> int:
         memory=memory_obj,
         metadata_store=session_metadata_store,
     )
+    mgr.approval_mode_provider = approval_broker.mode_state
     catalog = PersonaCatalog()
 
     try:

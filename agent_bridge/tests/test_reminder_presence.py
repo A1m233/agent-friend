@@ -61,6 +61,35 @@ def test_idle_duration_does_not_disqualify_a_fresh_focused_desktop() -> None:
     assert policy.decide(_state(_desktop(idle_ms=None))).kind == "desktop"
 
 
+def test_wake_can_observe_system_input_outside_af_but_needs_fresh_evidence() -> None:
+    registry = PresenceRegistry()
+    assert registry.last_desktop_interaction(now=NOW) is None
+    last = NOW - timedelta(seconds=40)
+    registry.update_desktop(
+        _desktop(
+            idle_ms=40_000,
+            current_session_id=None,
+            window_focused=False,
+            window_visible=False,
+            session_state="unknown",
+        )
+    )
+    assert registry.last_desktop_interaction(now=NOW) == last
+    assert registry.last_desktop_interaction(now=NOW + timedelta(seconds=16)) is None
+    assert registry.last_desktop_interaction(now=NOW - timedelta(seconds=1)) is None
+    unavailable: list[dict[str, object]] = [
+        {"session_state": "locked"},
+        {"session_state": "sleeping"},
+        {"last_desktop_interaction_at": None},
+        {"last_desktop_interaction_at": NOW + timedelta(seconds=1)},
+    ]
+    for overrides in unavailable:
+        registry.update_desktop(_desktop(idle_ms=40_000, **overrides))
+        assert registry.last_desktop_interaction(now=NOW) is None
+    registry.update_desktop(_desktop(idle_ms=None))
+    assert registry.last_desktop_interaction(now=NOW) is None
+
+
 def test_focus_minimize_lock_and_stale_snapshots_are_ineligible() -> None:
     policy = DestinationPolicy()
     cases = (

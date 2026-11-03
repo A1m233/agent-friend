@@ -13,6 +13,13 @@ export type ToolActivityCategory =
   | "weather"
   | "calculation"
   | "dateCalculation"
+  | "conversation"
+  | "message"
+  | "companionship"
+  | "schedule"
+  | "application"
+  | "persona"
+  | "auth"
   | "other";
 
 export interface ToolPresentation {
@@ -54,6 +61,13 @@ const CATEGORY_LABELS: Record<ToolActivityCategory, string> = {
   weather: "查询天气",
   calculation: "计算",
   dateCalculation: "日期计算",
+  conversation: "查看会话",
+  message: "发送消息",
+  companionship: "自主陪伴",
+  schedule: "安排时间",
+  application: "打开应用",
+  persona: "编辑人格",
+  auth: "平台登录",
   other: "其它操作",
 };
 
@@ -170,6 +184,42 @@ function summaryFor(block: ToolBlock, args: Record<string, unknown>): string {
       return "查看平台内容";
     case "recall_past_chats":
       return `查找过往对话${quoted(query)}`;
+    case "list_conversations":
+      return args.scope === "changed_since_wake" ? "查看有更新的会话" : "查看会话列表";
+    case "read_conversation":
+      if (args.mode === "since_wake") return "读取上次唤醒后的新消息";
+      if (args.mode === "continue") return "继续读取会话消息";
+      return args.mode === "latest" ? "读取会话最近消息" : "读取会话消息";
+    case "send_conversation_message":
+      return "向会话发送消息";
+    case "schedule_next_wake":
+      return "安排下次唤醒";
+    case "manage_companionship":
+      switch (args.action) {
+        case "status": return "查看自主陪伴状态";
+        case "pause_activity": return "暂停自主活动";
+        case "resume_activity": return "恢复自主活动";
+        case "pause_contact": return "暂停主动联系";
+        case "resume_contact": return "恢复主动联系";
+        default: return "管理自主陪伴";
+      }
+    case "scheduled_task_manage":
+      switch (args.operation) {
+        case "create": return "创建定时任务";
+        case "list": return "查看定时任务列表";
+        case "get": return "查看定时任务详情";
+        case "update": return "更新定时任务";
+        case "pause": return "暂停定时任务";
+        case "resume": return "恢复定时任务";
+        case "delete": return "删除定时任务";
+        case "run_now": return "立即运行定时任务";
+        case "history": return "查看定时任务运行记录";
+        default: return "管理定时任务";
+      }
+    case "session_files":
+      return args.action === "prepare" ? "准备会话附件" : "查看会话附件";
+    case "inspect_tool_calls":
+      return "查看工具调用记录";
     case "skill_read": {
       const skill = firstString(args, ["name", "id"]);
       return `加载 Skill${quoted(skill)}`;
@@ -217,8 +267,15 @@ function summaryFor(block: ToolBlock, args: Record<string, unknown>): string {
 }
 
 function categoryFor(name: string): ToolActivityCategory {
-  if (["web_search", "social_search", "nearby_place_search"].includes(name)) return "search";
-  if (["web_fetch", "social_read", "recall_past_chats"].includes(name)) return "read";
+  if (["web_search", "social_search", "nearby_place_search", "recall_past_chats"].includes(name)) return "search";
+  if (["web_fetch", "social_read", "session_files", "inspect_tool_calls", "recover_tool_result"].includes(name)) return "read";
+  if (name === "read_conversation" || name === "list_conversations") return "conversation";
+  if (name === "send_conversation_message") return "message";
+  if (name === "manage_companionship") return "companionship";
+  if (name === "schedule_next_wake" || name === "scheduled_task_manage") return "schedule";
+  if (name === "launch_desktop_application") return "application";
+  if (name === "propose_persona") return "persona";
+  if (name === "request_social_auth") return "auth";
   if (FILESYSTEM_READ_TOOLS.has(name)) return "read";
   if (FILESYSTEM_WRITE_TOOLS.has(name) || name === "request_filesystem_access") return "write";
   if (["exec_command", "host_process_start", "write_stdin", "terminate_command"].includes(name)) return "command";

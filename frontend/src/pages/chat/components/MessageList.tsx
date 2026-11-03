@@ -510,7 +510,7 @@ function MessageContent({
     const children = section.indexes.map((index) => segmentNodes[index]).filter(Boolean);
     if (!children.length) return null;
     if (!section.execution) return children;
-    return <Collapsible key={section.id} open={open}>
+    return <Collapsible key={section.id} open={open} className="data-[state=closed]:hidden">
       <CollapsibleContent><div className="flex flex-col gap-2">{children}</div></CollapsibleContent>
     </Collapsible>;
   }).filter(Boolean);
@@ -1352,7 +1352,7 @@ export function MessageTimeline({
         onPointerCancelCapture={handlePointerScrollEnd}
         onKeyDownCapture={handleKeyDownCapture}
         className="min-h-0 flex-1"
-        viewportClassName={CHAT_SCROLL_VIEWPORT_CLASS}
+        viewportClassName={cn(CHAT_SCROLL_VIEWPORT_CLASS, overlayComposer && "chat-composer-fade")}
       >
         <div
           className="relative w-full"
@@ -1502,6 +1502,7 @@ export function MessageList({
   const editingMessage = useConversationStore((s) => s.editingMessage);
   const editingMessageId = editingMessage?.messageId ?? null;
   const continueToolResult = useConversationStore((s) => s.continueToolResult);
+  const readOnly = useConversationStore((s) => Boolean(s.currentSessionId && s.readOnlySessionIds[s.currentSessionId]));
   const beginEditingMessage = useConversationStore((s) => s.beginEditingMessage);
   const cancelEditing = useConversationStore((s) => s.cancelEditing);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
@@ -1547,6 +1548,7 @@ export function MessageList({
     <ExecutionDisclosureStateProvider key={currentSessionId}>
       <MessageTimeline
         messages={messages}
+        emptyLabel={readOnly ? "还没有自主活动记录" : undefined}
         hasOlderHistory={hasOlderHistory}
         onLoadOlderHistory={loadOlderHistory}
         onLoadReferenceHistory={loadReferenceHistory}
@@ -1558,20 +1560,21 @@ export function MessageList({
         historyLoading={historyLoading}
         historyLoadSeq={historyLoadSeq}
         syncRefreshSeq={syncRefreshSeq}
+        overlayComposer={!readOnly}
         composerHeight={composerHeight}
         editingMessageId={editingMessageId}
-        onBeginEditLatestUserMessage={(messageId) => {
+        onBeginEditLatestUserMessage={readOnly ? undefined : (messageId) => {
           if (beginEditingMessage(messageId)) onFocusComposer?.();
         }}
         onFocusComposer={onFocusComposer}
-        onContinueToolResult={continueToolResult}
+        onContinueToolResult={readOnly ? undefined : continueToolResult}
         searchTarget={currentSearchTarget}
         onSearchTargetHandled={handleSearchTarget}
       />
       <MessageQuoteSelectionAction
         workspaceKey={quoteWorkspaceKey}
         onFocusComposer={onFocusComposer}
-        disabled={historyLoading || editingMessage?.phase === "submitting"}
+        disabled={readOnly || historyLoading || editingMessage?.phase === "submitting"}
       />
     </ExecutionDisclosureStateProvider>
   );

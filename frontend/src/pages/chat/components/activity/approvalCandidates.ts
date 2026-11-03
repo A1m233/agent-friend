@@ -10,7 +10,7 @@ export type PendingApproval = {
   kind: "command" | "filesystem" | "desktop_application";
   requestId: string;
   requestVersion: number;
-  modeSource?: "session" | "request";
+  modeSource?: "session" | "request" | "global";
   sessionId: string;
   runId: string;
   reason: string;
@@ -113,6 +113,7 @@ function filesystemDetailLines(entry: FilesystemApprovalEntry): string[] {
 
 export function buildPendingApprovalQueue(input: {
   currentSessionId: string | null;
+  sessionMode?: ExecutionApprovalRequest["approval_mode"];
   activeRunId: string | null;
   commandApprovals: Record<string, ExecutionApprovalRequest>;
   commandSubmitting: ReadonlySet<string>;
@@ -127,9 +128,11 @@ export function buildPendingApprovalQueue(input: {
     filesystemEntries,
   } = input;
   if (!currentSessionId || !activeRunId) return [];
+  const fallbackMode = input.sessionMode ?? "per_request";
   const commands: PendingApproval[] = Object.values(commandApprovals)
     .filter((request) => (
-      request.status === "pending"
+      shouldRenderPendingApprovals(request.approval_mode ?? fallbackMode)
+      && request.status === "pending"
       && request.session_id === currentSessionId
       && request.run_id === activeRunId
     ))
@@ -152,7 +155,8 @@ export function buildPendingApprovalQueue(input: {
     }));
   const files: PendingApproval[] = Object.values(filesystemEntries)
     .filter((entry) => (
-      (entry.status === "pending" || entry.status === "submitting")
+      shouldRenderPendingApprovals(entry.request.approval_mode ?? fallbackMode)
+      && (entry.status === "pending" || entry.status === "submitting")
       && entry.request.session_id === currentSessionId
       && entry.request.run_id === activeRunId
     ))
@@ -211,7 +215,7 @@ export function buildRunningCommandQueue(input: {
 }
 
 export function shouldRenderPendingApprovals(
-  approvalMode: "per_request" | "session_auto",
+  approvalMode: "per_request" | "session_auto" | "auto_review" | "full_access",
 ): boolean {
   return approvalMode === "per_request";
 }

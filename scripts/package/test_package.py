@@ -1039,6 +1039,7 @@ def test_doctor_without_configured_model_checks_static_html_extraction(monkeypat
         "stale_callback_rejected": True,
         "run_cleanup": True,
     }
+    assert payload["checks"]["capability:autonomous_companionship"]["ok"] is True
     assert payload["checks"]["capability:managed_execution_python"] == {
         "ok": True,
         "status": "not-configured",

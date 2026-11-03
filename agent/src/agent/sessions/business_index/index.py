@@ -16,6 +16,7 @@ import portalocker
 from portalocker.exceptions import LockException
 
 from ..events import ROLLOUT_EVENT_TYPES, Event
+from ..message_access import MessagePage, read_message_page
 from ..query import CancelCheck, SessionHistoryPage, SessionQuerySnapshot, check_cancel
 from ..store_types import SessionLoadDiagnostics, SourceVersion
 from .pages import page, recovery_body
@@ -295,3 +296,7 @@ class BusinessIndex:
     def page(self, session_id: str, version: SourceVersion, **kwargs: Any) -> SessionHistoryPage:
         with self.database(session_id, kwargs.get("cancel_check")) as db:
             return page(db, version, **kwargs)
+
+    def message_page(self, session_id: str, version: SourceVersion, **kwargs: Any) -> MessagePage:
+        with self.database(session_id, kwargs.get("cancel_check")) as db:
+            return read_message_page(db, version, **kwargs)

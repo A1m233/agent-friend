@@ -30,7 +30,9 @@ export interface ScheduledTask {
 }
 export interface TaskRun {
   im_notification?: IMNotification;
-  effective_options?: RequestOptions | null;
+  effective_options?: (Omit<RequestOptions, "approval_mode"> & {
+    approval_mode: RequestOptions["approval_mode"] | "auto_review";
+  }) | null;
   id: string;
   state: string;
   outcome: string | null;

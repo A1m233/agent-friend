@@ -89,7 +89,8 @@ class SessionBridge:
 
     def session_exists(self, session_id: str) -> bool:
         """检查 ``session_id`` 是否已在持久化 store 中存在。"""
-        return self._runtime.persistent_session_manager.exists(session_id)
+        manager = self._runtime.persistent_session_manager
+        return manager.exists(session_id) and not manager.is_inner(session_id)
 
     def generated_image_path(self, session_id: str, event_uuid: str) -> tuple[Path, str]:
         """Resolve only a retained assistant image in this session for channel delivery."""
@@ -295,13 +296,13 @@ class SessionBridge:
             )
             created = True
 
-        if created and boot.initial_approval_mode == "session_auto":
+        if created and boot.initial_approval_mode in ("session_auto", "auto_review"):
             broker = self._runtime.approval_broker
             if broker is None:
                 raise RuntimeError("initial session approval mode is unavailable")
             broker.set_session_mode(
                 boot.thread_id,
-                mode="session_auto",
+                mode=boot.initial_approval_mode,
                 expected_version=0,
             )
 

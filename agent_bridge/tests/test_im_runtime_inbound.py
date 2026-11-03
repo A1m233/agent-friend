@@ -168,6 +168,62 @@ def make_runtime(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("pause_after_first", [False, True])
+async def test_prepared_text_bubbles_keep_binding_quote_and_pause_checks(
+    tmp_path: Path, pause_after_first: bool
+) -> None:
+    from agent_bridge.protocols.im.provider import OutboundSendResult
+    from agent_bridge.protocols.im.reference_aliases import IMReferenceAliasIndex
+    from agent_bridge.protocols.im.reply_style import Bubble, IMReplyStyle
+
+    state = IMStateStore(tmp_path / "state.json")
+    key = IMBindingKey("qq", "ACCOUNT", "c2c", "USER")
+    state.set_binding(key, "SESSION")
+    aliases = IMReferenceAliasIndex(tmp_path / "aliases.json")
+    style = MagicMock(spec=IMReplyStyle)
+    style.enabled = lambda: True
+    style.prepare.return_value = [Bubble("甲呀", 0, 1), Bubble("乙呀", 1, 2)]
+    runtime = IMRuntime(
+        router=MagicMock(),
+        credentials=CredentialStore(base_dir=tmp_path / "credentials"),
+        resume_base_dir=tmp_path / "resume",
+        state_store=state,
+        reply_style=style,
+        reference_aliases=aliases,
+    )
+    provider = MagicMock()
+    provider.status.return_value = "active"
+    provider.send = AsyncMock(
+        side_effect=[
+            OutboundSendResult("delivered", "first"),
+            OutboundSendResult("delivered", "second"),
+        ]
+    )
+    runtime._providers[("qq", "ACCOUNT")] = provider
+    runtime._event_loop = asyncio.get_running_loop()
+    result = await asyncio.to_thread(
+        runtime.send_proactive,
+        "qq|ACCOUNT|c2c|USER|SESSION",
+        "甲乙",
+        prepared_event_uuid="prepared",
+        can_send=lambda: not pause_after_first or not provider.send.await_count,
+    )
+    style.prepare.assert_called_once_with("SESSION", "甲乙", proactive=True)
+    assert result.outcome == ("unknown" if pause_after_first else "delivered")
+    assert [call.args[0].text for call in provider.send.await_args_list] == (
+        ["甲呀"] if pause_after_first else ["甲呀", "乙呀"]
+    )
+    alias = aliases.resolve(
+        im_type="qq",
+        provider_bind_id="ACCOUNT",
+        chat_scope="c2c",
+        chat_id="USER",
+        message_aliases=["first"],
+    )
+    assert alias and alias.event_uuid == "prepared" and alias.source_span == (0, 1)
+
+
+@pytest.mark.asyncio
 async def test_runtime_routes_resolved_event(tmp_path: Path) -> None:
     router = MagicMock()
     router.handle_inbound = AsyncMock()

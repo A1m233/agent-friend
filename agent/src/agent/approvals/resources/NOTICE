@@ -1,0 +1,5 @@
+Policy and reviewer template adapted from OpenAI Codex, Copyright OpenAI.
+Source: https://github.com/openai/codex/tree/8806313db4c82c89efcae3e6ac682bed6f4d6a66/codex-rs/prompts/templates/guardian
+Licensed under Apache-2.0; see LICENSE.codex.
+Changes: actual Agent Friend execution environment, bounded host inspection, JSON-only output and autonomous-source boundary. Security policy is preserved.
+

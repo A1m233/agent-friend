@@ -37,6 +37,7 @@ from runtime_config import (
 
 from .assembly import BridgeRuntime, build_runtime
 from .attachment_reconciliation import reconcile_attachments
+from .companionship.routes import register_routes as register_companionship_routes
 from .lifecycle import LIFECYCLE_TOKEN_ENV, BridgeLifecycleController, register_lifecycle_routes
 from .migration import register_migration_routes
 from .protocols.ag_ui import register_routes as register_ag_ui_routes
@@ -142,6 +143,7 @@ def create_app_with_runtime(
         ),
         lifespan=_make_lifespan(runtime),
     )
+    register_companionship_routes(app, runtime)
     _add_tauri_production_cors(app)
     app.add_middleware(
         GZipMiddleware,
@@ -222,6 +224,8 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
         )
         if runtime.im_runtime is not None:
             runtime.im_runtime.start()
+        if runtime.session_delivery is not None:
+            runtime.session_delivery.start()
         if runtime.scheduled_run_tracker is not None:
             runtime.scheduled_run_tracker.start()
         if runtime.schedule_coordinator is not None:
@@ -248,6 +252,8 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
                 notifications = runtime.scheduled_run_tracker.notifications
                 if notifications is not None:
                     await asyncio.to_thread(notifications.stop)
+            if runtime.session_delivery is not None:
+                await asyncio.to_thread(runtime.session_delivery.stop)
             if runtime.im_runtime is not None:
                 await runtime.im_runtime.stop(timeout=5.0)
             if runtime.agent_runtime is not None:

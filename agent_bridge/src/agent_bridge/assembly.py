@@ -40,8 +40,10 @@ from agent.memory_search import SessionHistorySource, SessionStoreSourceOrderPro
 from agent.notifications import NotificationStore
 from agent.paths import (
     command_workspaces_dir,
+    companionship_db_path,
     log_dir,
     notifications_db_path,
+    session_delivery_db_path,
     session_requests_db_path,
     tool_execution_evidence_dir,
 )
@@ -133,7 +135,9 @@ from .social_auth import SocialAuthOrchestrator
 if TYPE_CHECKING:
     from agent.tools.builtin.social_platforms import SocialPlatformService
 
+    from .companionship import CompanionshipService
     from .protocols.im import IMRuntime, OnboardSessionRegistry
+    from .session_delivery import SessionDeliveryService
 
 from .self_presentation import DesktopSelfPresentationModeProvider
 
@@ -293,6 +297,8 @@ class BridgeRuntime:
     """桌面文件与命令授权请求、会话决策模式及高危策略的进程级 broker。"""
     command_runtime: CommandRuntime | None = None
     application_launch_evidence: ToolExecutionEvidenceStore | None = None
+    session_delivery: SessionDeliveryService | None = None
+    companionship: CompanionshipService | None = None
     """085：进程级 Codex exec-server 命令运行时；不可用时其它能力继续运行。"""
     execution_environment_manager: ExecutionEnvironmentManager | None = None
     """096：共享 base、session overlay 与 run snapshot 的进程级 owner。"""
@@ -325,7 +331,7 @@ class BridgeRuntime:
 
         **不挂记忆**：无状态分支没有持久身份，记下来也无处归属。
         """
-        return SessionManager(
+        manager = SessionManager(
             store=self.transient_store,
             llm_client_factory=self.llm_client_factory or _llm_factory,
             prompt_builder_factory=self.prompt_builder_factory,
@@ -334,9 +340,15 @@ class BridgeRuntime:
             skill_service=self.skill_service,
             time_provider=self.time_provider,
         )
+        manager.approval_mode_provider = self.persistent_session_manager.approval_mode_provider
+        return manager
 
     def close(self) -> None:
         """进程退出时调用：drain 抽取队列并关库（幂等）。"""
+        if self.companionship is not None:
+            self.companionship.stop()
+        if self.session_delivery is not None:
+            self.session_delivery.stop()
         if self.notification_service is not None:
             self.notification_service.stop()
         self.persistent_session_manager.close()
@@ -577,6 +589,8 @@ def build_runtime(
         settings.scheduled_tasks_db
         or settings.sessions_dir.parent / "scheduled-tasks" / "scheduled-tasks.db",
         settings.session_requests_db or session_requests_db_path(settings.sessions_dir.parent),
+        companionship_db_path(settings.sessions_dir.parent),
+        session_delivery_db_path(settings.sessions_dir.parent),
         log_dir(),
         default_settings_path(),
         tool_execution_evidence_dir(settings.sessions_dir.parent),
@@ -621,6 +635,14 @@ def build_runtime(
         risk_policy=catastrophic_action_policy,
         session_exists=session_exists,
         on_mode_changed=record_approval_mode_change,
+    )
+    from agent.approvals.automatic import AutomaticApprovals
+    from agent.approvals.policy import authorization_policy
+    from agent.approvals.reviewer import review_pending_action
+
+    approval_broker.automatic = AutomaticApprovals(
+        policy=lambda: authorization_policy(resolved_desktop_settings_reader.read()),
+        review=review_pending_action,
     )
 
     memory: Memory | None = None
@@ -732,6 +754,26 @@ def build_runtime(
         memory=memory,
         session_turn_guard=turn_coordinator.hold,
         runtime_identity=runtime_identity,
+        include_legacy_sources=False,
+    )
+    persistent_session_manager.approval_mode_provider = approval_broker.mode_state
+
+    def stop_denied_run(session_id: str, run_id: str) -> None:
+        snapshot = agent_runtime.get_run_snapshot(run_id)
+        if snapshot is not None:
+            agent_runtime.cancel_run(
+                run_id,
+                expected_session_id=session_id,
+                required_control_scope=snapshot.control_scope or "",
+            )
+
+    approval_broker.automatic.stop_run = stop_denied_run
+    agent_runtime.add_terminal_observer(
+        lambda snapshot: (
+            approval_broker.automatic.finish_run(snapshot.session_id, snapshot.run_id)
+            if approval_broker.automatic is not None
+            else None
+        )
     )
 
     def prepare_execution_environment(event: AgentEvent) -> PreTurnDecision:
@@ -896,7 +938,20 @@ def build_runtime(
             ),
             session_exists=session_bridge.session_exists,
         )
+        from .protocols.im.reply_style import IMReplyStyle
+
+        im_reply_style = IMReplyStyle(
+            enabled=lambda: (
+                (resolved_desktop_settings_reader.read() or {}).get("imReplyStyle", "natural")
+                == "natural"
+            ),
+            model=lambda sid: llm_client_factory(
+                persistent_session_manager.query(sid).current_model_config
+            ),
+            persona=lambda: persona_store.load().content,
+        )
         im_router = IMRouter(
+            reply_style=im_reply_style,
             session_bridge=session_bridge,
             default_persona=default_persona,
             default_model=default_model,
@@ -939,6 +994,8 @@ def build_runtime(
             IMAttachmentResolver(attachment_store),
         )
         im_runtime = _IMRuntime(
+            reply_style=im_reply_style,
+            reference_aliases=im_reference_aliases,
             router=im_router,
             credentials=credentials,
             resume_base_dir=settings.im_resume_dir,
@@ -967,7 +1024,7 @@ def build_runtime(
         agent_runtime=agent_runtime,
         im_runtime=im_runtime,
     )
-    return dataclasses.replace(
+    final_runtime = dataclasses.replace(
         base_runtime,
         im_runtime=im_runtime,
         im_onboard_registry=im_onboard_registry,
@@ -976,3 +1033,52 @@ def build_runtime(
         notification_service=notification_service,
         social_auth_orchestrator=social_auth_orchestrator,
     )
+    from agent.tools.builtin.conversation_access import ListConversationsTool
+    from agent.tools.builtin.conversation_access.delivery import SendConversationMessageTool
+
+    from .session_delivery import SessionDeliveryService
+
+    delivery = SessionDeliveryService(final_runtime)
+    directory_tool = tool_registry.get("list_conversations")
+    if isinstance(directory_tool, ListConversationsTool):
+        directory_tool.service.destinations = delivery.destinations
+    sender_tool = tool_registry.get("send_conversation_message")
+    if isinstance(sender_tool, SendConversationMessageTool):
+        sender_tool.submit = delivery.submit
+    final_runtime = dataclasses.replace(final_runtime, session_delivery=delivery)
+    if isinstance(directory_tool, ListConversationsTool):
+        from agent.tools.builtin.conversation_access.companionship import (
+            ManageCompanionshipTool,
+            ScheduleNextWakeTool,
+        )
+
+        from .companionship import CompanionshipService
+
+        companionship = CompanionshipService(
+            final_runtime, directory_tool.service, resolved_desktop_settings_reader
+        )
+        approval_broker.is_companionship = lambda sid: (
+            companionship.store.read()["inner_session_id"] == sid
+        )
+        delivery.contact_allowed = companionship.contact_allowed
+        manage_tool = tool_registry.get("manage_companionship")
+        schedule_tool = tool_registry.get("schedule_next_wake")
+        if isinstance(manage_tool, ManageCompanionshipTool):
+            manage_tool.handler = lambda args: (
+                companionship.status()
+                if args["action"] == "status"
+                else companionship.control(
+                    args["action"],
+                    until=args.get("until"),
+                    user_initiated=args.get("__agent_friend_user_initiated") is True,
+                )
+            )
+        if isinstance(schedule_tool, ScheduleNextWakeTool):
+            schedule_tool.handler = lambda args: companionship.schedule(
+                str(args.get("__agent_friend_current_session_id", "")),
+                str(args.get("__agent_friend_run_id", "")),
+                args["wake_at"],
+            )
+        agent_runtime.register_source(companionship)
+        final_runtime = dataclasses.replace(final_runtime, companionship=companionship)
+    return final_runtime

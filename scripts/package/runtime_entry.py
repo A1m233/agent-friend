@@ -1557,6 +1557,19 @@ def _doctor() -> int:
         checks["capability:qq_approvals"] = {"ok": True, **qq_approval_details}
 
     try:
+        from capability_smoke.companionship import run_companionship_smoke
+
+        companionship_details = run_companionship_smoke()
+    except Exception as exc:
+        checks["capability:autonomous_companionship"] = {
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+    else:
+        checks["capability:autonomous_companionship"] = {"ok": True, **companionship_details}
+
+    try:
         recovery_details = _smoke_sandbox_recovery()
     except Exception as exc:
         checks["capability:sandbox_recovery"] = {"ok": False, "error": str(exc)}

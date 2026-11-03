@@ -73,6 +73,9 @@ class QQReferenceResolver:
             source_text = "\n\n".join(
                 str(item.payload.get("content", "")) for item in source_events
             )
+            if entry is not None and entry.source_span is not None:
+                start, end = entry.source_span
+                source_text = source_text[start:end]
             quoted_text = direct_text or (source_text if isinstance(source_text, str) else "")
             availability: Literal["available", "unavailable"] = (
                 "available" if quoted_text.strip() else "unavailable"

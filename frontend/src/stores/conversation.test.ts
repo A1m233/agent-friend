@@ -629,6 +629,21 @@ beforeEach(() => {
 });
 
 describe("conversation store · session approval mode", () => {
+  it("starts fresh chats in automatic review and sends that choice on the first turn", async () => {
+    setModelCatalogForTests(KIMI_REASONING_CATALOG);
+    window.__AGENT_FRIEND_SETTINGS__ = { chatModel: { provider: "kimi", model: "kimi/kimi-k2.6" } };
+    useConversationStore.setState({ currentSessionId: "previous-chat", sessionViews: {} });
+    useConversationStore.getState().newSession();
+    expect(useConversationStore.getState().approvalMode).toBe("auto_review");
+    mockStream.mockImplementation(async function* () {
+      yield ev({ type: EventType.RUN_FINISHED });
+    });
+    await finishAcceptedSend(useConversationStore.getState().send("hello"));
+    expect(mockStream).toHaveBeenCalledWith(
+      expect.objectContaining({ initialApprovalMode: "auto_review" }), expect.any(Object),
+    );
+  });
+
   it("stages the risky mode before the first message and bootstraps it with the run", async () => {
     mockStream.mockImplementation(async function* () {
       yield ev({ type: EventType.RUN_FINISHED });
@@ -2240,6 +2255,18 @@ describe("conversation store · background detail refresh", () => {
     expect(isSessionBusy(useConversationStore.getState(), "sid-external")).toBe(true);
     expect(useConversationStore.getState().send("等待外部运行完成"))
       .toEqual({ accepted: false, reason: "busy" });
+  });
+
+  it("keeps an empty inner session detached from the ordinary list and refuses user writes", async () => {
+    mockGet.mockResolvedValueOnce({ ...sessionDetail("inner", ""), active_events: [], events: [], read_only: true });
+    expect(await useConversationStore.getState().openSession("inner")).toBe(true);
+    const state = useConversationStore.getState();
+    expect(state.detachedSessionId).toBe("inner");
+    expect(state.readOnlySessionIds.inner).toBe(true);
+    expect(state.messages).toEqual([]);
+    expect(state.send("hello")).toEqual({ accepted: false, reason: "read-only" });
+    expect(state.beginEditingMessage("missing")).toBe(false);
+    expect(mockStream).not.toHaveBeenCalled();
   });
 
   it("重连 pull 中缺失的旧 active run 会解除 busy 并刷新当前 detail", async () => {

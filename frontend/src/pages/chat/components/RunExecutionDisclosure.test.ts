@@ -12,6 +12,20 @@ function DurationFixture({ message }: { message: ChatMessage }) {
   return createElement(RunExecutionDisclosure, { message, enabled: false, collapse: false, children: () => null });
 }
 
+it("prepared proactive messages have no fictional execution duration", async () => {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const message: ChatMessage = { id: "delivery", role: "assistant", blocks: [], status: "complete",
+    createdAt: "2026-11-03T00:00:00Z", messageSource: { kind: "agent_initiated", deliveryId: "one" } };
+  try {
+    await act(async () => root.render(createElement(DurationFixture, { message })));
+    expect(container.querySelector("[data-run-duration]")).toBeNull();
+    expect(container.querySelector("[data-run-status-line]")?.textContent).toBe("由 agent-friend 主动发出");
+    expect(container.querySelector("[data-run-separator]")).not.toBeNull();
+    expect(container.textContent).not.toContain("用时未知");
+  } finally { await act(async () => root.unmount()); }
+});
+
 it.each(["complete", "error", "interrupted"] as const)("enables manual disclosure only after %s", async (status) => {
   const container = document.createElement("div");
   const root = createRoot(container);

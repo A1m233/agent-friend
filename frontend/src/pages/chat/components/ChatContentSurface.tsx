@@ -17,6 +17,7 @@ import { focusVoiceCallWindow, useVoiceStore } from "@/stores/voice";
 import { isVoiceCallBlockingText } from "@/stores/voiceStateMachine";
 import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX, CHAT_CONTENT_CONTAINER_CLASS } from "../layout";
 import { ApprovalDock } from "./ApprovalDock";
+import { AutomaticReviewStatus } from "./AutomaticReviewStatus";
 import { usePrimaryActivity } from "./activity/usePrimaryActivity";
 import { Composer, type ComposerHandle } from "./Composer";
 import { MessageList } from "./MessageList";
@@ -31,6 +32,7 @@ import { SessionApprovalModeController } from "./SessionApprovalModeController";
 export function ChatContentSurface() {
   const status = useConnectionStore((state) => state.status);
   const currentSessionId = useConversationStore((state) => state.currentSessionId);
+  const readOnly = useConversationStore((state) => Boolean(state.currentSessionId && state.readOnlySessionIds[state.currentSessionId]));
   const messageCount = useConversationStore((state) => state.messages.length);
   const historyLoading = useConversationStore((state) => state.historyLoading);
   const voiceSessionId = useVoiceStore((state) => state.sessionId);
@@ -105,14 +107,14 @@ export function ChatContentSurface() {
               ? referenceNavigation.reference : null}
             onReferenceTargetHandled={clearReferenceNavigation}
           />
-          <Composer
+          {readOnly ? <div className="mt-3 border-t border-border px-4 py-3 text-sm text-muted">内心活动 · 只读。这里记录 AF 的自主探索，分享给你的消息会出现在普通会话中。</div> : <Composer
             ref={composerRef}
             disabled={composerDisabled}
             disabledReason={composerDisabledReason}
             onHeightChange={setComposerHeight}
-            topSlot={<><PendingRequests key={currentSessionId} sessionId={currentSessionId} /><ApprovalDock activity={primaryActivity} /></>}
+            topSlot={<><PendingRequests key={currentSessionId} sessionId={currentSessionId} /><AutomaticReviewStatus /><ApprovalDock activity={primaryActivity} /></>}
             onReferenceSelect={selectReference}
-          />
+          />}
         </>
       )}
       </div>

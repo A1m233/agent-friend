@@ -64,6 +64,7 @@ from .store import (
     SessionSummary,
     SessionWriterLease,
     acquire_session_writer_lease,
+    append_session_events,
     delete_session_writer_lease,
 )
 from .tool_execution_evidence import ToolExecutionEvidenceError, ToolExecutionEvidenceStore
@@ -165,6 +166,7 @@ class SessionManager:
         runtime_start_reason: str = "direct_start",
     ) -> None:
         self._store = store
+        self.approval_mode_provider: Callable[[str], SessionApprovalModeState] | None = None
         self._llm_client_factory = llm_client_factory
         self._prompt_builder_factory = prompt_builder_factory
         self._context_manager_factory = context_manager_factory
@@ -276,6 +278,8 @@ class SessionManager:
     ) -> SessionApprovalModeState:
         """Read optional metadata for an already-bound persistent or transient session."""
 
+        if self.approval_mode_provider is not None:
+            return self.approval_mode_provider(session.session_id)
         if self._metadata_store is None:
             return SessionApprovalModeState()
         metadata = self._metadata_store.get(session.session_id)
@@ -365,6 +369,9 @@ class SessionManager:
     def exists(self, session_id: str) -> bool:
         """Check persistence without loading or validating conversation history."""
         return self._store.exists(session_id)
+
+    def is_inner(self, session_id: str) -> bool:
+        return self._summary(session_id).origin_kind == "inner_world"
 
     def open(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
         """完整加载指定会话。
@@ -469,6 +476,104 @@ class SessionManager:
             if lease is not None:
                 lease.release()
 
+    def append_delivered_message(
+        self,
+        session_id: str,
+        *,
+        delivery_id: str,
+        content: str,
+        source_session_id: str,
+        source_run_id: str,
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Append prepared output without a model turn. Caller reserves the idle session."""
+        if self.is_archived(session_id):
+            raise AgentError("target_session_archived")
+        state = self._runtime_states.get(session_id)
+        lease = acquire_session_writer_lease(self._store, session_id) if state is None else None
+        try:
+            session = (
+                state.rollout_recorder.session if state else self.open_for_execution(session_id)
+            )
+            if session.origin_kind == "inner_world":
+                raise AgentError("target_session_read_only")
+            message_id = f"delivery-{delivery_id}"
+            existing = next((e for e in session.events if e.uuid == message_id), None)
+            if existing:
+                if existing.payload.get("content") != content or existing.payload.get(
+                    "attachments", []
+                ) != (attachments or []):
+                    raise AgentError("delivery_content_conflict")
+                return message_id
+            if state:
+                history, context, epoch, recorder = (
+                    state.model_history,
+                    state.model_context,
+                    state.cache_epoch,
+                    state.rollout_recorder,
+                )
+            else:
+                restored = restore_rollout(session)
+                if restored.runtime_blocked:
+                    raise SessionCorruptError("目标会话暂不能接受消息，请先恢复会话。")
+                history, context, epoch = (
+                    restored.history,
+                    restored.model_context,
+                    restored.cache_epoch,
+                )
+                recorder = SessionRolloutRecorder(self._store, session, restored.commit)
+            source = {
+                "kind": "agent_initiated",
+                "delivery_id": delivery_id,
+                "source_session_id": source_session_id,
+                "source_run_id": source_run_id,
+            }
+            now = datetime.now(UTC)
+            events = [
+                Event(
+                    type="system_trigger",
+                    uuid=f"delivery-source-{delivery_id}",
+                    ts=now,
+                    payload={
+                        "source_kind": "cross_session_message",
+                        "presentation": "conversation",
+                        "output_visibility": "user",
+                    },
+                    meta={"run_id": message_id, "message_source": source},
+                ),
+                Event(
+                    type="assistant_message",
+                    uuid=message_id,
+                    ts=now,
+                    payload={
+                        "content": content,
+                        "partial": False,
+                        "phase": "final_answer",
+                        "attachments": attachments or [],
+                    },
+                    meta={"run_id": message_id, "message_source": source},
+                ),
+            ]
+            # A crash after the business append is recovered by existing rollout
+            # reconciliation; the stable message UUID prevents duplicate append.
+            append_session_events(self._store, session_id, events)
+            for event in events:
+                session.append(event)
+            history.reconcile(session)
+            epoch.advance("external_message")
+            recorder.commit(
+                history=history,
+                model_context=context,
+                cache_epoch=epoch,
+                boundary="assistant_completed",
+                turn_terminal=True,
+                exact_ineligibility_reason="external_message",
+            )
+            return message_id
+        finally:
+            if lease is not None:
+                lease.release()
+
     def list(
         self,
         *,
@@ -500,6 +605,8 @@ class SessionManager:
         query_text = query.strip().casefold() if query else ""
         result: list[SessionSummary] = []
         for summary in summaries:
+            if summary.origin_kind == "inner_world":
+                continue
             if not include_scheduled and summary.origin_kind == "scheduled_task":
                 continue
             if (summary.archived_at is not None) != archived:
@@ -654,6 +761,7 @@ class SessionManager:
         tool_run_context_factory: Callable[[str], ToolRunContext] | None = None,
         post_turn_external: bool = False,
         cancel_check: CancelCheck = None,
+        allow_inner: bool = False,
     ) -> Conversation:
         """根据 ``session.current_persona_id / current_model`` 装配 :class:`Conversation`。
 
@@ -679,6 +787,8 @@ class SessionManager:
                 在 catalog 找不到。
         """
         check_cancel(cancel_check)
+        if session.origin_kind == "inner_world" and not allow_inner:
+            raise AgentError("内心活动会话只读，不能通过普通会话入口执行。")
         state = self._runtime_states.get(session.session_id)
         if state is not None:
             session = self.open_for_execution(session.session_id, cancel_check=cancel_check)

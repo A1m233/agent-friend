@@ -49,6 +49,66 @@ def test_drops_empty_content() -> None:
     assert frag.is_empty()
 
 
+def test_inner_observation_preserves_source_without_importing_read_tool_body() -> None:
+    events = [
+        _ev("system_trigger", "wake", {"source_kind": "companionship", "presentation": "none"}),
+        _ev("tool_call_result", "read", {"content": "旧会话：用户住上海"}),
+        _ev(
+            "assistant_message",
+            "own",
+            {"content": "我准备了一张画，还没有分享。", "partial": False},
+        ),
+    ]
+    fragment = project_turn(events, session_id="inner", persona_id="p1")
+    assert not fragment.defer_extraction
+    assert len(fragment.utterances) == 1
+    assert fragment.utterances[0].speaker == "agent"
+    assert fragment.utterances[0].source_ref == "inner#own"
+    assert "不是用户新发言" in fragment.utterances[0].text
+    assert "上海" not in fragment.utterances[0].text
+
+
+def test_completed_inner_observation_enters_shared_memory_without_another_user_turn() -> None:
+    from memory.extraction.extractor import Extractor
+    from memory.extraction.reconciler import Reconciler
+    from memory.extraction.worker import AsyncExtractionWorker
+    from memory.store import SqliteMemoryStore
+
+    from llm_providers import ModelRequest, ModelResponse
+
+    class Model:
+        def generate(self, request: ModelRequest) -> ModelResponse:
+            assert "不是用户新发言" in str(request.messages)
+            return ModelResponse(
+                '{"core_updates":[],"semantic_changes":[],"episodic_entries":["AF 为小说里的猫准备了书签，尚未分享。"]}'
+            )
+
+    fragment = project_turn(
+        [
+            _ev("system_trigger", "wake", {"source_kind": "companionship"}),
+            _ev(
+                "assistant_message",
+                "own",
+                {"content": "我为小说里的猫准备了书签，尚未分享。", "partial": False},
+            ),
+        ],
+        session_id="inner",
+        persona_id="p1",
+    )
+    store = SqliteMemoryStore(":memory:")
+    worker = AsyncExtractionWorker(store, Extractor(Model()), Reconciler(store))  # type: ignore[arg-type]
+    try:
+        worker.submit(fragment)
+        worker.flush()
+        assert store.pending_extractions(10) == []
+        episodes = store.list_episodic(owner_user_id="local", persona_id="p1")
+        assert len(episodes) == 1
+        assert "书签" in episodes[0].summary
+    finally:
+        worker.close()
+        store.close()
+
+
 def _session_with_turns(count: int) -> tuple[Session, list[tuple[Event, Event]]]:
     session = Session.new(title="memory feed", persona="default", model="m", session_id="s1")
     turns: list[tuple[Event, Event]] = []

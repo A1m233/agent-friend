@@ -259,6 +259,14 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       }
       const content = asString(p.content);
       const message = ensureAssistant(ev.uuid, ev.ts, runId);
+      if (p.attachments && !p.generated_image) message.attachments = attachmentsOf(p.attachments);
+      const source = ev.meta?.message_source;
+      if (source && typeof source === "object" && !Array.isArray(source)) {
+        const origin = source as Record<string, unknown>;
+        if (origin.kind === "agent_initiated" && typeof origin.delivery_id === "string") {
+          message.messageSource = { kind: "agent_initiated", deliveryId: origin.delivery_id };
+        }
+      }
       // 一轮 assistant 可能包含多段文本和工具调用；左下角展示整轮最后回复的完成时间。
       message.createdAt = ev.ts;
       if (p.generated_image && typeof p.generated_image === "object") {

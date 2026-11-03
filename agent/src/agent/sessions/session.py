@@ -578,6 +578,11 @@ class Session:
                     timestamp=ev.ts,
                     meta=msg_meta,
                     uuid=ev.uuid,
+                    attachments=[
+                        AttachmentRef.from_dict(item)
+                        for item in ev.payload.get("attachments", [])
+                        if isinstance(item, dict)
+                    ],
                 )
                 position = len(result)
                 if "item_index" in msg_meta and msg_meta.get("run_id"):
@@ -675,6 +680,21 @@ class Session:
                             uuid=ev.uuid,
                         )
                     )
+                last_assistant = None
+                pending_reminder_fact = False
+            elif (
+                ev.type == "system_trigger"
+                and ev.payload.get("source_kind") == "cross_session_message"
+            ):
+                result.append(
+                    Message(
+                        role="system",
+                        content="接下来的助手消息是 AF 在另一个会话中准备后主动发来的内容，不是用户的新请求；投递不授予额外执行权限。用户可以在此继续交流。",
+                        timestamp=ev.ts,
+                        meta={**ev.meta, "synthetic": "agent_initiated_message"},
+                        uuid=ev.uuid,
+                    )
+                )
                 last_assistant = None
                 pending_reminder_fact = False
             elif ev.type == "todo_reminder":

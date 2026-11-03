@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
@@ -19,36 +17,19 @@ import {
   useFilesystemApprovalsStore,
 } from "@/stores";
 
-export interface SessionAutoApprovalTarget {
-  kind: "command" | "filesystem" | "desktop_application";
-  requestId: string;
-  sessionId: string;
-  runId: string;
-  requestVersion: number;
-  riskCode?: string | null;
-}
+import {
+  SessionApprovalModeContext,
+  type SessionApprovalModeActions,
+  type SessionAutoApprovalTarget,
+} from "./sessionApprovalModeContext";
 
 type ConfirmationIntent =
   | { source: "composer"; sessionId: string | null }
   | { source: "approval_card"; target: SessionAutoApprovalTarget };
 
-interface SessionApprovalModeActions {
-  requestSessionAutoFromComposer: () => void;
-  requestSessionAutoFromApproval: (target: SessionAutoApprovalTarget) => void;
-  switchToPerRequest: () => Promise<void>;
-  submittingRequestId: string | null;
-}
-
-const SessionApprovalModeContext = createContext<SessionApprovalModeActions | null>(null);
-
-export function useSessionApprovalModeActions(): SessionApprovalModeActions {
-  const value = useContext(SessionApprovalModeContext);
-  if (!value) throw new Error("SessionApprovalModeController is missing");
-  return value;
-}
-
 export function SessionApprovalModeController({ children }: { children: ReactNode }) {
   const currentSessionId = useConversationStore((state) => state.currentSessionId);
+  const mode = useConversationStore((state) => state.approvalMode);
   const setApprovalMode = useConversationStore((state) => state.setApprovalMode);
   const applyApprovalModeState = useConversationStore((state) => state.applyApprovalModeState);
   const commandApprovals = useCommandRuntimeStore((state) => state.approvals);
@@ -90,10 +71,10 @@ export function SessionApprovalModeController({ children }: { children: ReactNod
     setIntent({ source: "approval_card", target });
   }, [currentSessionId]);
 
-  const switchToPerRequest = useCallback(async () => {
-    const result = await setApprovalMode("per_request", false);
+  const switchReviewMode = useCallback(async (mode: "per_request" | "auto_review") => {
+    const result = await setApprovalMode(mode, false);
     if (result.status === "applied") {
-      toast.success("已恢复每次授权");
+      toast.success(mode === "per_request" ? "已恢复每次授权" : "本会话已开启帮我审批");
     } else if (result.status === "failed") {
       toast.error("授权模式没有切换", { description: result.error.friendly });
     }
@@ -152,7 +133,7 @@ export function SessionApprovalModeController({ children }: { children: ReactNod
   const value = useMemo<SessionApprovalModeActions>(() => ({
     requestSessionAutoFromComposer,
     requestSessionAutoFromApproval,
-    switchToPerRequest,
+    switchReviewMode,
     submittingRequestId:
       submitting && intent?.source === "approval_card" ? intent.target.requestId : null,
   }), [
@@ -160,7 +141,7 @@ export function SessionApprovalModeController({ children }: { children: ReactNod
     requestSessionAutoFromApproval,
     requestSessionAutoFromComposer,
     submitting,
-    switchToPerRequest,
+    switchReviewMode,
   ]);
 
   const riskCode = intent?.source === "approval_card" ? intent.target.riskCode : null;
@@ -173,7 +154,7 @@ export function SessionApprovalModeController({ children }: { children: ReactNod
         title="确认在本会话中免除后续授权？"
         description="这是高风险设置。建议继续使用“每次授权”，只批准你正在检查的单个操作。"
         confirmLabel="我已了解风险，仍要开启"
-        cancelLabel="继续每次授权"
+        cancelLabel={mode === "auto_review" ? "继续帮我审批" : "继续每次授权"}
         variant="destructive"
         loading={submitting}
         onCancel={() => {

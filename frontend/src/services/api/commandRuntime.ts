@@ -1,12 +1,14 @@
 import { http } from "@/services/http";
 
-export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
+export type ApprovalStatus = "pending" | "reviewing" | "approved" | "denied" | "expired" | "cancelled" | "aborted" | "timed_out" | "failed";
 export type CommandProcessStatus = "running" | "exited" | "cancelled" | "timed_out" | "runtime_lost";
 export type ApprovalDecisionSource =
   | "user_once"
   | "user_enable_session_auto"
   | "session_auto"
   | "request_auto"
+  | "auto_review"
+  | "full_access"
   | "catastrophic_policy";
 
 export interface ApprovalRiskAssessment {
@@ -59,8 +61,9 @@ export interface CommandApprovalRequest {
   requested_lifetime: "once";
   version: number;
   status: ApprovalStatus;
-  approval_mode?: "per_request" | "session_auto";
-  approval_mode_source?: "session" | "request";
+  approval_mode?: "per_request" | "session_auto" | "auto_review" | "full_access";
+  approval_mode_source?: "session" | "request" | "global";
+  review?: { outcome: "allow" | "deny"; risk_level: string; user_authorization: string; rationale: string } | null;
   approval_mode_version?: number;
   decision_source?: ApprovalDecisionSource | null;
   risk?: ApprovalRiskAssessment | null;

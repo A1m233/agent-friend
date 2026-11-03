@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -106,6 +107,9 @@ class PendingFilesystemApproval:
     approval_mode_version: int = 0
     decision_source: ApprovalDecisionSource | None = None
     risk_assessment: RiskAssessment | None = None
+    review_assessment: dict[str, object] | None = None
+    review_fingerprint: str | None = None
+    review_context: object | None = field(default=None, repr=False)
     _decision: ApprovalDecision | None = field(default=None, repr=False)
     _event: threading.Event = field(default_factory=threading.Event, repr=False)
 
@@ -147,6 +151,8 @@ class PendingFilesystemApproval:
             "approval_mode_version": self.approval_mode_version,
             "approval_mode_source": self.approval_mode_source,
             "decision_source": self.decision_source,
+            "review": self.review_assessment,
+            "review_fingerprint": self.review_fingerprint,
             "risk": (self.risk_assessment.to_dict() if self.risk_assessment is not None else None),
         }
 
@@ -168,6 +174,17 @@ class FilesystemAuthorizationLedger:
         self._scopes: dict[str, FilesystemCapability] = {}
         self._actions: dict[str, DestructiveActionGrant] = {}
         self._consumed_actions: set[str] = set()
+        self._grant_validators: dict[str, Callable[[], bool]] = {}
+
+    def bind_grant_validator(self, grant_id: str, validate: Callable[[], bool]) -> None:
+        self._grant_validators[grant_id] = validate
+
+    def _grant_valid(self, grant_id: str) -> bool:
+        validate = self._grant_validators.get(grant_id)
+        try:
+            return validate is None or validate()
+        except Exception:
+            return False
 
     def grant_scope(
         self,
@@ -215,6 +232,8 @@ class FilesystemAuthorizationLedger:
         return grant
 
     def scope(self, scope_id: str) -> FilesystemCapability | None:
+        if not self._grant_valid(scope_id):
+            return None
         return self._scopes.get(scope_id)
 
     def revoke_skill_root(self, root: Path) -> None:
@@ -252,6 +271,8 @@ class FilesystemAuthorizationLedger:
         recursive: bool = False,
     ) -> Literal["ok", "missing", "target_changed"]:
         grant = self._actions.get(action_id)
+        if not self._grant_valid(action_id):
+            return "missing"
         if grant is None or action_id in self._consumed_actions:
             return "missing"
         if (

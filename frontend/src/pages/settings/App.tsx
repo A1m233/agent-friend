@@ -36,6 +36,8 @@ import { SettingsPageLayout } from "./components/SettingsPageLayout";
 import { SettingsRow } from "./components/SettingsRow";
 import { AutostartSetting } from "./components/AutostartSetting";
 import { BackgroundOnlineSetting } from "./components/BackgroundOnlineSetting";
+import { AuthorizationSetting } from "./components/AuthorizationSetting";
+import { CompanionshipSetting } from "./components/CompanionshipSetting";
 import { ReminderNotificationSetting } from "./components/ReminderNotificationSetting";
 import { NotificationSettings } from "./components/NotificationSettings";
 import { PermissionPanel } from "./permissions/PermissionPanel";
@@ -158,6 +160,11 @@ export function SettingsApp({
               >
                 <BackgroundOnlineSetting />
               </SettingsGroup>
+            </SettingsPageLayout>
+          ) : section === "companionship" ? (
+            <SettingsPageLayout title="自主陪伴">
+              <SettingsGroup title="活动与联系"><CompanionshipSetting /></SettingsGroup>
+              <SettingsGroup title="授权"><AuthorizationSetting /></SettingsGroup>
             </SettingsPageLayout>
           ) : section === "notifications" ? (
             <SettingsPageLayout title="通知">

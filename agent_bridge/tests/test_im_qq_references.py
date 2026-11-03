@@ -53,6 +53,31 @@ def _put_alias(index: IMReferenceAliasIndex, alias: str = "REFIDX-SOURCE") -> No
 
 
 @pytest.mark.asyncio
+async def test_rewritten_bubble_quote_recovers_only_its_original_span(tmp_path: Path) -> None:
+    path = tmp_path / "aliases.json"
+    IMReferenceAliasIndex(path).put(
+        im_type="qq",
+        provider_bind_id="BOT-1",
+        chat_scope="c2c",
+        chat_id="OPENID-USER",
+        message_aliases=["REFIDX-SOURCE"],
+        session_id="s",
+        event_uuid="answer",
+        source_role="assistant",
+        source_span=(4, 9),
+    )
+    answer = SimpleNamespace(
+        uuid="answer", type="assistant_message", payload={"content": "找到了。还没验证。"}
+    )
+    session = cast(Session, SimpleNamespace(active_events=[answer]))
+    resolver = QQReferenceResolver(IMReferenceAliasIndex(path), lambda _: session)
+    result = await resolver.resolve(
+        "qq", _event(elements=[MsgElement(msg_idx="REFIDX-SOURCE")]), provider_bind_id="BOT-1"
+    )
+    assert result.references[0].quoted_text == "还没验证。"
+
+
+@pytest.mark.asyncio
 async def test_aggregate_quote_restores_all_source_items_and_fails_closed_if_inactive(
     tmp_path: Path,
 ) -> None:

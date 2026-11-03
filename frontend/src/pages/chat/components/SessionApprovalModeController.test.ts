@@ -13,11 +13,11 @@ import {
   useFilesystemApprovalsStore,
 } from "@/stores";
 import { SessionApprovalModeControl } from "./SessionApprovalModeControl";
+import { SessionApprovalModeController } from "./SessionApprovalModeController";
 import {
-  SessionApprovalModeController,
   useSessionApprovalModeActions,
   type SessionAutoApprovalTarget,
-} from "./SessionApprovalModeController";
+} from "./sessionApprovalModeContext";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -25,6 +25,7 @@ import {
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
 }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => undefined) }));
 
 let capturedActions: ReturnType<typeof useSessionApprovalModeActions> | null = null;
 
@@ -125,7 +126,7 @@ describe("SessionApprovalModeController", () => {
     });
 
     const trigger = document.querySelector<HTMLButtonElement>(
-      'button[aria-label="当前授权模式：每次授权，推荐"]',
+      'button[aria-label="当前授权模式：每次授权"]',
     );
     expect(trigger?.disabled).toBe(false);
 
@@ -147,6 +148,104 @@ describe("SessionApprovalModeController", () => {
     expect(trigger?.textContent).toContain("本会话无需授权");
     expect(trigger?.className).toContain("text-warning");
     expect(document.querySelector('[data-slot="dropdown-menu-content"]')).toBeNull();
+  });
+
+  it.each([false, true])("submits the exact approval-card identity and calibrates failure=%s", async (fails) => {
+    const enable = vi.spyOn(sessionsApi, "enableSessionAutoForApproval").mockResolvedValue({
+      accepted: true,
+      session_id: "session-a",
+      approval_mode: "session_auto",
+      approval_mode_version: 8,
+    });
+    if (fails) enable.mockRejectedValueOnce(new Error("approval conflict"));
+    const applyApprovalModeState = vi.fn();
+    const refreshApprovalMode = vi.fn(async () => "applied" as const);
+    const refreshCommands = vi.fn(async () => undefined);
+    const refreshFilesystem = vi.fn(async () => undefined);
+    useConversationStore.setState({
+      approvalModeVersion: 7,
+      applyApprovalModeState,
+      refreshApprovalMode,
+    });
+    useCommandRuntimeStore.setState({
+      refresh: refreshCommands,
+      approvals: {
+        "request-a": {
+          request_id: "request-a",
+          kind: "command",
+          session_id: "session-a",
+          run_id: "run-a",
+          tool_call_id: "tool-a",
+          reason: "test",
+          requested_lifetime: "once",
+          version: 3,
+          status: "pending",
+          risk: {
+            level: "catastrophic",
+            fingerprint: "risk-a",
+            code: "disk-wipe",
+            message: "risk",
+            evidence: [],
+          },
+          details: {
+            cmd: "format.com D:",
+            argv: ["format.com", "D:"],
+            execution: "host_user",
+            workdir: "C:/work",
+            cwd_source: "explicit",
+            mode: "buffered",
+            timeout_seconds: 30,
+            filesystem_access: "unrestricted",
+            additional_roots: [],
+            host_derived_roots: [],
+            network_access: "unrestricted",
+            interactive: false,
+          },
+        },
+      },
+    });
+    useFilesystemApprovalsStore.setState({ refresh: refreshFilesystem });
+    const target: SessionAutoApprovalTarget = {
+      kind: "command",
+      requestId: "request-a",
+      requestVersion: 3,
+      sessionId: "session-a",
+      runId: "run-a",
+      riskCode: "disk-wipe",
+    };
+
+    await act(async () => capturedActions?.requestSessionAutoFromApproval(target));
+    expect(document.body.textContent).toContain("当前请求风险类别：disk-wipe");
+    await act(async () => buttonWithText("我已了解风险，仍要开启").click());
+
+    expect(enable).toHaveBeenCalledWith({
+      requestId: "request-a",
+      sessionId: "session-a",
+      runId: "run-a",
+      requestVersion: 3,
+      modeVersion: 7,
+    });
+    if (fails) {
+      expect(applyApprovalModeState).not.toHaveBeenCalled();
+      expect(refreshApprovalMode).toHaveBeenCalledExactlyOnceWith("session-a", { invalidate: true });
+    } else {
+      expect(applyApprovalModeState).toHaveBeenCalledWith({
+        accepted: true,
+        session_id: "session-a",
+        approval_mode: "session_auto",
+        approval_mode_version: 8,
+      });
+      expect(refreshApprovalMode).not.toHaveBeenCalled();
+    }
+    expect(refreshCommands).toHaveBeenCalledTimes(1);
+    expect(refreshFilesystem).toHaveBeenCalledTimes(1);
+  });
+
+  it("selects automatic review for only this session", async () => {
+    await act(async () => capturedActions?.switchReviewMode("auto_review"));
+    expect(setApprovalMode).toHaveBeenCalledWith("auto_review", false);
+    await act(async () => useConversationStore.setState({ approvalMode: "auto_review" }));
+    expect(document.querySelector('button[aria-label="当前授权模式：帮我审批"]')).not.toBeNull();
   });
 
   it.each([false, true])("submits the exact approval-card identity and calibrates failure=%s", async (fails) => {

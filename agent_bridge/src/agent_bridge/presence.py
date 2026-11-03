@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 DesktopSessionState = Literal["active", "locked", "sleeping", "unknown"]
+DESKTOP_STALE_AFTER = timedelta(seconds=15)
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,21 @@ class PresenceRegistry:
         with self._lock:
             self._im = {item.destination_id: item for item in snapshots}
 
+    def last_desktop_interaction(self, *, now: datetime) -> datetime | None:
+        with self._lock:
+            desktop = self._desktop
+        if desktop is None or not timedelta(0) <= now - desktop.observed_at <= DESKTOP_STALE_AFTER:
+            return None
+        last = desktop.last_desktop_interaction_at
+        if (
+            desktop.session_state in {"locked", "sleeping"}
+            or desktop.os_idle_ms is None
+            or last is None
+            or last > desktop.observed_at
+        ):
+            return None
+        return last.astimezone(now.tzinfo)
+
     def snapshot(self, *, now: datetime, pet_available: bool) -> PresenceState:
         with self._lock:
             return PresenceState(
@@ -125,7 +141,7 @@ class DestinationPolicy:
     def __init__(
         self,
         *,
-        desktop_stale_after: timedelta = timedelta(seconds=15),
+        desktop_stale_after: timedelta = DESKTOP_STALE_AFTER,
     ) -> None:
         self._stale_after = desktop_stale_after
 
@@ -218,7 +234,7 @@ def _desktop_diagnostics(
         0,
         int((now.astimezone(UTC) - snapshot.observed_at.astimezone(UTC)).total_seconds() * 1000),
     )
-    fresh = age_ms <= 15_000
+    fresh = age_ms <= DESKTOP_STALE_AFTER.total_seconds() * 1000
     idle_ms = snapshot.os_idle_ms
     idle_bucket = (
         "unknown"

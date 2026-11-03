@@ -15,6 +15,10 @@ import {
 
 export type FilesystemApprovalUiStatus =
   | "pending"
+  | "reviewing"
+  | "aborted"
+  | "timed_out"
+  | "failed"
   | "submitting"
   | "approved"
   | "denied"

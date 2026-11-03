@@ -16,7 +16,7 @@ export interface SessionSummary {
   model: string;
   reasoningPreset?: string;
   archived_at?: string | null;
-  approval_mode?: "per_request" | "session_auto";
+  approval_mode?: "per_request" | "session_auto" | "auto_review" | "full_access";
   approval_mode_version?: number;
 }
 
@@ -39,7 +39,8 @@ interface SessionDetailBase {
   revision?: number;
   history_cursor?: string | null;
   history_epoch?: string;
-  approval_mode?: "per_request" | "session_auto";
+  approval_mode?: "per_request" | "session_auto" | "auto_review" | "full_access";
+  read_only?: boolean;
   approval_mode_version?: number;
 }
 

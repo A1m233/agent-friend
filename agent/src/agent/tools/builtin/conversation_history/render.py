@@ -1,8 +1,7 @@
 """命中结果的拟人化文本渲染。
 
-把扫描出的 :class:`Hit` 列表渲染成喂给 LLM 的纯文本——**不暴露 schema 字眼**
-（不出现 ``session_id`` / ``event_type`` / ``role`` 等），用日记叙事风格 +
-"你说" / "我说" 拟人称谓 + 拟人时间格式（"3 天前周一晚 22:14"）。
+把历史片段渲染成带来源边界的 JSON。保留自然语言发言及后续直接读取
+需要的会话引用；不把底层 event payload 暴露为用户应复述的文字。
 
 末尾追加 inline reminder 引导 LLM 用朋友口吻自然提及，不要复述时间戳 / 暴露
 工具名或底层机制（与 005 ``web_search._format`` 末尾风格一致）。
@@ -94,6 +93,8 @@ def format_evidence(
 def _format_evidence_one(candidate: EvidenceCandidate, now: datetime) -> dict[str, object]:
     if candidate.excerpts:
         return {
+            "session_id": candidate.session_id,
+            "source_refs": list(candidate.provenance),
             "recalled_at": _format_time(candidate.excerpts[-1].occurred_at, now),
             "utterances": [
                 {
@@ -105,6 +106,8 @@ def _format_evidence_one(candidate: EvidenceCandidate, now: datetime) -> dict[st
         }
     timestamp = candidate.occurred_at or candidate.valid_from
     return {
+        "session_id": candidate.session_id,
+        "source_refs": list(candidate.provenance),
         "recalled_at": _format_time(timestamp, now) if timestamp is not None else None,
         "memory": _truncate(candidate.text),
     }

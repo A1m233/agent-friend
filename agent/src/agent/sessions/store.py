@@ -46,6 +46,7 @@ from .errors import (
 from .events import ROLLOUT_EVENT_TYPES, Event
 from .execution_cache import ExecutionSnapshotCache, SourceDigestTracker, SourceHasher
 from .file_observation import observe_session_file
+from .message_access import MessagePage
 from .query import (
     CancelCheck,
     SessionActivity,
@@ -1198,6 +1199,30 @@ class JsonlSessionStore:
             raise ValueError("History changed; reload the latest page")
         return result
 
+    def query_messages(self, session_id: str, **kwargs: Any) -> MessagePage:
+        """Read/count messages through the disposable index, without loading all bodies."""
+        cancel_check = sticky_cancellation(kwargs.pop("cancel_check", None))
+        version = self._history_version(session_id, cancel_check)
+        for attempt in range(2):
+            try:
+                result = self._business_index.message_page(
+                    session_id, version, cancel_check=cancel_check, **kwargs
+                )
+                break
+            except (sqlite3.Error, OSError, LockException, SessionCorruptError) as exc:
+                check_cancel(cancel_check)
+                if attempt:
+                    raise
+                observe_query_maintenance_failure(session_id, exc)
+                self.discard_business_index(session_id)
+                version = self._history_version(session_id, cancel_check)
+        path = self._existing_path(session_id)
+        if path is None:
+            raise SessionNotFoundError(f"会话不存在: {session_id}")
+        if self._source_version(path) != version:
+            raise ValueError("history_changed")
+        return result
+
     @staticmethod
     def _validate_recoverable_errors(
         path: Path,
@@ -1615,6 +1640,12 @@ class NotifyingSessionStore:
 
     def load(self, session_id: str) -> Session:
         return self._inner.load(session_id)
+
+    def query_messages(self, session_id: str, **kwargs: Any) -> MessagePage:
+        query = getattr(self._inner, "query_messages", None)
+        if not callable(query):
+            raise ValueError("message index unavailable")
+        return cast(MessagePage, query(session_id, **kwargs))
 
     def cancellable_load(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
         return load_session(self._inner, session_id, cancel_check=cancel_check)

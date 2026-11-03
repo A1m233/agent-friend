@@ -364,6 +364,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             "reasoningPreset": session.current_model_config.reasoning_preset,
             "revision": revision,
             "recovery": recovery,
+            "read_only": mgr.is_inner(session_id),
             **mgr.approval_mode_state(session).to_dict(),
         }
         if view == "active":
@@ -767,6 +768,11 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                         )
                     stack.enter_context(runtime.turn_coordinator.try_hold(summary.session_id))
                 deleted = mgr.delete_archived(query=q)
+                for deleted_id in deleted:
+                    if runtime.companionship is not None:
+                        runtime.companionship.store.forget_session(deleted_id)
+                    if runtime.session_delivery is not None:
+                        runtime.session_delivery.store.forget_session(deleted_id)
                 if runtime.scheduled_task_store:
                     for deleted_id in deleted:
                         runtime.scheduled_task_store.pause_for_target(
@@ -798,6 +804,11 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         但挂断时发现没有产生任何 user / assistant 消息，就删除这条空记录，避免
         历史列表被无内容通话污染。
         """
+        if (
+            runtime.companionship is not None
+            and runtime.companionship.store.read()["inner_session_id"] == session_id
+        ):
+            runtime.companionship.control("disable", user_initiated=True)
         try:
             with ExitStack() as stack:
                 if runtime.agent_runtime is not None:
@@ -808,6 +819,10 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     )
                 stack.enter_context(runtime.turn_coordinator.try_hold(session_id))
                 mgr.delete(session_id)
+                if runtime.companionship is not None:
+                    runtime.companionship.store.forget_session(session_id)
+                if runtime.session_delivery is not None:
+                    runtime.session_delivery.store.forget_session(session_id)
                 if runtime.scheduled_task_store:
                     runtime.scheduled_task_store.pause_for_target(
                         session_id, "target_session_missing"

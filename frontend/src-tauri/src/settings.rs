@@ -19,6 +19,14 @@ use crate::power_policy::{BackgroundOnlinePolicy, PowerPolicyManager};
 pub struct Settings {
     pub theme: ThemeMode,
     #[serde(default)]
+    pub authorization_mode: AuthorizationMode,
+    #[serde(default)]
+    pub im_reply_style: ImReplyStyle,
+    #[serde(default)]
+    pub authorization_policy_version: u64,
+    #[serde(default)]
+    pub companionship_limits: CompanionshipLimits,
+    #[serde(default)]
     pub background_online_policy: BackgroundOnlinePolicy,
     #[serde(default)]
     pub reminder_notification_mode: ReminderNotificationMode,
@@ -61,6 +69,50 @@ pub struct Settings {
 pub enum ThemeMode {
     Light,
     Dark,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImReplyStyle {
+    #[default]
+    Natural,
+    Original,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthorizationMode {
+    #[default]
+    AutoReview,
+    FullAccess,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
+pub struct CompanionshipLimits {
+    pub interval_minutes: u32,
+    pub minimum_interval_minutes: u32,
+}
+
+impl Default for CompanionshipLimits {
+    fn default() -> Self {
+        Self {
+            interval_minutes: 60,
+            minimum_interval_minutes: 10,
+        }
+    }
+}
+
+impl CompanionshipLimits {
+    fn validate(&self) -> Result<(), String> {
+        if !(10..=10080).contains(&self.interval_minutes)
+            || !(1..=1440).contains(&self.minimum_interval_minutes)
+            || self.interval_minutes < self.minimum_interval_minutes
+        {
+            return Err("唤醒间隔超出允许范围".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -218,6 +270,10 @@ impl Default for Settings {
         Self {
             model_connections: default_model_connections(),
             theme: ThemeMode::Light,
+            authorization_mode: AuthorizationMode::AutoReview,
+            im_reply_style: ImReplyStyle::Natural,
+            authorization_policy_version: 0,
+            companionship_limits: CompanionshipLimits::default(),
             background_online_policy: BackgroundOnlinePolicy::FollowSystem,
             reminder_notification_mode: ReminderNotificationMode::Smart,
             notification_completion_mode: NotificationCompletionMode::WhenNotViewing,
@@ -773,6 +829,24 @@ pub fn set_setting(
                 .map_err(|e| format!("invalid backgroundOnlinePolicy: {e}"))?;
             s.background_online_policy = policy;
         }
+        "imReplyStyle" => {
+            s.im_reply_style = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid imReplyStyle: {e}"))?;
+        }
+        "authorizationMode" => {
+            let mode: AuthorizationMode = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid authorizationMode: {e}"))?;
+            if s.authorization_mode != mode {
+                s.authorization_mode = mode;
+                s.authorization_policy_version = s.authorization_policy_version.saturating_add(1);
+            }
+        }
+        "companionshipLimits" => {
+            let limits: CompanionshipLimits = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid companionshipLimits: {e}"))?;
+            limits.validate()?;
+            s.companionship_limits = limits;
+        }
         "reminderNotificationMode" => {
             let mode: ReminderNotificationMode = serde_json::from_value(payload.value.clone())
                 .map_err(|e| format!("invalid reminderNotificationMode: {e}"))?;
@@ -956,6 +1030,25 @@ pub(crate) fn save_notification_sound(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_global_authorization_defaults_to_review_and_limits_are_bounded() {
+        let mut value = serde_json::to_value(Settings::default()).unwrap();
+        value.as_object_mut().unwrap().remove("authorizationMode");
+        value.as_object_mut().unwrap().remove("companionshipLimits");
+        let migrated: Settings = serde_json::from_value(value).unwrap();
+        assert_eq!(migrated.authorization_mode, AuthorizationMode::AutoReview);
+        assert!(migrated.companionship_limits.validate().is_ok());
+        assert!(
+            serde_json::from_value::<AuthorizationMode>(serde_json::json!("session_auto")).is_err()
+        );
+        let mut limits = CompanionshipLimits::default();
+        limits.interval_minutes = 0;
+        assert!(limits.validate().is_err());
+        limits = CompanionshipLimits::default();
+        limits.minimum_interval_minutes = limits.interval_minutes + 1;
+        assert!(limits.validate().is_err());
+    }
 
     #[test]
     fn failed_sound_save_preserves_all_current_settings() {

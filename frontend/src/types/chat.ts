@@ -163,6 +163,7 @@ export type ContextRecoveryMode = "automatic" | "compact_then_resume";
 /** 一条对话消息（user 或一整轮 assistant，assistant 轮可含多块文本/工具）。 */
 export interface ChatMessage {
   requestSource?: { taskId: string; taskName: string; occurrenceId: string };
+  messageSource?: { kind: "agent_initiated"; deliveryId: string };
   id: string;
   role: ChatRole;
   /** 产生这条 assistant 消息的 Runtime run；旧历史和 user 消息可缺失。 */

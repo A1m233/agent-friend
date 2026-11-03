@@ -35,13 +35,15 @@ from ...presence import IMPresenceSnapshot
 from .adapters.qq import QQAdapter
 from .approvals import IMApprovalService
 from .coalescing import CoalescingDecision, QQAttachmentTextCoalescer
-from .content import OutboundContent, OutboundTextFormat
+from .content import OutboundContent, OutboundImage, OutboundTextFormat
 from .coordinator import IMBindingCoordinator
 from .credentials import CredentialStore, ImCredential
 from .dedupe import RecentMessageDeduper
 from .event import InboundEvent, InboundInteraction
 from .inbound_resolver import InboundResolver, InboundResolveResult, NoopInboundResolver
 from .provider import IMProvider, OutboundSendResult, ProviderStatus
+from .reference_aliases import IMReferenceAliasIndex
+from .reply_style import Bubble, IMReplyStyle, send_bubbles
 from .state import ControlCapability, IMBindingKey, IMStateStore
 
 if TYPE_CHECKING:
@@ -119,8 +121,12 @@ class IMRuntime:
         session_exists: Callable[[str], bool] | None = None,
         inbound_coalescer: QQAttachmentTextCoalescer | None = None,
         approvals: IMApprovalService | None = None,
+        reply_style: IMReplyStyle | None = None,
+        reference_aliases: IMReferenceAliasIndex | None = None,
     ) -> None:
         self._router = router
+        self._reply_style = reply_style
+        self._reference_aliases = reference_aliases
         self._credentials = credentials
         self._resume_base_dir = resume_base_dir
         self._lock_base_dir = lock_base_dir or resume_base_dir.parent / "im_provider_locks"
@@ -237,6 +243,9 @@ class IMRuntime:
         *,
         text_format: OutboundTextFormat = "plain_text",
         timeout: float = 20.0,
+        can_send: Callable[[], bool] | None = None,
+        image: OutboundImage | None = None,
+        prepared_event_uuid: str | None = None,
     ) -> OutboundSendResult:
         parts = destination_id.split("|", 4)
         if len(parts) != 5:
@@ -254,9 +263,20 @@ class IMRuntime:
         if loop is None or loop.is_closed():
             return OutboundSendResult("failed", error_kind="runtime_stopped")
 
-        async def dispatch() -> OutboundSendResult | None:
+        bubbles = [Bubble(text, 0, len(text))]
+        if (
+            prepared_event_uuid
+            and image is None
+            and self._reply_style
+            and self._reply_style.enabled()
+        ):
+            bubbles = self._reply_style.prepare(session_id, text, proactive=True)
+
+        async def dispatch_part(_index: int, bubble: Bubble) -> OutboundSendResult | None:
             # Recheck on the sending loop, after any queued work or binding change.
             current = self._state.get_binding(binding.key)
+            if can_send is not None and not can_send():
+                return OutboundSendResult("failed", error_kind="contact_paused")
             if current is None or current.session_id != session_id:
                 return OutboundSendResult("failed", error_kind="binding_changed")
             if (
@@ -264,20 +284,45 @@ class IMRuntime:
                 or provider.status() != "active"
             ):
                 return OutboundSendResult("failed", error_kind="provider_unavailable")
-            return await provider.send(
+            receipt = await provider.send(
                 OutboundContent(
                     chat_id=chat_id,
                     chat_scope=chat_scope,
-                    text=text,
+                    text=bubble.text,
                     reply_to_message_id=None,
                     text_format=text_format,
+                    image=image,
                 )
             )
 
-        future = asyncio.run_coroutine_threadsafe(dispatch(), loop)
+            if (
+                prepared_event_uuid
+                and self._reference_aliases
+                and receipt
+                and receipt.outcome == "delivered"
+                and receipt.provider_message_id
+            ):
+                try:
+                    self._reference_aliases.put(
+                        im_type=im_type,
+                        provider_bind_id=provider_bind_id,
+                        chat_scope=chat_scope,
+                        chat_id=chat_id,
+                        message_aliases=[receipt.provider_message_id],
+                        session_id=session_id,
+                        event_uuid=prepared_event_uuid,
+                        source_role="assistant",
+                        source_span=(bubble.start, bubble.end),
+                    )
+                except Exception:
+                    logger.warning("IM proactive alias registration failed")
+            return receipt
+
+        future = asyncio.run_coroutine_threadsafe(send_bubbles(bubbles, dispatch_part), loop)
         try:
             result = future.result(timeout=timeout)
         except TimeoutError:
+            future.cancel()
             return OutboundSendResult("unknown", error_kind="send_timeout")
         except Exception:
             logger.exception("IM proactive send failed (im_type=%s)", im_type)

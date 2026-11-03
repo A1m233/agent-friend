@@ -213,6 +213,7 @@ class RuntimeContext:
     compaction_control: CompactionControl | None = None
     session_id: str | None = None
     surface: str | None = None
+    autonomous_inner: bool = False
     cancel_check: Callable[[], None] | None = None
 
     def check_cancelled(self) -> None:

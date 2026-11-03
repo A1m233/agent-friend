@@ -400,7 +400,7 @@ function ScheduledTasksView({ id, active }: { id: string | null; active: boolean
                       执行模型：{modelLabel(run.effective_options.model.model_id)} ·{" "}
                       {run.effective_options.approval_mode === "session_auto"
                         ? "自动授权"
-                        : "逐次审批"}
+                        : run.effective_options.approval_mode === "auto_review" ? "帮我审批" : "逐次审批"}
                     </p>
                   )}
                   {run.reason_code && (

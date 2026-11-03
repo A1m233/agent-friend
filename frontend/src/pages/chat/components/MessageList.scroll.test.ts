@@ -277,7 +277,7 @@ describe("MessageTimeline disclosure scrolling", () => {
       expect(container.textContent).not.toContain("加载完整内容");
       expect(container.textContent).not.toContain("加载较新的消息");
       await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="展开执行过程"]')!.click());
-      expect(container.textContent).toContain("执行了 2 个步骤：读取内容");
+      expect(container.textContent).toContain("执行了 2 个步骤：搜索");
       const copyButtons = container.querySelectorAll<HTMLButtonElement>('button[aria-label="复制消息"]');
       expect(copyButtons).toHaveLength(1);
       await act(async () => copyButtons[0].click());
@@ -532,6 +532,7 @@ describe("MessageTimeline disclosure scrolling", () => {
 
   it.each([false, true])("keeps the bottom visible when a tool expands and collapses (overlayComposer=%s)", async (overlayComposer) => {
     const id = await mountTimeline(messages(), overlayComposer);
+    expect(viewport().classList.contains("chat-composer-fade")).toBe(overlayComposer);
     const collapsedBottom = viewport().scrollTop;
     await clickTool(id);
     expect(toolTrigger(id).getAttribute("aria-expanded")).toBe("true");

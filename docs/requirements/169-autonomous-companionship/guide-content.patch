@@ -1,0 +1,97 @@
+diff --git a/skills/agent-friend-guide/SKILL.md b/skills/agent-friend-guide/SKILL.md
+index 66f1e43..3b30b2b 100644
+--- a/skills/agent-friend-guide/SKILL.md
++++ b/skills/agent-friend-guide/SKILL.md
+@@ -20,7 +20,7 @@ description: 查询和解答 agent-friend 的产品功能、使用方法、设
+ | 用户问题 | 读取 |
+ | --- | --- |
+ | 产品是什么、能做什么、能力边界 | `references/product-overview.md` |
+-| 对话、会话、搜索、附件、人格、待办、定时任务、桌宠、Skill 等怎么用 | `references/using-agent-friend.md` |
++| 对话、会话、搜索、附件、人格、主动联系、自主陪伴、待办、定时任务、桌宠、Skill 等怎么用 | `references/using-agent-friend.md` |
+ | 添加或安装明日方舟 / Ark-Models Spine 桌宠模型 | `references/arknights-avatar-models.md` |
+ | 设置页在哪里、设置何时生效 | `references/settings-reference.md` |
+ | DeepSeek / Kimi / OpenRouter 模型与 API Key | `references/model-credentials.md` |
+diff --git a/skills/agent-friend-guide/references/data-and-privacy.md b/skills/agent-friend-guide/references/data-and-privacy.md
+index 22726bd..3ed0f77 100644
+--- a/skills/agent-friend-guide/references/data-and-privacy.md
++++ b/skills/agent-friend-guide/references/data-and-privacy.md
+@@ -51,10 +51,10 @@ Python 任务还会为当前会话保留独立的依赖环境。产品自带的
+ 
+ ## 会话授权状态与执行记录
+ 
+-- 提供 QQ 授权控制的版本允许在已绑定的 QQ 私聊与桌面管理同一会话的授权模式。QQ 单次授权卡会把本次文件路径、权限或命令、工作目录及网络范围等详情发送到 QQ 平台；可能包含私人目录或命令参数，发起任务前应考虑这些信息是否适合出现在聊天记录中。本机删除会话不代表 QQ 已接收的消息被撤回。
+-- “每次授权”或“本会话无需授权”的选择作为该会话的本地状态保存。应用重启、重新打开历史会话或恢复归档会话后会继续使用原选择；新对话和其它会话不会继承，也没有全局免授权默认值。
+-- 开启“本会话无需授权”后，Agent 可以在后续普通请求中不再逐项询问就读取、创建、修改、覆盖、移动或删除已申请范围内的本地文件，运行已申请的本地命令，并使用请求中写明的网络能力。明确标为“宿主用户（文件和网络不受限）”的命令也在此范围内，因此只在充分理解风险时开启，并在连续操作结束后切回“每次授权”。
+-- 自动允许仍会保留原请求、决定来源、风险类别和最终结果；灾难性动作被安全策略拒绝时也会留下明确原因。会话免授权不会绕过操作系统权限、命令沙箱准备、产品受保护路径或其它运行时拒绝。
++- 自主活动与普通聊天共用人格和记忆。AF 的独立经历可以被之后的交流用到。回看旧消息不会被当作今天再次确认用户事实，仍可通过现有的记忆管理方式纠正或遗忘内容。
++- 自主陪伴的授权模式单独保存在本地设置中。默认“帮我审批”在执行需要权限的操作前检查内容。自主活动审批未通过时会停下或选择其他做法。
++- “完全授权”允许 AF 直接执行支持的文件、命令和桌面应用操作，包括修改或删除文件。系统权限与产品保护仍然生效。
++- 主动消息记录在选定的普通会话中。已有 QQ 绑定的会话可选择通知到 QQ，删除本地记录不能撤回平台已发送的消息。
+ 
+ ## 桌宠通知与记忆
+ 
+diff --git a/skills/agent-friend-guide/references/product-overview.md b/skills/agent-friend-guide/references/product-overview.md
+index b4eab40..fce3179 100644
+--- a/skills/agent-friend-guide/references/product-overview.md
++++ b/skills/agent-friend-guide/references/product-overview.md
+@@ -34,3 +34,5 @@ agent-friend 是一个常驻桌面的 AI 朋友。它把日常对话、长期记
+ - 定时任务只在 agent-friend 正在运行时执行，不会在应用完全退出后留下本地后台服务，也不会为了等待计划时间持续阻止电脑休眠。应用恢复后只会按保守规则处理近期最近一次错过的计划点。
+ - 定时任务不会获得额外权限，也不会继承过去已经用过的一次性批准；需要批准的文件或命令操作仍会等待用户处理。
+ - 首版数据迁移只支持 Windows 到 Windows，目标电脑上的现有数据会整体替换，不自动合并。
++
++自主陪伴默认开启。AF 在内心会话中探索，自行决定是否在普通聊天或已绑定的 QQ 上分享。普通聊天的授权下拉菜单也可选择“帮我审批”。
+diff --git a/skills/agent-friend-guide/references/settings-reference.md b/skills/agent-friend-guide/references/settings-reference.md
+index ae0de08..068b7fe 100644
+--- a/skills/agent-friend-guide/references/settings-reference.md
++++ b/skills/agent-friend-guide/references/settings-reference.md
+@@ -30,6 +30,12 @@
+ - 后台在线：选择跟随系统、仅接通电源或始终保持。
+ - 外观与应用行为以当前版本设置项为准。
+ 
++## 自主陪伴
++
++本页是独立入口，默认开启。可以查看内心活动，调整最短和最长唤醒间隔。默认范围为 10 至 60 分钟，通常每次在范围内随机安排；AF 有具体计划时可以在范围内选定时间。改完数字后按 Enter 或离开输入框即生效。活动没有专属轮数、模型调用次数或总时长上限。
++
++“帮我审批”（默认）和“完全授权”仅在 AF 自主活动时生效。普通聊天在输入框里单独选择本会话模式。
++
+ ## 通知
+ 
+ 以下适用于提供“设置 → 通知”的版本。较早版本的“提醒发送方式”可能仍在“通用”中；找不到新通知选项时，先更新 agent-friend。
+@@ -74,3 +80,5 @@
+ - 可在本机生成诊断包并选择是否加入会话、附件原件和渲染截图。提供完整导出的版本默认采集每个所选会话的全部已保存轮次，也可取消“采集全部轮次”并选择最近 1～100 轮；较早版本可能默认最近 10 轮。全部轮次可能耗时较长，附件原件只随本次采集范围加入。隐私与采集上限见[诊断包说明](data-and-privacy.md#诊断包)。
+ - **包含原始崩溃转储**：Windows 0.4.1 起提供，默认关闭。不开启时仍会导出可用的崩溃摘要、记录覆盖情况和采集错误，无需选择会话。只有需要进一步定位时才选择；它独立于原始附件和渲染截图，每次生成后都会恢复为未选中。转储可能包含聊天、凭据等内存内容，无法自动脱敏，详见[Windows 应用崩溃记录](data-and-privacy.md#windows-应用崩溃记录)。
+ - ZIP 不会自动上传；分享前仍必须手工检查其中是否含有私人内容。
++
++在“接入 IM → IM 回复风格”中选择“自然聊天”（默认）或“原样发送”。自然聊天会在正文生成后，用一次额外的模型调用整理普通回复或自主分享，按需要分成几条发到 QQ，因此首条可能稍晚。原样发送保留原文和可用的流式回复。系统通知和授权卡保留原有格式。
+diff --git a/skills/agent-friend-guide/references/troubleshooting.md b/skills/agent-friend-guide/references/troubleshooting.md
+index ddf86d7..ec438d4 100644
+--- a/skills/agent-friend-guide/references/troubleshooting.md
++++ b/skills/agent-friend-guide/references/troubleshooting.md
+@@ -335,3 +335,7 @@ Windows 0.4.1 起，崩溃记录采集不可用、转储缺失或损坏等情况
+ - 桌面出现“图片生成未完成”或“图片未能接收或保存”时，先保留已有文字和图片结果。可能是上游没有返回有效内容、格式或体积不受支持，或本机保存失败；不要仅凭文字判断为已经送达。
+ - 桌面已经能看到图片而 QQ 没有收到时，检查是否出现“这轮图文回复未能确认完整发送，请在桌面端原会话查看。”。图片和文字可能分别成功或失败；结果未知时不宜立即重复发送，更不要为了补发反复生图。
+ - 图片显示“不可用”或右键提示附件失效时，原件可能被移动、删除或损坏。查看同一会话中的其他结果，保留发生时间和应用版本，持续出现时从“设置 → 帮助与反馈”生成诊断包；发送前检查私人图片和聊天内容。
++
++## 没有收到主动分享
++
++在“设置 → 自主陪伴”检查活动和联系是否暂停、下一次唤醒时间，以及是否有可用的 QQ 去向。没有可用绑定时，AF 仍可以在普通会话分享。查看最近分享记录可以区分会话落盘和 IM 发送结果。平台已发送不表示用户已读。电脑进入休眠时无法继续运行，后台在线选项在通用设置中。
+diff --git a/skills/agent-friend-guide/references/using-agent-friend.md b/skills/agent-friend-guide/references/using-agent-friend.md
+index 652edde..f1edff0 100644
+--- a/skills/agent-friend-guide/references/using-agent-friend.md
++++ b/skills/agent-friend-guide/references/using-agent-friend.md
+@@ -314,3 +314,15 @@
+ ## 后台在线
+ 
+ “设置 → 通用”可选择跟随系统、仅接通电源或始终保持后台在线。该设置只在 agent 执行任务或 QQ 在线等需要持续运行的状态下阻止系统空闲睡眠；不会阻止显示器关闭，也不能覆盖合盖或系统强制睡眠。
++
++## 自主陪伴与 QQ
++
++自主陪伴默认开启。打开“设置 → 自主陪伴”可看下次唤醒时间、查看活动或调整间隔；在普通聊天里可以暂停或恢复活动、主动联系。AF 在自己的内心会话里阅读近期交流、探索或制作内容。查看活动时只读，想接话可以回到普通会话。
++
++比如你最近关注某个 B 站视频，AF 可能读到字幕后把链接和自己的发现发来，也可能留到以后再聊。它会根据情境选择。主动分享在普通会话里标为“主动消息”，可以使用已经绑定的 QQ 找到你。电脑休眠、关机或退出应用后，自主活动会暂停。
++
++普通聊天里可以直接说“今天别主动联系我”或“暂停自主活动”。成功执行后会更新状态。“少来找我一点”表达相处偏好，也可以继续告诉它什么时候适合联系。
++
++普通聊天的输入框可直接选择“每次授权”“帮我审批”或“本会话无需授权”。选择只作用于当前会话。选择“帮我审批”时，AF 会独立审查每项请求。在普通聊天里可以查看拒绝原因，为具体操作补充授权并重试。
++
++从桌宠操作栏或聊天左栏点击云朵形的“内心活动”，可查看 AF 同一个只读内心会话。桌面保留普通会话的完整原答；选择自然聊天后，QQ 上可能出现几个更口语的气泡。格式敏感的内容和改写失败的回答会原样发送。

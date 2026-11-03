@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 from memory import (
     ConversationFragment,
@@ -63,6 +64,19 @@ def project_turn(
         for event in events
         if (utterance := _project_utterance(event, session_id=session_id)) is not None
     ]
+    autonomous = any(
+        event.type == "system_trigger" and event.payload.get("source_kind") == "companionship"
+        for event in events
+    )
+    if autonomous:
+        utterances = [
+            replace(
+                utterance,
+                text="【宿主语境：AF 的自主内心活动；不是用户新发言。以下是 AF 的观察或想法，是否分享须以实际发送结果为准。】\n"
+                + utterance.text,
+            )
+            for utterance in utterances
+        ]
     return ConversationFragment(
         session_id=session_id,
         utterances=utterances,
@@ -162,6 +176,7 @@ def project_post_turn_observation(
         persona_id=target.persona_id,
         owner_user_id=target.owner_user_id,
         semantic_update_context=context if not context.is_empty() else None,
+        defer_extraction=target.defer_extraction,
     )
 
 

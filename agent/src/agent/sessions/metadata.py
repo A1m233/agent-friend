@@ -103,7 +103,7 @@ class SessionMetadataStore:
 
         if expected_version < 0:
             raise ValueError("approval mode version must be non-negative")
-        if mode not in {"per_request", "session_auto"}:
+        if mode not in {"per_request", "session_auto", "auto_review"}:
             raise ValueError(f"invalid approval mode: {mode}")
 
         def mutate(
@@ -253,7 +253,9 @@ def _parse_metadata(value: dict[str, Any]) -> SessionMetadata:
         display_title=display_title if isinstance(display_title, str) else None,
         archived_at=_parse_datetime(archived_at) if isinstance(archived_at, str) else None,
         approval_mode=(
-            approval_mode if approval_mode in {"per_request", "session_auto"} else "per_request"
+            approval_mode
+            if approval_mode in {"per_request", "session_auto", "auto_review"}
+            else "per_request"
         ),
         approval_mode_version=(
             approval_mode_version

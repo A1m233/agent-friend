@@ -8,7 +8,7 @@ import {
 import { CHAT_CONTENT_CONTAINER_CLASS } from "../layout";
 import type { PrimaryActivityPresentation } from "./activity/primaryActivity";
 import type { PendingApproval, RunningCommand } from "./activity/approvalCandidates";
-import { useSessionApprovalModeActions } from "./SessionApprovalModeController";
+import { useSessionApprovalModeActions } from "./sessionApprovalModeContext";
 
 function PendingApprovalPanel({
   current,

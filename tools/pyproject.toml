@@ -8,6 +8,7 @@ dependencies = [
     "agent",
     "memory",
     "llm-providers",
+    "runtime-config",
     "python-dotenv>=1.0.0",
     "prompt-toolkit>=3.0.50",
     "rich>=13.9.0",
@@ -18,6 +19,7 @@ dependencies = [
 agent = { workspace = true }
 memory = { workspace = true }
 llm-providers = { workspace = true }
+runtime-config = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

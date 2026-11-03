@@ -474,6 +474,7 @@ class Conversation:
         self._store = store
         self._llm_client = llm_client
         self._run_model_snapshot: _RunModelSnapshot | None = None
+        self.model_guard: Callable[[LanguageModel], LanguageModel] | None = None
         self._context_manager = context_manager
         self._prompt_builder = prompt_builder
         self._llm_client_factory = llm_client_factory
@@ -702,6 +703,8 @@ class Conversation:
             binding.__exit__(None, None, None)
 
         try:
+            if self.model_guard is not None:
+                client = self.model_guard(client)
             return _RunModelSnapshot(
                 config=model_override or self._session.current_model_config,
                 llm_client=client,
@@ -1387,7 +1390,9 @@ class Conversation:
             persona_id = self._session.current_persona_id
             model_snapshot = self._active_model_id()
             loop_frame = _ToolLoopFrame(current_text_buf=[])
-            tool_run_context = self._make_tool_run_context(system_prompt_addendum)
+            tool_run_context = self._make_tool_run_context(
+                "" if source_kind == "companionship" else system_prompt_addendum
+            )
             self._active_tool_run_context = tool_run_context
             tool_run_state = ToolRunState(self._tool_run_policy)
             self._active_tool_run_state = tool_run_state
@@ -3114,9 +3119,11 @@ class Conversation:
             else None
         )
         current_channel = str(self._prompt_channel_override or self._session.current_channel)
-        approval_state = getattr(self, "_request_approval_override", None) or (
+        approval_state = (
             self._approval_mode_provider() if self._approval_mode_provider is not None else None
         )
+        if self._session.origin_kind != "inner_world":
+            approval_state = getattr(self, "_request_approval_override", None) or approval_state
         model_context_plan = SessionModelContext().plan(
             current_time=current_time,
             timezone=timezone,
@@ -3415,6 +3422,7 @@ class Conversation:
             request_assessment=lambda messages: self._estimate_context_input(messages, tool_specs),
             candidate_assessment_factory=lambda: self._candidate_context_assessor(tool_specs),
             compaction_control=self._current_compaction_control(),
+            autonomous_inner=self._session.origin_kind == "inner_world",
             trigger_reason=self._context_trigger_reason,
             run_id=(
                 self._run_id_override
@@ -5464,6 +5472,21 @@ class Conversation:
     ) -> dict[str, Any]:
         """给内置工具补运行时隐藏上下文；不改变 LLM 原始 tool args。"""
         invocation_args = dict(args)
+        if name in FILESYSTEM_TOOL_NAMES or name in {
+            "exec_command",
+            "host_process_start",
+            "launch_desktop_application",
+        }:
+            from .approvals.reviewer import (
+                REVIEW_CONTEXT_ARG,
+                ReviewContext,
+                visible_review_transcript,
+            )
+
+            invocation_args[REVIEW_CONTEXT_ARG] = ReviewContext(
+                model=self._active_llm_client(),
+                transcript=visible_review_transcript(self._session.active_events),
+            )
         if (
             name == "view_image"
             or (name == "exec_command" and "output_images" in args)
@@ -5558,7 +5581,12 @@ class Conversation:
                     "__agent_friend_runtime_timezone": action_time[1],
                 }
             )
-        if name in {"todo_manage", "scheduled_task_manage"}:
+        if name in {
+            "todo_manage",
+            "scheduled_task_manage",
+            "list_conversations",
+            "read_conversation",
+        }:
             invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
         if name in {
             _RECOVER_TOOL_RESULT_TOOL_NAME,
@@ -5567,6 +5595,31 @@ class Conversation:
             "view_image",
         }:
             invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
+        if name == "send_conversation_message":
+            invocation_args.update(
+                {
+                    _CURRENT_SESSION_ID_ARG: self._session.session_id,
+                    "__agent_friend_run_id": self._run_id_override or "",
+                    "__agent_friend_tool_call_id": tool_call_id,
+                }
+            )
+        if name in {"manage_companionship", "schedule_next_wake"}:
+            current_events = (
+                self._session.events[current_turn_start_idx:]
+                if current_turn_start_idx is not None
+                else []
+            )
+            invocation_args.update(
+                {
+                    "__agent_friend_current_session_id": self._session.session_id,
+                    "__agent_friend_run_id": self._run_id_override or "",
+                    "__agent_friend_user_initiated": self._session.origin_kind != "inner_world"
+                    and any(
+                        event.type == "user_message" and not event.payload.get("request_source")
+                        for event in current_events
+                    ),
+                }
+            )
         if name in {"social_search", "social_read"}:
             invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
         if name == "social_read":

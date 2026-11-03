@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any, Protocol, cast
 
+from .automatic import AutomaticApprovals
 from .models import (
     ENABLED_APPROVAL_LIFETIMES,
     ApprovalDecisionLike,
@@ -68,6 +69,8 @@ class ApprovalBroker:
         self._risk_policy = risk_policy
         self._session_exists = session_exists
         self._on_mode_changed = on_mode_changed
+        self.is_companionship: Callable[[str], bool] = lambda _: False
+        self.automatic: AutomaticApprovals | None = None
 
     def add_listener(self, listener: Callable[[dict[str, object]], None]) -> None:
         with self._lock:
@@ -90,12 +93,17 @@ class ApprovalBroker:
             self.cancel_run(session_id, run_id)
 
     def surface_available(self, session_id: str, run_id: str, surface: str) -> bool:
+        if self.mode_state(session_id, run_id).mode in {"auto_review", "full_access"}:
+            return True
         if surface == "desktop_chat":
             return True
         with self._lock:
             return bool(surface) and self._run_surfaces.get((session_id, run_id)) == surface
 
     def mode_state(self, session_id: str, run_id: str | None = None) -> SessionApprovalModeState:
+        if self.automatic is not None and self.is_companionship(session_id):
+            mode, version = self.automatic.mode()
+            return SessionApprovalModeState(cast(SessionApprovalMode, mode), version)
         if run_id is not None:
             with self._lock:
                 override = self._run_modes.get((session_id, run_id))
@@ -129,9 +137,27 @@ class ApprovalBroker:
             with self._lock:
                 self._run_modes.pop(key, None)
 
+    def policy_current(self, request: Any) -> bool:
+        current = self.mode_state(request.session_id, request.run_id)
+        return (current.mode, current.version) == (
+            request.approval_mode,
+            request.approval_mode_version,
+        )
+
     def reassess(self, request: Any) -> Any | None:
         """Re-run the deterministic policy immediately before a side effect."""
 
+        if request.approval_mode in {"auto_review", "full_access"} and not self.policy_current(
+            request
+        ):
+            from .models import RiskAssessment
+
+            return RiskAssessment(
+                "catastrophic",
+                "global_policy_changed",
+                "approval_policy_changed",
+                "授权模式已改变；请重新审批。",
+            )
         if self._risk_policy is None:
             return None
         return self._risk_policy.assess(request)
@@ -143,6 +169,8 @@ class ApprovalBroker:
         mode: SessionApprovalMode,
         expected_version: int,
     ) -> SessionApprovalModeState:
+        if self.is_companionship(session_id):
+            raise ValueError("自主陪伴的授权模式请在自主陪伴设置中调整。")
         lock = self._session_lock(session_id)
         changed = False
         resolved: tuple[Any, ...] = ()
@@ -181,7 +209,18 @@ class ApprovalBroker:
                 "request" if (request.session_id, request.run_id) in self._run_modes else "session"
             )
             request.risk_assessment = assessment
-            if surface is not None and not self.surface_available(
+            automatic = (
+                self.automatic if mode_state.mode in {"auto_review", "full_access"} else None
+            )
+            if automatic is not None:
+                if self.is_companionship(request.session_id):
+                    request.approval_mode_source = "global"
+                with self._lock:
+                    if request.request_id in self._pending:
+                        raise ValueError(f"duplicate approval request: {request.request_id}")
+                    self._pending[request.request_id] = request
+                    listeners = tuple(self._listeners)
+            elif surface is not None and not self.surface_available(
                 request.session_id, request.run_id, surface
             ):
                 immediate = True
@@ -216,6 +255,17 @@ class ApprovalBroker:
                         raise ValueError(f"duplicate approval request: {request.request_id}")
                     self._pending[request.request_id] = request
                     listeners = tuple(self._listeners)
+        if automatic is not None:
+            try:
+                return automatic.decide(
+                    request,
+                    timeout=timeout_seconds,
+                    publish=lambda: self._notify(listeners, request),
+                    policy_current=lambda: self.policy_current(request),
+                )
+            finally:
+                with self._lock:
+                    self._pending.pop(request.request_id, None)
         self._notify(listeners, request)
         if immediate:
             return request._decision
@@ -307,6 +357,8 @@ class ApprovalBroker:
         expected_mode_version: int,
         precondition: Callable[[Any], None] | None = None,
     ) -> SessionApprovalModeState:
+        if self.is_companionship(session_id):
+            raise ValueError("请在自主陪伴设置中选择授权模式。")
         lock = self._session_lock(session_id)
         resolved: tuple[Any, ...] = ()
         with lock:
@@ -443,6 +495,7 @@ class ApprovalBroker:
             for request in self._pending.values()
             if request.session_id == session_id
             and (session_id, request.run_id) not in getattr(self, "_run_modes", {})
+            and request.approval_mode == "per_request"
             and request.request_id != exclude_request_id
             and not request._event.is_set()
         )
@@ -486,6 +539,7 @@ class ApprovalBroker:
     ) -> bool:
         return bool(
             request is not None
+            and request.approval_mode == "per_request"
             and not request._event.is_set()
             and (session_id is None or request.session_id == session_id)
             and (run_id is None or request.run_id == run_id)

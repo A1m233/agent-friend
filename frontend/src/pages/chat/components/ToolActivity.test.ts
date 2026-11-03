@@ -174,6 +174,24 @@ describe("ToolActivity", () => {
     ).toBe(true);
   });
 
+  it.each([
+    ["read_conversation", { mode: "latest" }, "读取会话最近消息", "messages-square"],
+    ["read_conversation", { mode: "since_wake" }, "读取上次唤醒后的新消息", "messages-square"],
+    ["read_conversation", { mode: "continue" }, "继续读取会话消息", "messages-square"],
+    ["list_conversations", { scope: "changed_since_wake" }, "查看有更新的会话", "messages-square"],
+    ["send_conversation_message", {}, "向会话发送消息", "send"],
+    ["manage_companionship", { action: "pause_contact" }, "暂停主动联系", "heart"],
+    ["schedule_next_wake", {}, "安排下次唤醒", "alarm-clock"],
+    ["scheduled_task_manage", { operation: "history" }, "查看定时任务运行记录", "alarm-clock"],
+    ["session_files", { action: "prepare" }, "准备会话附件", "file-text"],
+    ["inspect_tool_calls", {}, "查看工具调用记录", "file-text"],
+  ] as const)("renders %s with its action label and icon", async (name, args, label, icon) => {
+    await render([{ ...tool("call", name), args: JSON.stringify(args) }]);
+    const row = container.querySelector("button");
+    expect(row?.textContent).toContain(label);
+    expect(row?.querySelector(`[data-slot="tool-activity-icon"].lucide-${icon}`)).not.toBeNull();
+  });
+
   it("uses the other-category icon for unknown tools", async () => {
     await render([tool("unknown", "future_tool")]);
 
