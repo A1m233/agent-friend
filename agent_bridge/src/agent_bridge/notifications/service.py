@@ -354,7 +354,7 @@ class NotificationService:
             run_id=run_id,
             approval_id=approval_id,
             task=task[:300],
-            reply=reply[:800],
+            reply=reply,
             created_at=self.clock(),
         )
 

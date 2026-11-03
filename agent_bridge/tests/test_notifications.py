@@ -31,7 +31,13 @@ from fastapi.testclient import TestClient
 from memory.contracts import MemoryContext, MemoryItem
 
 from agent import Event, JsonlSessionStore, Session
-from llm_providers import LLMTextDelta, LLMTurnDone, ModelRequest, minimum_model_runtime_config
+from llm_providers import (
+    LLMContextWindowError,
+    LLMTextDelta,
+    LLMTurnDone,
+    ModelRequest,
+    minimum_model_runtime_config,
+)
 from runtime_config import DesktopSettingsReader
 
 NOW = datetime(2026, 9, 6, tzinfo=UTC)
@@ -175,13 +181,14 @@ def test_routes_receipt_is_idempotent_and_memory_is_not_generation(tmp_path: Pat
 
 def test_terminal_and_recovery_share_id_and_todo_agent_is_excluded(tmp_path: Path) -> None:
     svc, _ = service(tmp_path)
+    reply = "目录说明。\n" * 450 + "你希望整理哪个目录？"
     svc.sessions.append_event(
         "s",
         Event(
             type="assistant_message",
             uuid="a",
             ts=NOW,
-            payload={"content": "你希望整理哪个目录？"},
+            payload={"content": reply},
             meta={"run_id": "r"},
         ),
     )
@@ -202,7 +209,7 @@ def test_terminal_and_recovery_share_id_and_todo_agent_is_excluded(tmp_path: Pat
     svc.on_terminal(replace(snapshot, source_kind="todo_reminder"))
     assert svc.snapshot() == []
     svc.on_terminal(snapshot)
-    assert svc.store.list()[0].fact.reply == "你希望整理哪个目录？"
+    assert svc.store.list()[0].fact.reply == reply
     svc.on_recovered(
         svc.sessions.load("s"),
         Event(type="run_terminal", uuid="new", ts=NOW, payload={"run_id": "r"}),
@@ -450,21 +457,23 @@ def test_catalog_minimum(model: str, preset: str) -> None:
     assert minimum_model_runtime_config(model).reasoning_preset == preset
 
 
+@pytest.mark.parametrize("error", [TimeoutError("deadline"), LLMContextWindowError("too long")])
 def test_failed_generation_uses_fallback_once_and_expiration_prevents_presentation(
-    tmp_path: Path,
+    tmp_path: Path, error: Exception
 ) -> None:
     svc, _generator = service(tmp_path)
     calls: list[int] = []
 
     def fail(*args: Any, **kwargs: Any) -> str:
         calls.append(1)
-        raise TimeoutError("deadline")
+        raise error
 
     svc.generator = cast(NotificationGenerator, SimpleNamespace(generate=fail))
     item = svc.accept(fact())
     assert svc.run_once()
     ready = svc.store.get(item.notification_id)
     assert ready.text_source == "fallback"
+    assert ready.text == "「整理照片」有新回复了，方便时回来看看吧。"
     assert not svc.run_once()
     assert calls == [1]
     svc.clock = lambda: NOW + timedelta(days=2)

@@ -66,7 +66,7 @@ def test_notification_context_keeps_current_fact_separate_through_provider_wire(
         kind=cast(Any, kind),
         title="整理照片",
         task="设计照片文件夹的整理方式。",
-        reply="整理方式已经写好了。你希望按年份还是按目的地来分类？",
+        reply="整理方式已经写好了。\n" * 250 + "你希望按年份还是按目的地来分类？",
         detail="这是当前事件的状态。",
         persona_id="default",
         session_id="session-under-test",
