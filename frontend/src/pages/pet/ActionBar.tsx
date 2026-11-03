@@ -228,11 +228,6 @@ export function ActionBar({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const buttons: BtnDef[] = [
     { icon: <MessageSquare />, tooltip: "打开对话", onClick: onOpenChat },
-    {
-      icon: <Phone />,
-      tooltip: voiceCallActive ? "查看通话" : "语音通话",
-      onClick: onStartVoiceCall,
-    },
     { icon: <ListTodo />, tooltip: "待办", onClick: onOpenTodos },
     { icon: <Clock3 />, tooltip: "定时任务", onClick: onOpenScheduledTasks },
     petAvatarSize === "mini"
@@ -241,6 +236,11 @@ export function ActionBar({
     { icon: <Plug />, tooltip: "接入 IM", onClick: onOpenIMConnect },
     { icon: <FeedbackIcon />, tooltip: "反馈与诊断", onClick: onOpenFeedback },
     { icon: <Settings />, tooltip: "打开设置", onClick: onOpenSettings },
+    {
+      icon: <Phone />,
+      tooltip: voiceCallActive ? "查看通话（功能已陈旧）" : "语音通话（功能已陈旧）",
+      onClick: onStartVoiceCall,
+    },
   ];
   if (import.meta.env.DEV) {
     buttons.push({
