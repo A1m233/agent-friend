@@ -29,6 +29,40 @@ describe("sessionsApi.get", () => {
       "/v1/sessions/im%3Aqq%2Fgroup%201?view=active&turn_limit=30&before=turn%3A31%2Fuser&history_epoch=epoch+1",
     );
   });
+
+  it("retries a latest-page history conflict once with the same encoded identity", async () => {
+    const detail = { session_id: "im:qq/group 1", active_events: [] };
+    vi.mocked(http.get).mockRejectedValueOnce({ code: "history_changed" })
+      .mockResolvedValueOnce(detail);
+    await expect(sessionsApi.get("im:qq/group 1")).resolves.toBe(detail);
+    expect(http.get).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(http.get).mock.calls[1]).toEqual(vi.mocked(http.get).mock.calls[0]);
+  });
+
+  it("stops after a second conflict and permits a later explicit retry", async () => {
+    const error = { code: "history_changed" };
+    vi.mocked(http.get).mockRejectedValue(error);
+    await expect(sessionsApi.get("sid")).rejects.toBe(error);
+    expect(http.get).toHaveBeenCalledTimes(2);
+    const detail = { session_id: "sid", active_events: [] };
+    vi.mocked(http.get).mockResolvedValueOnce(detail);
+    await expect(sessionsApi.get("sid")).resolves.toBe(detail);
+    expect(http.get).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["network", "http_error", "session_busy"])("does not retry %s errors", async (code) => {
+    const error = { code };
+    vi.mocked(http.get).mockRejectedValue(error);
+    await expect(sessionsApi.get("sid")).rejects.toBe(error);
+    expect(http.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves an older-page epoch conflict to its navigation owner", async () => {
+    const error = { code: "history_changed" };
+    vi.mocked(http.get).mockRejectedValue(error);
+    await expect(sessionsApi.getOlder("sid", "cursor", "epoch")).rejects.toBe(error);
+    expect(http.get).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("sessionsApi.search", () => {

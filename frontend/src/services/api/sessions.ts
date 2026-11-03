@@ -93,10 +93,18 @@ export const sessionsApi = {
   },
 
   /** 单个会话详情只取当前有效事件，避免重复传输原始事件流。 */
-  get(sessionId: string): Promise<SessionDetail> {
-    return http.get<unknown, SessionDetail>(
-      `/v1/sessions/${encodeURIComponent(sessionId)}?view=active&turn_limit=30`,
-    );
+  async get(sessionId: string): Promise<SessionDetail> {
+    const url = `/v1/sessions/${encodeURIComponent(sessionId)}?view=active&turn_limit=30`;
+    try {
+      return await http.get<unknown, SessionDetail>(url);
+    } catch (error) {
+      // The latest page has no cursor to invalidate. A concurrent append or
+      // rewrite can race its index read; retry once against the new history.
+      // Older pages must still fail so their owner can reset the old epoch.
+      if (!error || typeof error !== "object" || !("code" in error)
+        || error.code !== "history_changed") throw error;
+      return http.get<unknown, SessionDetail>(url);
+    }
   },
 
   getFull(sessionId: string): Promise<SessionDetail> {

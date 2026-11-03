@@ -28,6 +28,61 @@ def history_client(store: JsonlSessionStore) -> tuple[TestClient, BridgeRuntime]
     return client, runtime
 
 
+@pytest.mark.parametrize("turn_limit", [None, 1])
+def test_chat_history_omits_accounting_diagnostics_but_preserves_full_history(
+    tmp_path: Path, turn_limit: int | None
+) -> None:
+    store = JsonlSessionStore(tmp_path)
+    session = Session.new("diagnostics", "default", "test/model")
+    store.create(session)
+    accounting = {"messages": [{"diagnostic": "x" * 100_000}], "total_tokens": 12}
+    event = Event(
+        type="tool_call_request",
+        uuid="call",
+        ts=session.created_at,
+        payload={"tool_name": "exec_command", "tool_call_id": "tool-1", "args": {"cmd": "echo hi"}},
+        meta={"run_id": "run-1", "tool_run": {"status": "completed"}, "context_usage": accounting},
+    )
+    store.append_events(
+        session.session_id,
+        [
+            Event(
+                type="user_message",
+                uuid="user",
+                ts=session.created_at,
+                payload={"content": "hello"},
+            ),
+            event,
+            Event(
+                type="tool_call_result",
+                uuid="result",
+                ts=session.created_at,
+                payload={"tool_call_id": "tool-1", "content": "complete output", "is_error": False},
+            ),
+        ],
+    )
+    client, _ = history_client(store)
+    url = f"/v1/sessions/{session.session_id}"
+    params: dict[str, str | int] = {"view": "active"}
+    if turn_limit is not None:
+        params["turn_limit"] = turn_limit
+    response = client.get(url, params=params)
+    assert response.status_code == 200
+    assert len(response.content) < 5_000
+    events = {ev["uuid"]: ev for ev in response.json()["active_events"]}
+    assert events["call"]["meta"] == {"run_id": "run-1", "tool_run": {"status": "completed"}}
+    assert events["call"]["payload"] == event.payload
+    assert events["result"]["payload"]["content"] == "complete output"
+    full = client.get(url).json()
+    for field in ("events", "active_events"):
+        original = next(ev for ev in full[field] if ev["uuid"] == "call")
+        assert original["meta"]["context_usage"] == accounting
+    assert (
+        next(ev for ev in store.load(session.session_id).events if ev.uuid == "call").meta
+        == event.meta
+    )
+
+
 def test_history_page_route_preserves_full_read_and_rejects_rewritten_cursor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

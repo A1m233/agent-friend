@@ -47,6 +47,7 @@ from agent import (
     AttachmentRef,
     Conversation,
     ConversationEvent,
+    Event,
     PersonaAmbiguousError,
     PersonaNotFoundError,
     QuotedTextReference,
@@ -344,7 +345,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 "history_epoch": session.history_epoch,
             }
         visible = session.active_events
-        active_events = [_public_event_dict(ev) for ev in visible]
+        active_events = [_public_event_dict(ev, chat_view=view == "active") for ev in visible]
         recovery = None
         try:
             target = (
@@ -985,8 +986,15 @@ def _dataclass_to_dict(obj: Any) -> dict[str, Any]:
     return {"value": obj}
 
 
-def _public_event_dict(obj: Any) -> dict[str, Any]:
+def _public_event_dict(obj: Any, *, chat_view: bool = False) -> dict[str, Any]:
     """Serialize an event without exposing provider reasoning continuation payloads."""
+    if chat_view and isinstance(obj, Event):
+        # Context accounting contains per-message diagnostics that can dwarf the
+        # conversation itself. Chat does not consume them; retain them in the
+        # journal and full/debug reads. Filter before asdict's recursive copy.
+        obj = dataclasses.replace(
+            obj, meta={key: value for key, value in obj.meta.items() if key != "context_usage"}
+        )
     event = _dataclass_to_dict(obj)
     if event.get("type") != "provider_reasoning_state":
         return event

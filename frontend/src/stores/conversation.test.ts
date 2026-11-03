@@ -1262,6 +1262,23 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     expect(mockSetLastChatSessionId).not.toHaveBeenCalled();
   });
 
+  it("历史冲突失败解除输入锁定，再次打开成功后移除错误占位", async () => {
+    mockGet.mockRejectedValueOnce({ code: "history_changed" });
+    await expect(useConversationStore.getState().openSession("sid-1")).resolves.toBe(false);
+    expect(useConversationStore.getState().historyLoading).toBe(false);
+    expect(lastMessage().status).toBe("error");
+
+    const retry = deferred<SessionDetail>();
+    mockGet.mockReturnValueOnce(retry.promise);
+    const opening = useConversationStore.getState().openSession("sid-1");
+    expect(useConversationStore.getState().historyLoading).toBe(true);
+    retry.resolve(sessionDetail("sid-1", "恢复的历史"));
+    await expect(opening).resolves.toBe(true);
+    expect(useConversationStore.getState().historyLoading).toBe(false);
+    expect(firstText()).toBe("恢复的历史");
+    expect(useConversationStore.getState().messages.some((message) => message.status === "error")).toBe(false);
+  });
+
   it("进入和清空会话时同步可恢复 UI 指针", async () => {
     mockGet.mockResolvedValue(sessionDetail("sid-1", "历史消息"));
 
