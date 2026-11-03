@@ -205,6 +205,56 @@ def test_hard_image_count_cap_is_projection_only(tmp_path: Path) -> None:
     assert estimate_rendered_tokens(short) == estimate_rendered_tokens(long) == 16384
 
 
+@pytest.mark.parametrize("count", [5, 6, 7, 8])
+def test_reload_multi_image_tool_history_before_model_reconciliation(
+    tmp_path: Path, count: int
+) -> None:
+    """New command results must remain readable on the next conversation turn."""
+    image = (
+        ImageReadingService(AttachmentStore(tmp_path / "assets"))
+        .snapshot(png(), display_name="frame.png")
+        .image
+    )
+    result = ToolResult("frames", images=(image,) * count)
+    session = Session.new("multi-image", "default", "test/model")
+    store = JsonlSessionStore(tmp_path / "sessions")
+    store.create(session)
+    store.append_events(
+        session.session_id,
+        [
+            Event(
+                type="user_message",
+                uuid="user",
+                ts=session.created_at,
+                payload={"content": "inspect frames"},
+            ),
+            Event(
+                type="tool_call_request",
+                uuid="call",
+                ts=session.created_at,
+                payload={"tool_call_id": "call-1", "tool_name": "exec_command", "args": {}},
+            ),
+            Event(
+                type="tool_call_result",
+                uuid="result",
+                ts=session.created_at,
+                payload={
+                    "tool_call_id": "call-1",
+                    "tool_name": "exec_command",
+                    "content": result.text,
+                    "images": [ref.to_dict() for ref in result.images],
+                },
+            ),
+        ],
+    )
+    restored = JsonlSessionStore(tmp_path / "sessions").load(session.session_id)
+    tool = next(message for message in restored.business_llm_messages if message.role == "tool")
+    assert tool.images == result.images
+    assert tool.content == "frames"
+    with pytest.raises(ValueError, match="too many tool images"):
+        ToolResult("overflow", images=(image,) * 9)
+
+
 def test_gc_marks_tool_image_events(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 
