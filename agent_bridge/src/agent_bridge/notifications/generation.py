@@ -7,7 +7,6 @@ import logging
 import time
 from collections.abc import Callable
 from threading import Event
-from typing import Any
 
 from agent.notifications import NotificationFact
 from agent.personas import EffectivePersonaStore
@@ -131,17 +130,17 @@ class NotificationGenerator:
                 )
         check()
         rendered_memory, filtered, injected = memory_block(context)
-        facts: dict[str, Any] = {
+        facts = {
             "kind": fact.kind,
             "title": fact.title[:120],
             "task": fact.task[:300],
             "detail": fact.detail[:600],
-            "reply": fact.reply[:800],
         }
-        # Escaping and field framing can add overhead: bound the actual serialized payload.
+        # Bound event metadata separately so a long reply always reaches the model intact.
         while len(json.dumps(facts, ensure_ascii=False)) > 2000:
-            largest = max(("task", "detail", "reply"), key=lambda key: len(facts[key]))
+            largest = max(("task", "detail"), key=lambda key: len(facts[key]))
             facts[largest] = facts[largest][:-100]
+        facts["reply"] = fact.reply
         messages = [
             {
                 "role": "system",
