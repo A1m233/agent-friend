@@ -32,7 +32,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: 8246acd155090db997f7320046d4f8cb4f58c26752c72149816ae600bc3ab9c3 -->
+<!-- codex-adapter-source-sha256: 6ee20d27cf32b924acf789fef97bdfbe5fe9e4353b42f9a65228ca00a0f58bce -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -255,6 +255,14 @@ worktree、branch 和端口匹配只证明运行实例的归属，不能证明�
 
 > 详细需求交付流程见 `feature-delivery` skill；已登记 issue 的闭环流程见 `fix-issue` skill。本 rule 只承载项目级**底线约束**、分支策略、关 issue 标准与例外。
 
+## 主干基线
+
+新建需求和修复分支（含新 worktree）前，执行 `git fetch origin main`，从更新后的 `origin/main` 建分支。fetch 失败时停止，不从缓存引用或当前工作区猜测基线。
+
+续做已有分支和合入前同样刷新远端主干，核对工作树归属、未提交改动，并用 `git merge-base HEAD origin/main` 确认共同历史。功能分支落后或双方均有新提交时按现有集成流程同步；无共同祖先、浅克隆无法证明基线或远端出现意外历史替换时暂停，先核实来源。不得用强推或合并无关历史消除分叉。
+
+在持有本地 `main` 的干净工作树中核对 `git rev-list --left-right --count main...origin/main`。单纯落后可用 `git merge --ff-only origin/main` 对齐；本地有独有提交时先核实归属。已经确认的历史替换先留本地备份，再使日常主干跟踪公开历史，旧历史备份不推送。其它工作树未提交的修改不属于主干；交付时分别确认分支提交、远端主干包含关系和实际运行版本。
+
 ## 需求开发流程
 
 每个需求作为一次独立交付，必须走"独立分支 → 验收 → 合入 main"的流程，不在 main 上直接累积需求实现。
@@ -262,7 +270,7 @@ worktree、branch 和端口匹配只证明运行实例的归属，不能证明�
 ### 分支策略（需求）
 
 - 每个需求一条独立 feature 分支，命名 `feature/<3 位需求编号>-<kebab-case slug>`，编号与 `docs/requirements/` 目录一致。
-- 从最新 `main` 切。
+- 按“主干基线”从刚刷新后的 `origin/main` 切。
 - 同一需求多里程碑（M0.1 / M0.2 等）共用同一条分支，按需多次提交。
 - 一个需求只对应一条分支；需求拆分先拆 `docs/requirements/` 目录，再各开分支。
 - 不允许在 `main` 上做需求级开发。
@@ -327,7 +335,7 @@ issue 修复以 `docs/issues/<NNN>-slug/README.md` 为入口。登记 issue 只�
 
 - **只补充 issue 文档 / 附带复现资料**：可直接在 `main` 上提交。例如补 README、放 issue-local replay / smoke 脚本、记录调查结论。
 - **只新增小型回归测试、不改生产代码**：可作为 test/hotfix 直接在 `main` 上提交；若测试覆盖核心运行链路、改动范围较大、或会显著影响 CI，推荐开 fix 分支。
-- **修复生产代码**：必须从最新 `main` 开 fix 分支。
+- **修复生产代码**：按“主干基线”从刚刷新后的 `origin/main` 开 fix 分支。
 - **已登记 issue 的 fix 分支命名**：`fix/<NNN>-<slug>`，编号与 `docs/issues/` 目录一致。
 - **无 issue 编号的临场修复分支命名**：`fix/<kebab-case slug>`，slug 应描述被修复的问题，例如 `fix/memory-inconsistency-preflight`。临场修复完成后不补 issue 编号；若后来决定把未完成部分延期，先登记 backlog，未来处理时再使用带编号的 fix 分支。
 - **同一 fix 分支只修一个问题**：除非用户明确要求合并处理；调查时发现的新问题，当场修复则另开无编号 fix 分支，决定延期才登记新 issue，不顺手混修。
