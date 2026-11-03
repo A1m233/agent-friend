@@ -35,6 +35,7 @@ def test_bind_persistent_forwards_external_post_turn_ownership() -> None:
 
 def test_bind_persistent_applies_initial_auto_only_when_creating_session() -> None:
     runtime = MagicMock()
+    runtime.approval_broker.automatic = None
     manager = runtime.persistent_session_manager
     session = object()
     conversation = object()
@@ -78,3 +79,20 @@ def test_bind_persistent_does_not_override_existing_session_mode() -> None:
     bridge.bind_persistent(boot)
 
     runtime.approval_broker.set_session_mode.assert_not_called()
+
+
+def test_new_session_accepts_initial_automatic_review() -> None:
+    runtime = MagicMock()
+    runtime.persistent_session_manager.open_for_execution.side_effect = SessionNotFoundError("new")
+    SessionBridge(runtime).bind_persistent(
+        PersistentBootstrap(
+            thread_id="new",
+            new_user_input="hello",
+            default_persona="default",
+            default_model="test/model",
+            initial_approval_mode="auto_review",
+        )
+    )
+    runtime.approval_broker.set_session_mode.assert_called_once_with(
+        "new", mode="auto_review", expected_version=0
+    )

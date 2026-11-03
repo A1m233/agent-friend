@@ -26,15 +26,18 @@ export interface FilesystemApprovalRequest {
   items: FilesystemApprovalItem[];
   actions: FilesystemApprovalAction[];
   version: number;
-  status: "pending" | "approved" | "denied" | "expired" | "cancelled";
-  approval_mode?: "per_request" | "session_auto";
-  approval_mode_source?: "session" | "request";
+  status: "pending" | "reviewing" | "approved" | "denied" | "expired" | "cancelled" | "aborted" | "timed_out" | "failed";
+  approval_mode?: "per_request" | "session_auto" | "auto_review" | "full_access";
+  approval_mode_source?: "session" | "request" | "global";
+  review?: { outcome: "allow" | "deny"; risk_level: string; user_authorization: string; rationale: string } | null;
   approval_mode_version?: number;
   decision_source?:
     | "user_once"
     | "user_enable_session_auto"
     | "session_auto"
   | "request_auto"
+    | "auto_review"
+    | "full_access"
     | "catastrophic_policy"
     | null;
   risk?: {

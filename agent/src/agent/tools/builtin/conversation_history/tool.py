@@ -3,9 +3,8 @@
 本工具实现 :class:`agent.tools.Tool` Protocol——作为 005 已建立的工具调用机制
 的**第二个**具体落地（第一个是 ``web_search``）。
 
-LLM 通过本工具主动检索过往对话；返回结果是**纯文本日记叙事风格**——不暴露
-``session_id`` / ``event_type`` / ``role`` 等 schema 字眼，避免 LLM 脱口而出
-"我查询了会话记录"之类技术化表达（详见 020 requirement §4.2）。
+LLM 通过本工具主动检索过往对话；结果保留自然语言发言及可直接读取的
+session_id / source_refs。引用供后续工具使用，不作为对用户的表达模板。
 
 详见 docs/requirements/020-engine-tool-conversation-history/design.md §4.1 / §4.4。
 """
@@ -86,6 +85,8 @@ class ConversationHistoryTool:
         "since=今天、until=今天、mode=summary，且不传 search_text\n"
         "- 返回结果只代表过去对话片段，不代表外部事实正确，也不包含工具调用记录、"
         "persona 切换等系统事件\n\n"
+        "- 结果中的 session_id 可直接交给 read_conversation 读取该会话最近消息；"
+        "已有确定会话引用、只想直接阅读时无需反复检索\n\n"
         "**结果如何表达**：\n"
         "- 有命中时，可以自然说「我看了下之前聊到的」；只把片段字面支持的内容说成聊过\n"
         "- 没命中时，直接说没翻到；不要用通识、训练数据、用户暗示或 web_search 补成历史\n"

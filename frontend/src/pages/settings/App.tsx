@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import { Moon, Sun } from "lucide-react";
 import { FeedbackIcon } from "@/components/app/FeedbackIcon";
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   Sidebar,
   SidebarContent,
   SidebarGroup,
@@ -36,6 +37,8 @@ import { SettingsPageLayout } from "./components/SettingsPageLayout";
 import { SettingsRow } from "./components/SettingsRow";
 import { AutostartSetting } from "./components/AutostartSetting";
 import { BackgroundOnlineSetting } from "./components/BackgroundOnlineSetting";
+import { AuthorizationSetting } from "./components/AuthorizationSetting";
+import { CompanionshipSetting } from "./components/CompanionshipSetting";
 import { ReminderNotificationSetting } from "./components/ReminderNotificationSetting";
 import { NotificationSettings } from "./components/NotificationSettings";
 import { PermissionPanel } from "./permissions/PermissionPanel";
@@ -59,6 +62,7 @@ export function SettingsApp({
   } | null>(null);
   const [runtimeGroup, setRuntimeGroup] = useState<RuntimeConfigGroup | undefined>();
   const lastNavigationRequestId = useRef(0);
+  const [replyStyle, setReplyStyle] = useSetting("imReplyStyle");
   const [theme, setTheme] = useSetting("theme");
   const [voiceTunnelConsentAccepted, setVoiceTunnelConsentAccepted] = useSetting(
     "voiceTunnelConsentAccepted",
@@ -158,6 +162,27 @@ export function SettingsApp({
               >
                 <BackgroundOnlineSetting />
               </SettingsGroup>
+            </SettingsPageLayout>
+          ) : section === "chat" ? (
+            <SettingsPageLayout title="对话">
+              <SettingsGroup title="即时消息" description="用于普通 QQ 回复和 AF 主动发来的消息。自然聊天会口语化表达并按需分条，原样发送保留会话原文。">
+                <SettingsRow label="IM 回复风格">
+                  <Select value={replyStyle} onValueChange={(value) => {
+                    if (value === "natural" || value === "original") void setReplyStyle(value);
+                  }}>
+                    <SelectTrigger aria-label="IM 回复风格" className="w-36"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="natural">自然聊天</SelectItem>
+                      <SelectItem value="original">原样发送</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </SettingsRow>
+              </SettingsGroup>
+            </SettingsPageLayout>
+          ) : section === "companionship" ? (
+            <SettingsPageLayout title="自主陪伴">
+              <SettingsGroup title="活动与联系"><CompanionshipSetting /></SettingsGroup>
+              <SettingsGroup title="授权"><AuthorizationSetting /></SettingsGroup>
             </SettingsPageLayout>
           ) : section === "notifications" ? (
             <SettingsPageLayout title="通知">

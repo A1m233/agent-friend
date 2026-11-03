@@ -11,7 +11,7 @@ import {
 } from "./MessagePrimaryActivity";
 import type { PrimaryActivityPresentation } from "./primaryActivity";
 
-vi.mock("../SessionApprovalModeController", () => ({
+vi.mock("../sessionApprovalModeContext", () => ({
   useSessionApprovalModeActions: () => ({
     requestSessionAutoFromApproval: vi.fn(),
     submittingRequestId: null,

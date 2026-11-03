@@ -398,6 +398,17 @@ class NotificationService:
             return
         self.accept(fact)
 
+    def on_prepared_message(
+        self, session_id: str, delivery_id: str, content: str, created_at: datetime
+    ) -> None:
+        """Use the already composed message and existing quiet/visibility settings."""
+        session = load_business_session(self.sessions, session_id)
+        fact = self._session_fact(session, event_key=f"delivery:{delivery_id}", kind="reply_ready")
+        self.accept(
+            replace(fact, task="", reply=content[:800], created_at=created_at),
+            provided_text=content[:160],
+        )
+
     def on_recovered(self, session: Session, terminal: Event) -> None:
         if self._stopping.is_set():
             return

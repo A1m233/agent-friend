@@ -74,6 +74,7 @@ from .media import InboundMedia, render_model_media_context, render_user_media_n
 from .provider import IMOutboundProvider, IMProvider, OutboundSendResult
 from .qq_references import qq_current_message_aliases
 from .reference_aliases import IMReferenceAliasIndex
+from .reply_style import Bubble, IMReplyStyle, send_bubbles
 from .streaming import (
     IMStreamSession,
     IMTextStreamingProvider,
@@ -146,6 +147,7 @@ class IMRouter:
         capability_resolver: Callable[[str], ModelRouteCapabilities] = model_capabilities,
         session_files_available: Callable[[], bool] | None = None,
         approvals: IMApprovalService | None = None,
+        reply_style: IMReplyStyle | None = None,
     ) -> None:
         self._capability_resolver = capability_resolver
         self._session_files_available = session_files_available or (lambda: False)
@@ -155,6 +157,7 @@ class IMRouter:
         self._agent_runtime = agent_runtime
         self._reference_aliases = reference_aliases
         self._approvals = approvals
+        self._reply_style = reply_style
 
     def session_id_for(self, im_type: str, event: InboundEvent) -> str:
         """计算 IM inbound 应该挂在哪个 session 上。**策略扩展点**。
@@ -269,13 +272,18 @@ class IMRouter:
             im_type=im_type,
             stream_trace=stream_trace,
         )
-        stream_session = self._open_stream(
-            provider_or_send,
-            event,
-            stream_trace=stream_trace,
-            run_id=run_id,
-            session_id=session_id,
-            latency_started_ms=latency_started_ms,
+        natural = self._reply_style if self._reply_style and self._reply_style.enabled() else None
+        stream_session = (
+            None
+            if natural
+            else self._open_stream(
+                provider_or_send,
+                event,
+                stream_trace=stream_trace,
+                run_id=run_id,
+                session_id=session_id,
+                latency_started_ms=latency_started_ms,
+            )
         )
         relay: StreamRelay | None = None
         delta_queue: asyncio.Queue[object] | None = None
@@ -510,6 +518,12 @@ class IMRouter:
             prefix_sources: list[str] = []
             after_image = False
             for item in image_events:
+                if (
+                    natural
+                    and item.payload.get("phase") == "commentary"
+                    and "generated_image" not in item.payload
+                ):
+                    continue
                 if "generated_image" in item.payload:
                     after_image = True
                     try:
@@ -748,6 +762,71 @@ class IMRouter:
                 _text_len(text),
             )
 
+        if natural and include_menu:
+            # Never rewrite tool progress. Legacy providers commit their final answer last.
+            final = next(
+                (
+                    item
+                    for item in reversed(image_events)
+                    if item.payload.get("phase") == "final_answer"
+                ),
+                None,
+            )
+            if (
+                final is None
+                and assistant_event is not None
+                and assistant_event.payload.get("phase") in (None, "unknown")
+            ):
+                final = assistant_event
+            if (
+                final is not None
+                and isinstance(final.payload.get("content"), str)
+                and final.payload["content"].strip()
+            ):
+                source = final.payload["content"]
+                bubbles = await asyncio.to_thread(
+                    natural.prepare, session_id, source, event.content or ""
+                )
+                citations = _source_suffix(final.payload.get("content_parts", []))
+
+                async def send_part(index: int, bubble: Bubble) -> OutboundSendResult | None:
+                    last = index == len(bubbles) - 1
+                    receipt = await send_fn(
+                        OutboundContent(
+                            chat_id=event.chat_id,
+                            chat_scope=event.chat_scope,
+                            text=(reply_prefix if index == 0 else "")
+                            + bubble.text
+                            + (citations if last else ""),
+                            text_format=text_format,
+                            reply_to_message_id=event.message_id,
+                            controls=menu_controls() if last else None,
+                        )
+                    )
+                    if receipt is not None and receipt.outcome == "delivered":
+                        self._register_outbound_alias(
+                            provider_or_send,
+                            im_type=im_type,
+                            event=event,
+                            session_id=session_id,
+                            event_uuid=final.uuid,
+                            provider_message_id=receipt.provider_message_id,
+                            source_span=(bubble.start, bubble.end),
+                        )
+                    return receipt
+
+                delivery = await send_bubbles(bubbles, send_part)
+                log_run_latency(
+                    logger,
+                    run_latency,
+                    "im_turn_done",
+                    outcome=delivery.outcome,
+                    delivery="natural",
+                )
+                return
+            text = reply_prefix + FALLBACK_TEXT
+            include_menu = False
+
         send_result = await send_fn(
             OutboundContent(
                 chat_id=event.chat_id,
@@ -796,8 +875,7 @@ class IMRouter:
         """跑一轮 :class:`Conversation`,聚合所有 :class:`TextDelta` 到完整文本。
 
         ``Conversation.stream`` 是同步 generator,会 emit ``TextDelta`` /
-        ``ToolCallRequest`` / ``ToolCallResult`` / ``TurnDone``。IM 通道**不
-        流式分片**(QQ c2c 无打字态,分片只是切碎),所以聚合后整段回写。
+        ``ToolCallRequest`` / ``ToolCallResult`` / ``TurnDone``。按需转发增量，并保留完整正文供终态投递。
 
         ``ToolCallRequest`` / ``ToolCallResult``:agent 主链路自处理(执行工具
         + 把结果喂回 LLM)。IM 不透出工具载荷，但在工具结果后的
@@ -958,6 +1036,7 @@ class IMRouter:
         event_uuid: str,
         provider_message_id: str | None,
         event_uuids: tuple[str, ...] = (),
+        source_span: tuple[int, int] | None = None,
     ) -> None:
         aliases = self._reference_aliases
         bind_id = str(getattr(provider_or_send, "bind_id", "") or "")
@@ -974,6 +1053,7 @@ class IMRouter:
                 event_uuid=event_uuid,
                 source_role="assistant",
                 event_uuids=event_uuids,
+                source_span=source_span,
             )
         except Exception:
             logger.warning("IM outbound alias registration failed")

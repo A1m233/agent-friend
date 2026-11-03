@@ -11,6 +11,16 @@ function ev(
 }
 
 describe("projectSessionEvents", () => {
+  it("shows prepared proactive content without manufacturing a user input", () => {
+    const source = { kind: "agent_initiated", delivery_id: "delivery-1" };
+    const out = projectSessionEvents([
+      ev("system_trigger", { source_kind: "cross_session_message", presentation: "conversation", output_visibility: "user" }, { run_id: "delivery-run", message_source: source }),
+      ev("assistant_message", { content: "A small discovery", phase: "final_answer" }, { run_id: "delivery-run", message_source: source }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].role).toBe("assistant");
+    expect(out[0].messageSource).toEqual({ kind: "agent_initiated", deliveryId: "delivery-1" });
+  });
   it("preserves scheduled provenance without applying it to later manual messages", () => {
     const out = projectSessionEvents([
       ev("user_message", { content: "daily", request_source: { kind: "scheduled_task", task_id: "t", task_name: "Original name", occurrence_id: "o" } }),

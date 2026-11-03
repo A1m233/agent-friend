@@ -568,3 +568,20 @@ def test_candidate_progress_ignores_activity_uuids_but_counts_effective_input() 
     assert _fingerprint(first) != _fingerprint(
         [replace(first[0], meta={"provider_reasoning_state": {"opaque": "changed"}})]
     )
+
+
+def test_only_autonomous_inner_may_compact_completed_groups_without_user_goal() -> None:
+    model = SummaryModel()
+    history = [
+        Message(role="assistant", content="校样" * 1200, uuid=f"wake-{i}") for i in range(12)
+    ]
+    runtime = _runtime(model, history[0])
+    runtime.compaction_control = CompactionControl()
+    manager = SummarizingContextManager()
+    with pytest.raises(ContextCompactionUnavailableError) as failure:
+        manager.build_messages(history, "AF", runtime=runtime)
+    assert failure.value.reason == "task_source_unavailable"
+    assert not model.requests
+    resumed = manager.build_messages(history, "AF", runtime=replace(runtime, autonomous_inner=True))
+    assert resumed.new_compaction and not resumed.new_compaction.task_anchor_uuid
+    assert all(message.role != "user" for message in resumed.messages)

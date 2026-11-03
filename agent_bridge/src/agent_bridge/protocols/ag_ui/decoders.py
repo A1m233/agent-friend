@@ -168,8 +168,12 @@ def resolve_initial_approval_mode(payload: RunAgentInput) -> SessionApprovalMode
         return None
     if not isinstance(raw, dict):
         raise DecodeError("forwarded_props.initialApprovalMode 必须是对象")
+    if raw.get("mode") == "auto_review":
+        return "auto_review"
     if raw.get("mode") != "session_auto":
-        raise DecodeError("forwarded_props.initialApprovalMode.mode 只接受 session_auto")
+        raise DecodeError(
+            "forwarded_props.initialApprovalMode.mode 只接受 session_auto 或 auto_review"
+        )
     if raw.get("riskAcknowledged") is not True:
         raise DecodeError("进入本会话无需授权前必须重新确认风险")
     return "session_auto"

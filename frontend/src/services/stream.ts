@@ -152,11 +152,11 @@ export function buildRunAgentInput(input: SpecializedRunStreamInput): RunAgentIn
     state: {},
     forwardedProps: {
       ...(input.modelConfig ? { modelConfig: input.modelConfig } : {}),
-      ...(input.initialApprovalMode === "session_auto"
+      ...(input.initialApprovalMode === "session_auto" || input.initialApprovalMode === "auto_review"
         ? {
             initialApprovalMode: {
-              mode: "session_auto",
-              riskAcknowledged: true,
+              mode: input.initialApprovalMode,
+              riskAcknowledged: input.initialApprovalMode === "session_auto",
             },
           }
         : {}),

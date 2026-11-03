@@ -1,3 +1,5 @@
+import { InnerActivityIcon } from "@/components/app/InnerActivityIcon";
+import { openInnerActivity } from "@/lib/open-inner-activity";
 import { ListTodo } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
@@ -215,6 +217,7 @@ export function HistorySidebar({
   const sessionsError = useSessionsStore((s) => s.error);
   const status = useConnectionStore((s) => s.status);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
+  const viewingInner = useConversationStore((s) => Boolean(s.currentSessionId && s.readOnlySessionIds?.[s.currentSessionId]));
   const streaming = useConversationStore((s) => isSessionBusy(s, s.currentSessionId));
   const historyLoading = useConversationStore((s) => s.historyLoading);
   const messageCount = useConversationStore((s) => s.messages.length);
@@ -486,6 +489,11 @@ export function HistorySidebar({
             >
               <SquarePen />
               <span>新对话</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton isActive={workspaceTarget === "chat" && viewingInner} className={NAVIGATION_BUTTON_CLASS} onClick={() => void openInnerActivity()}>
+              <InnerActivityIcon /><span>内心活动</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>

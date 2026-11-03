@@ -2835,6 +2835,7 @@ dependencies = [
     { name = "prompt-toolkit" },
     { name = "python-dotenv" },
     { name = "rich" },
+    { name = "runtime-config" },
 ]
 
 [package.metadata]
@@ -2846,6 +2847,7 @@ requires-dist = [
     { name = "prompt-toolkit", specifier = ">=3.0.50" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rich", specifier = ">=13.9.0" },
+    { name = "runtime-config", editable = "runtime_config" },
 ]
 
 [[package]]

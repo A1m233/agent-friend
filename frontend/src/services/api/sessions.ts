@@ -22,7 +22,7 @@ interface SearchSessionsOptions {
   titleLimit?: number;
 }
 
-export type SessionApprovalMode = "per_request" | "session_auto";
+export type SessionApprovalMode = "per_request" | "session_auto" | "auto_review" | "full_access";
 
 export interface SessionApprovalModeState {
   session_id: string;

@@ -45,6 +45,13 @@ export interface ModelConnections {
 }
 
 export interface Settings {
+  companionshipLimits: {
+    interval_minutes: number;
+    minimum_interval_minutes: number;
+  };
+  imReplyStyle: "natural" | "original";
+  authorizationMode: "auto_review" | "full_access";
+  authorizationPolicyVersion: number;
   modelConnections: ModelConnections;
   theme: ThemeMode;
   backgroundOnlinePolicy: BackgroundOnlinePolicy;
@@ -67,6 +74,10 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  companionshipLimits: { interval_minutes: 60, minimum_interval_minutes: 10 },
+  imReplyStyle: "natural",
+  authorizationMode: "auto_review",
+  authorizationPolicyVersion: 0,
   modelConnections: { revision: 0, connections: [] },
   theme: "light",
   backgroundOnlinePolicy: "followSystem",
@@ -125,6 +136,9 @@ function normalizeSettingsSnapshot(
   const { petDisplayMode, deepseekModel, deepseekMemoryModel, ...current } =
     payload ?? {};
   const settings = { ...DEFAULT_SETTINGS, ...current };
+  if (!["auto_review", "full_access"].includes(settings.authorizationMode)) {
+    settings.authorizationMode = "auto_review";
+  }
   if (
     !Number.isInteger(settings.petActionBarPage) ||
     settings.petActionBarPage < 0 ||

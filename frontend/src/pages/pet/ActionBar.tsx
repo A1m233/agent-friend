@@ -1,3 +1,5 @@
+import { InnerActivityIcon } from "@/components/app/InnerActivityIcon";
+import { openInnerActivity } from "@/lib/open-inner-activity";
 import {
   useEffect,
   useLayoutEffect,
@@ -228,6 +230,7 @@ export function ActionBar({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const buttons: BtnDef[] = [
     { icon: <MessageSquare />, tooltip: "打开对话", onClick: onOpenChat },
+    { icon: <InnerActivityIcon />, tooltip: "内心活动", onClick: () => void openInnerActivity() },
     {
       icon: <Phone />,
       tooltip: voiceCallActive ? "查看通话" : "语音通话",

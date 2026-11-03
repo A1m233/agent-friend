@@ -84,6 +84,10 @@ class SessionRequestService:
             raise SessionRequestError(
                 "target_session_archived", "目标会话已归档，请先取消归档再恢复任务。"
             )
+        if manager.is_inner(session_id):
+            raise SessionRequestError(
+                "target_session_read_only", "内心活动会话只读，不能作为用户请求或定时任务目标。"
+            )
 
     def submit(
         self,

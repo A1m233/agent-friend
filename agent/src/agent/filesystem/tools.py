@@ -128,13 +128,12 @@ class RequestFilesystemAccessTool:
         "create 用于新建文件、目录、备份及复制/移动目的地，edit 只修改已有目标且不"
         "包含 create。对 .git/.cursor/.codex/.claude 等配置目录只能申请目录级"
         "search_metadata；读取或修改正文必须改为申请准确文件。每次调用都提交精确"
-        "请求；宿主可能按当前会话设置自动给出仅对该请求有效的一次性决定，不能据此"
+        "请求；宿主按本次适用的模式逐次询问、直接授权或交由独立审批者审查，给出仅对该请求有效的一次性决定，不能据此"
         "扩大后续范围。覆盖、移动、删除必须在 actions 中列出准确目标。关键根递归删除"
         "或目标无法确定的强制递归删除仍受独立灾难性策略约束；若返回"
         "catastrophic_action_blocked_in_session_auto，不要原样重试或改写目标绕过，"
-        "应请用户切回每次授权并重新检查准确请求。仅桌面聊天和宿主已登记的 QQ 私聊运行"
-        "支持审批；其他入口会明确拒绝，不能假设"
-        "获得权限。"
+        "硬性边界不能通过切换模式绕过。自动审批也适用于没有人工界面的自主活动；"
+        "拒绝、失败或超时均未授予权限，不要原样重试、换工具绕过或向用户索要全局放行。"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
@@ -282,7 +281,20 @@ class RequestFilesystemAccessTool:
             items=items,
             actions=actions,
         )
+        request.review_context = args.get("__agent_friend_review_context")
         decision = self._broker.request(request, timeout_seconds=300.0, surface=surface)
+        if request.decision_source == "auto_review" and request.status != "approved":
+            return _json_result(
+                {
+                    "status": request.status,
+                    "error": f"approval_{request.status}",
+                    "request_id": request.request_id,
+                    "review": request.review_assessment,
+                    "message": "本次自动审批未放行，未授予文件权限。不要原样重试或绕过；自主活动可选择安全替代或结束。",
+                    "retryable_without_user_change": False,
+                },
+                error=True,
+            )
         if decision is None:
             return _json_result(
                 {
@@ -311,14 +323,21 @@ class RequestFilesystemAccessTool:
                     "request_id": request.request_id,
                     "error": "catastrophic_action_blocked_in_session_auto",
                     "risk_code": risk.code if risk is not None else None,
-                    "message": (
-                        "该动作不会在本会话无需授权模式下执行。"
-                        "请让用户切回每次授权后重新检查并发起精确请求。"
-                    ),
+                    "message": ("该动作触及硬性安全边界，未放行；切换授权模式不能绕过。"),
                     "retryable_without_user_change": False,
                     "approval": _approval_audit(request),
                 },
                 error=True,
+            )
+        broker = self._broker
+        automated = request.approval_mode in {"auto_review", "full_access"}
+
+        def policy_is_current() -> bool:
+            return not automated or broker.policy_current(request)
+
+        if not policy_is_current():
+            return _json_result(
+                {"status": "aborted", "error": "approval_policy_changed"}, error=True
             )
         scopes: list[dict[str, object]] = []
         denied_item_ids: list[str] = []
@@ -334,6 +353,8 @@ class RequestFilesystemAccessTool:
                     permissions=permissions,
                     allow_protected=item.allow_protected,
                 )
+                if automated:
+                    ledger.bind_grant_validator(scope.scope_id, policy_is_current)
                 scopes.append(
                     {
                         "item_id": item.item_id,
@@ -354,6 +375,8 @@ class RequestFilesystemAccessTool:
                         else None
                     ),
                 )
+                if automated:
+                    ledger.bind_grant_validator(action.action_id, policy_is_current)
                 granted_actions.append({"action_id": action.action_id, "item_id": action.action_id})
         status = (
             "granted"
@@ -472,6 +495,7 @@ def _approval_audit(request: PendingFilesystemApproval) -> dict[str, object]:
         "decision_source": request.decision_source,
         "approval_mode": request.approval_mode,
         "approval_mode_version": request.approval_mode_version,
+        "review": request.review_assessment,
         "risk_code": risk.code if risk is not None else None,
         "risk_fingerprint": risk.fingerprint if risk is not None else None,
     }

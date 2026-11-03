@@ -37,6 +37,7 @@ def build_agent_runtime(
     memory: Memory | None,
     runtime_identity: RuntimeInstanceIdentity | None = None,
     session_turn_guard: Callable[[str], AbstractContextManager[None]] | None = None,
+    include_legacy_sources: bool = True,
 ) -> AgentRuntime:
     """装配 :class:`AgentRuntime`：注入 conversation_factory + 注册启用的 source。
 
@@ -70,7 +71,7 @@ def build_agent_runtime(
     # UserSource 永远注册（dev / 测试场景可用）；生产 pull 路径不走它
     runtime.register_source(UserSource())
 
-    if settings.enable_bedtime:
+    if include_legacy_sources and settings.enable_bedtime:
         if not settings.bedtime_target_session_id:
             logger.warning(
                 "enable_bedtime=True 但 bedtime_target_session_id 为空，BedtimeSource 不会注册"
@@ -84,7 +85,7 @@ def build_agent_runtime(
                 )
             )
 
-    if settings.enable_idle_reflection:
+    if include_legacy_sources and settings.enable_idle_reflection:
         if not settings.idle_target_session_id:
             logger.warning(
                 "enable_idle_reflection=True 但 idle_target_session_id 为空，"

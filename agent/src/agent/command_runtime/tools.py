@@ -213,6 +213,7 @@ def _approval_audit(request: PendingCommandApproval) -> dict[str, object]:
         "decision_source": request.decision_source,
         "approval_mode": request.approval_mode,
         "approval_mode_version": request.approval_mode_version,
+        "review": request.review_assessment,
         "risk_code": risk.code if risk is not None else None,
         "risk_fingerprint": risk.fingerprint if risk is not None else None,
     }
@@ -390,11 +391,12 @@ class ExecCommandTool:
         " host_process_start。普通非交互命令使用 buffered："
         "调用保持 pending，直到退出、超时、取消或运行时失联，过程输出只推送给界面；"
         "交互式命令使用 streaming，尽早返回仅对当前 run 有效的 process_id。每次启动"
-        "都必须提交一次准确的命令、目录、文件系统与网络权限请求；宿主可能按当前会话"
-        "设置自动给出仅对该请求有效的一次性决定，不能据此扩大后续命令。磁盘清除、"
+        "都必须提交一次准确的命令、目录、文件系统与网络权限请求；宿主按本次适用的模式逐次询问、"
+        "直接授权或交由独立审批者审查；这是仅对该请求有效的一次性决定，不能据此扩大后续命令。磁盘清除、"
         "关键根递归删除或目标无法确定的强制递归删除仍受独立灾难性策略约束；若返回"
         "catastrophic_action_blocked_in_session_auto，不要原样重试或改写命令绕过，"
-        "应请用户切回每次授权并重新检查准确请求。"
+        "硬性边界不能通过切换模式绕过。自动审批拒绝、超时或失败时命令没有执行；"
+        "自主活动可以安全替代或结束，不通过其他工具绕过，也不发消息催用户授权。"
         "需要命令直接返回图片时可传 output_images 的当前轮 read_image scope；仅限 buffered，"
         "脚本 stdout 须为含 image_paths 相对路径数组的 JSON，最多 8 张。命令已执行但图片"
         "收集失败时不得重放有副作用的命令，应修正授权或单独 view_image。"
@@ -739,8 +741,23 @@ class ExecCommandTool:
             details=details,
         )
         approval_started = time.monotonic()
+        request.review_context = args.get("__agent_friend_review_context")
         decision = self._broker.request(request, timeout_seconds=300.0, surface=surface)
         approval_wait_seconds = time.monotonic() - approval_started
+        if request.decision_source == "auto_review" and request.status != "approved":
+            return _result(
+                {
+                    "status": request.status,
+                    "error": f"approval_{request.status}",
+                    "request_id": request.request_id,
+                    "review": request.review_assessment,
+                    "message": "自动审批未放行，命令未执行。不要原样重试或换工具绕过；自主活动应选择安全替代或结束。",
+                    "retryable_without_user_change": False,
+                },
+                error=True,
+                executed=False,
+                authorization_requested=False,
+            )
         if decision is None:
             return _result(
                 {
@@ -771,10 +788,7 @@ class ExecCommandTool:
                     "request_id": request.request_id,
                     "error": "catastrophic_action_blocked_in_session_auto",
                     "risk_code": risk.code if risk is not None else None,
-                    "message": (
-                        "该动作不会在本会话无需授权模式下执行。"
-                        "请让用户切回每次授权后重新检查并发起精确请求。"
-                    ),
+                    "message": ("该动作触及硬性安全边界，未放行；切换授权模式不能绕过。"),
                     "retryable_without_user_change": False,
                     "approval": _approval_audit(request),
                 },

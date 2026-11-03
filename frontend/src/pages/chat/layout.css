@@ -1,4 +1,4 @@
-.chat-message-viewport {
+.chat-composer-fade {
   /*
    * 调整消息区底部渐隐：
    * - 改 --chat-scroll-fade-height 控制渐隐高度。

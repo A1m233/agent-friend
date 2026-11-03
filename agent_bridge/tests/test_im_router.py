@@ -317,6 +317,44 @@ async def test_handle_inbound_passes_session_id_to_bind_persistent(
     assert boot.default_model == "default-model"
 
 
+@pytest.mark.asyncio
+async def test_natural_reply_rewrites_only_final_and_sends_independent_bubbles(
+    session_bridge: MagicMock,
+) -> None:
+    from agent_bridge.protocols.im.reply_style import IMReplyStyle
+
+    from llm_providers import ModelResponse
+
+    model = MagicMock()
+    model.generate.return_value = ModelResponse(
+        '[{"source":"刚找到视频。","bubbles":["我找到视频啦。"]},{"source":"还没验证。","bubbles":["还没验证哦。"]}]'
+    )
+    style = IMReplyStyle(lambda: True, lambda _: model, lambda: "自然简洁")
+    router = IMRouter(session_bridge, "persona", "model", reply_style=style)
+    session_bridge.bind_persistent.return_value = _make_conv(
+        [
+            TextDelta("去查查看", phase="commentary"),
+            TextDelta("刚找到视频。还没验证。", phase="final_answer"),
+            TurnDone(),
+        ]
+    )
+    final = SimpleNamespace(
+        uuid="final", payload={"phase": "final_answer", "content": "刚找到视频。还没验证。"}
+    )
+    session_bridge.assistant_events_after.return_value = (
+        SimpleNamespace(uuid="progress", payload={"phase": "commentary", "content": "去查查看"}),
+        final,
+    )
+    session_bridge.assistant_event_after.return_value = final
+    provider = ReceiptStreamingProvider([])
+    await router.handle_inbound("qq", _make_event(), provider)
+    model.generate.assert_called_once()
+    assert "去查查看" not in str(model.generate.call_args.args[0].messages)
+    assert [part.text for part in provider.sent] == ["我找到视频啦。", "还没验证哦。"]
+    assert provider.stream is None
+    assert provider.sent[0].controls is None and provider.sent[-1].controls is not None
+
+
 # ---------- 文本聚合 ----------
 
 

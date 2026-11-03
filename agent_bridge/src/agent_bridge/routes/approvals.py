@@ -32,7 +32,7 @@ class CommandApprovalDecisionBody(BaseModel):
 class SessionApprovalModeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    mode: Literal["per_request", "session_auto"]
+    mode: Literal["per_request", "session_auto", "auto_review"]
     expected_version: int = Field(ge=0)
     risk_acknowledged: bool = False
 
@@ -47,8 +47,33 @@ class EnableSessionAutoBody(BaseModel):
     risk_acknowledged: bool
 
 
+class ReviewRetryBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str = Field(min_length=1)
+    expected_version: int = Field(ge=1)
+
+
 def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     router = APIRouter(prefix="/v1", tags=["approvals"])
+
+    @router.post("/approvals/{request_id}/reauthorize-review")
+    def reauthorize_review(request_id: str, body: ReviewRetryBody) -> dict[str, object]:
+        broker = runtime.approval_broker
+        if broker is None or broker.automatic is None:
+            raise HTTPException(status_code=503, detail="auto review unavailable")
+        manager = runtime.persistent_session_manager
+        session = manager.open(body.session_id)
+        if session.origin_kind == "inner_world":
+            raise HTTPException(status_code=409, detail="自主活动不能申请人工授权")
+        if broker.mode_state(body.session_id).mode != "auto_review":
+            raise HTTPException(status_code=409, detail="请在本会话选择帮我审批，再重新审查。")
+        try:
+            result = broker.automatic.reauthorize(
+                request_id, body.session_id, expected_version=body.expected_version
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"accepted": True, **result}
 
     @router.get("/approvals")
     def pending_approvals(
@@ -99,6 +124,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     **exc.current.to_dict(),
                 },
             ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail="approval mode unavailable") from exc
         return {"session_id": session_id, **state.to_dict()}
@@ -166,6 +193,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     **exc.current.to_dict(),
                 },
             ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail="approval mode unavailable") from exc
         return {"accepted": True, "session_id": body.session_id, **state.to_dict()}

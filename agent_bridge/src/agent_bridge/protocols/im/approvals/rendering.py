@@ -16,6 +16,8 @@ RISK_TEXT = (
 
 
 def mode_label(mode: str) -> str:
+    if mode in {"auto_review", "full_access"}:
+        return "帮我审批" if mode == "auto_review" else "完全授权"
     return "本会话无需授权（高风险）" if mode == "session_auto" else "每次授权（推荐）"
 
 

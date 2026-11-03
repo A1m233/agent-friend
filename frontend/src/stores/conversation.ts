@@ -179,6 +179,7 @@ export interface EditingMessageDescriptor {
 }
 
 export interface ConversationState {
+  readOnlySessionIds: Record<string, boolean>;
   currentSessionId: string | null;
   currentModel: string | null;
   currentReasoningPreset: string | null;
@@ -284,6 +285,7 @@ export type SendStartResult =
         | "empty"
         | "busy"
         | "history-loading"
+        | "read-only"
         | "model-switching"
         | "model-unavailable"
         | "editing";
@@ -394,9 +396,11 @@ function projectSessionDetail(detail: SessionDetail) {
   detail = historyPages.accept(detail);
   const events = detail.active_events ?? detail.events;
   if (!events) throw new Error("session detail is missing events");
-  return projectSessionEvents(events).map((message) => ({
+  const visibleEvents = detail.read_only ? events.map((event) => event.type === "system_trigger"
+    ? { ...event, payload: { ...event.payload, presentation: "conversation" } } : event) : events;
+  return projectSessionEvents(visibleEvents).map((message) => ({
     ...message,
-    canContinue: Boolean(detail.recovery && message.runId === detail.recovery.sourceRunId),
+    canContinue: !detail.read_only && Boolean(detail.recovery && message.runId === detail.recovery.sourceRunId),
   }));
 }
 
@@ -666,6 +670,7 @@ function newConversationDraftView(): SessionConversationView {
   const runtimeConfig = resolveDefaultConversationRuntimeConfig();
   return {
     ...emptyView(),
+    approvalMode: "auto_review",
     currentModel: runtimeConfig.model,
     // 首帧时 catalog 可能尚未加载；null 表示草稿仍在等待权威默认 preset。
     currentReasoningPreset: modelOption(runtimeConfig.model)
@@ -722,10 +727,11 @@ const approvalModeRefresher = createApprovalModeRefresher({
 });
 
 export const useConversationStore = create<ConversationState>((set, get) => ({
+  readOnlySessionIds: {},
   currentSessionId: null,
   currentModel: initialHomeView.currentModel,
   currentReasoningPreset: initialHomeView.currentReasoningPreset,
-  approvalMode: "per_request",
+  approvalMode: initialHomeView.approvalMode,
   approvalModeVersion: 0,
   approvalModeChanging: false,
   modelSwitching: false,
@@ -856,6 +862,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     try {
       const detail = await detailReads.read(sessionId);
       if (detail.session_id !== sessionId) throw new Error("Session detail identity mismatch");
+      set((state) => ({
+        readOnlySessionIds: { ...state.readOnlySessionIds, [sessionId]: detail.read_only === true },
+        ...(detail.read_only && state.currentSessionId === sessionId ? { detachedSessionId: sessionId } : {}),
+      }));
       if (token !== openSessionToken || get().currentSessionId !== sessionId || epoch !== runtimeGeneration) return false;
       if ((get().sessionViews[sessionId]?.revision ?? 0) > (detail.revision ?? 0)) {
         set((state) => {
@@ -1544,6 +1554,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   beginEditingMessage(messageId) {
     const current = get();
+    if (current.currentSessionId && current.readOnlySessionIds[current.currentSessionId]) return false;
     if (
       isSessionBusy(current, current.currentSessionId)
       || current.historyLoading
@@ -1595,6 +1606,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   send(text, attachments = [], references = []) {
+    const currentId = get().currentSessionId;
+    if (currentId && get().readOnlySessionIds[currentId]) return { accepted: false, reason: "read-only" };
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0 && references.length === 0) {
       return { accepted: false, reason: "empty" };
@@ -1635,7 +1648,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const sessionId = existingSessionId ?? newId();
     const runId = newId();
     const initialApprovalMode = runtimeState.approvalMode;
-    const shouldBootstrapApprovalMode = initialApprovalMode === "session_auto"
+    const shouldBootstrapApprovalMode = (initialApprovalMode === "session_auto" || initialApprovalMode === "auto_review")
       && runtimeState.messages.length === 0;
     const initialApprovalModeVersion = shouldBootstrapApprovalMode
       ? Math.max(1, runtimeState.approvalModeVersion)
@@ -2133,6 +2146,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   async continueToolResult(messageId) {
     const state = get();
+    if (state.currentSessionId && state.readOnlySessionIds[state.currentSessionId]) return;
     const target = state.messages.at(-1);
     if (
       isSessionBusy(state, state.currentSessionId) ||

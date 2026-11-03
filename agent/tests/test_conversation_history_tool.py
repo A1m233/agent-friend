@@ -317,7 +317,14 @@ def test_summary_returns_turn_count_without_overlap_in_chronological_order() -> 
     assert payload["result_unit"] == "conversation_turn"
     assert payload["result_count"] == 2
     assert payload["truncated"] is False
-    assert payload["results"] == [
+    for item in payload["results"]:
+        assert item["session_id"] == "two-turns"
+        assert len(item["source_refs"]) == 2
+        assert all(ref.startswith("two-turns#") for ref in item["source_refs"])
+    assert [
+        {k: v for k, v in item.items() if k not in {"session_id", "source_refs"}}
+        for item in payload["results"]
+    ] == [
         {
             "recalled_at": "今天 12:30",
             "utterances": [
@@ -580,13 +587,13 @@ def test_tool_schema_uses_semantic_search_text_instead_of_raw_query() -> None:
     assert "不要把用户整句原话" in ConversationHistoryTool.description
 
 
-def test_result_text_does_not_leak_schema_words() -> None:
-    """requirement R-4.2.2 红线：返回文本不出现 schema 字眼。"""
+def test_result_exposes_readable_references_without_raw_event_payloads() -> None:
+    """169 adds direct-read references; raw event internals stay private."""
     tool = _tool(_two_session_store())
     result = tool.invoke({})
     text = result.text
+    assert all(item["session_id"] in {"sess-a", "sess-b"} for item in json.loads(text)["results"])
     for forbidden in (
-        "session_id",
         "event_type",
         "payload",
         "role",

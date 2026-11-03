@@ -6,16 +6,28 @@ import threading
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, runtime_checkable
 
-ApprovalStatus = Literal["pending", "approved", "denied", "expired", "cancelled"]
+ApprovalStatus = Literal[
+    "pending",
+    "reviewing",
+    "approved",
+    "denied",
+    "expired",
+    "cancelled",
+    "aborted",
+    "timed_out",
+    "failed",
+]
 ApprovalLifetime = Literal["once", "turn", "session", "persistent"]
 ENABLED_APPROVAL_LIFETIMES: frozenset[ApprovalLifetime] = frozenset({"once"})
-SessionApprovalMode = Literal["per_request", "session_auto"]
+SessionApprovalMode = Literal["per_request", "session_auto", "auto_review", "full_access"]
 ApprovalDecisionSource = Literal[
     "user_once",
     "user_enable_session_auto",
     "session_auto",
     "request_auto",
     "catastrophic_policy",
+    "auto_review",
+    "full_access",
 ]
 RiskLevel = Literal["normal", "catastrophic"]
 

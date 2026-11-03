@@ -213,6 +213,7 @@ class LaunchDesktopApplicationTool:
                 details=details,
             )
             broker = self._broker
+            request.review_context = args.get("__agent_friend_review_context")
             token = control.add_cancel_callback(lambda _: broker.cancel_run(session_id, run_id))
             dispatched = False
             try:
@@ -223,8 +224,9 @@ class LaunchDesktopApplicationTool:
             if decision is None or not decision.approved:
                 return self._result(
                     {
-                        "status": "cancelled" if request.status == "cancelled" else "denied",
+                        "status": request.status,
                         "error_code": f"approval_{request.status}",
+                        "review": request.review_assessment,
                     }
                 )
 

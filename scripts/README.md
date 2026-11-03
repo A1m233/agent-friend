@@ -2,6 +2,7 @@
 
 | 名字 | 用途 | mac/linux 入口 | Windows 入口 |
 |---|---|---|---|
+| companionship-smoke | 有界真实模型观察：独立审批、记忆、自主情境及自然语言控制；合成历史和隔离状态，不读取真实聊天、不发送 IM，最多 50 次请求，须事先获得调用授权；`--case` 可重复指定样本。已授权的真实 Tauri 验收可用 `--desktop-stage open\|inspect\|reload\|verify\|preferences`，verify/preferences 后附新的证据目录，preferences 核验间隔自动保存并还原，使用预先暂停的隔离 fixture、不调用模型 | `./scripts/companionship-smoke/run.sh --allow-llm --output NEW_JSON [--section all\|review-memory\|behavior\|controls\|continuity\|compaction] [--case CASE]` | `.\scripts\companionship-smoke\run.ps1 --allow-llm --output NEW_JSON [--section all\|review-memory\|behavior\|controls\|continuity\|compaction] [--case CASE]` |
 | screenshot-smoke | 现有 Windows 产品 Codex/PowerShell 的 64×64 截图、view_image 和源文件清理后资产保留验证；无 LLM、无沙箱初始化；报告与图片保留在系统临时目录。非 Windows 明确拒绝，不伪装跨平台实测。 | `./scripts/screenshot-smoke/run.sh --runtime-root PATH --codex-home PATH` | `.\scripts\screenshot-smoke\run.ps1 --runtime-root PATH --codex-home PATH` |
 | pokemon/ocr-check | 仅对明确指定的本地截图样本清单做离线 OCR 试验，原尺寸与 3 倍放大比较；uv 临时环境安装固定 rapidocr-onnxruntime 1.4.4，不改产品依赖、不调用 LLM、不上传截图。samples JSON 为 name/path/crop/expected 对象数组；output 必须不存在。个人 Skill 的 wait 无按键等待战斗决策边界，方向操作按需附前图（可 --compare）；OCR 尚不参与游戏控制。 | `./scripts/pokemon/run.sh ocr-check --samples PRIVATE_JSON --output NEW_JSON` | `.\scripts\pokemon\run.ps1 ocr-check --samples PRIVATE_JSON --output NEW_JSON` |
 | pokemon/verify-visual | 在已暂停实例上无 LLM 验证，finally 恢复原存档与玩家记录。`--movement` 检查短步/等待；`--inspection-workflow ID` 检查已录制查看流程；`--player-load` 验证玩家读档保留经验。报告与正式 AF 试玩分开，不计游戏进度。 | `./scripts/pokemon/run.sh verify-visual --movement` | `.\scripts\pokemon\run.ps1 verify-visual --player-load` |
@@ -54,6 +55,8 @@ Windows 隔离准备：identity 中的 `settings_backup.directory` 只是新建�
 `session-latency/run.* offline --fixture A=/explicit/session.jsonl --sequence 'A,A' --output /private/new-report.json` 在临时副本上运行真实 SessionManager/Conversation 和历史召回，用 fake provider 完成轮次；阻断网络、不读取用户配置、不改原始会话。多样本可重复 `--fixture B=...` 并使用 `--sequence 'B,B,A,B,A,B'`（PowerShell 中必须保留引号）；`--reload-each` 每轮重建 runtime/store，不表示 OS 冷缓存。报告将首次加载与发送至 fake 请求边界分开，保留阶段、查询和文件观测；没有真实结构化记忆库、Skill、附件、桌面 IPC 或供应商 SDK，不能当作安装版完整 E2E。输出文件必须不存在。Windows：`./scripts/session-latency/run.ps1 offline ...`；mac/linux：`./scripts/session-latency/run.sh offline ...`。
 
 `package/run.* runtime` 的 frozen doctor 还验证会话附件的持久发现、哈希校验、工作副本读取及只读输入清理；不访问网络或调用模型。
+
+同一 frozen doctor 也验证自主陪伴状态、消息直读、无模型跨会话投递，以及独立审批者和活动提示词资源；全部采用临时数据与离线模型替身。
 
 | 脚本 | 用途 | mac/linux | Windows |
 |---|---|---|---|

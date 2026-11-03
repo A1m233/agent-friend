@@ -29,6 +29,7 @@ import {
 import type { SessionSummary } from "@/types/meta";
 import { subscribeActiveChatSession } from "@/lib/active-chat-session";
 import { emitSessionsChanged } from "@/stores/sessions";
+import { openSettings } from "@/lib/settings/navigation";
 import { cn } from "@/utils/cn";
 
 interface Props {
@@ -271,7 +272,10 @@ export function IMConnectPanel({ active = true }: Props) {
   return (
     <div className="flex h-full flex-col bg-bg text-fg">
       <header className="border-b border-border px-4 py-3">
-        <h1 className="text-lg font-semibold text-fg">接入 IM</h1>
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-lg font-semibold text-fg">接入 IM</h1>
+          <Button variant="link" size="sm" onClick={() => void openSettings({ target: "chat" })}>调整回复风格</Button>
+        </div>
         <p className="mt-1 text-sm text-fg/70">
           在 IM 里也能跟我聊。同人格，共享记忆。
         </p>

@@ -1,6 +1,13 @@
 import { useState } from "react";
 import {
   CalendarClock,
+  AlarmClock,
+  AppWindow,
+  Heart,
+  KeyRound,
+  MessagesSquare,
+  Send,
+  UserRoundPen,
   Calculator,
   ChevronRight,
   CloudSun,
@@ -38,6 +45,13 @@ const CATEGORY_ICONS: Record<ToolActivityCategory, LucideIcon> = {
   weather: CloudSun,
   calculation: Calculator,
   dateCalculation: CalendarClock,
+  conversation: MessagesSquare,
+  message: Send,
+  companionship: Heart,
+  schedule: AlarmClock,
+  application: AppWindow,
+  persona: UserRoundPen,
+  auth: KeyRound,
   other: Wrench,
 };
 

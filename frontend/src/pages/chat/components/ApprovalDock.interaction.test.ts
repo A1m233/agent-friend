@@ -16,7 +16,7 @@ vi.mock("@/services/api/commandRuntime", () => ({ commandRuntimeApi: {
   status: mocks.status, cancel: mocks.cancel, setupWindowsSandbox: mocks.setupWindowsSandbox,
 } }));
 vi.mock("sonner", () => ({ toast: { error: mocks.toastError, info: mocks.toastInfo } }));
-vi.mock("./SessionApprovalModeController", () => ({
+vi.mock("./sessionApprovalModeContext", () => ({
   useSessionApprovalModeActions: () => ({
     requestSessionAutoFromApproval: mocks.requestSessionAuto,
     submittingRequestId: null,

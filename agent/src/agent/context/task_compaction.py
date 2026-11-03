@@ -215,7 +215,9 @@ def _select_prefix_candidate(
     )
     if not capable:
         raise _failure("checkpoint_unsupported")
-    if control.current_user is None and not has_new_user_input:
+    # Inner-world history has no user task to pin. The provider capability and
+    # completed-response/tool boundaries above still govern every checkpoint.
+    if control.current_user is None and not has_new_user_input and not runtime.autonomous_inner:
         raise _failure("task_source_unavailable")
     choice = choose([cut for cut in boundaries if cut not in ordinary], True)
     if choice is not None:

@@ -11,7 +11,6 @@ import { sessionRunPresentation } from "@/stores/runPresentation";
 import {
   buildPendingApprovalQueue,
   buildRunningCommandQueue,
-  shouldRenderPendingApprovals,
 } from "./approvalCandidates";
 import {
   resolvePrimaryActivity,
@@ -56,16 +55,15 @@ export function usePrimaryActivity(): PrimaryActivityPresentation {
   return useMemo(() => {
     const runPresentation = sessionRunPresentation(conversation, conversation.currentSessionId);
     const activeRunId = runPresentation.run?.run_id ?? null;
-    const pendingApprovals = shouldRenderPendingApprovals(conversation.approvalMode) || Object.values(commandRuntime.approvals).some(r => r.approval_mode_source === "request") || Object.values(filesystemEntries).some(e => e.request.approval_mode_source === "request")
-      ? buildPendingApprovalQueue({
-          currentSessionId: conversation.currentSessionId,
-          activeRunId,
-          commandApprovals: commandRuntime.approvals,
-          commandSubmitting: commandRuntime.submitting,
-          commandRuntimeStatus: commandRuntime.runtimeStatus,
-          filesystemEntries,
-        })
-      : [];
+    const pendingApprovals = buildPendingApprovalQueue({
+      currentSessionId: conversation.currentSessionId,
+      sessionMode: conversation.approvalMode,
+      activeRunId,
+      commandApprovals: commandRuntime.approvals,
+      commandSubmitting: commandRuntime.submitting,
+      commandRuntimeStatus: commandRuntime.runtimeStatus,
+      filesystemEntries,
+    });
     const runningCommands = buildRunningCommandQueue({
       currentSessionId: conversation.currentSessionId,
       activeRunId,
