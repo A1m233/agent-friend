@@ -1,0 +1,93 @@
+{
+  "purpose": "First real-model observation of classified WebFetch failures and recovery",
+  "created_at": "2026-11-04T17:52:20.888384+00:00",
+  "cases": [
+    "C26-10",
+    "C26-11",
+    "C26-12"
+  ],
+  "model": "custom/e460216e-71da-42cb-a252-03ecaf1aa2bd/8d0327f8-a306-412a-9796-ddb22aaa122a",
+  "provider_model": "gpt-6.1-sol",
+  "reasoning_preset": "effort:medium",
+  "model_provenance": "Incident session b0fbd93a-fce8-40be-87a6-e828e836197e initial model/effort, no model_config_change; run 216eda48b316405eb0b64e053db8dd4b bridge completion response_model=gpt-6.1-sol. C26-12 uses the same product model under verification.",
+  "sampling": "First verification; once per case, sequential; no reruns or additional cases.",
+  "expected_model_requests": "approximately 5-8 total; stop on failed case for attribution",
+  "authorization": "User explicitly requested these three real-model cases in this chat.",
+  "destination": "agent_eval/reports",
+  "note": "web-fetch-classification-first-real; incident GPT-6.1-sol effort:medium; derived 404/403 + timeout control; classified results fixed; leakage audit clean; target observations only",
+  "leakage_audit": {
+    "scope": "Product WebFetch diff versus C26-10/11/12 fixtures",
+    "text_scan": "No case IDs, synthetic domains/paths, report title, or expected date in product diff.",
+    "semantic_review": "General HTTP/transport failure facts and recovery hints only; fixture historical errors intentionally match production output, while task-specific answers do not enter product instructions.",
+    "holdout": "C26-12 adjacent synthetic control participated in design; no independent holdout; no generalization or stable pass-rate claim."
+  },
+  "code_head": "688f51116a37480e8b43aa6b08931b3cb96fc768",
+  "overlay_sha256": {
+    "agent/src/agent/tools/builtin/web_fetch/html.py": "2f2b4d0fbfa6df0e6dc5f0185fea9abbb7d913bda0506a82f6c7fd9d1918a1bd",
+    "agent/src/agent/tools/builtin/web_fetch/pdf.py": "a822e454a534d05032a81854f6327c493495c3ab14bfd6872f69a26335ad06e3",
+    "agent/src/agent/tools/builtin/web_fetch/provider.py": "28f867a51e072db0701c51730626940e6c6c6500ed8d74e14d021b156a5a8e6c",
+    "agent/src/agent/tools/builtin/web_fetch/tavily_extract.py": "f2c3b21712f7ec5bb8778b7e5cc5bf57d78a2febdf1c10e682086fdb1e5412d3",
+    "agent/src/agent/tools/builtin/web_fetch/tool.py": "536c97380c2f1cc1e531b332b01cc5fef4c9d9fc6ab5678684755d533b63be99",
+    "agent_eval/README.md": "4abfb3f1efda057f7bb946e634c9df97f87c4612b2708636be07ac4f956f77d6",
+    "agent_eval/cases/c26-agent-run-recovery.yaml": "cb05472bbcfaa6a33499798b936dd695f7b248e590e5f54f0852c06bd3c375c5",
+    "agent_eval/tests/test_loader.py": "28c7c4f1a65eadbb5f92b676e79da6f652ad73c46c47d2a371dcf747a0550f4d",
+    "agent/tests/test_web_fetch_failures.py": "d26abf10b4c67ed1cc7ea9ae5bfd5c5e12d080e442a6eb9efb4d3b4f43884de5",
+    "agent_eval/tests/test_web_fetch_recovery_cases.py": "ed613cb38d9bbece1a4a4db92f720b760c771a43c64c59f11fbe4d56fbdeabb7"
+  },
+  "case_set_digest": "8217424315769c629dc5b45f1eeb7703eaf9273647c61eb26e5f8b8b44f5e8be",
+  "case_file_sha256": "cb05472bbcfaa6a33499798b936dd695f7b248e590e5f54f0852c06bd3c375c5",
+  "status": "completed; all three real-model traces manually reviewed; C26-10 false negative reconciled without rerun",
+  "pending": [],
+  "completed": [
+    {
+      "case": "C26-10",
+      "status": "completed_false_negative_reconciled",
+      "report": "2026-11-04T17-52-36-688f5111-C26-10.json",
+      "raw_judge": "fail: literal ISO date required",
+      "manual_review": "Pass: searched new URL, fetched exactly once, cited returned body and equivalent date 2026 年 8 月 17 日; no unchanged retry; end_turn; no runtime error.",
+      "rerun": false,
+      "report_sha256": "b9887a60c7729b5c51de4eb8ffd4e781dc9e7f20d9cf378154c7cca28a4eefaf"
+    },
+    {
+      "case": "C26-11",
+      "status": "completed_pass",
+      "report": "2026-11-04T17-54-36-688f5111-C26-11.json",
+      "raw_judge": "pass",
+      "manual_review": "Pass: explicitly identifies HTTP 403/access denial, no body obtained, no unsupported anti-bot attribution, no tool calls; end_turn; no runtime error.",
+      "report_sha256": "b54154dbe5c03156574b1c618bb6256d41d685fa3994b87e97b477a4119cec6d"
+    },
+    {
+      "case": "C26-12",
+      "status": "completed_pass",
+      "report": "2026-11-04T17-55-25-688f5111-C26-12.json",
+      "raw_judge": "pass",
+      "manual_review": "Pass: identifies timeout, explicitly states this does not imply missing page and exact cause is unknown, no tool calls; end_turn; no runtime error.",
+      "report_sha256": "ae150dad380234c23e225ca3abc6682f0ae8f6a9a10606cc443eb437b1186686"
+    }
+  ],
+  "amendments": [
+    {
+      "reason": "Confirmed judge false negative: semantically identical Chinese date rejected by literal ISO anchor. Governance consistency exception; product and remaining case inputs unchanged.",
+      "changed_files": {
+        "agent_eval\\cases\\c26-agent-run-recovery.yaml": "3fad0f6f2c21ac5f7633451e604a75570b40bb0ad642959f56a899bf3d88c604",
+        "agent_eval\\tests\\test_web_fetch_recovery_cases.py": "86ec4d4c677aee3d035bbb47a0ebc5f1ef77975cfaf8767b509b85671773d63e"
+      },
+      "case_set_digest": "ae4f1e191ad127ac6d1cc3ff58b92542ec634821030a8c2630f1d57acdf32b18",
+      "remaining_cases": [
+        "C26-11",
+        "C26-12"
+      ],
+      "model_and_sampling": "unchanged; no rerun of C26-10"
+    }
+  ],
+  "deterministic_reconciliation_checks": "169 agent_eval tests passed; lint passed; mypy 917 files passed",
+  "results": {
+    "raw_machine_passes": 2,
+    "raw_machine_failures": 1,
+    "confirmed_judge_false_negatives": 1,
+    "manual_behavior_passes": 3,
+    "runtime_errors": 0,
+    "sampling": "one real run per case; no reruns",
+    "limits": "Fixed classified tool results with real model; C26-10 web search/fetch recovery uses fixtures. Not a live-site availability test, independent holdout, repeated reliability estimate, or original long-session replay."
+  }
+}

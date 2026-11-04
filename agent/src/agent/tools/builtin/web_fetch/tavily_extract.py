@@ -10,7 +10,9 @@ from .provider import (
     WebContentEmptyError,
     WebContentError,
     WebContentNetworkError,
+    WebContentProviderAccessError,
     WebContentRateLimitError,
+    WebContentTimeoutError,
 )
 
 
@@ -42,13 +44,17 @@ class TavilyExtractProvider:
             )
         except (InvalidAPIKeyError, MissingAPIKeyError) as exc:
             raise WebContentAuthError(str(exc)) from exc
-        except (UsageLimitExceededError, ForbiddenError) as exc:
+        except ForbiddenError as exc:
+            raise WebContentProviderAccessError("remote extraction denied access") from exc
+        except UsageLimitExceededError as exc:
             raise WebContentRateLimitError(str(exc)) from exc
         except TavilyTimeoutError as exc:
-            raise WebContentNetworkError(str(exc)) from exc
+            raise WebContentTimeoutError("remote extraction timed out") from exc
         except Exception as exc:
             message = str(exc).lower()
-            if any(word in message for word in ("timeout", "connect", "network", "dns")):
+            if "timeout" in message or "timed out" in message:
+                raise WebContentTimeoutError("remote extraction timed out") from exc
+            if any(word in message for word in ("connect", "network", "dns")):
                 raise WebContentNetworkError(str(exc)) from exc
             raise WebContentError(str(exc)) from exc
 
