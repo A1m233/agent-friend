@@ -1402,12 +1402,10 @@ class Conversation:
 
             def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
                 nonlocal trigger_appended
-                tool_specs = self._current_tool_specs()
-                messages = yield from self._assemble_stream(
-                    trailing_user=system_prompt_addendum,
-                    tool_specs=tool_specs,
-                    cancel_check=cancel_check,
-                )
+                self._check_cancel(cancel_check)
+                # The accepted trigger belongs to the source being compacted.
+                # Appending it afterwards invalidates our own checkpoint before
+                # the provider can accept the prepared request.
                 if not trigger_appended:
                     self._append_system_trigger_event(
                         source_kind=source_kind,
@@ -1417,7 +1415,13 @@ class Conversation:
                         event_metadata=event_metadata,
                     )
                     trigger_appended = True
-                return messages
+                return (
+                    yield from self._assemble_stream(
+                        trailing_user=system_prompt_addendum,
+                        tool_specs=self._current_tool_specs(),
+                        cancel_check=cancel_check,
+                    )
+                )
 
         except BaseException:
             self._restore_run_model_snapshot(previous_run_model_snapshot)
@@ -3584,11 +3588,37 @@ class Conversation:
             **({} if compatibility_only else {"tools": tools or []}),
             "settings": settings or {},
         }
+        self._upgrade_attachment_usage_anchor(identity)
         if compatibility_only:
             from .context.input_identity import input_compatibility_scope
 
             return input_compatibility_scope(identity)
         return digest(identity)
+
+    def _upgrade_attachment_usage_anchor(self, identity: dict[str, Any]) -> None:
+        """Retain measured components across the known additive v2 -> v3 change."""
+        anchor = self._usage_anchor
+        event = getattr(self, "_legacy_usage_event", None)
+        if anchor is None or anchor.version != 4 or event is None:
+            return
+        usage = event.meta.get("context_usage")
+        if (
+            INPUT_PROJECTION_VERSION != "session-files-v3"
+            or not isinstance(usage, dict)
+            or usage.get("attachment_input_projection") != "session-files-v2"
+        ):
+            return
+        from .context.input_identity import input_compatibility_scope
+
+        previous = {**identity, "attachment_input_projection": "session-files-v2"}
+        if anchor.compatibility_scope == input_compatibility_scope(previous):
+            # v3 adds assistant file references; user projection, transport and
+            # token accounting are unchanged. Actual rendered component hashes
+            # still charge changed text/files and reserve unseen opaque inputs.
+            # Every other input identity field must match the persisted scope.
+            self._usage_anchor = replace(
+                anchor, compatibility_scope=input_compatibility_scope(identity)
+            )
 
     def _input_calibration_key(self, messages: list[Message]) -> str:
         kinds = {"session_file" for message in messages for ref in message.attachments}

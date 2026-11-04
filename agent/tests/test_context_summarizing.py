@@ -881,12 +881,17 @@ def _make_conversation(
     fake_llm: Any,
     context_manager: Any,
     with_recovery_tool: bool = False,
+    origin_kind: str | None = None,
 ) -> tuple[Conversation, Session, JsonlSessionStore]:
     catalog = PersonaCatalog(external_dir=tmp_path / "personas")
     persona_id = BUILTIN_DEFAULT_PERSONA_ID
     store = JsonlSessionStore(base_dir=tmp_path / "sessions")
     session = Session.new(
-        title="t", persona="default", model="deepseek/test", persona_id=persona_id
+        title="t",
+        persona="default",
+        model="deepseek/test",
+        persona_id=persona_id,
+        origin_kind=origin_kind,
     )
     store.create(session)
     builder = MarkdownPromptBuilder(persona_id=persona_id, catalog=catalog)
