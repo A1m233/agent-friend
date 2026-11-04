@@ -57,6 +57,8 @@ export interface PushEnvelope {
   command_process?: unknown;
   sandbox_capability?: unknown;
   notification?: AgentNotification | null;
+  /** Live arrival signal consumed by native audio, never by WebViews. */
+  notification_sound?: boolean;
 }
 
 // SessionEvent 仍由 sessionProjection 消费（GET /v1/sessions/{id} 返回的持久化 events）；

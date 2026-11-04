@@ -40,5 +40,6 @@ export interface PreparedNotification {
 
 export interface NotificationPresentationReceipt {
   notification: AgentNotification;
+  /** Legacy response field; presentation never authorizes audio playback. */
   playSound: boolean;
 }

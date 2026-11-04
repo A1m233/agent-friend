@@ -192,7 +192,7 @@ describe("notification presentation ownership", () => {
     expect(mocks.invoke).not.toHaveBeenCalled();
   });
 
-  it("records only actual displayed truncated text and plays only for the first accepted receipt", async () => {
+  it("records displayed text without sound even for a legacy sound-qualified receipt", async () => {
     const item = notification();
     ready(item);
     const claimed = prepared(item);
@@ -208,11 +208,11 @@ describe("notification presentation ownership", () => {
     pending.resolve(receipt(claimed.notification));
     await first;
     await recordNotificationPresented("n1", item.text, false);
-    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith("play_notification_sound", { notificationId: "n1" });
+    expect(mocks.invoke).not.toHaveBeenCalled();
     expect(mocks.presented).toHaveBeenCalledTimes(1);
   });
 
-  it("does not retry a failed native sound after the presented receipt was committed", async () => {
+  it("never invokes native audio from repeated presentation receipts", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const item = notification();
     ready(item);
@@ -220,10 +220,9 @@ describe("notification presentation ownership", () => {
     mocks.prepare.mockResolvedValue(claimed);
     await prepareNotification("n1");
     mocks.presented.mockResolvedValue(receipt(claimed.notification));
-    mocks.invoke.mockRejectedValueOnce(new Error("audio unavailable"));
     await recordNotificationPresented("n1", item.text, false);
     await recordNotificationPresented("n1", item.text, false);
-    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    expect(mocks.invoke).not.toHaveBeenCalled();
     expect(useNotificationStore.getState().records.n1.delivery.status).toBe("presented");
   });
 
@@ -341,12 +340,12 @@ describe("notifications that replace a closed row", () => {
     }));
   });
 
-  it("silences only the fifth replacement while still acknowledging every presented row", async () => {
+  it("acknowledges every presented row without playing audio", async () => {
     ready(...["A", "B", "C", "D", "E"].map((id) => notification(id)));
     for (const id of ["A", "B", "C", "D"]) await prepareNotification(id);
 
     await dismissNotification("A");
-    expect(mocks.dismiss).toHaveBeenCalledExactlyOnceWith("A", 2, ["E"]);
+    expect(mocks.dismiss).toHaveBeenCalledExactlyOnceWith("A", 2);
     await prepareNotification("E");
     for (const id of ["B", "C", "D", "E"]) {
       await recordNotificationPresented(id, `实际显示 ${id}`, false);
@@ -354,14 +353,13 @@ describe("notifications that replace a closed row", () => {
 
     expect(mocks.presented.mock.calls).toEqual(["B", "C", "D", "E"]
       .map((id) => [id, 1, `实际显示 ${id}`, false]));
-    expect(mocks.invoke.mock.calls).toEqual(["B", "C", "D"]
-      .map((notificationId) => ["play_notification_sound", { notificationId }]));
+    expect(mocks.invoke).not.toHaveBeenCalled();
     for (const id of ["B", "C", "D", "E"]) {
       expect(useNotificationStore.getState().records[id].delivery.status).toBe("presented");
     }
   });
 
-  it("freezes E and F across consecutive closes without silencing a new higher-priority arrival", async () => {
+  it("keeps concurrent closes and incoming notifications independent of audio", async () => {
     ready(...["A", "B", "C", "D", "E", "F"].map((id) => notification(id)));
     const closingA = deferred<{ notification: AgentNotification }>();
     const closingB = deferred<{ notification: AgentNotification }>();
@@ -369,7 +367,7 @@ describe("notifications that replace a closed row", () => {
 
     const first = dismissNotification("A");
     const second = dismissNotification("B");
-    expect(mocks.dismiss.mock.calls).toEqual([["A", 1, ["E"]], ["B", 1, ["F"]]]);
+    expect(mocks.dismiss.mock.calls).toEqual([["A", 1], ["B", 1]]);
     useNotificationStore.getState().merge([notification("Z", { kind: "needs_action" })]);
     closingB.resolve({ notification: dismissed(useNotificationStore.getState().records.B) });
     await second;
@@ -381,10 +379,10 @@ describe("notifications that replace a closed row", () => {
       await recordNotificationPresented(id, `实际显示 ${id}`, false);
     }
     expect(mocks.presented.mock.calls.map(([id]) => id)).toEqual(["E", "F", "Z"]);
-    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith("play_notification_sound", { notificationId: "Z" });
+    expect(mocks.invoke).not.toHaveBeenCalled();
   });
 
-  it("keeps a replacement silent when its sound-qualified receipt arrives after close has finished", async () => {
+  it("keeps delayed legacy receipts silent after close", async () => {
     ready(...["A", "B", "C", "D", "E"].map((id) => notification(id)));
     const closing = deferred<{ notification: AgentNotification }>();
     const presenting = deferred<NotificationPresentationReceipt>();
@@ -406,7 +404,7 @@ describe("notifications that replace a closed row", () => {
     expect(mocks.invoke).not.toHaveBeenCalled();
   });
 
-  it("keeps the original replacement IDs when a version conflict refreshes a reordered queue", async () => {
+  it("retries the original close after a snapshot reorders the queue", async () => {
     vi.spyOn(console, "debug").mockImplementation(() => {});
     ready(...["A", "B", "C", "D", "E"].map((id) => notification(id)));
     const newerA = notification("A", { version: 2 });
@@ -417,7 +415,7 @@ describe("notifications that replace a closed row", () => {
 
     await dismissNotification("A");
 
-    expect(mocks.dismiss.mock.calls).toEqual([["A", 1, ["E"]], ["A", 2, ["E"]]]);
+    expect(mocks.dismiss.mock.calls).toEqual([["A", 1], ["A", 2]]);
     expect(selectBubbleNotifications(useNotificationStore.getState().records)
       .map((item) => item.notificationId)).toEqual(["Z", "B", "C", "D"]);
     for (const id of ["E", "Z", "D"]) {
@@ -425,11 +423,10 @@ describe("notifications that replace a closed row", () => {
       await recordNotificationPresented(id, `实际显示 ${id}`, false);
     }
     expect(mocks.presented.mock.calls.map(([id]) => id)).toEqual(["E", "Z", "D"]);
-    expect(mocks.invoke.mock.calls).toEqual(["Z", "D"]
-      .map((notificationId) => ["play_notification_sound", { notificationId }]));
+    expect(mocks.invoke).not.toHaveBeenCalled();
   });
 
-  it("keeps the two-argument close contract when there is no unseen replacement", async () => {
+  it("closes without a replacement sound policy", async () => {
     ready(...["A", "B", "C", "D"].map((id) => notification(id)),
       notification("E", { delivery: { status: "presented", presentedAt: "2026-09-06T07:20:02Z" } }));
     await dismissNotification("A");

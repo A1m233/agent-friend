@@ -81,6 +81,8 @@ class PushEnvelope:
     runtime_instance_id: str | None = None
     run_event_seq: int | None = None
     notification: dict[str, Any] | None = None
+    # Transient live-arrival signal; never reconstructed from a snapshot.
+    notification_sound: bool = False
 
 
 @dataclass(frozen=True)
@@ -553,7 +555,9 @@ class ListenerRegistry:
                     ),
                 )
 
-    def publish_notification_change(self, notification: dict[str, Any]) -> None:
+    def publish_notification_change(
+        self, notification: dict[str, Any], sound: bool = False
+    ) -> None:
         """Publish a durable notification revision, never an Agent turn."""
         with self._lock:
             for sub in list(self._subs.values()):
@@ -569,6 +573,7 @@ class ListenerRegistry:
                         source_kind=None,
                         events=[],
                         notification=notification,
+                        notification_sound=sound,
                     ),
                 )
 

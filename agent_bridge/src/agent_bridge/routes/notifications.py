@@ -33,6 +33,7 @@ class PresentedRequest(BaseModel):
 class DismissRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: int = Field(ge=1)
+    # Accepted for older desktop clients, but closing never changes sound eligibility.
     silent_replacement_ids: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(
         default_factory=list, alias="silentReplacementIds", max_length=4
     )
@@ -93,10 +94,11 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     @router.post("/{notification_id}/presented")
     def presented(notification_id: str, body: PresentedRequest) -> dict[str, Any]:
         try:
-            item, sound = service().presented(
+            item = service().presented(
                 notification_id, attempt=body.attempt, text=body.text, truncated=body.truncated
             )
-            return {"notification": item.to_wire(), "playSound": sound}
+            # Older clients must also stay silent on presentation receipts.
+            return {"notification": item.to_wire(), "playSound": False}
         except (NotificationConflict, NotificationNotFound) as exc:
             raise _error(exc) from exc
 
@@ -108,7 +110,6 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 .dismiss(
                     notification_id,
                     version=body.version,
-                    silent_replacement_ids=body.silent_replacement_ids,
                 )
                 .to_wire()
             }

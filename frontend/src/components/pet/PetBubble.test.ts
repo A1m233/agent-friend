@@ -232,7 +232,7 @@ describe("PetBubble controlled rows", () => {
     expect(mocks.prepare).not.toHaveBeenCalled();
 
     await act(async () => closeButton("A").click());
-    expect(mocks.dismiss).toHaveBeenCalledExactlyOnceWith("A", 3, ["E"]);
+    expect(mocks.dismiss).toHaveBeenCalledExactlyOnceWith("A", 3);
     expect(mocks.prepare).toHaveBeenCalledExactlyOnceWith("E", 3, expect.any(String));
     expect(activeIds()).toEqual(["B", "C", "D", "E"]);
     expect(row("A").dataset.state).toBe("exiting");

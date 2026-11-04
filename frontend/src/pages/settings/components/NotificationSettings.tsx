@@ -31,7 +31,7 @@ export function NotificationSettings() {
     </SettingsRow>
     <NotificationSoundSettings />
     <p className="text-xs leading-relaxed text-muted">
-      新气泡显示时播放提示音。关闭声音后，气泡仍会正常显示。
+      收到新通知时播放一次提示音。滚动查看、展开或补位不会再次播放。
     </p>
   </div>;
 }
