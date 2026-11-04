@@ -148,10 +148,18 @@ def approval_text(snapshot: dict[str, object], title: str) -> str:
     risk_text = ""
     if isinstance(risk, dict) and risk.get("level") == "catastrophic":
         risk_text = "\n高危请求：请仔细检查；免授权模式不会自动允许此项。"
+    fallback = {
+        "failed": "自动审批出错，请你确认本次操作",
+        "timed_out": "自动审批超时，请你确认本次操作",
+        "denied": "自动审批未放行，请你确认本次操作",
+    }.get(str(snapshot.get("review_fallback")))
+    review = snapshot.get("review")
+    if fallback and isinstance(review, dict) and isinstance(review.get("rationale"), str):
+        fallback += "：" + plain_literal(review["rationale"])
     text = (
         "本地操作等待授权\n"
         + plain_literal(f"会话：{title}\n")
-        + mode_label(str(snapshot.get("approval_mode")))
+        + (fallback or mode_label(str(snapshot.get("approval_mode"))))
         + "\n"
         + plain_literal(f"理由：{snapshot.get('reason', '')}\n\n{body}")
         + risk_text

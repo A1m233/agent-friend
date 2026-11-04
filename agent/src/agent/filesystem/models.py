@@ -108,6 +108,7 @@ class PendingFilesystemApproval:
     decision_source: ApprovalDecisionSource | None = None
     risk_assessment: RiskAssessment | None = None
     review_assessment: dict[str, object] | None = None
+    review_fallback: str | None = None
     review_fingerprint: str | None = None
     review_context: object | None = field(default=None, repr=False)
     _decision: ApprovalDecision | None = field(default=None, repr=False)
@@ -152,6 +153,7 @@ class PendingFilesystemApproval:
             "approval_mode_source": self.approval_mode_source,
             "decision_source": self.decision_source,
             "review": self.review_assessment,
+            "review_fallback": self.review_fallback,
             "review_fingerprint": self.review_fingerprint,
             "risk": (self.risk_assessment.to_dict() if self.risk_assessment is not None else None),
         }

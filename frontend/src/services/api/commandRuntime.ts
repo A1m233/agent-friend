@@ -64,6 +64,7 @@ export interface CommandApprovalRequest {
   approval_mode?: "per_request" | "session_auto" | "auto_review" | "full_access";
   approval_mode_source?: "session" | "request" | "global";
   review?: { outcome: "allow" | "deny"; risk_level: string; user_authorization: string; rationale: string } | null;
+  review_fallback?: "failed" | "timed_out" | "denied" | null;
   approval_mode_version?: number;
   decision_source?: ApprovalDecisionSource | null;
   risk?: ApprovalRiskAssessment | null;

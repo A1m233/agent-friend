@@ -98,7 +98,20 @@ class AutomaticApprovals:
         timeout: float,
         publish: Callable[[], None],
         policy_current: Callable[[], bool],
+        manual_fallback: Callable[[str, ReviewAssessment | None], bool] | None = None,
     ) -> Any:
+        def finish(state: str, assessment: ReviewAssessment | None) -> Any:
+            if request._event.is_set() or not policy_current():
+                state = "aborted"
+            if (
+                state in {"failed", "timed_out", "denied"}
+                and (assessment is None or assessment.risk_level != "critical")
+                and manual_fallback is not None
+                and manual_fallback(state, assessment)
+            ):
+                return request._decision
+            return self._finish(request, state, assessment, publish)
+
         mode = request.approval_mode
         request.decision_source = "auto_review" if mode == "auto_review" else "full_access"
         action = action_payload(request)
@@ -133,7 +146,7 @@ class AutomaticApprovals:
         if extra is not None and extra.pop("expires_at") > time.monotonic():
             action["host_user_reauthorization"] = extra
         elif cached is not None:
-            return self._finish(request, "denied", cached, publish)
+            return finish("denied", cached)
         request.status = "reviewing"
         request.version += 1
         publish()
@@ -162,20 +175,18 @@ class AutomaticApprovals:
                 continue
             except (InterruptedError, TimeoutError) as error:
                 stopped.set()
-                return self._finish(
-                    request,
+                return finish(
                     "aborted" if isinstance(error, InterruptedError) else "timed_out",
                     None,
-                    publish,
                 )
             stopped.set()
             if isinstance(assessment, Exception):
                 state = "timed_out" if isinstance(assessment, TimeoutError) else "failed"
-                return self._finish(request, state, None, publish)
+                return finish(state, None)
             if not policy_current() or request._event.is_set():
                 return self._finish(request, "aborted", None, publish)
             state = "approved" if assessment.outcome == "allow" else "denied"
-            return self._finish(request, state, assessment, publish)
+            return finish(state, assessment)
 
     def _finish(
         self,

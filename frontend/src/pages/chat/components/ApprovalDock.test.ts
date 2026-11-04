@@ -103,6 +103,18 @@ const runtimeReady: CommandRuntimeStatus = {
 };
 
 describe("buildPendingApprovalQueue", () => {
+  it("keeps a filesystem fallback visible while the session stays in automatic review", () => {
+    const entry = filesystem();
+    entry.request.approval_mode = "per_request";
+    entry.request.review_fallback = "timed_out";
+    const queue = buildPendingApprovalQueue({
+      currentSessionId: "session-a", activeRunId: "run-a", sessionMode: "auto_review",
+      commandApprovals: {}, commandSubmitting: new Set(), commandRuntimeStatus: runtimeReady,
+      filesystemEntries: { current: entry },
+    });
+    expect(queue).toHaveLength(1);
+    expect(queue[0].reviewFallback).toBe("自动审批超时，请你确认本次操作");
+  });
   it("shows only pending approvals owned by the active run", () => {
     const queue = buildPendingApprovalQueue({
       currentSessionId: "session-a",

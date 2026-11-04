@@ -109,6 +109,26 @@ describe("ApprovalDock command decision interaction", () => {
     return found!;
   }
 
+  it("turns a silent automatic review into the existing manual card and uses its decision", async () => {
+    const reviewing: CommandApprovalRequest = {
+      ...request, version: 2, status: "reviewing", approval_mode: "auto_review", decision_source: "auto_review",
+    };
+    useCommandRuntimeStore.setState({ approvals: { [request.request_id]: reviewing } });
+    await mount();
+    expect(container.textContent).not.toContain("仅本次允许");
+    const manual: CommandApprovalRequest = {
+      ...reviewing, version: 3, status: "pending", approval_mode: "per_request", review_fallback: "failed",
+    };
+    await act(async () => useCommandRuntimeStore.setState({ approvals: { [request.request_id]: manual } }));
+    expect(container.textContent).toContain("自动审批出错，请你确认本次操作");
+    expect(container.textContent).toContain("检查测试夹具中的环境");
+    expect(container.textContent).not.toContain("重新审批");
+    mocks.decide.mockResolvedValue(approved(manual));
+    await act(async () => button("仅本次允许").click());
+    expect(mocks.decide).toHaveBeenCalledWith(manual, true);
+    expect(container.textContent).not.toContain("仅本次允许");
+  });
+
   function expectApprovalRemoved() {
     expect(container.querySelector('[data-primary-activity="approval"]')).toBeNull();
     expect(container.textContent).not.toContain(request.reason);
