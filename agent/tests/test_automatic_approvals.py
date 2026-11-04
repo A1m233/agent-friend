@@ -15,11 +15,67 @@ from agent.approvals.reviewer import (
     SecurityReviewer,
     inspect_action_path,
     parse_assessment,
+    review_failure_message,
 )
 from agent.filesystem.models import ApprovalItem, PendingFilesystemApproval
 from llm_providers.stream_events import LLMStreamEvent
 
 from llm_providers import ModelRequest, ModelResponse
+
+
+@pytest.mark.parametrize("succeeds", [True, False])
+def test_security_review_retries_transient_provider_failure_once(
+    monkeypatch: pytest.MonkeyPatch, succeeds: bool
+) -> None:
+    from llm_providers.errors import LLMTransientProviderError
+
+    from llm_providers import LLMClient, build_provider_spec
+
+    calls: list[ModelRequest] = []
+    deadline = time.monotonic() + 5
+
+    def generate(_spec: Any, request: ModelRequest, **_kwargs: Any) -> ModelResponse:
+        calls.append(request)
+        if succeeds and len(calls) == 2:
+            return ModelResponse('{"outcome":"allow"}')
+        raise LLMTransientProviderError("server unavailable")
+
+    monkeypatch.setattr("llm_providers.client.generate_responses", generate)
+    spec = build_provider_spec(provider_id="deepseek", api_key="fixture")
+    assert spec.responses is not None
+    reviewer = SecurityReviewer(
+        LLMClient(
+            spec,
+            network_retry_backoff_seconds=0,
+            engine_overload_retry_backoff_seconds=0,
+        )
+    )
+
+    def run() -> ReviewAssessment:
+        return reviewer.review(
+            {"kind": "filesystem"},
+            [],
+            inspect=lambda *_: {},
+            cancel_check=lambda: None,
+            deadline=deadline,
+            session_id="s",
+            run_id="r",
+        )
+
+    if succeeds:
+        assert run().outcome == "allow"
+    else:
+        with pytest.raises(LLMTransientProviderError):
+            run()
+    assert len(calls) == 2
+    assert all(call.control.deadline_monotonic == deadline for call in calls)
+
+
+@pytest.mark.parametrize("status", ["failed", "timed_out", "aborted", "denied"])
+def test_review_failures_preserve_the_reason_without_claiming_execution(status: str) -> None:
+    message = review_failure_message(status)
+    assert "未授予权限，操作未执行" in message
+    assert ("被自动审批拒绝" in message) == (status == "denied")
 
 
 def test_global_policy_migrates_legacy_or_invalid_values_without_expanding_access() -> None:
@@ -222,7 +278,10 @@ def test_reviewer_uses_only_security_context_and_bounded_inspection(tmp_path: Pa
     )
     assert result.outcome == "allow"
     assert len(seen) == 2
-    assert all(req.tools is None and not req.control.allow_retries for req in seen)
+    assert all(req.tools is None and req.control.allow_retries for req in seen)
+    assert all(
+        req.control.retry_limit == 1 and req.control.deadline_monotonic is not None for req in seen
+    )
     assert "friend persona" not in seen[0].messages[0]["content"]
     assert "{{" not in seen[0].messages[0]["content"]
     assert "universal sandbox" in seen[0].messages[0]["content"]

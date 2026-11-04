@@ -29,6 +29,7 @@ import {
 import type { ToolBlock } from "@/types/chat";
 import { cn } from "@/utils/cn";
 import { ToolCard } from "./ToolCard";
+import { AutomaticReviewStatus } from "./AutomaticReviewStatus";
 import {
   toolActivitySummary,
   toolPresentation,
@@ -126,6 +127,7 @@ function ToolActivityItem({
       category={presentation.category}
       contentClassName={cn("ml-5 pt-1 pb-1", bounded && "max-h-tool-activity overflow-y-auto overscroll-y-contain")}
     >
+      <AutomaticReviewStatus toolCallId={block.toolCallId} />
       <ToolCard block={block} embedded isPrimaryActivity={isPrimaryActivity} />
     </ToolDisclosureRow>
   );

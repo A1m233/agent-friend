@@ -49,6 +49,48 @@ describe("filesystem approvals store", () => {
     useFilesystemApprovalsStore.getState().clear();
   });
 
+  it.each(["approved", "denied", "failed", "timed_out", "aborted"] as const)(
+    "accepts automatic review pushes through %s and ignores delayed reviewing events",
+    (status) => {
+      for (const [version, next] of [[2, "reviewing"], [3, status], [2, "reviewing"]] as const) {
+        handleFilesystemApprovalPush({
+          kind: "filesystem_approval_changed", session_id: "session-a",
+          seq: version, source_kind: null, events: [],
+          filesystem_approval: request("one", "session-a", {
+            version, status: next, decision_source: "auto_review",
+          }),
+        });
+      }
+      expect(useFilesystemApprovalsStore.getState().entries.one.status).toBe(status);
+      expect(useFilesystemApprovalsStore.getState().entries.one.request.status).toBe(status);
+    },
+  );
+
+  it.each(["disconnect", "finish", "absent"] as const)(
+    "retires a reviewing card on %s even if its final push is lost",
+    async (event) => {
+      const store = useFilesystemApprovalsStore.getState();
+      store.merge(request("one", "session-a", { status: "reviewing", decision_source: "auto_review" }));
+      if (event === "disconnect") store.markDisconnected();
+      if (event === "finish") store.finishRun("run-session-a");
+      if (event === "absent") {
+        vi.mocked(filesystemApprovalsApi.pending).mockResolvedValue([]);
+        await store.refresh();
+      }
+      expect(useFilesystemApprovalsStore.getState().entries.one.status).toBe("interrupted");
+    },
+  );
+
+  it("restores the actual reviewing state after reconnection", async () => {
+    const review = request("one", "session-a", { status: "reviewing", decision_source: "auto_review" });
+    const store = useFilesystemApprovalsStore.getState();
+    store.merge(review);
+    store.markDisconnected();
+    vi.mocked(filesystemApprovalsApi.pending).mockResolvedValue([review]);
+    await store.refresh();
+    expect(useFilesystemApprovalsStore.getState().entries.one.status).toBe("reviewing");
+  });
+
   it("tracks pending approvals across background sessions", async () => {
     vi.mocked(filesystemApprovalsApi.pending).mockResolvedValue([
       request("one", "session-a"),
