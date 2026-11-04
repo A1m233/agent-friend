@@ -17,6 +17,19 @@ Authorization = Literal["unknown", "low", "medium", "high"]
 REVIEW_CONTEXT_ARG = "__agent_friend_review_context"
 
 
+def review_failure_message(status: str) -> str:
+    reason = {
+        "failed": "自动审批过程出错，未能取得审批结论。",
+        "timed_out": "自动审批超时，未能取得审批结论。",
+        "aborted": "自动审批已中止。",
+        "denied": "本次操作被自动审批拒绝。",
+    }.get(status, "自动审批未完成。")
+    return (
+        reason + "未授予权限，操作未执行。不要原样重试或换工具绕过；"
+        "普通会话可由用户对这项操作发起重新审批，自主活动可选择安全替代或结束。"
+    )
+
+
 @dataclass(frozen=True)
 class ReviewContext:
     model: LanguageModel
@@ -191,8 +204,8 @@ class SecurityReviewer:
                     control=ModelCallControl(
                         cancel_check=cancel_check,
                         deadline_monotonic=deadline,
-                        allow_retries=False,
-                        retry_limit=0,
+                        allow_retries=True,
+                        retry_limit=1,
                         trace_context=ModelCallTraceContext(
                             operation="approval_review",
                             call_kind="security_review",

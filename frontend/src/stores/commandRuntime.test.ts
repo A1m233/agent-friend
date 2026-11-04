@@ -137,6 +137,24 @@ describe("command runtime global sandbox capability", () => {
     expect(useCommandRuntimeStore.getState().approvals).toEqual({});
   });
 
+  it.each(["disconnect", "finish", "absent"] as const)(
+    "retires automatic command review on %s without a final push",
+    async (event) => {
+      const request: CommandApprovalRequest = {
+        ...approval(), status: "reviewing", decision_source: "auto_review",
+      };
+      const store = useCommandRuntimeStore.getState();
+      store.handlePush({
+        kind: "approval_changed", session_id: "session-a", seq: 1,
+        source_kind: null, events: [], approval: request,
+      });
+      if (event === "disconnect") store.markDisconnected();
+      if (event === "finish") store.finishRun("run-a");
+      if (event === "absent") await store.refresh();
+      expect(useCommandRuntimeStore.getState().approvals[request.request_id].status).toBe("cancelled");
+    },
+  );
+
   it("retains desktop approval pushes without creating a managed process", () => {
     const request: ApplicationApprovalRequest = { ...approval(), kind: "desktop_application",
       details: { executable_path: "C:\\Apps\\Viewer.exe", arguments: [], working_directory: "C:\\Apps",

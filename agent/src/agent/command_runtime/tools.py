@@ -17,6 +17,7 @@ from typing import Any, ClassVar, cast
 from uuid import uuid4
 
 from ..approvals import ApprovalBroker
+from ..approvals.reviewer import review_failure_message
 from ..attachments import AttachmentError, AttachmentRef
 from ..execution_environment import (
     ExecutionEnvironmentManager,
@@ -751,7 +752,7 @@ class ExecCommandTool:
                     "error": f"approval_{request.status}",
                     "request_id": request.request_id,
                     "review": request.review_assessment,
-                    "message": "自动审批未放行，命令未执行。不要原样重试或换工具绕过；自主活动应选择安全替代或结束。",
+                    "message": review_failure_message(request.status),
                     "retryable_without_user_change": False,
                 },
                 error=True,

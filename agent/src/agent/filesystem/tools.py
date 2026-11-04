@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, ClassVar, cast
 
+from ..approvals.reviewer import review_failure_message
 from ..tools.protocol import Tool, ToolResult
 from .approvals import FilesystemApprovalBroker
 from .models import (
@@ -290,7 +291,7 @@ class RequestFilesystemAccessTool:
                     "error": f"approval_{request.status}",
                     "request_id": request.request_id,
                     "review": request.review_assessment,
-                    "message": "本次自动审批未放行，未授予文件权限。不要原样重试或绕过；自主活动可选择安全替代或结束。",
+                    "message": review_failure_message(request.status),
                     "retryable_without_user_change": False,
                 },
                 error=True,

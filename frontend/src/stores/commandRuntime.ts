@@ -123,7 +123,7 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
       }
       for (const [requestId, request] of Object.entries(nextApprovals)) {
         if (
-          request.status !== "pending"
+          (request.status !== "pending" && request.status !== "reviewing")
           || approvalIds.has(requestId)
           || !canReconcileSnapshotAbsence(state.approvalFence, requestId, approvalRequestEpoch)
         ) continue;
@@ -223,7 +223,7 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
       let approvalFence = state.approvalFence;
       let processFence = state.processFence;
       const approvals = Object.fromEntries(Object.entries(state.approvals).map(([key, request]) => {
-        if (request.run_id !== runId || request.status !== "pending") return [key, request];
+        if (request.run_id !== runId || (request.status !== "pending" && request.status !== "reviewing")) return [key, request];
         approvalFence = touchSnapshotKey(approvalFence, key);
         return [key, { ...request, status: "cancelled" as const }];
       }));
@@ -334,7 +334,7 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
       approvals: Object.fromEntries(
         Object.entries(state.approvals).map(([key, request]) => [
           key,
-          request.status === "pending" ? { ...request, status: "cancelled" as const } : request,
+          request.status === "pending" || request.status === "reviewing" ? { ...request, status: "cancelled" as const } : request,
         ]),
       ),
       processes: Object.fromEntries(

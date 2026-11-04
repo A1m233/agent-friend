@@ -116,14 +116,14 @@ export const useFilesystemApprovalsStore = create<FilesystemApprovalState>((set,
         if (wasRecoverable && restored) {
           next = {
             ...next,
-            [request.request_id]: { ...restored, status: "pending", recoverable: false },
+            [request.request_id]: { ...restored, status: request.status, recoverable: false },
           };
         }
       }
       for (const [requestId, entry] of Object.entries(next)) {
         if (activeIds.has(requestId)) continue;
         if (!canReconcileSnapshotAbsence(state.fence, requestId, requestStartEpoch)) continue;
-        if (entry.status === "pending" || entry.status === "submitting") {
+        if (entry.status === "pending" || entry.status === "submitting" || entry.status === "reviewing") {
           next = {
             ...next,
             [requestId]: { ...entry, status: "interrupted", recoverable: false },
@@ -146,7 +146,7 @@ export const useFilesystemApprovalsStore = create<FilesystemApprovalState>((set,
       const entries = Object.fromEntries(Object.entries(state.entries).map(([key, entry]) => {
         if (
           entry.request.run_id !== runId
-          || (entry.status !== "pending" && entry.status !== "submitting")
+          || (entry.status !== "pending" && entry.status !== "submitting" && entry.status !== "reviewing")
         ) return [key, entry];
         fence = touchSnapshotKey(fence, key);
         return [
@@ -207,7 +207,7 @@ export const useFilesystemApprovalsStore = create<FilesystemApprovalState>((set,
       let fence = state.fence;
       const entries = Object.fromEntries(
         Object.entries(state.entries).map(([requestId, entry]) => {
-          if (entry.status !== "pending" && entry.status !== "submitting") {
+          if (entry.status !== "pending" && entry.status !== "submitting" && entry.status !== "reviewing") {
             return [requestId, entry];
           }
           fence = touchSnapshotKey(fence, requestId);
@@ -234,7 +234,7 @@ function approvalFromEnvelope(env: PushEnvelope): FilesystemApprovalRequest | nu
     || typeof approval.run_id !== "string"
     || typeof approval.tool_call_id !== "string"
     || !Number.isSafeInteger(approval.version)
-    || !["pending", "approved", "denied", "expired", "cancelled"].includes(
+    || !["pending", "reviewing", "approved", "denied", "expired", "cancelled", "aborted", "timed_out", "failed"].includes(
       String(approval.status),
     )
     || !Array.isArray(approval.items)
