@@ -9,7 +9,7 @@ import sqlite3
 import sys
 import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from contextlib import closing, contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -248,6 +248,29 @@ class NotificationStore:
             self._save_delivery(conn, notification_id, state)
             return self._record(conn, notification_id)
 
+    def consume_sound(self, notification_id: str) -> bool:
+        """Claim the live arrival signal once, independently of visual delivery.
+
+        This internal bit does not advance the public revision or invalidate a
+        presentation claim. Callers consume even muted arrivals; there is no replay.
+        """
+        with self._transaction() as conn:
+            item = self._record(conn, notification_id)
+            state = item.delivery
+            if (
+                item.generation_status != "ready"
+                or state["status"] in {"dismissed", "invalidated"}
+                # Legacy receipts predate the bit; never replay those arrivals.
+                or state.get("soundHandled", state["presentedAt"] is not None) is True
+            ):
+                return False
+            conn.execute(
+                "UPDATE notification_deliveries SET state_json=? "
+                "WHERE notification_id=? AND channel='pet'",
+                (json.dumps(dict(state, soundHandled=True)), notification_id),
+            )
+            return True
+
     def presented(
         self,
         notification_id: str,
@@ -256,8 +279,7 @@ class NotificationStore:
         text: str,
         truncated: bool,
         now: datetime,
-        sound_enabled: bool,
-    ) -> tuple[NotificationRecord, bool]:
+    ) -> NotificationRecord:
         with self._transaction() as conn:
             item = self._record(conn, notification_id)
             state = item.delivery
@@ -270,7 +292,7 @@ class NotificationStore:
             if state["presentedAt"] is not None:
                 if state["presentedText"] != text or state["truncated"] != truncated:
                     raise NotificationConflict("presentation receipt is immutable")
-                return item, False
+                return item
             prefix = text.removesuffix("…").removesuffix("...") if truncated else text
             if (
                 not text
@@ -287,19 +309,15 @@ class NotificationStore:
                 + ("内容在显示时被截断。" if truncated else "")
             )
             already_dismissed = state["status"] == "dismissed"
-            sound_already_handled = state.get("soundHandled") is True
             state.update(
                 status="dismissed" if already_dismissed else "presented",
                 presentedAt=timestamp,
                 presentedText=text,
                 truncated=truncated,
-                soundHandled=True,
                 memorySummary=summary,
             )
             self._save_delivery(conn, notification_id, state)
-            return self._record(conn, notification_id), (
-                sound_enabled and not already_dismissed and not sound_already_handled
-            )
+            return self._record(conn, notification_id)
 
     def dismiss(
         self,
@@ -307,7 +325,6 @@ class NotificationStore:
         *,
         version: int,
         now: datetime,
-        silent_replacement_ids: Sequence[str] = (),
     ) -> NotificationRecord:
         with self._transaction() as conn:
             item = self._record(conn, notification_id)
@@ -320,26 +337,6 @@ class NotificationStore:
                     item.delivery, status="dismissed", dismissedAt=now.astimezone(UTC).isoformat()
                 )
                 self._save_delivery(conn, notification_id, state)
-            for replacement_id in dict.fromkeys(silent_replacement_ids):
-                if replacement_id == notification_id:
-                    continue
-                try:
-                    replacement = self._record(conn, replacement_id)
-                except NotificationNotFound:
-                    continue
-                if (
-                    replacement.fact.owner_user_id != item.fact.owner_user_id
-                    or replacement.delivery["status"] not in {"pending", "prepared"}
-                    or replacement.delivery.get("soundHandled") is True
-                ):
-                    continue
-                replacement_state = dict(replacement.delivery, soundHandled=True)
-                # Sound eligibility is internal and does not invalidate a prepared claim.
-                conn.execute(
-                    "UPDATE notification_deliveries SET state_json=? "
-                    "WHERE notification_id=? AND channel='pet'",
-                    (json.dumps(replacement_state, ensure_ascii=False), replacement_id),
-                )
             return self._record(conn, notification_id)
 
     def mark_memory(self, notification_id: str, status: str) -> None:

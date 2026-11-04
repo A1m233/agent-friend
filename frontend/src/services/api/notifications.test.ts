@@ -7,20 +7,13 @@ import { notificationsApi } from "./notifications";
 describe("notification delivery API", () => {
   beforeEach(() => post.mockReset().mockResolvedValue({ notification: {} }));
 
-  it("sends only the causal replacement IDs with the close version", async () => {
-    await notificationsApi.dismiss("debug:A/B", 4, ["E", "F"]);
-    expect(post).toHaveBeenCalledExactlyOnceWith("/v1/notifications/debug%3AA%2FB/dismiss", {
-      version: 4, silentReplacementIds: ["E", "F"],
-    });
-  });
-
-  it.each([undefined, []])("preserves the existing payload without replacement IDs (%j)", async (ids) => {
-    await notificationsApi.dismiss("A", 4, ids);
-    expect(post).toHaveBeenCalledExactlyOnceWith("/v1/notifications/A/dismiss", { version: 4 });
+  it("closes only the requested notification", async () => {
+    await notificationsApi.dismiss("debug:A/B", 4);
+    expect(post).toHaveBeenCalledExactlyOnceWith("/v1/notifications/debug%3AA%2FB/dismiss", { version: 4 });
   });
 
   it("still sends the full presentation receipt for a replacement notification", async () => {
-    await notificationsApi.dismiss("A", 4, ["E"]);
+    await notificationsApi.dismiss("A", 4);
     await notificationsApi.presented("E", 2, "实际呈现的补位文本…", true);
     expect(post).toHaveBeenLastCalledWith("/v1/notifications/E/presented", {
       attempt: 2, text: "实际呈现的补位文本…", truncated: true,

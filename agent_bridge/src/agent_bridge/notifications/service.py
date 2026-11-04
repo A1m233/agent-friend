@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -46,7 +46,7 @@ class NotificationService:
         presence: PresenceRegistry,
         reader: DesktopSettingsReader,
         generator: NotificationGenerator,
-        publisher: Callable[[dict[str, Any]], None],
+        publisher: Callable[[dict[str, Any], bool], None],
         memory: Memory | None = None,
         todos: TodoStore | None = None,
         approvals: ApprovalBroker | None = None,
@@ -89,9 +89,20 @@ class NotificationService:
             self._threads = []
         return stopped
 
-    def _publish(self, item: NotificationRecord) -> NotificationRecord:
+    def _publish(self, item: NotificationRecord, *, arrival: bool = False) -> NotificationRecord:
+        sound = False
         try:
-            self.publisher(item.to_wire())
+            if arrival and self.store.consume_sound(item.notification_id):
+                enabled = bool(self._settings().get("notificationSoundEnabled", True))
+                item = self.store.get(item.notification_id)
+                sound = enabled and not self._locked() and not self._stopping.is_set()
+        except Exception:
+            # Audio is best effort; its bookkeeping must not block visual delivery.
+            logger.warning(
+                "notification sound claim failed id=%s", item.notification_id, exc_info=True
+            )
+        try:
+            self.publisher(item.to_wire(), sound)
         except Exception:
             logger.warning(
                 "notification publication failed id=%s", item.notification_id, exc_info=True
@@ -105,7 +116,7 @@ class NotificationService:
             provided_text = fallback_text(fact)
         item = self.store.accept(fact, provided_text=provided_text)
         item = self._revalidate(item)
-        self._publish(item)
+        item = self._publish(item, arrival=True)
         self._wake.set()
         return item
 
@@ -183,35 +194,32 @@ class NotificationService:
 
     def presented(
         self, notification_id: str, *, attempt: int, text: str, truncated: bool
-    ) -> tuple[NotificationRecord, bool]:
+    ) -> NotificationRecord:
         self._revalidate(self.store.get(notification_id))
         if self._locked():
             raise NotificationConflict("desktop is locked or sleeping")
-        result, play_sound = self.store.presented(
+        result = self.store.presented(
             notification_id,
             attempt=attempt,
             text=text,
             truncated=truncated,
             now=self.clock(),
-            sound_enabled=bool(self._settings().get("notificationSoundEnabled", True)),
         )
         self._publish(result)
         self._wake.set()
-        return result, play_sound
+        return result
 
     def dismiss(
         self,
         notification_id: str,
         *,
         version: int,
-        silent_replacement_ids: Sequence[str] = (),
     ) -> NotificationRecord:
         return self._publish(
             self.store.dismiss(
                 notification_id,
                 version=version,
                 now=self.clock(),
-                silent_replacement_ids=silent_replacement_ids,
             )
         )
 
@@ -248,7 +256,8 @@ class NotificationService:
         item = self._revalidate(self.store.get(item.notification_id))
         if item.generation_status == "generating":
             self._publish(
-                self.store.ready(item.notification_id, text, source=source, diagnostic=diagnostic)
+                self.store.ready(item.notification_id, text, source=source, diagnostic=diagnostic),
+                arrival=True,
             )
         return True
 

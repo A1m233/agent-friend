@@ -17,10 +17,8 @@ export const notificationsApi = {
     id: string, attempt: number, text: string, truncated: boolean,
   ): Promise<NotificationPresentationReceipt> =>
     http.post<unknown, NotificationPresentationReceipt>(`${path(id)}/presented`, { attempt, text, truncated }),
-  dismiss: (id: string, version: number, silentReplacementIds: string[] = []): Promise<{ notification: AgentNotification }> =>
-    http.post<unknown, { notification: AgentNotification }>(`${path(id)}/dismiss`, {
-      version, ...(silentReplacementIds.length ? { silentReplacementIds } : {}),
-    }),
+  dismiss: (id: string, version: number): Promise<{ notification: AgentNotification }> =>
+    http.post<unknown, { notification: AgentNotification }>(`${path(id)}/dismiss`, { version }),
   /** Host-generated provided text follows the real queue, presentation receipt and sound path. */
   debug: async (scenario: NotificationDebugScenario): Promise<{ notifications: AgentNotification[] }> => {
     requireDebugBuild();

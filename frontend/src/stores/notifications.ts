@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
 import { notificationsApi } from "@/services/api/notifications";
 import type { AgentNotification, NotificationKind } from "@/types/notification";
 import type { PushEnvelope } from "@/types/push";
@@ -54,9 +53,6 @@ let windowId = "";
 const preparing = new Set<string>();
 const presenting = new Set<string>();
 const dismissing = new Set<string>();
-// Freeze causal replacement IDs at the close click, never mute a time window.
-// Also guard receipts already in flight when durable dismissal consumes sound.
-const silentReplacements = new Set<string>();
 const retryAfter = new Map<string, number>();
 
 export async function refreshNotifications(): Promise<void> {
@@ -77,7 +73,7 @@ export async function refreshNotifications(): Promise<void> {
   try { await promise; } finally { if (refreshPromise === promise) refreshPromise = null; }
 }
 
-/** Prepare only items selected for the visible stack; queued items remain silent. */
+/** Prepare only items selected for the visible stack; sound is owned by native push. */
 export async function prepareNotification(id: string): Promise<void> {
   const store = useNotificationStore.getState();
   const item = store.records[id];
@@ -119,16 +115,6 @@ export async function recordNotificationPresented(
     const result = await notificationsApi.presented(id, item.delivery.attempt, text, truncated);
     if (token !== generation) return;
     useNotificationStore.getState().merge([result.notification]);
-    const currentState = useNotificationStore.getState();
-    const current = currentState.records[id];
-    if (result.playSound && !dismissing.has(id) && !silentReplacements.has(id)
-      && currentState.ready && current?.delivery.status === "presented"
-      && current.delivery.attempt === item.delivery.attempt && isTauri()) {
-      // The server consumes this once before replying. Never retry a lost sound receipt.
-      await invoke("play_notification_sound", { notificationId: id }).catch((error: unknown) => {
-        console.warn("notification sound unavailable", error);
-      });
-    }
   } catch (error) {
     if (token !== generation) return;
     retryAfter.set(`present:${id}`, Date.now() + RETRY_MS);
@@ -142,21 +128,12 @@ export async function recordNotificationPresented(
 export async function dismissNotification(id: string): Promise<void> {
   let item = useNotificationStore.getState().records[id];
   if (!item || dismissing.has(id)) return;
-  const remainingRecords = () => Object.fromEntries(Object.entries(useNotificationStore.getState().records)
-    .filter(([key]) => !dismissing.has(key)));
-  const before = new Set(selectBubbleNotifications(remainingRecords()).map((record) => record.notificationId));
   dismissing.add(id);
-  const replacementIds = selectBubbleNotifications(remainingRecords())
-    .filter((record) => !before.has(record.notificationId) && record.delivery.presentedAt === null)
-    .map((record) => record.notificationId);
-  replacementIds.forEach((replacement) => silentReplacements.add(replacement));
   const token = generation;
   try {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const result = replacementIds.length
-          ? await notificationsApi.dismiss(id, item.version, replacementIds)
-          : await notificationsApi.dismiss(id, item.version);
+        const result = await notificationsApi.dismiss(id, item.version);
         if (token === generation) useNotificationStore.getState().merge([result.notification]);
         return;
       } catch (error) {
@@ -219,6 +196,5 @@ export function resetNotificationsForTests(): void {
   refreshPromise = null;
   windowId = "";
   preparing.clear(); presenting.clear(); dismissing.clear(); retryAfter.clear();
-  silentReplacements.clear();
   useNotificationStore.setState({ records: {}, expanded: {}, ready: false, ownedAttempts: {} });
 }

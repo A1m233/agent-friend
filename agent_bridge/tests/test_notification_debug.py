@@ -40,7 +40,7 @@ def build(
         presence=PresenceRegistry(),
         reader=reader,
         generator=cast(NotificationGenerator, generator),
-        publisher=published.append,
+        publisher=lambda item, _sound: published.append(item),
         clock=lambda: NOW,
     )
     app = FastAPI()
@@ -136,7 +136,7 @@ def test_debug_request_cannot_supply_text_or_identity(tmp_path: Path, body: dict
 
 
 @pytest.mark.parametrize("memory_enabled", [True, False])
-def test_debug_presented_receipts_keep_normal_sound_semantics_but_discard_memory(
+def test_debug_presented_receipts_are_silent_and_discard_memory(
     tmp_path: Path, memory_enabled: bool
 ) -> None:
     manager, generator, published, client = build(tmp_path)
@@ -146,7 +146,7 @@ def test_debug_presented_receipts_keep_normal_sound_semantics_but_discard_memory
         "notifications"
     ][0]
     first, duplicate = present(client, item)
-    assert first["playSound"] is True
+    assert first["playSound"] is False
     assert duplicate["playSound"] is False
     assert first["notification"]["delivery"]["status"] == "presented"
     assert not manager.run_once()
@@ -220,7 +220,7 @@ def test_invalid_silent_replacement_request_cannot_close_notification(
     generator.generate.assert_not_called()
 
 
-def test_explicit_close_replacement_is_silent_but_still_projects_its_presented_memory(
+def test_legacy_close_replacement_payload_does_not_change_sound_or_memory(
     tmp_path: Path,
 ) -> None:
     manager, generator, _published, client = build(tmp_path)
@@ -265,7 +265,7 @@ def test_explicit_close_replacement_is_silent_but_still_projects_its_presented_m
     newly_arrived = client.post("/v1/notifications/debug", json={"scenario": "short"}).json()[
         "notifications"
     ][0]
-    assert present(client, newly_arrived)[0]["playSound"] is True
+    assert present(client, newly_arrived)[0]["playSound"] is False
     generator.generate.assert_not_called()
 
 

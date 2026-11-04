@@ -1,14 +1,16 @@
-//! Native, at-most-once sound for a bubble's confirmed presentation.
+//! Native, at-most-once sound for a live notification arrival.
 //!
 //! The notification ledger owns durable playback qualification. This state also
-//! blocks repeated WebView invocations within one desktop process, including
-//! window reloads. Sound failure or a disabled setting consumes the qualification.
+//! blocks duplicate push signals within one desktop process. UI visibility and
+//! WebView lifetimes do not participate. Muted or failed playback is not retried.
 
 use std::{
     collections::HashSet,
     sync::{Arc, Mutex},
 };
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Manager};
+
+use crate::push_subscriber::PushEnvelope;
 
 pub(crate) mod assets;
 mod commands;
@@ -25,17 +27,7 @@ pub struct NotificationSoundState {
 }
 
 impl NotificationSoundState {
-    fn play_once(
-        &self,
-        window_label: &str,
-        window_visible: bool,
-        notification_id: &str,
-        settings: &Settings,
-        play: impl FnOnce(NotificationSoundSource) -> bool,
-    ) -> Result<(), String> {
-        if window_label != "bubble" {
-            return Err("notification sound is only available to the bubble window".to_string());
-        }
+    fn consume(&self, notification_id: &str) -> Result<bool, String> {
         if notification_id.is_empty()
             || notification_id.len() > 256
             || notification_id
@@ -44,12 +36,20 @@ impl NotificationSoundState {
         {
             return Err("invalid notification id".to_string());
         }
-        if !self
+        Ok(self
             .consumed
             .lock()
             .map_err(|error| format!("notification sound state poisoned: {error}"))?
-            .insert(notification_id.to_string())
-        {
+            .insert(notification_id.to_string()))
+    }
+
+    fn play_once(
+        &self,
+        notification_id: &str,
+        settings: &Settings,
+        play: impl FnOnce(NotificationSoundSource) -> bool,
+    ) -> Result<(), String> {
+        if !self.consume(notification_id)? {
             return Ok(());
         }
         let source = match &settings.notification_sound {
@@ -58,8 +58,6 @@ impl NotificationSoundState {
         };
         let outcome = if !settings.notification_sound_enabled {
             "disabled"
-        } else if !window_visible {
-            "hidden"
         } else if play(settings.notification_sound.clone()) {
             "played"
         } else {
@@ -70,27 +68,67 @@ impl NotificationSoundState {
     }
 }
 
-#[tauri::command]
-pub async fn play_notification_sound(
-    app: AppHandle,
-    window: WebviewWindow,
-    settings: tauri::State<'_, Arc<Mutex<Settings>>>,
-    notification_id: String,
-) -> Result<(), String> {
-    let current = settings
-        .lock()
-        .map_err(|error| format!("settings state poisoned: {error}"))?
-        .clone();
-    let label = window.label().to_string();
-    let visible = window.is_visible().map_err(|error| error.to_string())?;
+/// Called by the native SSE subscriber before any WebView projection.
+pub(crate) fn handle_push(app: &AppHandle, envelope: &PushEnvelope) {
+    if let Some(id) = terminal_id(envelope) {
+        // A terminal revision may overtake an arrival on the publishing threads.
+        // Remember it natively so a delayed signal cannot revive its sound.
+        if let Err(error) = app.state::<NotificationSoundState>().consume(id) {
+            log::warn!("notification sound invalidation unavailable: {error}");
+        }
+        return;
+    }
+    let Some(id) = arrival_id(envelope) else {
+        return;
+    };
+    let settings = app.state::<Arc<Mutex<Settings>>>();
+    let current = match settings.lock() {
+        Ok(value) => value.clone(),
+        Err(error) => {
+            log::warn!("notification sound settings unavailable: {error}");
+            return;
+        }
+    };
+    let app = app.clone();
+    let id = id.to_string();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<NotificationSoundState>();
-        state.play_once(&label, visible, &notification_id, &current, |source| {
+        if let Err(error) = state.play_once(&id, &current, |source| {
             state.player.play(source, None).is_ok()
-        })
-    })
-    .await
-    .map_err(|error| error.to_string())?
+        }) {
+            log::warn!("notification sound unavailable: {error}");
+        }
+    });
+}
+
+fn terminal_id(envelope: &PushEnvelope) -> Option<&str> {
+    if envelope.kind != "notification_changed" {
+        return None;
+    }
+    let item = envelope.notification.as_ref()?;
+    if matches!(
+        item.get("delivery")?.get("status")?.as_str()?,
+        "dismissed" | "invalidated"
+    ) {
+        return item.get("notificationId")?.as_str();
+    }
+    None
+}
+
+fn arrival_id(envelope: &PushEnvelope) -> Option<&str> {
+    if envelope.kind != "notification_changed" || !envelope.notification_sound {
+        return None;
+    }
+    let item = envelope.notification.as_ref()?;
+    if item.get("generationStatus")?.as_str()? != "ready"
+        || !matches!(
+            item.get("delivery")?.get("status")?.as_str()?,
+            "pending" | "prepared" | "presented"
+        )
+    {
+        return None;
+    }
+    item.get("notificationId")?.as_str()
 }
 
 #[cfg(test)]
@@ -99,13 +137,71 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
-    fn repeated_bubble_callbacks_play_only_once() {
+    fn only_explicit_live_ready_arrivals_play_without_any_window() {
+        let value = serde_json::json!({
+            "kind": "notification_changed", "session_id": "s", "seq": 1,
+            "source_kind": null, "events": [], "notification_sound": true,
+            "notification": {"notificationId": "new", "generationStatus": "ready",
+                "delivery": {"status": "pending"}}
+        });
+        let envelope: PushEnvelope = serde_json::from_value(value.clone()).unwrap();
+        let state = NotificationSoundState::default();
+        let mut played = 0;
+        for _ in 0..2 {
+            state
+                .play_once(arrival_id(&envelope).unwrap(), &Settings::default(), |_| {
+                    played += 1;
+                    true
+                })
+                .unwrap();
+        }
+        assert_eq!(played, 1);
+        for status in ["pending", "prepared", "presented"] {
+            let mut changed = value.clone();
+            changed["notification"]["delivery"]["status"] = status.into();
+            assert_eq!(
+                arrival_id(&serde_json::from_value(changed).unwrap()),
+                Some("new")
+            );
+        }
+        for status in ["dismissed", "invalidated"] {
+            let mut changed = value.clone();
+            changed["notification"]["delivery"]["status"] = status.into();
+            changed["notification_sound"] = false.into();
+            let terminal: PushEnvelope = serde_json::from_value(changed).unwrap();
+            assert!(arrival_id(&terminal).is_none());
+            let silent = NotificationSoundState::default();
+            silent.consume(terminal_id(&terminal).unwrap()).unwrap();
+            silent
+                .play_once(arrival_id(&envelope).unwrap(), &Settings::default(), |_| {
+                    panic!("an older arrival cannot sound after dismissal or invalidation")
+                })
+                .unwrap();
+        }
+        for status in ["pending", "generating", "suppressed", "expired"] {
+            let mut changed = value.clone();
+            changed["notification"]["generationStatus"] = status.into();
+            assert!(arrival_id(&serde_json::from_value(changed).unwrap()).is_none());
+        }
+        let mut legacy = value.clone();
+        legacy.as_object_mut().unwrap().remove("notification_sound");
+        assert!(arrival_id(&serde_json::from_value(legacy).unwrap()).is_none());
+        let mut silent = value.clone();
+        silent["notification_sound"] = false.into();
+        assert!(arrival_id(&serde_json::from_value(silent).unwrap()).is_none());
+        let mut heartbeat = value;
+        heartbeat["kind"] = "heartbeat".into();
+        assert!(arrival_id(&serde_json::from_value(heartbeat).unwrap()).is_none());
+    }
+
+    #[test]
+    fn duplicate_arrivals_play_only_once() {
         let state = NotificationSoundState::default();
         let settings = Settings::default();
         let played = AtomicUsize::new(0);
         for _ in 0..3 {
             state
-                .play_once("bubble", true, "n1", &settings, |source| {
+                .play_once("n1", &settings, |source| {
                     assert_eq!(source, NotificationSoundSource::default());
                     played.fetch_add(1, Ordering::SeqCst);
                     true
@@ -114,7 +210,7 @@ mod tests {
         }
         assert_eq!(played.load(Ordering::SeqCst), 1);
         state
-            .play_once("bubble", true, "n2", &settings, |_| {
+            .play_once("n2", &settings, |_| {
                 played.fetch_add(1, Ordering::SeqCst);
                 true
             })
@@ -123,27 +219,8 @@ mod tests {
     }
 
     #[test]
-    fn forbidden_window_cannot_play_or_consume_bubble_qualification() {
-        let state = NotificationSoundState::default();
-        let settings = Settings::default();
-        assert!(state
-            .play_once("workspace", true, "n1", &settings, |_| panic!(
-                "must not play"
-            ))
-            .is_err());
-        let mut called = false;
-        state
-            .play_once("bubble", true, "n1", &settings, |_| {
-                called = true;
-                true
-            })
-            .expect("bubble");
-        assert!(called);
-    }
-
-    #[test]
-    fn disabled_hidden_or_failed_sound_is_not_replayed_later() {
-        for case in ["disabled", "hidden", "failed"] {
+    fn disabled_or_failed_sound_is_not_replayed_later() {
+        for case in ["disabled", "failed"] {
             let state = NotificationSoundState::default();
             let settings = Settings {
                 notification_sound_enabled: case != "disabled",
@@ -151,16 +228,14 @@ mod tests {
             };
             let mut called = false;
             state
-                .play_once("bubble", case != "hidden", "n1", &settings, |_| {
+                .play_once("n1", &settings, |_| {
                     called = true;
                     false
                 })
                 .expect("first request");
             assert_eq!(called, case == "failed");
             state
-                .play_once("bubble", true, "n1", &Settings::default(), |_| {
-                    panic!("must not replay")
-                })
+                .play_once("n1", &Settings::default(), |_| panic!("must not replay"))
                 .expect("duplicate");
         }
     }
@@ -170,9 +245,7 @@ mod tests {
         let state = NotificationSoundState::default();
         for id in ["", " ", "a\nb", "a\0b"] {
             assert!(state
-                .play_once("bubble", true, id, &Settings::default(), |_| panic!(
-                    "must not play"
-                ))
+                .play_once(id, &Settings::default(), |_| panic!("must not play"))
                 .is_err());
         }
     }
@@ -185,7 +258,7 @@ mod tests {
             for _ in 0..8 {
                 scope.spawn(|| {
                     state
-                        .play_once("bubble", true, "n1", &Settings::default(), |_| {
+                        .play_once("n1", &Settings::default(), |_| {
                             played.fetch_add(1, Ordering::SeqCst);
                             true
                         })

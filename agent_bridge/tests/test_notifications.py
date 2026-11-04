@@ -65,7 +65,7 @@ def service(
         presence=PresenceRegistry(),
         reader=reader,
         generator=cast(NotificationGenerator, generator),
-        publisher=lambda _: None,
+        publisher=lambda _, _sound: None,
         session_metadata_store=session_metadata_store,
         clock=lambda: NOW,
     )
@@ -170,7 +170,7 @@ def test_routes_receipt_is_idempotent_and_memory_is_not_generation(tmp_path: Pat
         url + "/prepare", json={"version": ready["version"], "windowId": "bubble"}
     ).json()
     payload = {"attempt": prepared["attempt"], "text": prepared["text"], "truncated": False}
-    assert client.post(url + "/presented", json=payload).json()["playSound"]
+    assert not client.post(url + "/presented", json=payload).json()["playSound"]
     assert not client.post(url + "/presented", json=payload).json()["playSound"]
     svc.run_once()
     svc.run_once()
@@ -545,3 +545,156 @@ def test_approval_resolution_invalidates_prepared_notification(tmp_path: Path) -
         )
     assert svc.store.get(item.notification_id).delivery["status"] == "invalidated"
     assert generator.calls == 1
+
+
+@pytest.mark.parametrize("provided", [True, False])
+def test_sound_arrives_before_ui_and_never_repeats_for_delivery_or_snapshot(
+    tmp_path: Path, provided: bool
+) -> None:
+    svc, generator = service(tmp_path)
+    signals: list[tuple[dict[str, Any], bool]] = []
+    svc.publisher = lambda item, sound: signals.append((item, sound))
+    item = svc.accept(fact(), provided_text="ready" if provided else None)
+    if not provided:
+        assert not any(sound for _, sound in signals)
+        assert svc.run_once()
+    ready = svc.store.get(item.notification_id)
+    assert [wire["notificationId"] for wire, sound in signals if sound] == [item.notification_id]
+    assert ready.delivery["status"] == "pending"
+    assert ready.delivery["presentedAt"] is None
+    assert ready.delivery["memorySummary"] is None
+    count = len(signals)
+    svc.snapshot()
+    assert len(signals) == count
+    prepared = svc.prepare(item.notification_id, version=ready.version, window_id="bubble")
+    svc.presented(
+        item.notification_id, attempt=prepared.delivery["attempt"], text=ready.text, truncated=False
+    )
+    svc.presented(
+        item.notification_id, attempt=prepared.delivery["attempt"], text=ready.text, truncated=False
+    )
+    shown = svc.store.get(item.notification_id)
+    svc.dismiss(item.notification_id, version=shown.version)
+    svc.accept(fact(), provided_text="ready" if provided else None)
+    assert not any(sound for _, sound in signals[count:])
+    assert generator.calls == (0 if provided else 1)
+
+
+@pytest.mark.parametrize("quiet", ["muted", "locked", "viewing"])
+def test_quiet_arrival_is_not_replayed_after_settings_or_visibility_changes(
+    tmp_path: Path, quiet: str
+) -> None:
+    svc, _ = service(tmp_path)
+    signals: list[bool] = []
+    svc.publisher = lambda _, sound: signals.append(sound)
+    if quiet == "muted":
+        svc.reader.path.write_text('{"notificationSoundEnabled": false}', encoding="utf-8")
+    else:
+        svc.presence.update_desktop(desktop(state="locked" if quiet == "locked" else "active"))
+    item = svc.accept(fact(), provided_text="ready")
+    assert not any(signals)
+    svc.reader.path.write_text("{}", encoding="utf-8")
+    svc.presence.update_desktop(replace(desktop("other"), observed_at=NOW + timedelta(seconds=1)))
+    svc.snapshot()
+    svc.accept(fact(), provided_text="ready")
+    if quiet != "viewing":
+        prepared = svc.prepare(item.notification_id, version=item.version, window_id="bubble")
+        svc.presented(
+            item.notification_id,
+            attempt=prepared.delivery["attempt"],
+            text=item.text,
+            truncated=False,
+        )
+    assert not any(signals)
+
+
+def test_arrivals_outside_four_row_stack_sound_without_presentation(tmp_path: Path) -> None:
+    svc, _ = service(tmp_path)
+    signals: list[str] = []
+    svc.publisher = lambda wire, sound: signals.append(wire["notificationId"]) if sound else None
+    items = [
+        svc.accept(replace(fact(), event_key=f"run:{index}"), provided_text="ready")
+        for index in range(6)
+    ]
+    assert signals == [item.notification_id for item in items]
+    assert all(item.delivery["presentedAt"] is None for item in svc.store.list())
+    first = items[0]
+    svc.dismiss(first.notification_id, version=first.version)
+    for item in items[1:]:
+        prepared = svc.prepare(item.notification_id, version=item.version, window_id="bubble")
+        svc.presented(
+            item.notification_id,
+            attempt=prepared.delivery["attempt"],
+            text=item.text,
+            truncated=False,
+        )
+    assert len(signals) == 6
+
+
+def test_lost_arrival_signal_is_not_retried_after_store_reopen(tmp_path: Path) -> None:
+    svc, _ = service(tmp_path)
+
+    def fail(_wire: dict[str, Any], _sound: bool) -> None:
+        raise RuntimeError("disconnected")
+
+    svc.publisher = fail
+    item = svc.accept(fact(), provided_text="ready")
+    svc.store = NotificationStore(svc.store.path)
+    signals: list[bool] = []
+    svc.publisher = lambda _, sound: signals.append(sound)
+    svc.accept(fact(), provided_text="ready")
+    svc.snapshot()
+    assert signals == [False]
+    assert svc.store.get(item.notification_id).delivery["presentedAt"] is None
+
+
+@pytest.mark.asyncio
+async def test_live_sound_crosses_sse_once_and_reconnection_has_no_replay(tmp_path: Path) -> None:
+    import asyncio
+
+    from agent.runtime.listeners import ListenerRegistry, Subscriber
+    from agent_bridge.push.protocol import encode_envelope_sse
+
+    svc, _ = service(tmp_path)
+    listeners = ListenerRegistry()
+    svc.publisher = listeners.publish_notification_change
+
+    def subscribe() -> Subscriber:
+        sub = Subscriber(
+            loop=asyncio.get_running_loop(), accept_kinds=frozenset({"notification_changed"})
+        )
+        listeners.register(sub)
+        return sub
+
+    first = subscribe()
+    item = svc.accept(fact(), provided_text="ready")
+    event = await asyncio.wait_for(first.queue.get(), timeout=1)
+    payload = json.loads(encode_envelope_sse(event).decode().split("data: ", 1)[1])
+    assert payload["notification_sound"] is True
+    assert payload["notification"]["notificationId"] == item.notification_id
+    assert payload["notification"]["delivery"]["presentedAt"] is None
+    listeners.unregister(first.id)
+    second = subscribe()
+    svc.snapshot()
+    await asyncio.sleep(0)
+    assert second.queue.empty()
+    svc.accept(fact(), provided_text="ready")
+    repeated = await asyncio.wait_for(second.queue.get(), timeout=1)
+    assert repeated.notification_sound is False
+    listeners.unregister(second.id)
+
+
+def test_sound_bookkeeping_failure_does_not_block_notification_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    svc, _ = service(tmp_path)
+
+    def fail(_id: str) -> bool:
+        raise RuntimeError("sound bookkeeping unavailable")
+
+    monkeypatch.setattr(svc.store, "consume_sound", fail)
+    signals: list[tuple[dict[str, Any], bool]] = []
+    svc.publisher = lambda item, sound: signals.append((item, sound))
+    item = svc.accept(fact(), provided_text="ready")
+    assert signals == [(item.to_wire(), False)]
+    assert svc.snapshot() == [item.to_wire()]

@@ -57,6 +57,8 @@ pub struct PushEnvelope {
     pub command_process: Option<serde_json::Value>,
     #[serde(default)]
     pub notification: Option<serde_json::Value>,
+    #[serde(default)]
+    pub notification_sound: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -184,6 +186,7 @@ async fn run_connection(
                     log::trace!("push heartbeat seq={}", env.seq);
                 }
                 Some(env) if env.kind == "notification_changed" => {
+                    crate::notification_sound::handle_push(app, &env);
                     if let Err(error) = app.emit_to("bubble", "notification://changed", env) {
                         log::warn!("emit_to(bubble, notification changed) failed: {error}");
                     }
@@ -424,6 +427,7 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
             approval: None,
             command_process: None,
             notification: None,
+            notification_sound: false,
         };
         let json = serde_json::to_string(&original).unwrap();
         let parsed: PushEnvelope = serde_json::from_str(&json).unwrap();
