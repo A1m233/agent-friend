@@ -57,6 +57,25 @@ def no_scan(*args: object, **kwargs: object) -> None:
     raise AssertionError("warm recall must not scan the JSONL")
 
 
+def test_busy_recall_index_catches_up_on_next_read(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = store_with_history(tmp_path)
+    query_session_recall(store, "one")
+    caplog.set_level("DEBUG", logger="agent.sessions.query_observation")
+    with store._recall_index._locked(store._recall_index.path("one"), None):
+        store.append_event("one", event("user_message", "saved-during-read", content="once"))
+    assert any(
+        getattr(record, "cache_miss_reason", None) == "index_busy" for record in caplog.records
+    )
+    assert not any(
+        getattr(record, "error_type", None) == "AlreadyLocked" for record in caplog.records
+    )
+    snapshot = query_session_recall(JsonlSessionStore(tmp_path), "one")
+    assert snapshot.events[-1].uuid == "saved-during-read"
+
+
 def test_warm_alternating_append_and_restart_do_not_scan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
