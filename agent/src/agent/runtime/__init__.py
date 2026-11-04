@@ -459,6 +459,7 @@ class AgentRuntime:
 
     def _handle_run_changed(self, snapshot: RunSnapshot) -> None:
         with self._run_lock:
+            self._listeners.ensure_run_journal(snapshot.run_id, snapshot.session_id)
             if snapshot.status is RunStatus.TERMINAL:
                 self._active_run_snapshots.pop(snapshot.run_id, None)
                 self._recent_terminal_snapshots[snapshot.run_id] = snapshot

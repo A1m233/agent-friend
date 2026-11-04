@@ -242,6 +242,13 @@ class ListenerRegistry:
         with self._lock:
             self._run_journals.pop(run_id, None)
 
+    def ensure_run_journal(self, run_id: str, session_id: str) -> None:
+        """Admission owns a journal even while history preparation has no events."""
+        with self._lock:
+            journal = self._run_journals.setdefault(run_id, _RunJournal(session_id=session_id))
+            if journal.session_id != session_id:
+                raise RuntimeError(f"run {run_id!r} journal session changed")
+
     def _record_run_event_locked(
         self,
         *,

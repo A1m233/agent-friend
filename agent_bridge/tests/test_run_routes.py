@@ -171,6 +171,39 @@ def test_run_event_route_returns_runtime_owned_journal(tmp_path: Path) -> None:
     ]
 
 
+def test_admitted_run_has_empty_journal_before_conversation_is_ready(tmp_path: Path) -> None:
+    from threading import Event
+
+    runtime = _runtime(tmp_path)
+    agent_runtime = runtime.agent_runtime
+    assert agent_runtime is not None
+    entered, release = Event(), Event()
+
+    def factory(_sid: str) -> Conversation:
+        entered.set()
+        assert release.wait(5)
+        return cast(Conversation, None)
+
+    agent_runtime._conversation_factory = factory
+    agent_runtime.start()
+    try:
+        agent_runtime.submit(UserEvent(session_id="s", user_input="hello"), run_id="slow-history")
+        assert entered.wait(5)
+        client = TestClient(create_app_with_runtime(runtime))
+        response = client.get("/v1/runs/slow-history/events?afterSeq=0")
+        assert response.status_code == 200
+        assert response.json()["events"] == []
+        assert response.json()["next_seq"] == 1
+        assert (
+            response.json()["runtime_instance_id"]
+            == agent_runtime.runtime_identity.bridge_instance_id
+        )
+        assert client.get("/v1/runs/missing/events").status_code == 404
+    finally:
+        release.set()
+        agent_runtime.stop()
+
+
 def test_session_runtime_snapshot_is_content_free(tmp_path: Path) -> None:
     runtime = _runtime(tmp_path)
     client = TestClient(create_app_with_runtime(runtime))
