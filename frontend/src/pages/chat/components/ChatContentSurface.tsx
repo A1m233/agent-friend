@@ -17,7 +17,6 @@ import { focusVoiceCallWindow, useVoiceStore } from "@/stores/voice";
 import { isVoiceCallBlockingText } from "@/stores/voiceStateMachine";
 import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX, CHAT_CONTENT_CONTAINER_CLASS } from "../layout";
 import { ApprovalDock } from "./ApprovalDock";
-import { AutomaticReviewStatus } from "./AutomaticReviewStatus";
 import { usePrimaryActivity } from "./activity/usePrimaryActivity";
 import { Composer, type ComposerHandle } from "./Composer";
 import { MessageList } from "./MessageList";
@@ -112,7 +111,7 @@ export function ChatContentSurface() {
             disabled={composerDisabled}
             disabledReason={composerDisabledReason}
             onHeightChange={setComposerHeight}
-            topSlot={<><PendingRequests key={currentSessionId} sessionId={currentSessionId} /><AutomaticReviewStatus /><ApprovalDock activity={primaryActivity} /></>}
+            topSlot={<><PendingRequests key={currentSessionId} sessionId={currentSessionId} /><ApprovalDock activity={primaryActivity} /></>}
             onReferenceSelect={selectReference}
           />}
         </>

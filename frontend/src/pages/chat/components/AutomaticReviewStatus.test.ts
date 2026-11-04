@@ -6,7 +6,6 @@ import { useConversationStore, useFilesystemApprovalsStore, useCommandRuntimeSto
 import type { FilesystemApprovalRequest } from "@/services/api/filesystem";
 import type { RunSnapshot } from "@/types/run";
 import { AutomaticReviewStatus } from "./AutomaticReviewStatus";
-import { CHAT_CONTENT_CONTAINER_CLASS } from "../layout";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -41,33 +40,31 @@ describe("automatic approval presentation", () => {
     useFilesystemApprovalsStore.getState().clear();
     useConversationStore.setState({ currentSessionId: null, runSnapshots: {}, readOnlySessionIds: {} });
   });
-  async function render(toolCallId?: string) {
+  async function render(toolCallId = "tool-a") {
     await act(async () => root.render(createElement(AutomaticReviewStatus, { toolCallId })));
   }
 
-  it("uses the composer width and removes completed reviews from the dock", async () => {
+  it("keeps automatic review silent and shows only the matching failure in tool details", async () => {
     useFilesystemApprovalsStore.getState().merge(review);
     await render();
-    expect(container.textContent).toContain("正在帮你审批");
-    expect(container.firstElementChild?.className).toBe(CHAT_CONTENT_CONTAINER_CLASS);
+    expect(container.textContent).toBe("");
     await act(async () => useFilesystemApprovalsStore.getState().merge({
       ...review, status: "failed", version: 3,
     }));
-    expect(container.textContent).toBe("");
     await act(async () => useConversationStore.setState({ runSnapshots: {} }));
     await render("tool-a");
     expect(container.textContent).toContain("审批出错");
-    expect(container.textContent).toContain("重试");
+    expect(container.textContent).toContain("重新审批");
     await render("another-tool");
     expect(container.textContent).toBe("");
   });
 
   it.each(["disconnect", "finish", "terminal"] as const)(
-    "removes a stale reviewing card on %s",
+    "keeps stale reviews silent on %s",
     async (event) => {
       useFilesystemApprovalsStore.getState().merge(review);
       await render();
-      expect(container.textContent).toContain("正在帮你审批");
+      expect(container.textContent).toBe("");
       await act(async () => {
         if (event === "disconnect") useFilesystemApprovalsStore.getState().markDisconnected();
         if (event === "finish") useFilesystemApprovalsStore.getState().finishRun("run-a");
@@ -83,7 +80,7 @@ describe("automatic approval presentation", () => {
     useFilesystemApprovalsStore.getState().merge({ ...review, request_id: "old", run_id: "old-run" });
     useFilesystemApprovalsStore.getState().merge({ ...review, reason: "本轮操作" });
     await render();
-    expect(container.textContent).toContain("本轮操作");
+    expect(container.textContent).toBe("");
     await act(async () => useConversationStore.setState({ currentSessionId: "other-session" }));
     expect(container.textContent).toBe("");
   });
@@ -93,6 +90,6 @@ describe("automatic approval presentation", () => {
     useConversationStore.setState({ runSnapshots: {}, readOnlySessionIds: { "session-a": true } });
     await render("tool-a");
     expect(container.textContent).toContain("审批出错");
-    expect(container.textContent).not.toContain("重试");
+    expect(container.textContent).not.toContain("重新审批");
   });
 });
