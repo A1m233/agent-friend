@@ -77,6 +77,19 @@ class ResizeObserverHarness implements ResizeObserver {
 }
 
 describe("MessageTimeline disclosure scrolling", () => {
+  it("measures rows during mount and session changes without nested flushSync", async () => {
+    const error = vi.spyOn(console, "error");
+    try {
+      await mountTimeline(messages());
+      await renderTimeline(messages("session-b"));
+      await flushFrames();
+      expect(error.mock.calls.flat().some(value => String(value).includes("flushSync"))).toBe(false);
+      expect(container.querySelectorAll("[data-message-id]").length).toBeGreaterThan(0);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   let container: HTMLDivElement;
   let root: Root;
   let rowHeights: Map<string, number>;
