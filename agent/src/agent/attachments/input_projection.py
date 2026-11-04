@@ -4,21 +4,26 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from .models import AttachmentRef
 
 if TYPE_CHECKING:
     from ..messages import Message
 
-INPUT_PROJECTION_VERSION = "session-files-v2"
+INPUT_PROJECTION_VERSION = "session-files-v3"
 
 
-def file_reference(ref: AttachmentRef, prepared: dict[str, Any] | None = None) -> str:
+def file_reference(
+    ref: AttachmentRef,
+    prepared: dict[str, Any] | None = None,
+    *,
+    source: Literal["user_upload", "assistant_generated"] = "user_upload",
+) -> str:
     from ..messages import escape_internal_prompt_markers
 
     metadata = {
-        "source": "user_upload",
+        "source": source,
         "name": ref.display_name,
         "media_type": ref.media_type,
         "size_bytes": ref.size_bytes,
@@ -44,7 +49,7 @@ def file_reference(ref: AttachmentRef, prepared: dict[str, Any] | None = None) -
 
 
 def project_file_message(message: Message, prepared: list[dict[str, Any]] | None = None) -> Message:
-    if message.role != "user" or not message.attachments:
+    if message.role not in {"user", "assistant"} or not message.attachments:
         return message
     return replace(
         message,
@@ -52,7 +57,13 @@ def project_file_message(message: Message, prepared: list[dict[str, Any]] | None
             [
                 message.content,
                 *[
-                    file_reference(ref, prepared[index] if prepared is not None else None)
+                    file_reference(
+                        ref,
+                        prepared[index] if prepared is not None else None,
+                        source="assistant_generated"
+                        if message.role == "assistant"
+                        else "user_upload",
+                    )
                     for index, ref in enumerate(message.attachments)
                 ],
             ]

@@ -78,6 +78,56 @@ def test_preflight_removes_orphan_legacy_marker_without_restarting_old_task(tmp_
     assert session.events == events_before
 
 
+def test_preflight_commits_all_interruption_repairs_once(tmp_path: Path) -> None:
+    from unittest.mock import Mock
+
+    conv, session, _ = _make_conversation(
+        tmp_path, fake_llm=_FakeLLM(), context_manager=SummarizingContextManager()
+    )
+    for index in range(3):
+        run_id = f"old-{index}"
+        ts = datetime.now(UTC)
+        session.append(
+            Event(
+                type="tool_call_request",
+                uuid=f"request-{index}",
+                ts=ts,
+                payload={"tool_call_id": f"call-{index}", "tool_name": "read"},
+                meta={"run_id": run_id},
+            )
+        )
+        session.append(
+            Event(
+                type="tool_call_result",
+                uuid=f"result-{index}",
+                ts=ts,
+                payload={"tool_call_id": f"call-{index}", "executed": False},
+                meta={"run_id": run_id},
+            )
+        )
+        session.append(
+            Event(
+                type="run_terminal",
+                uuid=f"terminal-{index}",
+                ts=ts,
+                payload={"run_id": run_id, "status": "interrupted"},
+            )
+        )
+        conv._session_model_history.append(
+            [Message(role="assistant", content="old answer", meta={"provider_run_id": run_id})]
+        )
+    recorder = Mock()
+    conv._rollout_recorder = recorder
+    conv._repair_incomplete_model_tool_transactions()
+    assert (
+        sum(m.meta.get("synthetic") == "turn_aborted" for m in conv._session_model_history.items)
+        == 3
+    )
+    recorder.commit.assert_called_once()
+    conv._repair_incomplete_model_tool_transactions()
+    recorder.commit.assert_called_once()
+
+
 @pytest.mark.parametrize("legacy", [False, True])
 def test_failed_edit_preserves_compacted_prefix_warm_and_cold(
     tmp_path: Path, legacy: bool, monkeypatch: pytest.MonkeyPatch

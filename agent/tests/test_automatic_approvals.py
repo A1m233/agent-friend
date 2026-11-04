@@ -121,7 +121,9 @@ def test_chat_review_is_opt_in_and_independent_of_companionship(tmp_path: Path) 
     assert broker.mode_state("inner").mode == "full_access"
     assert broker.mode_state("session").mode == "per_request"
     broker.set_session_mode("session", mode="auto_review", expected_version=0)
-    assert not broker.request(request(tmp_path / "file"), timeout_seconds=1).approved
+    assert not broker.request(
+        request(tmp_path / "file"), timeout_seconds=1, surface="no_human_surface"
+    ).approved
     assert store.get("session").approval_mode == "auto_review"
     assert broker.mode_state("other").mode == "per_request"
     assert broker.mode_state("inner").mode == "full_access"

@@ -506,6 +506,11 @@ class SessionManager:
                     raise AgentError("delivery_content_conflict")
                 return message_id
             if state:
+                if state.recovery_disposition in {
+                    "corrupt_committed_history",
+                    "incompatible_rollout_schema",
+                }:
+                    raise SessionCorruptError("目标会话历史需要恢复，暂不追加主动消息。")
                 history, context, epoch, recorder = (
                     state.model_history,
                     state.model_context,
@@ -513,9 +518,19 @@ class SessionManager:
                     state.rollout_recorder,
                 )
             else:
-                restored = restore_rollout(session)
+                # Execution loading strips journal records from session.events and
+                # already owns the verified replay. Replaying that compact view
+                # would create a new root commit inside the existing journal.
+                restored = session.restored_rollout
+                if restored is None:
+                    restored = restore_rollout(session)
                 if restored.runtime_blocked:
                     raise SessionCorruptError("目标会话暂不能接受消息，请先恢复会话。")
+                if restored.disposition in {
+                    "corrupt_committed_history",
+                    "incompatible_rollout_schema",
+                }:
+                    raise SessionCorruptError("目标会话历史需要恢复，暂不追加主动消息。")
                 history, context, epoch = (
                     restored.history,
                     restored.model_context,
@@ -924,6 +939,18 @@ class SessionManager:
             # Opening may precede the writer lease. Revalidate every cold source,
             # including conversations with no tool transactions to reconcile.
             session = self.open_for_execution(session.session_id, cancel_check=cancel_check)
+        if session.restored_rollout is None:
+            session.restored_rollout = restore_rollout(session, cancel_check=cancel_check)
+        if session.restored_rollout.disposition in {
+            "corrupt_committed_history",
+            "incompatible_rollout_schema",
+        }:
+            # Even transaction reconciliation can append events. Reject a broken
+            # journal before invoking any writer, not just before the model call.
+            raise SessionCorruptError(
+                f"会话 {session.session_id} 的历史未通过完整性校验，"
+                f"无法建立可写 runtime: {session.restored_rollout.reason}"
+            )
         if self._transaction_reconciler is not None and any(
             event.type == "tool_call_request" for event in session.events
         ):
@@ -941,9 +968,12 @@ class SessionManager:
         }:
             restored = finish_rollout_restore(session, restored.commit, cancel_check=cancel_check)
         check_cancel(cancel_check)
-        if restored.runtime_blocked:
+        if restored.runtime_blocked or restored.disposition in {
+            "corrupt_committed_history",
+            "incompatible_rollout_schema",
+        }:
             raise SessionCorruptError(
-                f"会话 {session.session_id} 的 rollout 无有效提交点，"
+                f"会话 {session.session_id} 的历史未通过完整性校验，"
                 f"无法建立可写 runtime: {restored.reason}"
             )
         bind_projection = getattr(self._store, "bind_execution_projection", None)

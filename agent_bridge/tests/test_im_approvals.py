@@ -163,6 +163,37 @@ async def card(harness: Harness) -> OutboundContent:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["filesystem", "command"])
+@pytest.mark.parametrize("approved", [True, False])
+async def test_auto_review_error_uses_existing_qq_manual_buttons(
+    tmp_path: Path, kind: str, approved: bool
+) -> None:
+    from agent.approvals.automatic import AutomaticApprovals
+
+    def broken(*_args: object) -> Any:
+        raise ValueError("invalid review")
+
+    h = Harness(tmp_path)
+    h.broker.set_session_mode("session", mode="auto_review", expected_version=0)
+    h.broker.automatic = AutomaticApprovals(policy=lambda: ("auto_review", 1), review=broken)
+    req = request(kind)
+    with h.route():
+        waiting = asyncio.create_task(
+            asyncio.to_thread(h.broker.request, req, timeout_seconds=2, surface="im:qq")
+        )
+        content = await card(h)
+        assert "自动审批出错，请你确认本次操作" in html.unescape(content.text)
+        assert not waiting.done()
+        payload = button(content, "仅本次允许" if approved else "拒绝")
+        await h.click(payload)
+        assert (await waiting).approved is approved
+        assert req.decision_source == "user_once"
+        assert h.broker.mode_state("session").mode == "auto_review"
+        await h.click(payload)
+        assert "失效" in h.provider.sent[-1].text
+
+
+@pytest.mark.asyncio
 async def test_mode_confirmation_cancel_replay_exit_and_persistence(tmp_path: Path) -> None:
     h = Harness(tmp_path)
     await h.click(PAGE_PAYLOAD)
@@ -432,8 +463,9 @@ class FileWorkflowLLM:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("allow", [True, False])
+@pytest.mark.parametrize("automatic", [True, False])
 async def test_real_conversation_file_tool_roundtrip_via_qq_control(
-    tmp_path: Path, allow: bool
+    tmp_path: Path, allow: bool, automatic: bool
 ) -> None:
     h = Harness(tmp_path)
     session = Session.new(
@@ -445,6 +477,14 @@ async def test_real_conversation_file_tool_roundtrip_via_qq_control(
     store = JsonlSessionStore(tmp_path / "sessions")
     store.create(session)
     h.state.set_binding(h.key, session.session_id)
+    if automatic:
+        from agent.approvals.automatic import AutomaticApprovals
+
+        def broken(*_args: object) -> Any:
+            raise ValueError("invalid review")
+
+        h.broker.set_session_mode(session.session_id, mode="auto_review", expected_version=0)
+        h.broker.automatic = AutomaticApprovals(policy=lambda: ("auto_review", 1), review=broken)
     catalog = PersonaCatalog(external_dir=tmp_path / "personas")
     policy = ProtectedPathPolicy(
         product_roots=((tmp_path / "product").resolve(),), personal_skill_roots=()
@@ -487,6 +527,9 @@ async def test_real_conversation_file_tool_roundtrip_via_qq_control(
         )
         content = await card(h)
         assert "新建" in content.text
+        assert not target.exists()
+        if automatic:
+            assert "自动审批出错" in content.text
         await h.click(button(content, "仅本次允许" if allow else "拒绝"))
         await asyncio.wait_for(waiting, 5)
     assert target.exists() is allow
@@ -495,3 +538,5 @@ async def test_real_conversation_file_tool_roundtrip_via_qq_control(
     results = [event for event in session.events if event.type == "tool_call_result"]
     assert len(results) == (2 if allow else 1)
     assert results[0].payload["is_error"] is not allow
+    if automatic:
+        assert h.broker.mode_state(session.session_id).mode == "auto_review"

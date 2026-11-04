@@ -66,6 +66,56 @@ def test_all_files_are_bounded_references(media: str) -> None:
     assert estimate_rendered_tokens([projected.to_openai()]) == estimate_tokens([projected])
 
 
+def test_historical_assistant_attachment_preserves_origin_without_reading_asset() -> None:
+    original = Message(
+        role="assistant", content="生成的图片", attachments=[ref(b"image", "image/png")]
+    )
+    projected = project_file_message(original)
+    assert projected.role == "assistant" and projected.uuid == original.uuid
+    assert original.attachments and not projected.attachments
+    assert '"source": "assistant_generated"' in projected.content
+    assert "user_upload" not in projected.content
+    assert project_file_message(projected) == projected
+
+
+def test_restart_with_generated_attachment_can_prepare_and_send_followup(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from agent.sessions.events import Event
+
+    def forbidden(_asset: str) -> BytesIO:
+        pytest.fail("Historical generated image must not be opened or uploaded")
+
+    llm = MeasuredLLM(context_window=100000, prompt_tokens=1000)
+    conv, session, store = _make_conversation(
+        tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
+    )
+    event = Event(
+        type="assistant_message",
+        uuid="old-generated-image",
+        ts=datetime.now(UTC),
+        payload={
+            "content": "生成的图片",
+            "attachments": [ref(b"image", "image/png").to_dict()],
+        },
+    )
+    store.append_event(session.session_id, event)
+    adapter = MultimodalInputAdapter(open_asset=forbidden)
+    restarted = Conversation(
+        session=store.load(session.session_id),
+        store=store,
+        llm_client=llm,
+        prompt_builder=conv._prompt_builder,
+        catalog=conv._catalog,
+        context_manager=SummarizingContextManager(),
+        message_projector=project_file_message,
+        message_renderer=adapter.render_message,
+        message_budget_renderer=adapter.render_budget_message,
+    )
+    assert restarted.send("继续") == "ok"
+    assert any("assistant_generated" in json.dumps(request) for request in llm.received)
+
+
 @pytest.mark.parametrize("model", ["openai/kimi-k2.6", "deepseek/deepseek-v4-pro"])
 def test_provider_receives_pdf_hint_without_opening_or_uploading_file(
     tmp_path: Path, model: str

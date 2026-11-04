@@ -20,8 +20,12 @@ _SLOW_QUERY_SECONDS = 0.1
 class SessionQueryObservation:
     session_id: str
     projection_kind: Literal["business", "recall"] = "business"
-    action: Literal["lookup", "waiting", "hit", "coalesced", "rebuilt", "invalidated"] = "lookup"
-    miss_reason: Literal["absent", "source_changed", "maintenance_failed", "missing"] | None = None
+    action: Literal[
+        "lookup", "waiting", "hit", "coalesced", "rebuilt", "invalidated", "deferred"
+    ] = "lookup"
+    miss_reason: (
+        Literal["absent", "source_changed", "maintenance_failed", "missing", "index_busy"] | None
+    ) = None
     wait_seconds: float = 0.0
     published: bool | None = None
     publish_reason: Literal["stored", "source_changed", "capacity"] | None = None
@@ -97,4 +101,18 @@ def observe_query_maintenance_failure(session_id: str, error: Exception) -> None
             published=False,
             outcome="error",
             error_type=type(error).__name__,
+        ).emit()
+
+
+def observe_query_maintenance_deferred(
+    session_id: str, *, projection_kind: Literal["business", "recall"]
+) -> None:
+    """A busy optional index stays at its old version until the next reader catches up."""
+    with suppress(Exception):
+        SessionQueryObservation(
+            session_id,
+            projection_kind=projection_kind,
+            action="deferred",
+            miss_reason="index_busy",
+            published=False,
         ).emit()

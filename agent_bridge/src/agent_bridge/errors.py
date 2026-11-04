@@ -370,6 +370,17 @@ def map_exception(exc: BaseException) -> ProtocolError:
             False,
         )
     if isinstance(exc, LLMBadRequestError):
+        if (
+            exc.error_evidence is not None
+            and exc.error_evidence.source == "local_validation"
+            and exc.error_evidence.code == "attachment_projection_required"
+        ):
+            return ProtocolError(
+                400,
+                "attachment_projection_required",
+                "会话附件未能正确准备，本次没有发送模型请求。请重试；若仍失败，请反馈问题。",
+                False,
+            )
         if exc.error_evidence is not None and exc.error_evidence.source == "local_validation":
             return ProtocolError(
                 400,

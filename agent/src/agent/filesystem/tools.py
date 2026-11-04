@@ -497,6 +497,7 @@ def _approval_audit(request: PendingFilesystemApproval) -> dict[str, object]:
         "approval_mode": request.approval_mode,
         "approval_mode_version": request.approval_mode_version,
         "review": request.review_assessment,
+        "review_fallback": request.review_fallback,
         "risk_code": risk.code if risk is not None else None,
         "risk_fingerprint": risk.fingerprint if risk is not None else None,
     }

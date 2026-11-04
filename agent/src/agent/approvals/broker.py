@@ -15,6 +15,7 @@ from .models import (
     SessionApprovalMode,
     SessionApprovalModeState,
 )
+from .reviewer import ReviewAssessment
 from .risk import CatastrophicActionPolicy
 
 logger = logging.getLogger(__name__)
@@ -262,6 +263,14 @@ class ApprovalBroker:
                     timeout=timeout_seconds,
                     publish=lambda: self._notify(listeners, request),
                     policy_current=lambda: self.policy_current(request),
+                    manual_fallback=lambda status, review: self._manual_fallback(
+                        request,
+                        status,
+                        review,
+                        surface=surface,
+                        timeout_seconds=timeout_seconds,
+                        listeners=listeners,
+                    ),
                 )
             finally:
                 with self._lock:
@@ -269,6 +278,52 @@ class ApprovalBroker:
         self._notify(listeners, request)
         if immediate:
             return request._decision
+
+        return self._wait_for_decision(request, timeout_seconds=timeout_seconds)
+
+    def _manual_fallback(
+        self,
+        request: Any,
+        status: str,
+        review: ReviewAssessment | None,
+        *,
+        surface: str | None,
+        timeout_seconds: float,
+        listeners: tuple[Callable[[dict[str, object]], None], ...],
+    ) -> bool:
+        """Hand the same action to the existing human flow, without a terminal gap."""
+        with self._session_lock(request.session_id):
+            if (
+                self.is_companionship(request.session_id)
+                or request.approval_mode != "auto_review"
+                or not self.policy_current(request)
+                or request._event.is_set()
+            ):
+                return False
+            with self._lock:
+                if self._pending.get(request.request_id) is not request:
+                    return False
+                assert request is not None
+                # Auto review itself needs no surface. A fallback must have the
+                # same real human route as ordinary manual approval.
+                if (
+                    surface not in {None, "desktop_chat"}
+                    and self._run_surfaces.get((request.session_id, request.run_id)) != surface
+                ):
+                    return False
+                request.approval_mode = "per_request"
+                request.decision_source = None
+                request.review_fallback = status
+                request.review_assessment = review.to_dict() if review else None
+                request.review_context = None
+                request.status = "pending"
+                request.version += 1
+        self._notify(listeners, request)
+        self._wait_for_decision(request, timeout_seconds=timeout_seconds)
+        return True
+
+    def _wait_for_decision(self, request: Any, *, timeout_seconds: float) -> Any:
+        lock = self._session_lock(request.session_id)
 
         if not request._event.wait(timeout_seconds):
             with lock, self._lock:

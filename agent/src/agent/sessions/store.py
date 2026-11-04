@@ -25,7 +25,7 @@ from time import monotonic, perf_counter
 from typing import TYPE_CHECKING, Any, BinaryIO, Protocol, cast
 
 import portalocker
-from portalocker.exceptions import LockException
+from portalocker.exceptions import AlreadyLocked, LockException
 
 from llm_providers import (
     ModelRuntimeConfig,
@@ -62,6 +62,7 @@ from .query import (
 )
 from .query_observation import (
     SessionQueryObservation,
+    observe_query_maintenance_deferred,
     observe_query_maintenance_failure,
     observe_session_query,
 )
@@ -501,6 +502,8 @@ class JsonlSessionStore:
                     events,
                     is_current=lambda: self._source_version(path) == after,
                 )
+            except AlreadyLocked:
+                observe_query_maintenance_deferred(session_id, projection_kind="business")
             except Exception as exc:
                 observe_query_maintenance_failure(session_id, exc)
             try:
@@ -511,6 +514,8 @@ class JsonlSessionStore:
                     events,
                     is_current=lambda: self._source_version(path) == after,
                 )
+            except AlreadyLocked:
+                observe_query_maintenance_deferred(session_id, projection_kind="recall")
             except Exception as exc:
                 # The old persisted version remains distinguishable from `after`.
                 observe_query_maintenance_failure(session_id, exc)

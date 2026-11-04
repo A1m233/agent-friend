@@ -73,6 +73,7 @@ function PendingApprovalPanel({
         </div>
       </div>
       {current.modeSource === "request" && <p className="text-xs text-muted">本次请求使用独立的逐次审批设置</p>}
+      {current.reviewFallback && <p className="text-xs text-muted">{current.reviewFallback}</p>}
       <p className="text-sm font-medium text-fg">{current.reason}</p>
       {current.command ? (
         <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface/60 p-2 text-xs text-fg">

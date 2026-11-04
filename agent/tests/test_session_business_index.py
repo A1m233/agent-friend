@@ -157,6 +157,26 @@ def test_index_maintenance_failure_does_not_fail_durable_append_and_can_recover(
     assert sum(e.uuid == "saved" for e in store.load("one").events) == 1
 
 
+def test_busy_business_index_defers_without_losing_append(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = make_store(tmp_path)
+    store.query_page("one", turn_limit=30)
+    caplog.set_level("DEBUG", logger="agent.sessions.query_observation")
+    with store._business_index.database("one"):
+        store.append_event("one", event("user_message", "saved-during-read", content="once"))
+    assert any(
+        getattr(record, "cache_miss_reason", None) == "index_busy" for record in caplog.records
+    )
+    assert not any(
+        getattr(record, "error_type", None) == "AlreadyLocked" for record in caplog.records
+    )
+    fresh = JsonlSessionStore(tmp_path)
+    assert fresh.query_page("one", turn_limit=30).active_events[-1].uuid == "saved-during-read"
+    assert sum(e.uuid == "saved-during-read" for e in fresh.load("one").events) == 1
+
+
 def test_cancelled_build_is_not_published_and_other_sessions_remain_available(
     tmp_path: Path,
 ) -> None:

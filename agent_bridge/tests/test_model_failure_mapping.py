@@ -58,6 +58,22 @@ def test_local_request_and_protocol_errors_keep_their_origin() -> None:
     assert "没有可用回答" in unsupported.message
 
 
+def test_unprojected_attachment_is_a_local_history_error() -> None:
+    from types import SimpleNamespace
+
+    from llm_providers import LLMBadRequestError, LLMClient, MultimodalInputAdapter, ProviderSpec
+
+    adapter = MultimodalInputAdapter(open_asset=lambda _: pytest.fail("unexpected asset read"))
+    with pytest.raises(LLMBadRequestError) as caught:
+        adapter.render_budget_message(
+            SimpleNamespace(attachments=[object()]),
+            LLMClient(ProviderSpec(model="deepseek/deepseek-chat", api_key="fixture")),
+        )
+    result = map_exception(caught.value)
+    assert result.code == "attachment_projection_required"
+    assert "没有发送模型请求" in result.message
+
+
 @pytest.mark.parametrize(
     "reason,action",
     [

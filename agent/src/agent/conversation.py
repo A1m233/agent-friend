@@ -1402,12 +1402,10 @@ class Conversation:
 
             def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
                 nonlocal trigger_appended
-                tool_specs = self._current_tool_specs()
-                messages = yield from self._assemble_stream(
-                    trailing_user=system_prompt_addendum,
-                    tool_specs=tool_specs,
-                    cancel_check=cancel_check,
-                )
+                self._check_cancel(cancel_check)
+                # The accepted trigger belongs to the source being compacted.
+                # Appending it afterwards invalidates our own checkpoint before
+                # the provider can accept the prepared request.
                 if not trigger_appended:
                     self._append_system_trigger_event(
                         source_kind=source_kind,
@@ -1417,7 +1415,13 @@ class Conversation:
                         event_metadata=event_metadata,
                     )
                     trigger_appended = True
-                return messages
+                return (
+                    yield from self._assemble_stream(
+                        trailing_user=system_prompt_addendum,
+                        tool_specs=self._current_tool_specs(),
+                        cancel_check=cancel_check,
+                    )
+                )
 
         except BaseException:
             self._restore_run_model_snapshot(previous_run_model_snapshot)
@@ -3584,11 +3588,37 @@ class Conversation:
             **({} if compatibility_only else {"tools": tools or []}),
             "settings": settings or {},
         }
+        self._upgrade_attachment_usage_anchor(identity)
         if compatibility_only:
             from .context.input_identity import input_compatibility_scope
 
             return input_compatibility_scope(identity)
         return digest(identity)
+
+    def _upgrade_attachment_usage_anchor(self, identity: dict[str, Any]) -> None:
+        """Retain measured components across the known additive v2 -> v3 change."""
+        anchor = self._usage_anchor
+        event = getattr(self, "_legacy_usage_event", None)
+        if anchor is None or anchor.version != 4 or event is None:
+            return
+        usage = event.meta.get("context_usage")
+        if (
+            INPUT_PROJECTION_VERSION != "session-files-v3"
+            or not isinstance(usage, dict)
+            or usage.get("attachment_input_projection") != "session-files-v2"
+        ):
+            return
+        from .context.input_identity import input_compatibility_scope
+
+        previous = {**identity, "attachment_input_projection": "session-files-v2"}
+        if anchor.compatibility_scope == input_compatibility_scope(previous):
+            # v3 adds assistant file references; user projection, transport and
+            # token accounting are unchanged. Actual rendered component hashes
+            # still charge changed text/files and reserve unseen opaque inputs.
+            # Every other input identity field must match the persisted scope.
+            self._usage_anchor = replace(
+                anchor, compatibility_scope=input_compatibility_scope(identity)
+            )
 
     def _input_calibration_key(self, messages: list[Message]) -> str:
         kinds = {"session_file" for message in messages for ref in message.attachments}
@@ -6841,13 +6871,25 @@ class Conversation:
                 and run_id
             }
         )
+        interruption_changed = False
         for repaired_run_id in sorted(repaired_runs | interrupted_run_reasons.keys()):
-            self._append_turn_aborted_history_fact(
+            changed = self._append_turn_aborted_history_fact(
                 run_id=repaired_run_id,
                 reason_code=interrupted_run_reasons.get(
                     repaired_run_id, "history_preflight_repair"
                 ),
                 result_origin="history_preflight_repair",
+                persist=False,
+            )
+            interruption_changed = interruption_changed or changed
+        if interruption_changed and self._rollout_recorder is not None:
+            # One preflight boundary, rather than a full transcript per old run.
+            self._rollout_recorder.commit(
+                history=self._session_model_history,
+                model_context=self._session_model_context,
+                cache_epoch=self._cache_epoch,
+                boundary="tool_result_completed",
+                turn_terminal=True,
             )
 
     def _append_turn_aborted_history_fact(
@@ -6856,20 +6898,27 @@ class Conversation:
         run_id: str,
         reason_code: str,
         result_origin: str,
+        persist: bool = True,
     ) -> bool:
+        active_events = self._session.active_events
         requests = [
             event
-            for event in self._session.active_events
+            for event in active_events
             if event.type == "tool_call_request" and event.meta.get("run_id") == run_id
         ]
-        if any(not self._tool_result_exists_for_request(item) for item in requests):
+        results_by_key = {
+            self._tool_transaction_key(event): event
+            for event in active_events
+            if event.type == "tool_call_result" and self._tool_transaction_key(event) is not None
+        }
+        if any(self._tool_transaction_key(item) not in results_by_key for item in requests):
             return False
         from .sessions.interruption import scope_interruption
 
         keys = {self._tool_transaction_key(item) for item in requests}
         results = [
             event
-            for event in self._session.active_events
+            for event in active_events
             if event.type == "tool_call_result" and self._tool_transaction_key(event) in keys
         ]
         scoped = scope_interruption(
@@ -6886,7 +6935,7 @@ class Conversation:
             scoped, stable_system_prompt="", reason="interruption_scope_repair"
         )
         self._session_model_history.note_active_events(self._session)
-        if self._rollout_recorder is not None:
+        if persist and self._rollout_recorder is not None:
             self._rollout_recorder.commit(
                 history=self._session_model_history,
                 model_context=self._session_model_context,

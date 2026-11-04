@@ -1,10 +1,47 @@
 from pathlib import Path
 
+import pytest
 from agent.session_delivery import SessionDeliveryStore
 from agent.sessions.manager import SessionManager
 from agent.sessions.rollout import restore_rollout
 
 from agent import JsonlSessionStore, Session
+
+from .test_session_rollout import _create, _manager, _RecordingLLM, _run
+
+
+@pytest.mark.parametrize("cold", [False, True])
+def test_delivery_extends_existing_rollout_after_runtime_release(
+    tmp_path: Path, cold: bool
+) -> None:
+    manager = _manager(tmp_path, _RecordingLLM())
+    sid = _create(manager)
+    _run(manager, sid, "previous question")
+    store = manager._store
+    previous = restore_rollout(store.load(sid))
+    assert previous.commit is not None
+    if cold:
+        manager.close()
+        manager = _manager(tmp_path, _RecordingLLM())
+    try:
+        manager.append_delivered_message(
+            sid,
+            delivery_id="next",
+            content="prepared share",
+            source_session_id="inner",
+            source_run_id="wake",
+        )
+        session = store.load(sid)
+        commit = [e for e in session.events if e.type == "rollout_commit"][-1]
+        assert commit.payload["base_commit_id"] == previous.commit.commit_id
+        restored = restore_rollout(session)
+        assert restored.disposition != "corrupt_committed_history"
+        assert [m.to_dict() for m in restored.history.items[: len(previous.history.items)]] == [
+            m.to_dict() for m in previous.history.items
+        ]
+        assert any(m.content == "prepared share" for m in restored.history.items)
+    finally:
+        manager.close()
 
 
 def test_prepared_message_persists_source_and_recovers_without_model_call(tmp_path: Path) -> None:

@@ -801,6 +801,17 @@ export function MessageTimeline({
     followOnAppend: false,
     scrollEndThreshold: MESSAGE_SCROLL_BOTTOM_EPSILON_PX,
   });
+  const measureRow = useCallback((node: HTMLDivElement | null) => {
+    // Ref callbacks run inside React's commit. Measure before paint, after that
+    // commit, while keeping synchronous ResizeObserver scroll compensation.
+    if (node === null) {
+      virtualizer.measureElement(null);
+      return;
+    }
+    queueMicrotask(() => {
+      if (node.isConnected) virtualizer.measureElement(node);
+    });
+  }, [virtualizer]);
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = userLayoutMutationMessageId !== null
     ? (item, _delta, instance) => shouldAdjustMessageScrollPositionOnItemSizeChange({
         activeMessageId: userLayoutMutationMessageId,
@@ -1397,7 +1408,7 @@ export function MessageTimeline({
             return (
               <div
                 key={virtualItem.key}
-                ref={virtualizer.measureElement}
+                ref={measureRow}
                 data-index={virtualItem.index}
                 className="absolute left-0 top-0 w-full"
                 style={{ transform: `translateY(${virtualItem.start}px)` }}

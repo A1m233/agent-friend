@@ -11,6 +11,7 @@ export type PendingApproval = {
   requestId: string;
   requestVersion: number;
   modeSource?: "session" | "request" | "global";
+  reviewFallback?: string | null;
   sessionId: string;
   runId: string;
   reason: string;
@@ -33,6 +34,21 @@ function commandExecutionLabel(request: CommandApprovalRequest): string {
   return request.details.execution === "host_user"
     ? "宿主用户（文件和网络不受限）"
     : "Codex 沙箱";
+}
+
+function reviewFallbackText(request: {
+  review_fallback?: "failed" | "timed_out" | "denied" | null;
+  review?: { rationale: string } | null;
+}): string | null {
+  const labels = {
+    failed: "自动审批出错，请你确认本次操作",
+    timed_out: "自动审批超时，请你确认本次操作",
+    denied: "自动审批未放行，请你确认本次操作",
+  };
+  if (!request.review_fallback) return null;
+  const label = labels[request.review_fallback];
+  return request.review_fallback === "denied" && request.review?.rationale
+    ? `${label}：${request.review.rationale}` : label;
 }
 
 function commandFilesystemLabel(request: CommandApprovalRequest): string {
@@ -141,6 +157,7 @@ export function buildPendingApprovalQueue(input: {
       requestId: request.request_id,
       requestVersion: request.version,
       modeSource: request.approval_mode_source,
+      reviewFallback: reviewFallbackText(request),
       sessionId: request.session_id,
       runId: request.run_id,
       reason: request.reason,
@@ -165,6 +182,7 @@ export function buildPendingApprovalQueue(input: {
       requestId: entry.request.request_id,
       requestVersion: entry.request.version,
       modeSource: entry.request.approval_mode_source,
+      reviewFallback: reviewFallbackText(entry.request),
       sessionId: entry.request.session_id,
       runId: entry.request.run_id,
       reason: entry.request.reason,

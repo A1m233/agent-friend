@@ -9,7 +9,7 @@ from typing import Any, BinaryIO, cast
 
 from ..catalog import DEEPSEEK_VISION_LITELLM_MODEL, model_capabilities
 from ..client import LLMClient
-from ..errors import LLMBadRequestError
+from ..errors import ErrorEvidence, LLMBadRequestError
 from ..protocol import LanguageModel
 from .limits import TOOL_RESULT_MAX_IMAGE_BYTES, TOOL_RESULT_MAX_IMAGES
 from .tool_images import supports_tool_images
@@ -23,9 +23,15 @@ class MultimodalInputAdapter:
         if getattr(message, "images", ()):
             return self._render_tool_images(message, client)
         if getattr(message, "attachments", ()):
-            raise LLMBadRequestError(
-                "attachment_projection_required: 用户附件必须通过会话文件投影按需读取。"
+            error = LLMBadRequestError(
+                "attachment_projection_required: 消息附件必须通过会话文件投影按需读取。"
             )
+            error.error_evidence = ErrorEvidence(
+                source="local_validation",
+                category="bad_request",
+                code="attachment_projection_required",
+            )
+            raise error
         return cast(dict[str, Any], message.to_openai())
 
     @staticmethod
