@@ -18,8 +18,36 @@ class WebContentRateLimitError(WebContentError):
     kind = "rate_limit"
 
 
+class WebContentProviderAccessError(WebContentError):
+    kind = "provider_access_denied"
+
+
 class WebContentNetworkError(WebContentError):
     kind = "network"
+
+
+class WebContentTimeoutError(WebContentError):
+    kind = "timeout"
+
+
+class WebContentRedirectError(WebContentError):
+    kind = "redirect_limit"
+
+
+class WebContentHttpError(WebContentError):
+    """A response from the target site, distinct from provider authentication."""
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"HTTP {status_code}")
+        self.http_status = status_code
+        self.kind = {
+            401: "authentication_required",
+            403: "access_denied",
+            404: "not_found",
+            410: "gone",
+            408: "timeout",
+            429: "rate_limit",
+        }.get(status_code, "server_error" if status_code >= 500 else "http_error")
 
 
 class WebContentEmptyError(WebContentError):

@@ -14,8 +14,11 @@ from .provider import (
     ExtractedContent,
     ExtractedLink,
     WebContentEmptyError,
+    WebContentHttpError,
     WebContentNetworkError,
+    WebContentRedirectError,
     WebContentResourceLimitError,
+    WebContentTimeoutError,
     WebContentUnsupportedError,
 )
 from .url_safety import UnsafeUrlError, resolve_redirect, validate_public_url
@@ -58,7 +61,7 @@ class SafeHtmlReader:
                     ) as response:
                         if response.is_redirect:
                             if redirect_count >= MAX_REDIRECTS:
-                                raise WebContentNetworkError("too many redirects")
+                                raise WebContentRedirectError("too many redirects")
                             current = resolve_redirect(
                                 current, response.headers.get("location", "")
                             )
@@ -78,7 +81,11 @@ class SafeHtmlReader:
             raise
         except WebContentResourceLimitError:
             raise
-        except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+        except httpx.HTTPStatusError as exc:
+            raise WebContentHttpError(exc.response.status_code) from exc
+        except httpx.TimeoutException as exc:
+            raise WebContentTimeoutError("local HTML request timed out") from exc
+        except httpx.RequestError as exc:
             raise WebContentNetworkError(str(exc)) from exc
 
         sniff = data[:512].lstrip().lower()

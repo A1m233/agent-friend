@@ -11,8 +11,11 @@ from pypdf import PdfReader
 from .provider import (
     ExtractedContent,
     WebContentEmptyError,
+    WebContentHttpError,
     WebContentNetworkError,
+    WebContentRedirectError,
     WebContentResourceLimitError,
+    WebContentTimeoutError,
     WebContentUnsupportedError,
 )
 from .url_safety import UnsafeUrlError, resolve_redirect, validate_public_url
@@ -42,7 +45,7 @@ def download_and_extract_pdf(
                 ) as response:
                     if response.is_redirect:
                         if redirect_count >= MAX_REDIRECTS:
-                            raise WebContentNetworkError("too many redirects")
+                            raise WebContentRedirectError("too many redirects")
                         current = resolve_redirect(current, response.headers.get("location", ""))
                         continue
                     response.raise_for_status()
@@ -57,7 +60,11 @@ def download_and_extract_pdf(
         raise
     except (WebContentResourceLimitError, WebContentUnsupportedError):
         raise
-    except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+    except httpx.HTTPStatusError as exc:
+        raise WebContentHttpError(exc.response.status_code) from exc
+    except httpx.TimeoutException as exc:
+        raise WebContentTimeoutError("local PDF request timed out") from exc
+    except httpx.RequestError as exc:
         raise WebContentNetworkError(str(exc)) from exc
     if not data.startswith(b"%PDF-"):
         raise WebContentUnsupportedError("response is not a PDF")

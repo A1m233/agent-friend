@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any, ClassVar
 from urllib.parse import urlsplit
@@ -104,13 +105,27 @@ class WebFetchTool:
             return _error("url_not_authorized", "URL 授权与读取目标不一致，未读取。")
 
         pdf_meta: dict[str, Any] = {}
+        failures: list[dict[str, Any]] = []
+
+        def read_pdf() -> tuple[ExtractedContent, dict[str, Any]]:
+            return _attempt(
+                "local_pdf", lambda: download_and_extract_pdf(normalized, focus=focus), failures
+            )
+
+        def extract_remote() -> ExtractedContent:
+            assert self._provider is not None
+            provider = self._provider
+            return _attempt(
+                "remote_extract", lambda: provider.extract(normalized, focus=focus), failures
+            )
+
         body_provider = ""
         link_provider: str | None = None
         local_fetch_error_kind: str | None = None
         try:
             if urlsplit(normalized).path.lower().endswith(".pdf"):
                 try:
-                    content, pdf_meta = download_and_extract_pdf(normalized, focus=focus)
+                    content, pdf_meta = read_pdf()
                     body_provider = "local_pdf"
                 except UntrustedDnsResolutionError as local_error:
                     content, body_provider = self._remote_after_untrusted_dns(
@@ -118,17 +133,22 @@ class WebFetchTool:
                         focus=focus,
                         authorization=authorization,
                         local_error=local_error,
+                        failures=failures,
                     )
                     local_fetch_error_kind = "dns_untrusted"
             elif self._html_reader is not None:
                 try:
-                    local_content = self._html_reader.open(normalized, focus=focus)
+                    reader = self._html_reader
+                    local_content = _attempt(
+                        "local_html", lambda: reader.open(normalized, focus=focus), failures
+                    )
                 except UntrustedDnsResolutionError as local_error:
                     content, body_provider = self._remote_after_untrusted_dns(
                         normalized,
                         focus=focus,
                         authorization=authorization,
                         local_error=local_error,
+                        failures=failures,
                     )
                     local_fetch_error_kind = "dns_untrusted"
                 except (UnsafeUrlError, WebContentError) as local_error:
@@ -140,7 +160,7 @@ class WebFetchTool:
                     if self._provider is None:
                         raise
                     try:
-                        content = self._provider.extract(normalized, focus=focus)
+                        content = extract_remote()
                         body_provider = self._provider.name
                     except WebContentError as provider_error:
                         if getattr(provider_error, "kind", "") not in {
@@ -149,7 +169,7 @@ class WebFetchTool:
                         }:
                             raise
                         try:
-                            content, pdf_meta = download_and_extract_pdf(normalized, focus=focus)
+                            content, pdf_meta = read_pdf()
                             body_provider = "local_pdf"
                         except WebContentError as pdf_error:
                             raise local_error from pdf_error
@@ -159,7 +179,7 @@ class WebFetchTool:
                     link_provider = self._html_reader.name if content.links else None
                     if not content.text and self._provider is not None:
                         try:
-                            provider_content = self._provider.extract(normalized, focus=focus)
+                            provider_content = extract_remote()
                         except WebContentError:
                             pass
                         else:
@@ -175,7 +195,7 @@ class WebFetchTool:
                 if self._provider is None:
                     raise WebContentEmptyError("no webpage provider is configured")
                 try:
-                    content = self._provider.extract(normalized, focus=focus)
+                    content = extract_remote()
                     body_provider = self._provider.name
                 except WebContentError as provider_error:
                     if getattr(provider_error, "kind", "") not in {
@@ -184,28 +204,37 @@ class WebFetchTool:
                     }:
                         raise
                     try:
-                        content, pdf_meta = download_and_extract_pdf(normalized, focus=focus)
+                        content, pdf_meta = read_pdf()
                         body_provider = "local_pdf"
                     except WebContentError as pdf_error:
                         raise provider_error from pdf_error
         except UntrustedDnsResolutionError:
-            return _error(
+            return _fetch_error(
                 "dns_untrusted",
                 "网页读取失败：本机 DNS 无法安全确认该地址属于公网，未发起本地请求，"
                 "且当前没有可用的安全远端正文回退。请改用搜索摘要或其它来源；原样重试通常无效。",
+                failures,
             )
         except UnsafeUrlError:
-            return _error("unsafe_url", "网页读取失败：目标地址不属于可访问的公网范围。")
+            return _fetch_error(
+                "unsafe_url",
+                "网页读取失败：URL 或重定向未通过公网安全校验；请换用公开来源。",
+                failures,
+            )
         except WebContentError as exc:
             kind = getattr(exc, "kind", "provider")
             if kind == "empty_content" and urlsplit(normalized).path.lower().endswith(".pdf"):
                 kind = "scanned_pdf"
-            return _error(kind, f"网页读取失败：{_friendly_failure(kind)}")
+            return _fetch_error(kind, f"网页读取失败：{_friendly_failure(kind)}", failures)
         except Exception as exc:
             return ToolResult(
                 text="网页读取失败：没有取得可用正文。",
                 is_error=True,
-                meta={"error_kind": "internal_error", "exception_type": type(exc).__name__},
+                meta={
+                    "error_kind": "internal_error",
+                    "exception_type": type(exc).__name__,
+                    "fetch_failures": failures,
+                },
             )
 
         parent_ref = authorization.get("evidence_ref")
@@ -245,6 +274,8 @@ class WebFetchTool:
         }
         if local_fetch_error_kind is not None:
             meta["local_fetch_error_kind"] = local_fetch_error_kind
+        if failures:
+            meta["fetch_failures"] = failures
         return ToolResult(text=rendered, meta=meta)
 
     def _remote_after_untrusted_dns(
@@ -254,6 +285,7 @@ class WebFetchTool:
         focus: str | None,
         authorization: dict[str, Any],
         local_error: UntrustedDnsResolutionError,
+        failures: list[dict[str, Any]],
     ) -> tuple[ExtractedContent, str]:
         provider = self._provider
         if (
@@ -262,7 +294,10 @@ class WebFetchTool:
             or not isinstance(authorization.get("evidence_ref"), str)
         ):
             raise local_error
-        return provider.extract(url, focus=focus), provider.name
+        return (
+            _attempt("remote_extract", lambda: provider.extract(url, focus=focus), failures),
+            provider.name,
+        )
 
 
 def _render_content(
@@ -299,14 +334,65 @@ def _render_content(
 
 def _friendly_failure(kind: str) -> str:
     return {
-        "auth": "当前无法访问正文来源。",
-        "rate_limit": "正文服务暂时繁忙。",
-        "network": "网络或目标站点没有在限定时间内响应。",
-        "empty_content": "页面没有可提取的正文或链接。",
-        "unsupported_content": "页面格式不在当前支持范围内。",
-        "resource_limit": "页面或文件超过当前安全读取范围。",
+        "auth": "远端正文服务的凭据不可用；需检查服务配置，重试目标 URL 无法修复。",
+        "provider_access_denied": "远端正文服务拒绝请求；需检查服务权限，不能据此断言目标站点拒绝访问。",
+        "authentication_required": "站点要求身份认证；当前工具不支持登录，请换用公开来源。",
+        "access_denied": "站点拒绝访问；无法仅据此判断是否反爬，请换用其它来源，不要绕过访问控制。",
+        "not_found": "站点返回页面不存在；请核对链接或搜索替代来源，不要原样重复请求。",
+        "gone": "站点表示资源已移除；请搜索新地址或替代来源，不要原样重复请求。",
+        "rate_limit": "请求受到限流或服务配额限制；请稍后重试或检查配额，不要立即连续请求。",
+        "server_error": "服务端返回错误；可稍后有限重试，持续失败则换用其它来源。",
+        "http_error": "收到未成功的 HTTP 响应；请核对地址或换用其它来源。",
+        "timeout": "请求超过等待时限；可稍后有限重试，持续超时则换用其它来源。",
+        "network": "网络连接或传输失败，尚不能确认页面是否存在；检查网络或换用其它来源。",
+        "redirect_limit": "页面重定向次数超过上限；请核对最终公开地址，不要原样重复请求。",
+        "dns_untrusted": "本机 DNS 无法安全确认公网目标，未发起本地请求；不要绕过安全校验。",
+        "unsafe_url": "URL 或重定向未通过公网安全校验；请换用公开来源。",
+        "empty_content": "未取得可提取的正文或链接，不能据此断言页面不存在；请换用其它来源。",
+        "unsupported_content": "页面格式不受当前静态网页/PDF 读取支持；请换用支持的公开来源。",
+        "resource_limit": "页面或文件超过安全读取范围；请改用更小的页面或文件。",
         "scanned_pdf": "PDF 没有可读取的文本层，当前不支持 OCR。",
-    }.get(kind, "没有取得可用正文。")
+    }.get(kind, "没有取得可用正文，具体原因尚未确定；请换用其它来源。")
+
+
+def _attempt[T](stage: str, operation: Callable[[], T], failures: list[dict[str, Any]]) -> T:
+    """Keep bounded, public failure facts; never persist raw exception text or URLs."""
+    try:
+        return operation()
+    except (WebContentError, UnsafeUrlError) as exc:
+        if isinstance(exc, UntrustedDnsResolutionError):
+            kind = "dns_untrusted"
+        elif isinstance(exc, UnsafeUrlError):
+            kind = "unsafe_url"
+        else:
+            kind = exc.kind
+        failure: dict[str, Any] = {"stage": stage, "error_kind": kind}
+        status = getattr(exc, "http_status", None)
+        if status is not None:
+            failure["http_status"] = status
+        failures.append(failure)
+        raise
+
+
+def _fetch_error(kind: str, message: str, failures: list[dict[str, Any]]) -> ToolResult:
+    labels = {
+        "local_html": "本地网页读取",
+        "local_pdf": "本地 PDF 读取",
+        "remote_extract": "远端正文服务",
+    }
+    lines = [f"[{kind}] {message}"]
+    for failure in failures:
+        status = failure.get("http_status")
+        code = failure["error_kind"]
+        lines.append(
+            f"- {labels[failure['stage']]} [{code}]"
+            f"{f' HTTP {status}' if status is not None else ''}：{_friendly_failure(code)}"
+        )
+    return ToolResult(
+        text="\n".join(lines),
+        is_error=True,
+        meta={"error_kind": kind, "fetch_failures": failures},
+    )
 
 
 def _error(kind: str, text: str) -> ToolResult:

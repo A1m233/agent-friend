@@ -1,0 +1,153 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-11-04T17:52:36.869432+00:00",
+    "ended_at": "2026-11-04T17:52:57.246140+00:00",
+    "duration_seconds": 20.377,
+    "git_commit": "688f5111",
+    "working_tree_dirty": true,
+    "note": "web-fetch-classification-first-real; incident GPT-6.1-sol effort:medium; derived 404/403 + timeout control; classified results fixed; leakage audit clean; target observations only",
+    "selection": {
+      "contract": "all",
+      "case": "C26-10",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/gpt-6.1-sol",
+      "api_base": "http://127.0.0.1:8317/v1",
+      "defaults": {
+        "timeout": 90.0,
+        "reasoning_effort": "medium"
+      },
+      "context_window": 400000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "8217424315769c629dc5b45f1eeb7703eaf9273647c61eb26e5f8b8b44f5e8be",
+      "total_contracts": 28,
+      "total_cases": 259,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 2,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 7,
+        "C18": 9,
+        "C19": 5,
+        "C20": 11,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 13,
+        "C25": 2,
+        "C26": 12,
+        "C27": 6,
+        "C28": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C26": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C26",
+      "name": "agent-run-recovery",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C26-10",
+          "query": "继续核对这份报告的发布日期。",
+          "facet": "404 后寻找替代地址而非原样重试",
+          "source": "diagnostic-20261104-web-fetch-classification-generalized",
+          "surface": null,
+          "self_presentation_mode": "immersive",
+          "passed": false,
+          "reason": "required anchors missing: ['2026-08-17']",
+          "tool_calls": [
+            {
+              "name": "web_search",
+              "args": {
+                "query": "\"example.org/archive/rainfall-report\" 发布日期"
+              },
+              "result_text": "报告的新地址为 https://example.org/reports/rainfall。",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            },
+            {
+              "name": "web_fetch",
+              "args": {
+                "url": "https://example.org/reports/rainfall",
+                "focus": "核对这份报告明确标注的发布日期，并区分更新日期。"
+              },
+              "result_text": "{\"content\":\"降雨观测报告，发布日期 2026-08-17。\"}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            }
+          ],
+          "prior_tool_calls": [
+            {
+              "name": "web_fetch",
+              "args": {
+                "url": "https://example.org/archive/rainfall-report"
+              },
+              "result_text": "[not_found] 网页读取失败：站点返回页面不存在；请核对链接或搜索替代来源，不要原样重复请求。\n- 本地网页读取 [not_found] HTTP 404：站点返回页面不存在；请核对链接或搜索替代来源，不要原样重复请求。",
+              "is_error": true,
+              "duration_seconds": null,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": "not_found"
+            }
+          ],
+          "skill_activations": [],
+          "assistant_segments": [
+            "查到的新页面明确标注：这份《降雨观测报告》的发布日期是 **2026 年 8 月 17 日**。\n\n原链接返回页面不存在；以上日期依据[报告新页面](https://example.org/reports/rainfall)的正文标注。"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "查到的新页面明确标注：这份《降雨观测报告》的发布日期是 **2026 年 8 月 17 日**。\n\n原链接返回页面不存在；以上日期依据[报告新页面](https://example.org/reports/rainfall)的正文标注。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

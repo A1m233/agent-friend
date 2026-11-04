@@ -4,6 +4,97 @@ contract:
   expected_behavior: response
 
 cases:
+  - id: C26-10
+    query: 继续核对这份报告的发布日期。
+    facet: 404 后寻找替代地址而非原样重试
+    source: diagnostic-20261104-web-fetch-classification-generalized
+    current_session_events:
+      - type: user_message
+        text: 核对 https://example.org/archive/rainfall-report 的发布日期。
+      - type: assistant_message
+        text: 我打开页面核对。
+      - type: tool_call_request
+        tool_call_id: missing-page
+        tool_name: web_fetch
+        args: {url: "https://example.org/archive/rainfall-report"}
+      - type: tool_call_result
+        tool_call_id: missing-page
+        tool_name: web_fetch
+        is_error: true
+        error_code: not_found
+        content: |-
+          [not_found] 网页读取失败：站点返回页面不存在；请核对链接或搜索替代来源，不要原样重复请求。
+          - 本地网页读取 [not_found] HTTP 404：站点返回页面不存在；请核对链接或搜索替代来源，不要原样重复请求。
+    fake_tools:
+      - name: web_search
+        result_text: 报告的新地址为 https://example.org/reports/rainfall。
+      - name: web_fetch
+        responses:
+          - match_args: {url: "https://example.org/reports/rainfall"}
+            result_text: '{"content":"降雨观测报告，发布日期 2026-08-17。"}'
+    judge:
+      required_tool_sequence: [web_search, web_fetch]
+      required_successful_tool_calls:
+        - name: web_fetch
+          args: {url: "https://example.org/reports/rainfall"}
+      maximum_tool_call_counts: {web_fetch: 1}
+      must_mention_any: ['2026-08-17', '2026 年 8 月 17 日', '2026年8月17日']
+      require_non_empty_response: true
+
+  - id: C26-11
+    query: 刚才为什么没读到？先不用重试。
+    facet: 403 说明访问拒绝而非超时或页面不存在
+    source: diagnostic-20261104-web-fetch-classification-generalized
+    current_session_events:
+      - type: user_message
+        text: 打开 https://example.net/archive/field-notes。
+      - type: assistant_message
+        text: 我读取这个页面。
+      - type: tool_call_request
+        tool_call_id: denied-page
+        tool_name: web_fetch
+        args: {url: "https://example.net/archive/field-notes"}
+      - type: tool_call_result
+        tool_call_id: denied-page
+        tool_name: web_fetch
+        is_error: true
+        error_code: access_denied
+        content: |-
+          [access_denied] 网页读取失败：站点拒绝访问；无法仅据此判断是否反爬，请换用其它来源，不要绕过访问控制。
+          - 本地网页读取 [access_denied] HTTP 403：站点拒绝访问；无法仅据此判断是否反爬，请换用其它来源，不要绕过访问控制。
+    judge:
+      must_not_call_any: [web_fetch, web_search, exec_command]
+      must_mention_any_groups:
+        - ['403', 拒绝访问, 访问被拒, 禁止访问]
+      require_non_empty_response: true
+
+  - id: C26-12
+    query: 刚才为什么没读到？先不用重试。
+    facet: 相邻 control：真实传输超时不推断页面不存在
+    source: synthetic-web-fetch-timeout-control
+    current_session_events:
+      - type: user_message
+        text: 打开 https://example.net/catalog/observations。
+      - type: assistant_message
+        text: 我读取这个页面。
+      - type: tool_call_request
+        tool_call_id: slow-page
+        tool_name: web_fetch
+        args: {url: "https://example.net/catalog/observations"}
+      - type: tool_call_result
+        tool_call_id: slow-page
+        tool_name: web_fetch
+        is_error: true
+        error_code: timeout
+        content: |-
+          [timeout] 网页读取失败：请求超过等待时限；可稍后有限重试，持续超时则换用其它来源。
+          - 本地网页读取 [timeout]：请求超过等待时限；可稍后有限重试，持续超时则换用其它来源。
+    judge:
+      must_not_call_any: [web_fetch, web_search, exec_command]
+      must_mention_any_groups:
+        - [超时, 超过等待时限, timeout]
+      require_non_empty_response: true
+
   - id: C26-07
     query: 继续核对这份研究报告的作者和日期。
     facet: 搜索通道故障后读取命令发现的公开链接
