@@ -6841,13 +6841,25 @@ class Conversation:
                 and run_id
             }
         )
+        interruption_changed = False
         for repaired_run_id in sorted(repaired_runs | interrupted_run_reasons.keys()):
-            self._append_turn_aborted_history_fact(
+            changed = self._append_turn_aborted_history_fact(
                 run_id=repaired_run_id,
                 reason_code=interrupted_run_reasons.get(
                     repaired_run_id, "history_preflight_repair"
                 ),
                 result_origin="history_preflight_repair",
+                persist=False,
+            )
+            interruption_changed = interruption_changed or changed
+        if interruption_changed and self._rollout_recorder is not None:
+            # One preflight boundary, rather than a full transcript per old run.
+            self._rollout_recorder.commit(
+                history=self._session_model_history,
+                model_context=self._session_model_context,
+                cache_epoch=self._cache_epoch,
+                boundary="tool_result_completed",
+                turn_terminal=True,
             )
 
     def _append_turn_aborted_history_fact(
@@ -6856,20 +6868,27 @@ class Conversation:
         run_id: str,
         reason_code: str,
         result_origin: str,
+        persist: bool = True,
     ) -> bool:
+        active_events = self._session.active_events
         requests = [
             event
-            for event in self._session.active_events
+            for event in active_events
             if event.type == "tool_call_request" and event.meta.get("run_id") == run_id
         ]
-        if any(not self._tool_result_exists_for_request(item) for item in requests):
+        results_by_key = {
+            self._tool_transaction_key(event): event
+            for event in active_events
+            if event.type == "tool_call_result" and self._tool_transaction_key(event) is not None
+        }
+        if any(self._tool_transaction_key(item) not in results_by_key for item in requests):
             return False
         from .sessions.interruption import scope_interruption
 
         keys = {self._tool_transaction_key(item) for item in requests}
         results = [
             event
-            for event in self._session.active_events
+            for event in active_events
             if event.type == "tool_call_result" and self._tool_transaction_key(event) in keys
         ]
         scoped = scope_interruption(
@@ -6886,7 +6905,7 @@ class Conversation:
             scoped, stable_system_prompt="", reason="interruption_scope_repair"
         )
         self._session_model_history.note_active_events(self._session)
-        if self._rollout_recorder is not None:
+        if persist and self._rollout_recorder is not None:
             self._rollout_recorder.commit(
                 history=self._session_model_history,
                 model_context=self._session_model_context,
