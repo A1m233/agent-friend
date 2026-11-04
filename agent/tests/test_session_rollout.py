@@ -1091,7 +1091,7 @@ def test_unknown_rollout_schema_blocks_writable_runtime_without_business_fallbac
     assert restored.history.items == []
 
     manager = _manager(tmp_path, _RecordingLLM(), store=store)
-    with pytest.raises(SessionCorruptError, match="rollout 无有效提交点"):
+    with pytest.raises(SessionCorruptError, match="历史未通过完整性校验"):
         manager.start_conversation(manager.open(session.session_id))
 
 
