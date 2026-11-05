@@ -13,6 +13,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
+if [[ "${1:-}" == "--live-qq-media" ]]; then
+  shift
+  exec uv run python -X utf8 scripts/im-smoke/qq_media.py "$@"
+fi
 if [[ "${1:-}" == "--live-qq-approvals" ]]; then
   shift
   exec uv run python scripts/im-smoke/qq_approvals.py "$@"

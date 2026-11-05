@@ -405,7 +405,7 @@ function projectSessionDetail(detail: SessionDetail) {
 }
 
 export function messageHasConversationContent(message: ChatMessage): boolean {
-  return Boolean(message.error) || message.blocks.some((block) => {
+  return Boolean(message.error || message.attachments?.length) || message.blocks.some((block) => {
     if (block.kind === "text" || block.kind === "thinking") return Boolean(block.text.trim());
     return true;
   });

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConversationStore } from "@/stores";
 import { useSocialAuthRequestsStore } from "@/stores/socialAuthRequests";
 import type { SocialAuthRequestSnapshot, SocialAuthRequestStatus } from "@/services";
-import type { ChatMessage, ChatTextReference } from "@/types/chat";
+import type { ChatAttachment, ChatMessage, ChatTextReference } from "@/types/chat";
 import { projectSessionEvents } from "@/stores/sessionProjection";
 import { MessageList, MessageTimeline } from "./MessageList";
 
@@ -19,7 +19,15 @@ vi.mock("@tdesign-react/chat", () => ({
   }) => createElement("div", null,
     content?.map((item) => typeof item.data === "string" ? item.data : "").join(""), children),
 }));
-vi.mock("./MessageAttachments", () => ({ MessageAttachments: () => null }));
+vi.mock("./MessageAttachments", () => ({
+  MessageAttachments: ({ attachments }: { attachments: ChatAttachment[] }) => createElement("div",
+    { "data-message-attachments": true },
+    attachments.map(item => createElement("span", { key: item.assetId }, item.displayName))),
+}));
+vi.mock("@/services", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/services")>(),
+  isAttachmentAssetAvailable: vi.fn(async () => true),
+}));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -77,6 +85,31 @@ class ResizeObserverHarness implements ResizeObserver {
 }
 
 describe("MessageTimeline disclosure scrolling", () => {
+  it.each(["user", "assistant"] as const)("renders %s history attachments once after refresh", async (role) => {
+    const events = [{ type: `${role}_message`, uuid: "delivery", ts: "2026-11-05T02:01:00Z",
+      payload: { content: "A small discovery", phase: "final_answer", attachments: [
+        { asset_id: "a".repeat(64), display_name: "picture.png", kind: "image", media_type: "image/png", size_bytes: 80 },
+        { asset_id: "b".repeat(64), display_name: "notes.pdf", kind: "document", media_type: "application/pdf", size_bytes: 90 },
+      ] }, meta: { run_id: "delivery", message_source: { kind: "agent_initiated", delivery_id: "one" } } }];
+    await renderTimeline(projectSessionEvents(events));
+    await renderTimeline(projectSessionEvents(events));
+    expect(container.querySelectorAll("[data-message-attachments]")).toHaveLength(1);
+    expect(container.textContent).toContain("picture.png");
+    expect(container.textContent).toContain("notes.pdf");
+    expect(container.textContent).toContain("A small discovery");
+  });
+
+  it("keeps native generated images in their image block without an extra attachment row", async () => {
+    const items = projectSessionEvents([{ type: "assistant_message", uuid: "generated", ts: "2026-11-05T02:01:00Z",
+      payload: { content: "internal reference", item_index: 0, generated_image: { error_code: null }, attachments: [
+        { asset_id: "a".repeat(64), sha256: "a".repeat(64), display_name: "picture.png", kind: "image", media_type: "image/png", size_bytes: 80 },
+      ] } }]);
+    await renderTimeline(items);
+    expect(container.querySelectorAll("[data-message-attachments]")).toHaveLength(0);
+    expect(container.querySelectorAll("img")).toHaveLength(1);
+    expect(container.textContent).not.toContain("internal reference");
+  });
+
   it("measures rows during mount and session changes without nested flushSync", async () => {
     const error = vi.spyOn(console, "error");
     try {

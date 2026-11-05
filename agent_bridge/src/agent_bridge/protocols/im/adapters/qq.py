@@ -28,7 +28,7 @@ import random
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -306,6 +306,28 @@ class QQAdapter:
             return OutboundSendResult("failed", error_kind="provider_not_started")
 
         if content.image is not None:
+            if content.text.strip():
+                # Rich-media messages do not carry our Markdown body. Preserve
+                # it as a separate message and never replay a partially sent pair.
+                text_receipt = await self.send(replace(content, image=None))
+                logger.info(
+                    "QQ mixed content part=text outcome=%s error_kind=%s",
+                    text_receipt.outcome,
+                    text_receipt.error_kind,
+                )
+                if text_receipt.outcome != "delivered":
+                    return text_receipt
+                image_receipt = await self._send_image(content)
+                logger.info(
+                    "QQ mixed content part=image outcome=%s error_kind=%s",
+                    image_receipt.outcome,
+                    image_receipt.error_kind,
+                )
+                if image_receipt.outcome != "delivered":
+                    return OutboundSendResult("unknown", error_kind="partial_delivery")
+                # The prepared event alias describes the text span, so retain
+                # the text receipt rather than pointing that span at the image.
+                return text_receipt
             return await self._send_image(content)
 
         msg_seq = self._next_msg_seq()

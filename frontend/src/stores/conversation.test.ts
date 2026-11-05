@@ -65,6 +65,7 @@ import type { CancelRunResponse, RunSnapshot } from "@/types/run";
 import type { SessionMessageSearchResult } from "@/types/search";
 import {
   useConversationStore,
+  messageHasConversationContent,
   resetConversationCoordinatorsForTests,
   type SendStartResult,
 } from "./conversation";
@@ -249,6 +250,16 @@ it("keeps each paged assistant turn intact through prepend, refresh and live rep
   expect(lastMessage().id).toBe(latestAssistantId);
   expect(lastMessage().blocks.filter((block) => block.kind === "tool")).toHaveLength(2);
   expect(lastMessage().blocks.at(-1)).toMatchObject({ kind: "text", text: "recovered final" });
+});
+
+it("counts attachment-only assistant messages as conversation content", () => {
+  const message = { id: "delivery", role: "assistant" as const, status: "complete" as const,
+    createdAt: "2026-11-05T02:01:00Z", blocks: [], attachments: [
+      { assetId: "a".repeat(64), displayName: "picture.png", kind: "image" as const,
+        mediaType: "image/png", sizeBytes: 80 },
+    ] };
+  expect(messageHasConversationContent(message)).toBe(true);
+  expect(messageHasConversationContent({ ...message, attachments: [] })).toBe(false);
 });
 
 describe("paged reference history", () => {
