@@ -236,6 +236,53 @@ async def test_generated_image_upload_and_receipt(
         assert message.msg_id == "incoming"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "replies,outcome,error,send_count",
+    [
+        ([{"id": "caption"}, {"id": "picture"}], "delivered", None, 2),
+        ([{"code": 11001}], "failed", "platform_rejected", 1),
+        ([{}], "unknown", "missing_receipt", 1),
+        ([{"id": "caption"}, {"code": 11001}], "unknown", "partial_delivery", 2),
+        ([{"id": "caption"}, {}], "unknown", "partial_delivery", 2),
+    ],
+)
+async def test_mixed_image_preserves_caption_and_requires_both_receipts(
+    adapter: QQAdapter,
+    tmp_path: Path,
+    replies: list[dict[str, Any]],
+    outcome: str,
+    error: str | None,
+    send_count: int,
+) -> None:
+    adapter._api = MagicMock()
+    adapter._api.post_c2c_message = AsyncMock(side_effect=replies)
+    adapter._http_client = MagicMock()
+    with patch("agent_bridge.protocols.im.adapters.qq.MediaUploader") as uploader:
+        uploader.return_value.upload = AsyncMock(return_value="file-info")
+        result = await adapter.send(
+            OutboundContent(
+                chat_id="user",
+                chat_scope="c2c",
+                text="**A small discovery**",
+                text_format="markdown",
+                image=OutboundImage(tmp_path / "image.png", "image.png"),
+            )
+        )
+        assert result.outcome == outcome
+        assert result.error_kind == error
+        calls = adapter._api.post_c2c_message.await_args_list
+        assert len(calls) == send_count
+        assert calls[0].args[1].markdown.content == "**A small discovery**"
+        if send_count == 2:
+            assert calls[1].args[1].msg_type == QQMessageType.RICH_MEDIA
+            assert calls[1].args[1].msg_seq > calls[0].args[1].msg_seq
+        else:
+            uploader.return_value.upload.assert_not_awaited()
+        if outcome == "delivered":
+            assert result.provider_message_id == "caption"
+
+
 def test_initial_status_stopped(adapter: QQAdapter) -> None:
     assert adapter.status() == "stopped"
 

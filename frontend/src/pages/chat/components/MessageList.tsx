@@ -515,10 +515,13 @@ function MessageContent({
     </Collapsible>;
   }).filter(Boolean);
 
-  const hasContent = segmentNodes.some(Boolean);
+  const hasContent = segmentNodes.some(Boolean) || Boolean(message.attachments?.length);
 
   return (
     <div className="flex flex-col gap-2" data-execution-disclosure-source={disclosurePolicy.source}>
+      {!!message.attachments?.length && (
+        <TextBubble role="assistant" text="" attachments={message.attachments} />
+      )}
       <RunExecutionDisclosure key={message.runId ?? message.id} message={message} enabled={hasProcess}
         collapse={disclosurePolicy.collapse} disclosureId={message.runId ?? message.id}
         revealTarget={revealTarget} onDisclosureChange={onToolDisclosureChange}>

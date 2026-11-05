@@ -13,7 +13,10 @@ $ErrorActionPreference = "Stop"
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Set-Location (Join-Path $PSScriptRoot "..\..")
 
-if ($args.Count -gt 0 -and $args[0] -eq "--live-qq-approvals") {
+if ($args.Count -gt 0 -and $args[0] -eq "--live-qq-media") {
+    $liveArgs = @($args | Select-Object -Skip 1)
+    & uv run python -X utf8 scripts/im-smoke/qq_media.py @liveArgs
+} elseif ($args.Count -gt 0 -and $args[0] -eq "--live-qq-approvals") {
     $liveArgs = @($args | Select-Object -Skip 1)
     & uv run python scripts/im-smoke/qq_approvals.py @liveArgs
 } elseif ($args.Count -gt 0 -and $args[0] -eq "--live-qq") {
