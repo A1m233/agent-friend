@@ -72,3 +72,26 @@ it("keeps unavailable and incomplete image feedback without file actions", async
     await act(async () => root.unmount());
   }
 });
+
+it.each([
+  ["image_interrupted", "图片生成已中断，未取得完整图片。"],
+  ["image_storage_failed", "图片未能保存，请重试。"],
+  ["image_store_unavailable", "图片保存服务不可用，请稍后重试。"],
+  ["private-provider-detail", "未能取得可用图片，请重试。"],
+  [undefined, "未能取得可用图片，请重试。"],
+])("reports the known failure boundary for %s", async (errorCode, expected) => {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(createElement(GeneratedImage, {
+      block: { ...block, status: "failed", images: [], errorCode }, running: false,
+    })));
+    expect(host.querySelector('[role="status"]')?.textContent).toBe(
+      `${expected}已取得的其它内容仍保留。`,
+    );
+    expect(host.textContent).not.toContain("private-provider-detail");
+    expect(host.querySelector("img, button")).toBeNull();
+  } finally {
+    await act(async () => root.unmount());
+  }
+});

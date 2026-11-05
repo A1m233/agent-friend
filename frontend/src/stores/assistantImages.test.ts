@@ -10,6 +10,21 @@ const base: ChatMessage = { id: "m", role: "assistant", runId: "run", createdAt:
 const result = { type: "assistant_image", message_id: "picture", item_index: 1, images: [image], error_code: null };
 
 describe("generated assistant images", () => {
+  it.each(["image_interrupted", "image_storage_failed", "image_store_unavailable"])(
+    "preserves %s for live and restored failure feedback", (errorCode) => {
+      const failure = { ...result, images: [], error_code: errorCode };
+      const live = applyPushConversationEvent(base, failure, "run");
+      const restored = projectSessionEvents([{
+        type: "assistant_message", uuid: "picture", ts: base.createdAt, meta: { run_id: "run" },
+        payload: { content: "internal failure context", item_index: 1,
+          generated_image: { error_code: errorCode }, attachments: [] },
+      }]);
+      expect(live.blocks[0]).toMatchObject({ status: "failed", errorCode, images: [] });
+      expect(restored[0].blocks[0]).toEqual(live.blocks[0]);
+      expect(JSON.stringify(restored)).not.toContain("internal failure context");
+    },
+  );
+
   it("keeps native, AG-UI and disk projections in source order, without exposing host facts", () => {
     let live = applyPushConversationEvent(base, { type: "text_delta", message_id: "before", item_index: 0, text: "before" }, "run");
     live = applyPushConversationEvent(live, result, "run");
