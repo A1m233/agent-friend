@@ -8,7 +8,11 @@ from llm_providers.image_output import LLMImageResult
 from ..attachments import AttachmentError, AttachmentRef, AttachmentStore
 from ..image_reading.service import ImageReadingService
 
-IMAGE_FAILURE_TEXT = "图片未能保存，请在当前回复中查看失败状态；不要宣称图片已交付。"
+_FAILURE_REASONS = {
+    "image_interrupted": "图片生成已中断，未取得完整图片",
+    "image_storage_failed": "图片未能保存",
+    "image_store_unavailable": "图片保存服务不可用",
+}
 
 
 def save_generated_image(
@@ -31,7 +35,9 @@ def save_generated_image(
             except OSError:
                 error = "image_storage_failed"
     if image is None:
-        return IMAGE_FAILURE_TEXT, (), error or "image_invalid"
+        error = error or "image_invalid"
+        reason = _FAILURE_REASONS.get(error, "未能取得可用图片")
+        return f"{reason}；不要宣称图片已交付。", (), error
     file_ref = "file-" + hashlib.sha256(f"{message_id}:0".encode()).hexdigest()
     text = (
         "[助手生成图片已保存："

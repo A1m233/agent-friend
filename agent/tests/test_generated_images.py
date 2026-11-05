@@ -102,6 +102,24 @@ def test_bad_image_and_store_failures_do_not_claim_success(
     monkeypatch.setattr(assets, "import_image_bytes", fail)
     text, refs, error = save_generated_image(LLMImageResult("i", 0, png()), assets, "m")
     assert error == "image_storage_failed" and not refs and "private" not in text
+    assert "图片未能保存" in text
+
+
+@pytest.mark.parametrize("error_code", ["image_interrupted", "private-provider-detail"])
+def test_failed_provider_image_does_not_attempt_storage_or_blame_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_code: str
+) -> None:
+    assets = AttachmentStore(tmp_path)
+
+    def unexpected_write(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("An incomplete provider image must not enter storage")
+
+    monkeypatch.setattr(assets, "import_image_bytes", unexpected_write)
+    text, refs, error = save_generated_image(LLMImageResult("i", 0, b"", error_code), assets, "m")
+    assert error == error_code and not refs
+    assert "保存" not in text and "private-provider-detail" not in text
+    assert "不要宣称图片已交付" in text
+    assert ("图片生成已中断" in text) == (error_code == "image_interrupted")
 
 
 def test_mixed_order_survives_reload_and_idempotent_replay(tmp_path: Path) -> None:
@@ -141,12 +159,17 @@ def test_interrupted_generation_is_durable_without_regenerating(
 ) -> None:
     class Interrupted(NativeModel):
         def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+            self.received.append(request.messages)
+            if len(self.received) > 1:
+                yield from items()
+                return
             yield LLMImageStart("unfinished", 0)
             if completed:
                 yield LLMImageResult("unfinished", 0, png())
             raise RuntimeError("transport failed")
 
-    conv = _make_conversation(tmp_path, fake_llm=Interrupted())
+    model = Interrupted()
+    conv = _make_conversation(tmp_path, fake_llm=model)
     conv._generated_image_store = AttachmentStore(tmp_path / "assets")
     with pytest.raises(RuntimeError, match="transport failed"):
         list(conv.stream("image", run_id="interrupted"))
@@ -157,3 +180,9 @@ def test_interrupted_generation_is_durable_without_regenerating(
         None if completed else "image_interrupted"
     )
     assert bool(images[0].payload["attachments"]) == completed
+    if not completed:
+        assert "图片生成已中断" in images[0].payload["content"]
+        assert "未能保存" not in images[0].payload["content"]
+        list(conv.stream("继续", run_id="next"))
+        history = str(model.received[-1])
+        assert "图片生成已中断" in history and "未能保存" not in history
