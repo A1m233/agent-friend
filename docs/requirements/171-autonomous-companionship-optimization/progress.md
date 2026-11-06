@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-IN_PROGRESS。产品能力及本轮修复验证已完成，可进入交付收尾；B 站公开触达缺口由用户明确暂缓，留档 issue 071。用户已确认按已知限制验收并授权合入推送；正在执行 Guide 发布与 Git 交付。
+COMPLETED。产品能力、修复及本期约定验证已完成，用户确认在 issue 071 暂缓的已知限制下验收，并授权合入推送。Guide r110 已发布；交付提交与主干合并以 Git 历史为准。
 
 - 工作区：`af171/agent-friend`；分支：`feature/171-autonomous-companionship-optimization`。
 - 历史运行基线：`37d704e2abab000f72133a8c821d89f8db8bb45c` + 本需求未提交 overlay；2026-11-06 刷新后与 origin/main 无差异。
@@ -39,12 +39,12 @@ IN_PROGRESS。产品能力及本轮修复验证已完成，可进入交付收尾
 | AC-10 | 已确认 prompt 与局部类型契约修复完成；三个项目 check stage 已通过，最新 backend 4790 passed；冻结验证 E-025 完整通过。真实平台只确认接收和作者读回，公开可见性未通过；用户已确认按 issue 071 暂缓的边界验收。 |
 | AC-11 | 7 个新增社交样例 + 1 个既有 control，8/8 自动判定通过并人工复核；记忆冒充场景通过；仅为单样本观测，真实平台公共写入不由 fixture 证明。 |
 
-## 剩余事项
+## 交付状态与已知限制
 
 1. 三个 check stage 已有通过证据；本轮后端变更已复验，因冻结能力契约实质变化执行 E-025 并完整通过。E-017 原失败记录保留，不抹去。
 2. 用户已授权并实施系统性记忆修复（E-024），本轮后端和冻结 runtime 验证均已通过。用户明确暂缓评论匿名不可见及 @ 送达问题，已登记 [issue 071](../../issues/071-bilibili-comment-public-visibility/README.md)。保留 AC-5 的验证缺口，不自动重发，不标记为已解决。
-3. Guide 只读检查发现需补充平台账号、评论工具及展示机会口径；本次 runtime-only 使用已发布 r109 临时基线，不发布新 Guide 或留下 builtin overlay。合入/发布前按相应工作流同步。
-4. 用户已明确要求合入主干并推送；先形成稳定产品提交、发布匹配 Guide，再完成带 merge commit 的合入。保持 dev 运行，不构建新安装包。
+3. Guide 已补齐账号、评论、展示感知、身份保存及平台可见性说明，r110 已作为 immutable release 发布。此前冻结验证用 r109 临时基线的历史证据保留；此次不改 builtin、不打新包。
+4. 用户已明确确认本期交付；产品实现提交 e4a80392 已推送需求分支，Guide 发布完成，采用保留 merge commit 的主干交付方式。dev 保持运行，不构建新安装包。
 
 2026-11-06 收尾状态复核：用户明确“先不管”B 站问题并询问是否可收尾。只登记延期项及更新状态，不据此代替最终验收确认或授权 Git 交付。重新 fetch 后 HEAD 与 origin/main 均为 37d704e2，双方无独有提交；当前 feature overlay 未提交，diff --check 通过，dev 健康。Guide 更新、最终验收确认和 Git 交付仍是收尾事项。
 
@@ -102,3 +102,9 @@ E-024 隔离真实模型 5 次请求：提供、第三方引用、AI 转述、�
 ## 合入交付
 
 2026-11-06 用户明确授权合入 main 并推送，构成本期已知限制下的最终验收确认。公开 Guide 使用 merge-main-and-push 模式同步账号操作、展示证据、核心身份与发送状态说明；发布结果在后续收尾记录补充。产品代码沿用已通过检查的精确内容，本次只整理验收状态。
+
+### Guide 发布与验收收口
+
+公开 Guide commit a0d0a6ee0fe67b4be02f32c76997929779b1e33a，release [r110](https://github.com/A1m233/agent-friend-guide/releases/tag/agent-friend-guide-r110)，GitHub 确认 immutable=true、非 draft，两个资产摘要已由发布入口核对。兼容范围 0.4.1 ≤ version < 0.5.0，明确旧构建缺少入口时指南不会新增能力。系统 Skill validator、项目 verify、Git diff 校验均通过。
+
+Guide 精确锚定产品实现 e4a80392，后续收口仅修改验收文档及发布证据，不改变已验证产品代码。用户确认保留 issue 071；未把平台公开可见性或 @ 到达标为通过。已有前端、Rust、后端与冻结证据保持适用，不为 Git 合入重跑打包。

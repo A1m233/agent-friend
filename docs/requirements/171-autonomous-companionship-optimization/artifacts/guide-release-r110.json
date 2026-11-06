@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "releaseSequence": 110,
+  "releaseTag": "agent-friend-guide-r110",
+  "sourceCommit": "a0d0a6ee0fe67b4be02f32c76997929779b1e33a",
+  "packageSha256": "b5a5429ba234b3ac6d09501194909a8663cfe4d6dc30c7a21d9101b09bc0f6c2",
+  "packageSnapshotSha256": "cb05b5584432487b9908aea0750383679b04a8989d5581f45905019944a39559",
+  "packageSize": 219983,
+  "minProductVersion": "0.4.1",
+  "maxProductVersionExclusive": "0.5.0",
+  "immutable": true,
+  "releaseUrl": "https://github.com/A1m233/agent-friend-guide/releases/tag/agent-friend-guide-r110",
+  "reviewedProductCommit": "e4a80392a83461af304ae6bc1829bf5310e1ba05"
+}

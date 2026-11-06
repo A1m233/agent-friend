@@ -170,3 +170,12 @@ Guide package-baseline 只读预览：目标为 37d704e2 + 171 overlay，公开 
 - Guide r109 的临时基线事务已恢复，当前用户 dev 未被冻结 smoke 替换。中间 runtime 按标准入口回收，交付的是验证报告，不是已删除目录。
 - 本次实质变化包括共享契约、Core 动作前同步及 accepted/visibility 结果，重新验证是针对新代码，不是掩盖 E-017 的收尾错误。
 - 未构建 installer、未安装、未发布 Guide、未提交或推送。dev 最后保持 af171 / Tauri，app PID 23340，bridge PID 16140 于 18:22:12 启动，晚于产品代码最后修改 18:17:47；healthz 正常。
+
+
+## E-026：用户验收与 Guide 发布
+
+用户在确认 issue 071 暂缓、其余功能及检查完成后，明确要求合入 main 并推送。按本期边界验收，不将公开可见性或 @ 通知送达的未知状态改成成功。
+
+产品实现稳定提交 e4a80392a83461af304ae6bc1829bf5310e1ba05 与此前通过检查的工作树等价；后续收口仅改文档。公开 Guide 的五份 reference 与 source metadata 已同步，系统 Skill validator 和项目 verify 通过，来源提交 a0d0a6ee0fe67b4be02f32c76997929779b1e33a 已推送。
+
+[发布回执](./artifacts/guide-release-r110.json)：r110，0.4.1 ≤ version < 0.5.0，immutable=true，ZIP 和 manifest 摘要核验成功。未改产品 builtin，未打包或安装，不停止 af171 dev。
