@@ -160,6 +160,10 @@ class FakeCredentialBackend:
         del name
         self.value = value
 
+    def delete(self, name: str) -> None:
+        del name
+        self.value = None
+
 
 def _credential() -> Credential:
     return Credential(
@@ -220,6 +224,57 @@ class FakeLoginClient:
         del interaction
         assert cancelled() is False
         return _credential()
+
+
+def test_bilibili_logout_removes_saved_and_resident_credentials() -> None:
+    backend = FakeCredentialBackend()
+    target = FakeCredentialTarget()
+    handler = BilibiliAuthHandler(
+        target, store=BilibiliCredentialStore(backend), login_client=FakeLoginClient()
+    )
+    handler.login(cancelled=lambda: False)
+    handler.logout()
+    assert backend.value is None
+    assert not target.authenticated
+    restored = BilibiliAuthHandler(FakeCredentialTarget(), store=BilibiliCredentialStore(backend))
+    assert restored.status().state == "anonymous"
+
+
+def test_bilibili_logout_prevents_late_qr_login_from_restoring_credentials() -> None:
+    backend = FakeCredentialBackend()
+    target = FakeCredentialTarget()
+    started, release = threading.Event(), threading.Event()
+
+    class DelayedLogin(FakeLoginClient):
+        def login(
+            self, *, cancelled: Callable[[], bool], interaction: SocialAuthInteraction | None = None
+        ) -> Credential:
+            started.set()
+            assert release.wait(2)
+            return _credential()  # Even an SDK that ignores cancellation must not restore it.
+
+    handler = BilibiliAuthHandler(
+        target, store=BilibiliCredentialStore(backend), login_client=DelayedLogin()
+    )
+    errors: list[Exception] = []
+
+    def run() -> None:
+        try:
+            handler.login(cancelled=lambda: False)
+        except Exception as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert started.wait(1)
+        handler.logout()
+    finally:
+        release.set()
+        worker.join(2)
+    assert not worker.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], SocialProviderError)
+    assert backend.value is None and not target.authenticated
 
 
 def test_bilibili_auth_handler_persists_and_restores_without_exposing_values() -> None:

@@ -10,6 +10,8 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from ..contracts import MemoryWriteReceipt
+
 if TYPE_CHECKING:
     from ..contracts import ConversationFragment
     from ..store import SqliteMemoryStore
@@ -65,11 +67,11 @@ class AsyncExtractionWorker:
         self._retry_after = 0.0
         self._blocked_code: str | None = None
 
-    def submit(self, fragment: ConversationFragment) -> None:
+    def submit(self, fragment: ConversationFragment) -> MemoryWriteReceipt:
         """Persist material; only fresh non-failed activity can permit a bounded drain."""
         with self._lock:
             if self._closed:
-                return
+                return MemoryWriteReceipt(observation_id(fragment), "unknown", "worker_closed")
             if not fragment.is_empty():
                 refs = [u.source_ref for u in fragment.utterances]
                 if fragment.semantic_update_context:
@@ -87,10 +89,76 @@ class AsyncExtractionWorker:
                     "turn_failed" if fragment.defer_extraction else "activity",
                 )
             if fragment.defer_extraction:
-                return
+                return self._store.extraction_status(observation_id(fragment))
             self._ensure_started()
             # A queued activity must never release material from a later failed turn.
             self._queue.put(self._store.pending_extraction_sequence())
+            return self._store.extraction_status(observation_id(fragment))
+
+    def ensure_core(
+        self,
+        fragment: ConversationFragment,
+        *,
+        timeout_seconds: float = 45.0,
+        cancel_check: Callable[[], None] | None = None,
+    ) -> MemoryWriteReceipt:
+        """Synchronize a trusted user observation without waiting for unrelated backlog.
+
+        Core and full extraction have different durable identities. The later full
+        observation still owns Semantic/Episodic; neither commit impersonates the other.
+        """
+        if fragment.extraction_scope != "core" or any(
+            u.speaker != "user" for u in fragment.utterances
+        ):
+            raise ValueError("Core barrier requires host-projected user-only material")
+        identity = observation_id(fragment)
+        if self._closed or fragment.defer_extraction or fragment.is_empty():
+            return MemoryWriteReceipt(identity, "unknown", "material_unavailable")
+        deadline = time.monotonic() + max(0.0, timeout_seconds)
+        while True:
+            if cancel_check:
+                cancel_check()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                receipt = self._store.extraction_status(identity)
+                return (
+                    receipt
+                    if receipt.status != "unknown"
+                    else MemoryWriteReceipt(identity, "unknown", "core_barrier_busy")
+                )
+            if self._processing.acquire(timeout=min(remaining, 0.1)):
+                break
+        try:
+            if cancel_check:
+                cancel_check()
+            if self._closed:
+                return MemoryWriteReceipt(identity, "unknown", "worker_closed")
+            self._store.enqueue_extraction(
+                identity,
+                fragment.session_id,
+                encode(fragment),
+                [u.source_ref for u in fragment.utterances],
+                "ready",
+            )
+            receipt = self._store.extraction_status(identity)
+            if receipt.status != "pending" or self._closed:
+                return receipt
+            if self._clock() < self._store.extraction_cooldown():
+                return receipt
+            self._blocked_code = None
+            self._retry_after = 0.0
+            if self._process(fragment, recovery=True, cancel_check=cancel_check, deadline=deadline):
+                self._store.finish_pending_extraction(identity)
+            elif self._blocked_code:
+                self._store.block_pending_extraction(identity, self._blocked_code)
+            else:
+                self._store.defer_extractions(
+                    self._clock() + max(self._cooldown_seconds, self._retry_after),
+                    "extraction_failed",
+                )
+            return self._store.extraction_status(identity)
+        finally:
+            self._processing.release()
 
     def invalidate(self, session_id: str, event_uuids: set[str] | None = None) -> int:
         """Synchronize with the active extraction; never drain deferred work here."""
@@ -198,11 +266,30 @@ class AsyncExtractionWorker:
             )
         logger.info("memory_observation action=processed count=%d recovery=%s", processed, recovery)
 
-    def _process(self, fragment: ConversationFragment, *, recovery: bool = False) -> bool:
+    def _process(
+        self,
+        fragment: ConversationFragment,
+        *,
+        recovery: bool = False,
+        cancel_check: Callable[[], None] | None = None,
+        deadline: float | None = None,
+    ) -> bool:
         if fragment.is_empty():
             return True
         context = self._context_builder.build(fragment)
-        output = self._extractor.extract(fragment, context, allow_retries=not recovery)
+        if fragment.extraction_scope == "core":
+            output = self._extractor.extract(
+                fragment,
+                context,
+                allow_retries=not recovery,
+                core_only=True,
+                cancel_check=cancel_check,
+                deadline_monotonic=deadline,
+            )
+        else:
+            output = self._extractor.extract(fragment, context, allow_retries=not recovery)
+        if cancel_check:
+            cancel_check()
         self._degraded = output.reconciliation_degraded
         if output.retry_after_seconds is not None and math.isfinite(output.retry_after_seconds):
             self._retry_after = max(0.0, output.retry_after_seconds)
@@ -212,6 +299,7 @@ class AsyncExtractionWorker:
                     self._on_extracted(
                         ExtractionResult(
                             session_id=fragment.session_id,
+                            observation_id=observation_id(fragment),
                             committed=False,
                             error_code=output.failure_code,
                         )
@@ -224,11 +312,12 @@ class AsyncExtractionWorker:
         try:
             result = self._reconciler.apply(output, fragment, context)
         except ExtractionApplyError as exc:
-            if exc.code == "observation_time_conflict":
+            if exc.code in {"observation_time_conflict", "invalid_extraction_output"}:
                 self._blocked_code = exc.code
             logger.warning("extraction batch rejected code=%s detail=%s", exc.code, exc)
             result = ExtractionResult(
                 session_id=fragment.session_id,
+                observation_id=observation_id(fragment),
                 committed=False,
                 error_code=exc.code,
                 error_message=str(exc),

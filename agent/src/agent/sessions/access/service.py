@@ -8,8 +8,10 @@ import hmac
 import json
 import secrets
 from collections.abc import Callable
+from threading import RLock
 from typing import Any, cast
 
+from ...message_exposure import content_version
 from ..catalog import SessionCatalog
 from ..message_access import MessagePage, message_payload
 from ..query import CancelCheck, check_cancel
@@ -30,7 +32,19 @@ class ConversationAccessService:
         self.wake_snapshot: Callable[[str], dict[str, Any] | None] = lambda _sid: None
         self.observe_read: Callable[[str, str, list[str]], None] = lambda *_args: None
         self.is_busy: Callable[[str], bool] = lambda _sid: False
+        self.message_evidence: Callable[[str, Any], dict[str, Any]] = lambda *_args: {}
+        self.evidence_changes: Callable[[int], dict[str, Any]] = lambda after: {
+            "cursor": after,
+            "items": [],
+            "has_more": False,
+        }
         self._key = secrets.token_bytes(32)
+        self._read_refs: dict[str, dict[tuple[str, str], str]] = {}
+        self._read_lock = RLock()
+
+    def has_read_message(self, caller: str, session_id: str, message_id: str, version: str) -> bool:
+        with self._read_lock:
+            return self._read_refs.get(caller, {}).get((session_id, message_id)) == version
 
     def _encode(self, payload: dict[str, Any]) -> str:
         data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -132,6 +146,10 @@ class ConversationAccessService:
                 entry["last_message_at"] = (
                     latest.messages[-1][1].ts.isoformat() if latest.messages else None
                 )
+                if latest.messages:
+                    entry["communication_evidence"] = self.message_evidence(
+                        sid, latest.messages[-1][1]
+                    )
             except ConversationAccessError:
                 entry["preview"] = ""
                 entry["history_changed"] = True
@@ -191,6 +209,7 @@ class ConversationAccessService:
         rendered: list[dict[str, Any]] = []
         for position, event in page.messages:
             item = message_payload(position, event)
+            item["communication_evidence"] = self.message_evidence(session_id, event)
             text = event.payload.get("content", "")
             text = text if isinstance(text, str) else ""
             offset = int(content_cursor["offset"]) if content_cursor else 0
@@ -212,6 +231,14 @@ class ConversationAccessService:
                 else None
             )
             rendered.append(item)
+            if current_session_id:
+                with self._read_lock:
+                    if current_session_id not in self._read_refs and len(self._read_refs) >= 64:
+                        self._read_refs.pop(next(iter(self._read_refs)))
+                    refs = self._read_refs.setdefault(current_session_id, {})
+                    refs[(session_id, event.uuid)] = content_version(text)
+                    while len(refs) > 512:
+                        refs.pop(next(iter(refs)))
         continuation = None
         if page.has_more and page.messages and not content_cursor:
             next_range = dict(frozen)

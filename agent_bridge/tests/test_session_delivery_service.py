@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 from agent.runtime import SessionBusyError
+from agent.sessions.access.service import ConversationAccessError, ConversationAccessService
 from agent.sessions.manager import SessionManager
 from agent_bridge.protocols.im.provider import OutboundSendResult
 from agent_bridge.session_delivery.service import SessionDeliveryService
@@ -53,6 +54,43 @@ def submit(service: SessionDeliveryService) -> dict[str, Any]:
             "notify_im": True,
             "destination_id": "qq-owner",
         }
+    )
+
+
+def test_source_reference_requires_actual_read_by_current_caller(
+    service: SessionDeliveryService,
+) -> None:
+    manager = service.runtime.persistent_session_manager
+    manager.append_delivered_message(
+        "target",
+        delivery_id="original",
+        content="原始结果",
+        source_session_id="source",
+        source_run_id="previous",
+    )
+    access = ConversationAccessService(manager._store)
+    service.source_was_read = access.has_read_message
+    message = next(
+        e for e in manager.query("target").active_events if e.type == "assistant_message"
+    )
+    args = {
+        "__agent_friend_current_session_id": "source",
+        "__agent_friend_run_id": "wake",
+        "__agent_friend_tool_call_id": "share",
+        "target_session_id": "target",
+        "content": "更新",
+        "source_messages": [{"session_id": "target", "message_id": message.uuid}],
+    }
+    with pytest.raises(ConversationAccessError, match="来源未读取"):
+        service.submit(args)
+    access.read_conversation(session_id="target", current_session_id="other")
+    with pytest.raises(ConversationAccessError):
+        service.submit(args)
+    access.read_conversation(session_id="target", current_session_id="source")
+    result = service.submit(args)
+    assert (
+        service.store.get(result["delivery_id"])["request"]["source_messages"]
+        == args["source_messages"]
     )
 
 

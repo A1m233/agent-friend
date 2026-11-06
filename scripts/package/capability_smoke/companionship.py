@@ -21,6 +21,8 @@ def run_companionship_smoke() -> dict[str, bool]:
     from agent import JsonlSessionStore, Session, SessionManager
     from llm_providers import LLMStreamEvent, ModelRequest, ModelResponse
 
+    from .social import run_social_smoke
+
     class Model:
         context_window = 128000
 
@@ -75,6 +77,7 @@ def run_companionship_smoke() -> dict[str, bool]:
             raise RuntimeError("packaged autonomous prompt absent")
         manager.close()
     return {
+        **run_social_smoke(),
         "autonomous_prompt": True,
         "security_review": True,
         "direct_history": True,

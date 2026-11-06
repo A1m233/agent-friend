@@ -79,6 +79,29 @@ class SessionDeliveryStore:
         result["request"] = json.loads(result.pop("request_json"))
         return result
 
+    def for_message(self, session_id: str, message_id: str) -> list[dict[str, Any]]:
+        with self.connection() as db:
+            rows = db.execute(
+                """SELECT d.* FROM deliveries d WHERE
+                (json_extract(d.request_json,'$.target_session_id')=? AND d.message_id=?)
+                OR EXISTS (SELECT 1 FROM json_each(d.request_json,'$.source_messages') s
+                    WHERE json_extract(s.value,'$.session_id')=? AND json_extract(s.value,'$.message_id')=?)
+                ORDER BY d.created_at DESC LIMIT 10""",
+                (session_id, message_id, session_id, message_id),
+            ).fetchall()
+        return [
+            {
+                "delivery_id": r["delivery_id"],
+                "target_session_id": json.loads(r["request_json"])["target_session_id"],
+                "message_id": r["message_id"],
+                "conversation_state": r["conversation_state"],
+                "im_state": r["im_state"],
+                "created_at": r["created_at"],
+                "im_read_status": "unknown",
+            }
+            for r in rows
+        ]
+
     def get(self, delivery_id: str) -> dict[str, Any]:
         with self.connection() as db:
             row = db.execute(

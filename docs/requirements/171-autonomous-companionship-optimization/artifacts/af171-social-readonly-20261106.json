@@ -1,0 +1,26 @@
+{
+  "replies": {
+    "ok": true,
+    "count": 20,
+    "supported": 20,
+    "has_more": false,
+    "read_receipt": "unknown"
+  },
+  "at": {
+    "ok": true,
+    "count": 20,
+    "supported": 20,
+    "has_more": false,
+    "read_receipt": "unknown"
+  },
+  "comments": {
+    "ok": true,
+    "count": 4,
+    "has_more": true
+  },
+  "thread": {
+    "ok": true,
+    "count": 0,
+    "root_present": true
+  }
+}

@@ -42,13 +42,14 @@ interface CommandRuntimeState {
 
 function validApproval(value: unknown): value is ExecutionApprovalRequest {
   const item = value as Partial<ExecutionApprovalRequest> | undefined;
-  return (item?.kind === "command" || item?.kind === "desktop_application")
+  return (item?.kind === "command" || item?.kind === "desktop_application" || item?.kind === "social_comment")
     && typeof item.request_id === "string"
     && typeof item.session_id === "string"
     && typeof item.run_id === "string"
     && typeof item.tool_call_id === "string"
     && typeof item.version === "number"
     && ((item.kind === "command" && typeof item.details?.cmd === "string")
+      || (item.kind === "social_comment" && typeof item.details?.text === "string" && typeof item.details.account_uid === "string" && typeof item.details.bvid === "string" && Array.isArray(item.details.mentions))
       || (item.kind === "desktop_application" && typeof item.details?.executable_path === "string"
         && Array.isArray(item.details.arguments)
         && typeof item.details.working_directory === "string"

@@ -61,6 +61,7 @@ def capture_changes(
         )
     return {
         "wake_id": wake_id,
+        "evidence_changes": access.evidence_changes(int(state.get("evidence_cursor", 0))),
         "first_overview": first,
         "entries": entries,
         "sessions": sessions,
@@ -89,9 +90,12 @@ def render_overview(access: ConversationAccessService, snapshot: dict[str, Any])
                 content = page.messages[0][1].payload.get("content", "")
                 item["preview"] = str(content)[:200]
         item["im_destinations"] = [binding for binding in bindings if binding["session_id"] == sid]
+        if position is not None and page.messages:
+            item["communication_evidence"] = access.message_evidence(sid, page.messages[0][1])
         entries.append(item)
     return {
         "first_overview": snapshot["first_overview"],
+        "display_changes": snapshot.get("evidence_changes", {"items": []}),
         "changed_count": len(snapshot["entries"]),
         "conversations": entries,
         "removed_session_ids": snapshot["removed_session_ids"],

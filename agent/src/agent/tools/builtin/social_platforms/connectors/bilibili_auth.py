@@ -59,6 +59,8 @@ class CredentialBackend(Protocol):
 
     def set(self, name: str, value: str) -> None: ...
 
+    def delete(self, name: str) -> None: ...
+
 
 class BilibiliCredentialStore:
     """Store one versioned credential blob without registering it as an API key."""
@@ -109,6 +111,9 @@ class BilibiliCredentialStore:
             sort_keys=True,
         )
         self._backend.set(BILIBILI_CREDENTIAL_KEY, payload)
+
+    def clear(self) -> None:
+        self._backend.delete(BILIBILI_CREDENTIAL_KEY)
 
 
 class QrPicture(Protocol):
@@ -252,6 +257,8 @@ class BilibiliAuthHandler:
         self._store = store or BilibiliCredentialStore()
         self._login_client = login_client or BilibiliQrLoginClient()
         self._restore_error: str | None = None
+        self._state_lock = threading.RLock()
+        self._generation = 0
         self._restore()
 
     def status(self) -> SocialAuthStatus:
@@ -289,22 +296,44 @@ class BilibiliAuthHandler:
         _, available = self._store.status()
         if not available:
             raise SocialConnectorUnavailableError("Bilibili credential store is unavailable")
+        with self._state_lock:
+            generation = self._generation
+
+        def was_cancelled() -> bool:
+            return cancelled() or self._generation != generation
+
         credential = self._login_client.login(
-            cancelled=cancelled,
+            cancelled=was_cancelled,
             interaction=interaction,
         )
-        if cancelled():
-            raise SocialProviderError("Bilibili login was cancelled")
-        try:
-            self._store.save(credential)
-        except Exception as exc:
-            raise SocialConnectorUnavailableError("Bilibili credential could not be saved") from exc
-        self._target.set_credential(credential)
-        self._restore_error = None
+        with self._state_lock:
+            if was_cancelled():
+                raise SocialProviderError("Bilibili login was cancelled")
+            try:
+                self._store.save(credential)
+            except Exception as exc:
+                raise SocialConnectorUnavailableError(
+                    "Bilibili credential could not be saved"
+                ) from exc
+            self._target.set_credential(credential)
+            self._generation += 1
+            self._restore_error = None
         return self.status()
 
     def cancel_login(self) -> None:
-        return None
+        with self._state_lock:
+            self._generation += 1
+
+    def logout(self) -> None:
+        with self._state_lock:
+            self._generation += 1
+            self._target.set_credential(Credential())
+            try:
+                self._store.clear()
+            except Exception as exc:
+                self._restore_error = "credential_store_unavailable"
+                raise SocialConnectorUnavailableError("保存的凭据未能清除，请重试退出。") from exc
+            self._restore_error = None
 
     def close(self) -> None:
         return None

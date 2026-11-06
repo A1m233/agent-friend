@@ -24,7 +24,7 @@ __all__ = [
     "serialize_ts",
 ]
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 """记忆库 schema 版本。
 
 - v1：semantic/episodic 表，FTS5 `tokenize='trigram'` 直接索引原文列
@@ -239,6 +239,11 @@ DDL_STATEMENTS: tuple[str, ...] = (
     """
     CREATE INDEX IF NOT EXISTS idx_core_scope
     ON core_profile_entry(owner_user_id, scope_kind, persona_id, field_key)
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_core_bilibili_uid_active
+    ON core_profile_entry(owner_user_id, scope_kind, persona_id, field_key)
+    WHERE valid_until IS NULL AND deleted_at IS NULL AND field_key = 'user.bilibili_uid'
     """,
     """
     CREATE TABLE IF NOT EXISTS extraction_commit (

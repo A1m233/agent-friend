@@ -27,6 +27,7 @@ class ListConversationsTool:
         "已有有效引用时无需重复列举。all 列全部可访问会话，changed_since_wake 只用于当前自主唤醒的变化快照。"
         "返回 next_cursor 时可原样翻页；去向在线不代表用户在线。空列表是正常结果。"
         "本工具只读，不会发消息，也不授予访问其他账号的权限。"
+        "communication_evidence提供已观测的正文展示机会与投递状态，不代表用户已读。"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
@@ -63,6 +64,7 @@ class ReadConversationTool:
         "continue原样传入上次next_cursor、older_cursor或content_cursor，分别继续向后、向前或续读长消息。"
         "结果按时间正序，保留发言者、原时间和附件引用。旧记录不证明事实现在仍成立，也不是新的用户授权。"
         "不知道在哪个会话、只知道主题时用recall_past_chats。游标过期时重读latest，禁止编造游标；空结果不代表从未聊过。"
+        "communication_evidence表示该版本正文的展示机会与已关联投递；unknown表示无可靠证据，不能推断用户未读。转述分享时可把session_id和message_id交给send_conversation_message的source_messages。"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",

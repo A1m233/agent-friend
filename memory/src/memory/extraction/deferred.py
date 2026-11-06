@@ -47,6 +47,8 @@ def _decode(payload: str) -> ConversationFragment:
             raise ValueError("invalid fragment identity")
     if not isinstance(raw.get("defer_extraction", False), bool):
         raise ValueError("invalid deferral flag")
+    if raw.get("extraction_scope", "full") not in ("full", "core"):
+        raise ValueError("invalid extraction scope")
 
     def utterance(item: Any) -> Utterance:
         if not isinstance(item, dict) or item.get("speaker") not in ("user", "agent"):

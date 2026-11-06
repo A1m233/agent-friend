@@ -104,6 +104,10 @@ def companionship_db_path(data_root: Path | None = None) -> Path:
     return (data_root or user_data_dir()) / "companionship" / "companionship.db"
 
 
+def message_exposure_db_path(data_root: Path | None = None) -> Path:
+    return (data_root or user_data_dir()) / "message_exposure" / "exposure.db"
+
+
 def personas_dir() -> Path:
     """用户自定义 persona 目录：``<user_data_dir>/personas``。"""
     return user_data_dir() / "personas"
@@ -159,6 +163,7 @@ __all__ = [
     "execution_environments_dir",
     "log_dir",
     "memory_db_path",
+    "message_exposure_db_path",
     "notifications_db_path",
     "persona_internal_dir",
     "personas_dir",

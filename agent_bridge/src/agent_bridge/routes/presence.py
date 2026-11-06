@@ -12,6 +12,14 @@ from ..assembly import BridgeRuntime
 from ..presence import DesktopPresenceSnapshot
 
 
+class MessageDisplayObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message_id: str = Field(alias="messageId", min_length=1, max_length=160)
+    content_version: str = Field(alias="contentVersion", pattern=r"^[0-9a-f]{64}$")
+    extent: Literal["partial", "full"]
+    dwell_ms: int = Field(alias="dwellMs", ge=2000, le=60000)
+
+
 class DesktopPresenceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -26,6 +34,9 @@ class DesktopPresenceRequest(BaseModel):
         default=None, alias="lastDesktopInteractionAt"
     )
     capabilities: list[str] = Field(default_factory=list)
+    message_observations: list[MessageDisplayObservation] = Field(
+        default_factory=list, alias="messageObservations", max_length=100
+    )
 
 
 def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
@@ -52,6 +63,20 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 capabilities=tuple(payload.capabilities),
             )
         )
+        now = datetime.now(UTC)
+        if (
+            getattr(runtime, "message_exposure", None) is not None
+            and payload.current_session_id
+            and payload.window_visible
+            and payload.window_focused
+            and not payload.window_minimized
+            and payload.session_state == "active"
+            and abs((now - _aware(payload.observed_at)).total_seconds()) <= 5
+        ):
+            assert runtime.message_exposure is not None
+            runtime.message_exposure.record(
+                payload.current_session_id, payload.message_observations, now=now
+            )
         return {"status": "ok"}
 
     @router.get("/reminder-diagnostics")

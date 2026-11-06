@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent.attachments import AttachmentError
 from agent.errors import AgentError
+from agent.message_exposure import content_version
 from agent.paths import session_delivery_db_path
 from agent.runtime import SessionBusyError
 from agent.session_delivery import SessionDeliveryStore
@@ -32,6 +33,7 @@ class SessionDeliveryService:
             session_delivery_db_path(runtime.settings.sessions_dir.parent)
         )
         self.contact_allowed: Callable[[str], bool] = lambda _sid: True
+        self.source_was_read: Callable[[str, str, str, str], bool] = lambda *_args: False
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._delivery_lock = threading.Lock()
@@ -113,6 +115,25 @@ class SessionDeliveryService:
             "destination_id": destination,
             "attachments": attachments,
         }
+        if refs := args.get("source_messages"):
+            if not isinstance(refs, list) or len(refs) > 8:
+                raise ConversationAccessError("invalid_sources", "最多关联八条已读取消息。")
+            for ref in refs:
+                if not isinstance(ref, dict) or set(ref) != {"session_id", "message_id"}:
+                    raise ConversationAccessError(
+                        "invalid_sources", "来源需要精确session_id和message_id。"
+                    )
+                sid, mid = ref["session_id"], ref["message_id"]
+                if not isinstance(sid, str) or not isinstance(mid, str) or not sessions.exists(sid):
+                    raise ConversationAccessError("source_missing", "来源消息不可用，请重新读取。")
+                event = next((e for e in sessions.query(sid).active_events if e.uuid == mid), None)
+                if event is None or not self.source_was_read(
+                    source, sid, mid, content_version(str(event.payload.get("content", "")))
+                ):
+                    raise ConversationAccessError(
+                        "source_not_read", "来源未读取或已变化，请先用read_conversation读取原消息。"
+                    )
+            request["source_messages"] = refs
         if (
             "notify_im" not in args
             and sessions.is_inner(source)

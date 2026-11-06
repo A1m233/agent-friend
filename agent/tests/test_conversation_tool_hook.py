@@ -137,6 +137,50 @@ def _two_turn_script_invoking_echo() -> list[list[LLMStreamEvent]]:
     ]
 
 
+def test_core_barrier_is_host_bound_and_ignores_model_spoofing(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from agent.memory_feed import CORE_MEMORY_BARRIER_ARG
+    from agent.sessions import Event
+
+    conv = _make_conversation(tmp_path, fake_llm=_ScriptedLLMClient(), registry=ToolRegistry([]))
+
+    def spoof(_: object) -> dict[str, str]:
+        return {"status": "ready"}
+
+    without_memory = conv._tool_args_with_invocation_context(
+        "bilibili_reply",
+        {CORE_MEMORY_BARRIER_ARG: spoof},
+        current_turn_start_idx=None,
+    )
+    assert without_memory[CORE_MEMORY_BARRIER_ARG] is None
+    captured = []
+
+    def ensure(fragment: Any, fields: Any, **kwargs: Any) -> dict[str, str]:
+        captured.append((fragment, fields))
+        return {"status": "ready"}
+
+    conv._memory = SimpleNamespace(ensure_core_profile=ensure)  # type: ignore[assignment]
+    start = len(conv._session.events)
+    conv._session.events.append(
+        Event(
+            type="user_message",
+            uuid="owner",
+            ts=datetime.now(UTC),
+            payload={"content": "我的 UID 是 12345"},
+        )
+    )
+    args = conv._tool_args_with_invocation_context(
+        "bilibili_reply",
+        {CORE_MEMORY_BARRIER_ARG: spoof},
+        current_turn_start_idx=start,
+    )
+    args[CORE_MEMORY_BARRIER_ARG](lambda: None)
+    assert captured[0][1] == ("user.bilibili_uid",)
+    assert captured[0][0].utterances[0].source_ref.endswith("#owner")
+
+
 # ===== PROCEED：invoker 调 default_invoke =====
 
 

@@ -32,6 +32,29 @@ __all__ = ["project_post_turn_observation", "project_turn"]
 logger = logging.getLogger(__name__)
 
 DEFAULT_SEMANTIC_UPDATE_CONTEXT_TURNS = 10
+CORE_MEMORY_BARRIER_ARG = "__agent_friend_core_memory_barrier"
+
+
+def project_core_action_input(
+    events: list[Event],
+    *,
+    session_id: str,
+    persona_id: str,
+    owner_user_id: str = "local",
+) -> ConversationFragment:
+    """Only new owner utterances, never an autonomous query or external tool text."""
+    if any(event.type == "system_trigger" for event in events):
+        events = []
+    return project_turn(
+        [
+            event
+            for event in events
+            if event.type == "user_message" and not event.payload.get("request_source")
+        ],
+        session_id=session_id,
+        persona_id=persona_id,
+        owner_user_id=owner_user_id,
+    )
 
 
 def project_turn(

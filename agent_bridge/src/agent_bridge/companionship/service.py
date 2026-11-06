@@ -283,6 +283,9 @@ class CompanionshipService:
                     "limits": asdict(config),
                     "contact_paused": self.store.paused(state, "contact", now),
                     "changes": overview,
+                    "recent_deliveries": self.runtime.session_delivery.store.recent(inner)
+                    if self.runtime.session_delivery is not None
+                    else [],
                     "im_destinations": self.access.destinations(),
                 },
                 ensure_ascii=False,

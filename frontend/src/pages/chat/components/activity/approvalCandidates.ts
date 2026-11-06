@@ -7,7 +7,7 @@ import type {
 import type { FilesystemApprovalEntry } from "@/stores/filesystemApprovals";
 
 export type PendingApproval = {
-  kind: "command" | "filesystem" | "desktop_application";
+  kind: "command" | "filesystem" | "desktop_application" | "social_comment";
   requestId: string;
   requestVersion: number;
   modeSource?: "session" | "request" | "global";
@@ -62,6 +62,12 @@ function commandNetworkLabel(request: CommandApprovalRequest): string {
 }
 
 function commandDetailLines(request: ExecutionApprovalRequest): string[] {
+  if (request.kind === "social_comment") {
+    return [`发布账号 UID：${request.details.account_uid}`, `视频：${request.details.bvid}`,
+      request.details.parent_id ? `回复评论：${request.details.parent_id}` : "在视频评论区分享",
+      ...request.details.mentions.map((person) => `提及：${person.name}（UID ${person.uid}）`),
+      "这是公开评论，批准后仍需等待平台结果。"];
+  }
   if (request.kind === "desktop_application") {
     return [
       `工作目录：${request.details.working_directory}`,
@@ -161,7 +167,7 @@ export function buildPendingApprovalQueue(input: {
       sessionId: request.session_id,
       runId: request.run_id,
       reason: request.reason,
-      command: request.kind === "desktop_application"
+      command: request.kind === "social_comment" ? request.details.text : request.kind === "desktop_application"
         ? [request.details.executable_path, ...request.details.arguments].map((v) => JSON.stringify(v)).join(" ")
         : request.details.cmd,
       detailLines: commandDetailLines(request),

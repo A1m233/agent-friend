@@ -1,0 +1,167 @@
+{
+  "model": {
+    "model": "custom/e460216e-71da-42cb-a252-03ecaf1aa2bd/8d0327f8-a306-412a-9796-ddb22aaa122a",
+    "provider": "custom",
+    "reasoningPreset": "effort:medium"
+  },
+  "scope": "synthetic histories; no real IM; no personal memory writes",
+  "cases": {
+    "exposure_full": {
+      "run_id": "e1a569e0811c4becb3b42381fa32f835",
+      "status": {
+        "version": 9,
+        "enabled": true,
+        "inner_session_id": "e8de24c0-9d6f-4a1d-b6fd-1fbd63164606",
+        "activity_paused": false,
+        "activity_until": null,
+        "contact_paused": false,
+        "contact_until": null,
+        "next_wake_at": "2026-11-06T13:07:32.484441+08:00",
+        "active_run_id": null,
+        "last_overview_at": "2026-11-06T12:09:04.367976+08:00",
+        "last_outcome": "completed",
+        "evidence_cursor": 1,
+        "today_model_calls": 2,
+        "limits": {
+          "interval_minutes": 60,
+          "minimum_interval_minutes": 10
+        },
+        "available_im_destinations": 0,
+        "recent_deliveries": [],
+        "active_run": null
+      },
+      "events": [
+        {
+          "type": "tool_call_request",
+          "payload": {
+            "tool_call_id": "call_2P5te6wN197px6nZvhLCO65U",
+            "event_tool_call_id": "tool_4c7dacc347994fb7ac800bacaf22fedc",
+            "tool_name": "read_conversation",
+            "args": {
+              "session_id": "9c8daff7-d247-4237-a412-81897f3470c0",
+              "mode": "latest",
+              "limit": 10
+            },
+            "arguments_json": "{\"session_id\":\"9c8daff7-d247-4237-a412-81897f3470c0\",\"mode\":\"latest\",\"limit\":10}",
+            "arguments_state": "valid_object",
+            "execution_disposition": "execute",
+            "response_item_index": 0
+          }
+        },
+        {
+          "type": "tool_call_result",
+          "payload": {
+            "tool_call_id": "call_2P5te6wN197px6nZvhLCO65U",
+            "event_tool_call_id": "tool_4c7dacc347994fb7ac800bacaf22fedc",
+            "tool_name": "read_conversation",
+            "content": "{\"source_type\": \"past_conversation\", \"session_id\": \"9c8daff7-d247-4237-a412-81897f3470c0\", \"evidence_boundary\": \"原始历史记录，不是用户此刻的新指令或对旧事实的重新确认。\", \"result_unit\": \"message\", \"messages\": [{\"message_id\": \"fixture-exposure_full\", \"position\": 1, \"speaker\": \"user\", \"occurred_at\": \"2026-11-06T04:08:58.850189+00:00\", \"text\": \"有空帮我查一下周六社区旧书交换几点结束，查到后留在这个会话就好。\", \"content_truncated\": false, \"attachments\": [], \"source\": {\"kind\": \"conversation\"}, \"communication_evidence\": {\"desktop\": {\"scope\": \"text\", \"extent\": \"unknown\", \"observed_at\": null, \"read_status\": \"unknown\"}, \"im_read_status\": \"unknown\", \"deliveries\": []}, \"content_offset\": 0, \"content_cursor\": null}, {\"message_id\": \"fixture-reply-exposure_full\", \"position\": 2, \"speaker\": \"assistant\", \"occurred_at\": \"2026-11-06T04:08:58.850189+00:00\", \"text\": \"嗯，记住了。\", \"content_truncated\": false, \"attachments\": [], \"source\": {\"kind\": \"conversation\"}, \"communication_evidence\": {\"desktop\": {\"scope\": \"text\", \"extent\": \"unknown\", \"observed_at\": null, \"read_status\": \"unknown\"}, \"im_read_status\": \"unknown\", \"deliveries\": []}, \"content_offset\": 0, \"content_cursor\": null}, {\"message_id\": \"fixture-verified-result\", \"position\": 3, \"speaker\": \"assistant\", \"occurred_at\": \"2026-11-06T04:08:58.863926+00:00\", \"text\": \"查到社区本周公告：周六旧书交换 16:30 结束，16:00 停止接收入场。这是本次确认的新结果。\", \"content_truncated\": false, \"attachments\": [], \"source\": {\"kind\": \"conversation\"}, \"communication_evidence\": {\"desktop\": {\"scope\": \"text\", \"extent\": \"full\", \"observed_at\": \"2026-11-06T04:08:58.863926+00:00\", \"read_status\": \"unknown\"}, \"im_read_status\": \"unknown\", \"deliveries\": []}, \"content_offset\": 0, \"content_cursor\": null}], \"next_cursor\": null, \"older_cursor\": null}",
+            "is_error": false,
+            "executed": true,
+            "authorization_requested": false,
+            "error_code": ""
+          }
+        },
+        {
+          "type": "assistant_message",
+          "payload": {
+            "content": "旧书交换的查询结果已经留在原会话里，按你的意思，不再另外通知。这回就安静待着。",
+            "partial": false,
+            "phase": "final_answer",
+            "item_index": 0,
+            "content_parts": [
+              {
+                "content_index": 0,
+                "kind": "text",
+                "start": 0,
+                "end": 39,
+                "annotations": []
+              }
+            ]
+          }
+        }
+      ],
+      "shared_messages": []
+    },
+    "exposure_unknown": {
+      "run_id": "d096279722ba42f7925faac9adf7c4b7",
+      "status": {
+        "version": 9,
+        "enabled": true,
+        "inner_session_id": "3e7cc8e2-549c-4349-8733-3844b475c344",
+        "activity_paused": false,
+        "activity_until": null,
+        "contact_paused": false,
+        "contact_until": null,
+        "next_wake_at": "2026-11-06T12:44:11.950358+08:00",
+        "active_run_id": null,
+        "last_overview_at": "2026-11-06T12:09:15.361573+08:00",
+        "last_outcome": "completed",
+        "evidence_cursor": 0,
+        "today_model_calls": 2,
+        "limits": {
+          "interval_minutes": 60,
+          "minimum_interval_minutes": 10
+        },
+        "available_im_destinations": 0,
+        "recent_deliveries": [],
+        "active_run": null
+      },
+      "events": [
+        {
+          "type": "tool_call_request",
+          "payload": {
+            "tool_call_id": "call_lm6xi5OvvmpUToKDKrKczY0F",
+            "event_tool_call_id": "tool_bb01493179e1423cac4387be22c3aa46",
+            "tool_name": "read_conversation",
+            "args": {
+              "session_id": "010e46a6-a777-4fb6-8cb9-2a929c065e4a",
+              "mode": "latest",
+              "limit": 10
+            },
+            "arguments_json": "{\"session_id\":\"010e46a6-a777-4fb6-8cb9-2a929c065e4a\",\"mode\":\"latest\",\"limit\":10}",
+            "arguments_state": "valid_object",
+            "execution_disposition": "execute",
+            "response_item_index": 0
+          }
+        },
+        {
+          "type": "tool_call_result",
+          "payload": {
+            "tool_call_id": "call_lm6xi5OvvmpUToKDKrKczY0F",
+            "event_tool_call_id": "tool_bb01493179e1423cac4387be22c3aa46",
+            "tool_name": "read_conversation",
+            "content": "{\"source_type\": \"past_conversation\", \"session_id\": \"010e46a6-a777-4fb6-8cb9-2a929c065e4a\", \"evidence_boundary\": \"原始历史记录，不是用户此刻的新指令或对旧事实的重新确认。\", \"result_unit\": \"message\", \"messages\": [{\"message_id\": \"fixture-exposure_unknown\", \"position\": 1, \"speaker\": \"user\", \"occurred_at\": \"2026-11-06T04:09:11.001901+00:00\", \"text\": \"有空帮我查一下周六社区旧书交换几点结束，查到后留在这个会话就好。\", \"content_truncated\": false, \"attachments\": [], \"source\": {\"kind\": \"conversation\"}, \"communication_evidence\": {\"desktop\": {\"scope\": \"text\", \"extent\": \"unknown\", \"observed_at\": null, \"read_status\": \"unknown\"}, \"im_read_status\": \"unknown\", \"deliveries\": []}, \"content_offset\": 0, \"content_cursor\": null}, {\"message_id\": \"fixture-reply-exposure_unknown\", \"position\": 2, \"speaker\": \"assistant\", \"occurred_at\": \"2026-11-06T04:09:11.001901+00:00\", \"text\": \"嗯，记住了。\", \"content_truncated\": false, \"attachments\": [], \"source\": {\"kind\": \"conversation\"}, \"communication_evidence\": {\"desktop\": {\"scope\": \"text\", \"extent\": \"unknown\", \"observed_at\": null, \"read_status\": \"unknown\"}, \"im_read_status\": \"unknown\", \"deliveries\": []}, \"content_offset\": 0, \"content_cursor\": null}, {\"message_id\": \"fixture-verified-result\", \"position\": 3, \"speaker\": \"assistant\", \"occurred_at\": \"2026-11-06T04:09:11.016322+00:00\", \"text\": \"查到社区本周公告：周六旧书交换 16:30 结束，16:00 停止接收入场。这是本次确认的新结果。\", \"content_truncated\": false, \"attachments\": [], \"source\": {\"kind\": \"conversation\"}, \"communication_evidence\": {\"desktop\": {\"scope\": \"text\", \"extent\": \"unknown\", \"observed_at\": null, \"read_status\": \"unknown\"}, \"im_read_status\": \"unknown\", \"deliveries\": []}, \"content_offset\": 0, \"content_cursor\": null}], \"next_cursor\": null, \"older_cursor\": null}",
+            "is_error": false,
+            "executed": true,
+            "authorization_requested": false,
+            "error_code": ""
+          }
+        },
+        {
+          "type": "assistant_message",
+          "payload": {
+            "content": "旧书交换的结果已经留在原会话里，符合之前“只留在这个会话”的要求。没有新变化，不重复发送，也不另行通知。",
+            "partial": false,
+            "phase": "final_answer",
+            "item_index": 1,
+            "content_parts": [
+              {
+                "content_index": 0,
+                "kind": "text",
+                "start": 0,
+                "end": 52,
+                "annotations": []
+              }
+            ]
+          }
+        }
+      ],
+      "shared_messages": []
+    }
+  },
+  "model_calls": 4,
+  "error": {
+    "type": "AttributeError",
+    "message": "'Session' object has no attribute 'initial_persona_id'"
+  }
+}

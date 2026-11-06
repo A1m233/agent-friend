@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,6 +12,7 @@ from typing import Literal
 CoreFieldKey = Literal[
     "user.preferred_name",
     "user.current_residences",
+    "user.bilibili_uid",
     "relationship.kind",
     "relationship.agent_nickname",
 ]
@@ -18,6 +20,8 @@ CoreScopeKind = Literal["user", "persona"]
 CoreCardinality = Literal["single", "many"]
 
 _MAX_PROFILE_JSON_CHARS = 64_000
+_UID_PATTERN = r"[1-9][0-9]{0,18}"
+_UID_URL_PATTERN = rf"https://space\.bilibili\.com/({_UID_PATTERN})/?"
 
 
 class CoreProfileError(ValueError):
@@ -39,6 +43,9 @@ CORE_FIELD_SPECS: dict[CoreFieldKey, CoreFieldSpec] = {
     ),
     "user.current_residences": CoreFieldSpec(
         "user.current_residences", "user", "many", 200, "用户当前住处"
+    ),
+    "user.bilibili_uid": CoreFieldSpec(
+        "user.bilibili_uid", "user", "single", 160, "用户的 B 站 UID"
     ),
     "relationship.kind": CoreFieldSpec(
         "relationship.kind", "persona", "single", 240, "你与用户的关系"
@@ -81,6 +88,11 @@ class CoreProfile:
             "user": {
                 "preferred_name": _single(by_field.get("user.preferred_name", [])),
                 "current_residences": by_field.get("user.current_residences", []),
+                **(
+                    {"bilibili_uid": _single(by_field["user.bilibili_uid"])}
+                    if by_field.get("user.bilibili_uid")
+                    else {}
+                ),
             },
             "relationship": {
                 "kind": _single(by_field.get("relationship.kind", [])),
@@ -153,7 +165,31 @@ def validate_core_value(field_key: CoreFieldKey, value: object) -> str:
         raise CoreProfileError(f"{field_key} must not be empty")
     if len(cleaned) > spec.max_value_chars:
         raise CoreProfileError(f"{field_key} exceeds {spec.max_value_chars} characters")
+    if field_key == "user.bilibili_uid":
+        match = re.fullmatch(_UID_URL_PATTERN, cleaned)
+        cleaned = match.group(1) if match else cleaned
+        if not re.fullmatch(_UID_PATTERN, cleaned):
+            raise CoreProfileError("B 站身份需要正整数 UID 或准确的 space.bilibili.com 主页")
     return cleaned
+
+
+def extraction_field_contract() -> str:
+    """Render structural constraints from the same registry used at commit time."""
+    fields = [
+        {
+            "field": key,
+            "value_type": "nonempty_string",
+            "max_length": spec.max_value_chars,
+            "cardinality": spec.cardinality,
+            **(
+                {"value_patterns": [_UID_PATTERN, _UID_URL_PATTERN]}
+                if key == "user.bilibili_uid"
+                else {}
+            ),
+        }
+        for key, spec in CORE_FIELD_SPECS.items()
+    ]
+    return "\n\n## 宿主 Core 结构契约\n" + json.dumps(fields, ensure_ascii=False)
 
 
 def normalize_core_value(value: str) -> str:

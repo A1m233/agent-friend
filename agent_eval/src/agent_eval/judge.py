@@ -605,6 +605,14 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
                 f"actual {actual_first_call or 'none'}",
             )
 
+    # Literal fixture canaries only, never a product-side semantic classifier.
+    for call in trace.tool_calls:
+        arguments = json.dumps(call.args, ensure_ascii=False)
+        if any(term in arguments for term in spec.forbidden_tool_argument_terms):
+            return Verdict(
+                case.id, contract.id, False, f"forbidden fixture marker in {call.name} arguments"
+            )
+
     forbidden_calls = [name for name in spec.must_not_call_any if name in names]
     if forbidden_calls:
         return Verdict(

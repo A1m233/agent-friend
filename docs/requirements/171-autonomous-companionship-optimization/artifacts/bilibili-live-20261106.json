@@ -1,0 +1,76 @@
+{
+  "date": "2026-11-06",
+  "kind": "real_product_e2e",
+  "status": "blocked_before_publication",
+  "source": "Tauri long conversation, user explicitly authorized testing on this creator and confirmed A1m233 as own account",
+  "sessionId": "c3c41515-bab8-411d-b850-ab98d50bab93",
+  "runtime": {
+    "worktree": "af171/agent-friend",
+    "branch": "feature/171-autonomous-companionship-optimization",
+    "appPid": 39884,
+    "bridgeInstanceId": "89d7095fd1b74629a7477257b599b646",
+    "startedAt": "2026-11-06T07:45:53.934385+00:00"
+  },
+  "model": {
+    "id": "custom/e460216e-71da-42cb-a252-03ecaf1aa2bd/8d0327f8-a306-412a-9796-ddb22aaa122a",
+    "name": "gpt-6.1-sol",
+    "reasoningPreset": "effort:medium",
+    "provenance": "long conversation persisted selection"
+  },
+  "account": {
+    "name": "agent-friend",
+    "uid": "614630950",
+    "state": "authenticated"
+  },
+  "owner": {
+    "name": "A1m233",
+    "uid": "16520572",
+    "provenance": "user confirmation of previously verified account"
+  },
+  "video": {
+    "bvid": "BV1oDdKYtEyr",
+    "title": "ykn: 一勺料汁",
+    "creatorUid": "8741868",
+    "creatorName": "开戰鬥機的虾米"
+  },
+  "runs": [
+    {
+      "id": "56b0e66a-6a2c-4c74-ae14-2d9392306357",
+      "inputEventId": "847fdcae-e664-405b-8755-ca03a2964ef1",
+      "modelCalls": 5,
+      "result": "creator search, works, video detail and comment reading succeeded; no public write requested"
+    },
+    {
+      "id": "f75c6e4b-264a-4673-a9af-cb56a0babc35",
+      "inputEventId": "a8b59979-ab53-41e1-834a-3eb6f033bfb4",
+      "modelCalls": 2,
+      "result": "bilibili_reply rejected owner_identity_missing; AF stopped without retry or bypass"
+    }
+  ],
+  "attemptedComment": "@A1m233 我来分享这条《一勺料汁》啦，一起听听～",
+  "publication": {
+    "postDispatched": false,
+    "commentId": null,
+    "replySent": false,
+    "atDelivered": false
+  },
+  "memory": {
+    "coreEntryPresent": false,
+    "rejections": [
+      {
+        "time": "2026-11-06T15:51:29.213+08:00",
+        "code": "invalid_extraction_output",
+        "detail": "invalid_operation_shape_or_reason"
+      },
+      {
+        "time": "2026-11-06T15:56:07.227+08:00",
+        "code": "invalid_extraction_output",
+        "detail": "invalid_operation_shape_or_reason"
+      }
+    ],
+    "processed": 0,
+    "boundary": "Memory extraction output parsing/reconciliation -> Core -> Bilibili owner_uid lookup",
+    "gap": "No raw extraction response retained in current evidence; cannot distinguish exact malformed field or prompt/model/validator cause"
+  },
+  "limits": "Real memory failure is not covered by the earlier isolated four-fragment success; no public comment or mention receipt can be claimed. Existing session approval mode session_auto retained; automatic-review path not exercised in this live run."
+}

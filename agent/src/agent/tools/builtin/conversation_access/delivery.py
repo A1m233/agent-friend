@@ -21,12 +21,35 @@ class SendConversationMessageTool:
         "联系暂停或去向失效时停止或重新发现，不绕过暂停换通道。"
         "attachment_asset_ids 可引用当前会话中实际已有的附件或工具图片 asset_id，不能填路径或猜 ID。"
         "IM 附件当前仅支持一张已有图片；其它附件可只发到会话。"
+        "转述已读取的会话消息时，可用source_messages关联原消息；引用来自read_conversation，独立见闻可省略。"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
         "additionalProperties": False,
         "required": ["target_session_id", "content"],
         "properties": {
+            "source_messages": {
+                "type": "array",
+                "maxItems": 8,
+                "description": "本次分享依据的原消息，不是投递目标；使用实际读取结果中的精确会话与消息ID。",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["session_id", "message_id"],
+                    "properties": {
+                        "session_id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "read_conversation结果的session_id。",
+                        },
+                        "message_id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "该读取结果中的message_id，不是运行ID。",
+                        },
+                    },
+                },
+            },
             "attachment_asset_ids": {
                 "type": "array",
                 "maxItems": 8,

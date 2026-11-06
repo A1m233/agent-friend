@@ -46,6 +46,8 @@ class CatastrophicActionPolicy:
         self._critical_root_keys = frozenset(self._path_key(str(item), None) for item in roots)
 
     def assess(self, request: Any) -> RiskAssessment:
+        if getattr(request, "kind", None) == "social_comment":
+            return self._normal({"kind": "social_comment", "details": request.details})
         if getattr(request, "kind", None) == "filesystem":
             return self._assess_filesystem(request)
         if getattr(request, "kind", None) in {"command", "desktop_application"}:

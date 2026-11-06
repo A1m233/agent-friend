@@ -1,0 +1,47 @@
+{
+  "checked_at": "2026-11-06T10:09:46.621768+00:00",
+  "scope": "read-only; no publication",
+  "video_id": "BV1oDdKYtEyr",
+  "aid": "114309128526065",
+  "author_readback": {
+    "comment_id": "319366370353",
+    "author_uid": "614630950",
+    "text": "@A1m233 我来分享这条《一勺料汁》啦，一起听听～",
+    "platform_state": 17,
+    "mentioned_uids": [
+      "16520572"
+    ]
+  },
+  "self_replies": [
+    {
+      "comment_id": "319366469585",
+      "root_id": "319366370353",
+      "parent_id": "319366370353",
+      "author_uid": "614630950",
+      "text": "再留一句，分享成功啦～",
+      "platform_state": 0
+    }
+  ],
+  "public_visibility": {
+    "status": "not_visible",
+    "viewer": "anonymous",
+    "reason": "comment_not_found",
+    "message": "平台接收或作者能读回，不等于其他人可见。当前匿名查询没有该评论；不要重复发布。"
+  },
+  "mention_delivery": "unknown",
+  "controls": {
+    "316243493745": {
+      "status": "visible",
+      "viewer": "anonymous",
+      "root_id": "316243493745",
+      "visible_reply_ids": []
+    },
+    "315685569648": {
+      "status": "visible",
+      "viewer": "anonymous",
+      "root_id": "315685569648",
+      "visible_reply_ids": []
+    }
+  },
+  "limitation": "Anonymous visibility is not recipient notification evidence; platform moderation cause is unknown."
+}

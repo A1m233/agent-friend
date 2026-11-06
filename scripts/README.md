@@ -1,5 +1,13 @@
 # scripts/
 
+`package/run.* runtime-verify` 的自主陪伴 capability smoke 还验证消息展示独立存储、B 站凭据恢复/退出、二维码图像生成，以及固定评论端点与 UID 提及表单；使用假凭据与本地 HTTP transport，不访问平台或调用模型。
+
+`companionship-smoke/run.* --allow-llm --section exposure --output NEW_JSON` 使用当前 chatModel 对照完整展示、无展示记录、已分享、明确等待四种隔离自主唤醒，最多 20 次请求，无网络探索或真实 IM；仅观察行为，不将展示视为已读。
+
+`companionship-smoke/run.* --allow-llm --section social-identity --output NEW_JSON` 使用当前设置的 memoryModel，在独立临时库观察 B 站 UID 的提供、外部评论转述、纠正与撤回，最多四个片段，每片段包含基础抽取及至多一次契约修复。不读取或写入用户记忆库、不发布平台内容，须获本轮真实调用授权；结果记录原始中文和实际核心身份变化。
+
+`companionship-smoke/run.* --allow-llm --section memory-commit --output NEW_JSON` 通过实际 Core 同步入口观察提供、第三方引述、AI 转述、纠正和撤回；同时检查重复调用幂等及后续完整记忆提交。使用隔离库和当前 memoryModel，最多 10 次请求，不发布评论或 IM，须获真实调用授权；失败返回非零并保留中文输入、抽取尝试和提交回执。
+
 | 名字 | 用途 | mac/linux 入口 | Windows 入口 |
 |---|---|---|---|
 | companionship-smoke | 有界真实模型观察：独立审批、记忆、自主情境及自然语言控制；合成历史和隔离状态，不读取真实聊天、不发送 IM，最多 50 次请求，须事先获得调用授权；`--case` 可重复指定样本。已授权的真实 Tauri 验收可用 `--desktop-stage open\|inspect\|reload\|verify\|preferences`，verify/preferences 后附新的证据目录，preferences 核验间隔自动保存并还原，使用预先暂停的隔离 fixture、不调用模型 | `./scripts/companionship-smoke/run.sh --allow-llm --output NEW_JSON [--section all\|review-memory\|behavior\|controls\|continuity\|compaction] [--case CASE]` | `.\scripts\companionship-smoke\run.ps1 --allow-llm --output NEW_JSON [--section all\|review-memory\|behavior\|controls\|continuity\|compaction] [--case CASE]` |

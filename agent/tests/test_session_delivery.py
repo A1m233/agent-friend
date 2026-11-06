@@ -91,3 +91,33 @@ def test_conversation_only_delivery_has_no_pending_im(tmp_path: Path) -> None:
     store.update(row["delivery_id"], conversation_state="committed")
     assert store.get(row["delivery_id"])["im_state"] == "not_requested"
     assert store.pending() == []
+
+
+def test_source_association_preserves_delivery_status_without_guessing_old_messages(
+    tmp_path: Path,
+) -> None:
+    store = SessionDeliveryStore(tmp_path / "delivery.db")
+    base = {
+        "source_session_id": "inner",
+        "source_run_id": "wake",
+        "target_session_id": "target",
+        "content": "消息",
+        "destination_id": "qq",
+    }
+    old = store.submit("old", base)
+    assert store.for_message("daily", "original") == []
+    linked = store.submit(
+        "linked", {**base, "source_messages": [{"session_id": "daily", "message_id": "original"}]}
+    )
+    store.update(
+        linked["delivery_id"],
+        conversation_state="committed",
+        im_state="delivered",
+        message_id="forwarded",
+    )
+    entries = store.for_message("daily", "original")
+    assert [entry["delivery_id"] for entry in entries] == [linked["delivery_id"]]
+    assert entries[0]["im_read_status"] == "unknown"
+    assert entries[0]["im_state"] == "delivered"
+    assert store.for_message("target", "forwarded") == entries
+    assert old["delivery_id"] != linked["delivery_id"]

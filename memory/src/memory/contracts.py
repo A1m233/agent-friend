@@ -128,10 +128,20 @@ class ConversationFragment:
     owner_user_id: str = DEFAULT_OWNER_USER_ID
     semantic_update_context: SemanticUpdateContext | None = None
     defer_extraction: bool = False
+    extraction_scope: Literal["full", "core"] = "full"
 
     def is_empty(self) -> bool:
         """没有任何可抽取发言时为真（worker 可直接跳过）。"""
         return not self.utterances
+
+
+@dataclass(frozen=True)
+class MemoryWriteReceipt:
+    """Durable commit/queue state; a model acknowledgement is not a commit."""
+
+    observation_id: str
+    status: Literal["committed", "pending", "blocked", "unknown"]
+    error_code: str | None = None
 
 
 @dataclass(frozen=True)

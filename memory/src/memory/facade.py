@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -21,10 +23,11 @@ from .contracts import (
     DEFAULT_OWNER_USER_ID,
     MemoryContext,
     MemoryItem,
+    MemoryWriteReceipt,
     RecallTrace,
     RecallTraceItem,
 )
-from .core_profile import CoreProfileError, CoreProfileRenderer
+from .core_profile import CORE_FIELD_SPECS, CoreFieldKey, CoreProfileError, CoreProfileRenderer
 from .extraction import AsyncExtractionWorker
 from .host_episodes import (
     HostEpisode,
@@ -40,8 +43,6 @@ from .store import EpisodicRow, SemanticRow
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from .contracts import ConversationFragment, GateMode
     from .extraction import ExtractionResult, Extractor, Reconciler
     from .retrieval import Candidate, RetrievalStrategy
@@ -144,7 +145,7 @@ class Memory:
             self._index_manager.request_backfill()
         return result
 
-    def observe(self, fragment: ConversationFragment) -> None:
+    def observe(self, fragment: ConversationFragment) -> MemoryWriteReceipt:
         """提交一段对话素材做异步抽取（非阻塞）。"""
         logger.info(
             "observe owner=%s persona=%s utterances=%d",
@@ -152,7 +153,56 @@ class Memory:
             fragment.persona_id,
             len(fragment.utterances),
         )
-        self._worker.submit(fragment)
+        return self._worker.submit(fragment)
+
+    def observation_status(self, observation_id: str) -> MemoryWriteReceipt:
+        """Read the durable result without starting work or treating enqueue as success."""
+        return self._store.extraction_status(observation_id)
+
+    def ensure_core_profile(
+        self,
+        fragment: ConversationFragment,
+        required_fields: Sequence[CoreFieldKey],
+        *,
+        cancel_check: Callable[[], None] | None = None,
+        timeout_seconds: float = 45.0,
+    ) -> dict[str, object]:
+        """Action dependency barrier; the host supplies source-preserving user text.
+
+        Only identity is synchronized. Ordinary memory remains on the original
+        asynchronous path, in the same store with separate observation receipts.
+        """
+        if any(key not in CORE_FIELD_SPECS for key in required_fields):
+            raise ValueError("unsupported Core dependency")
+        receipt: MemoryWriteReceipt | None = None
+        if not fragment.is_empty():
+            receipt = self._worker.ensure_core(
+                replace(fragment, extraction_scope="core", semantic_update_context=None),
+                timeout_seconds=timeout_seconds,
+                cancel_check=cancel_check,
+            )
+            if receipt.status != "committed":
+                return {
+                    "status": receipt.status,
+                    "observation_id": receipt.observation_id,
+                    "error_code": receipt.error_code,
+                    "message": "核心身份写入尚未确认；不能据口头确认继续依赖该身份的动作。",
+                }
+        if cancel_check:
+            cancel_check()
+        try:
+            profile = self._store.core_profile(
+                owner_user_id=fragment.owner_user_id, persona_id=fragment.persona_id
+            )
+        except CoreProfileError:
+            return {"status": "unavailable", "error_code": "core_profile_unavailable"}
+        available = {entry.field_key for entry in profile.entries}
+        missing = [key for key in required_fields if key not in available]
+        return {
+            "status": "missing" if missing else "ready",
+            "missing_fields": missing,
+            "observation_id": receipt.observation_id if receipt else None,
+        }
 
     def invalidate_sources(
         self,

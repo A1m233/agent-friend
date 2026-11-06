@@ -29,7 +29,7 @@ function PendingApprovalPanel({
       <div className="flex items-center gap-2">
         <StatusDot tone="warning" pulse={!current.submitting} />
         <span className="text-xs text-muted">
-          {current.kind === "desktop_application" ? "打开桌面应用" : current.kind === "command" ? "本地命令授权" : "本地文件授权"}
+          {current.kind === "social_comment" ? "发布 B 站评论" : current.kind === "desktop_application" ? "打开桌面应用" : current.kind === "command" ? "本地命令授权" : "本地文件授权"}
         </span>
         {queuedCount > 0 ? <span className="text-xs text-muted">还有 {queuedCount} 项排队</span> : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">

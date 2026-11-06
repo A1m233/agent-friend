@@ -1,4 +1,5 @@
 import { continuationRecoveryMode, groupRecoveryMessages } from "@/stores/taskRecovery";
+import { registerMessageExposure } from "@/lib/desktop-presence/messageExposure";
 import {
   type KeyboardEvent,
   type PointerEvent,
@@ -235,6 +236,13 @@ const TextBubble = memo(function TextBubble({
   };
 }) {
   const [unavailableAssets, setUnavailableAssets] = useState<Set<string>>(() => new Set());
+  const exposureRef = useRef<HTMLDivElement>(null);
+  const exposureMessageId = role === "assistant" ? quoteSource?.textBlockId : undefined;
+  useEffect(() => {
+    if (exposureRef.current && exposureMessageId && text) {
+      return registerMessageExposure(exposureRef.current, exposureMessageId, text);
+    }
+  }, [exposureMessageId, text]);
   useEffect(() => {
     let active = true;
     void Promise.all(
@@ -290,6 +298,7 @@ const TextBubble = memo(function TextBubble({
       className="contents"
       data-search-anchor={searchAnchor}
       data-quoteable-text={quoteSource ? "true" : undefined}
+      ref={exposureRef}
       data-quote-message-id={quoteSource?.messageEventUuid}
       data-quote-block-id={quoteSource?.textBlockId}
       data-quote-role={quoteSource?.role}

@@ -1,0 +1,32 @@
+{
+  "originalReport": "C:\\Users\\chens\\AppData\\Local\\agent-friend\\build-control\\reports\\4aa1f81a61648489128b75ae\\85cd7cd70c8c9c8e0ad00628-20632c52d1814888a3fb717a82686760.json",
+  "originalSha256": "3365f4fdb22f6ed3fa3e78a056ee4fbbc81c842dfdd06dc297b0521b88e0ba20",
+  "runtimeVerification": {
+    "doctor": "passed",
+    "frozenServices": {
+      "bridge": "passed",
+      "voice": "passed"
+    },
+    "identity": {
+      "buildId": "20261106T040600Z-37d704e2abab-48d46f1b",
+      "buildMode": "local-test",
+      "dirty": true,
+      "distribution": "ordinary",
+      "productVersion": "0.4.1",
+      "profileId": "production",
+      "schemaVersion": 1,
+      "sourceCommit": "37d704e2abab000f72133a8c821d89f8db8bb45c",
+      "sourceTreeSha256": "59e41456346a767048fb9e4027b8238faa990579a60236a2c7839cba9d879da3"
+    },
+    "runtimeInventorySha256": "b6577da61cc4647d8f5d119b31a1abfcead75f48d4b0e4ec633640cc93425e6d",
+    "schemaVersion": 1
+  },
+  "guideBaseline": {
+    "lifecycle": "transient",
+    "snapshot_sha256": "8055e63fa3a40e5272cafe0de15d6be075077f0f3d76993bd59adc0550982fc6",
+    "source_commit": "302369f7232e51e24adeabb16f48b3e6302c5898"
+  },
+  "outerExitCode": 1,
+  "outerError": "package Guide baseline cleanup did not restore the entry worktree state",
+  "cause": "Agent added exposure.py and artifacts while baseline transaction was open; all Guide-managed paths are restored and clean. Runtime doctor, bridge and voice probes passed. No installer built."
+}

@@ -63,10 +63,10 @@ class SocialSearchTool:
     timeout_seconds: ClassVar[float] = 90.0
     description: ClassVar[str] = (
         "在小红书或 Bilibili 内进行只读搜索，返回可继续读取的候选。\n\n"
-        "**何时使用**：用户明确要求在小红书/B站寻找内容，或普通网页搜索无法证明平台内不存在时。\n"
+        "**何时使用**：用户指定平台、当前自主活动选择在该平台探索，或普通网页搜索无法证明平台内不存在时。\n"
         "**何时不要使用**：用户已提供受支持的平台内容直链时改用 social_read 的 url；"
-        "用户未指定平台且普通网页即可回答时也不要使用。不要用于发布、互动、下载或批量采集。\n"
-        "**参数边界**：platform 必须来自用户意图；小红书只搜 note，Bilibili 可搜 video/article/creator。"
+        "普通问答中用户未指定平台且普通网页即可回答时也不要使用。不要用于发布、互动、下载或批量采集。\n"
+        "**参数边界**：platform 来自用户意图或当前自主探索选择；小红书只搜 note，Bilibili 可搜 video/article/creator。"
         "搜索 Bilibili UP 主时必须使用 creator，不能把名字当作视频关键词搜索。"
         "日期和排序只在用户确实提供或要求时填写。\n"
         "**证据边界**：结果只是搜索摘要。需要正文、简介或字幕时，选择少量候选并把 resource_ref 原样交给 social_read；"
@@ -82,7 +82,7 @@ class SocialSearchTool:
             "platform": {
                 "type": "string",
                 "enum": ["xiaohongshu", "bilibili"],
-                "description": "用户明确要求搜索的平台。",
+                "description": "用户指定或当前自主活动选择探索的平台。",
             },
             "query": {"type": "string", "description": "平台内搜索关键词。"},
             "content_types": {

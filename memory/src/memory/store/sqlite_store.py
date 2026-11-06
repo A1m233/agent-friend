@@ -28,6 +28,7 @@ from uuid import uuid4
 
 import jieba
 
+from ..contracts import MemoryWriteReceipt
 from ..core_profile import (
     CORE_FIELD_SPECS,
     CoreFieldKey,
@@ -313,6 +314,22 @@ class SqliteMemoryStore:
         with self._lock:
             row = self._conn.execute("SELECT MAX(sequence) FROM extraction_pending").fetchone()
             return int(row[0] or 0)
+
+    def extraction_status(self, observation_id: str) -> MemoryWriteReceipt:
+        with self._lock:
+            if self._conn.execute(
+                "SELECT 1 FROM extraction_commit WHERE observation_id=?", (observation_id,)
+            ).fetchone():
+                return MemoryWriteReceipt(observation_id, "committed")
+            row = self._conn.execute(
+                "SELECT state,error_code,reason FROM extraction_pending WHERE observation_id=?",
+                (observation_id,),
+            ).fetchone()
+            if row is None:
+                return MemoryWriteReceipt(observation_id, "unknown")
+            return MemoryWriteReceipt(
+                observation_id, row[0], row[1] or (row[2] if row[2] != "ready" else None)
+            )
 
     def pending_extractions(
         self, limit: int = 2, *, through: int | None = None

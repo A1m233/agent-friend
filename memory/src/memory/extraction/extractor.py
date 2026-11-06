@@ -26,7 +26,10 @@ from llm_providers import (
     OperationRequestLineageTracker,
 )
 
+from ..core_profile import CORE_FIELD_SPECS, CoreProfileError, validate_core_value
+from ..core_profile.contracts import extraction_field_contract
 from .context import ExtractionContext
+from .reconciler import ExtractionApplyError, _validate_output
 from .result import (
     CoreUpdate,
     ExtractionAttempt,
@@ -100,7 +103,13 @@ class Extractor:
         self._llm = llm_client
         self._allow_retries = True
         self._allow_legacy_output = allow_legacy_output
-        self._prompt = prompt if prompt is not None else _PROMPT_PATH.read_text(encoding="utf-8")
+        # An explicit override is an exact experimental prompt. Do not silently
+        # change historical/control variants; production uses the shared contract.
+        self._prompt = (
+            prompt
+            if prompt is not None
+            else _PROMPT_PATH.read_text(encoding="utf-8") + extraction_field_contract()
+        )
         self._reconciliation_prompt = (
             reconciliation_prompt
             if reconciliation_prompt is not None
@@ -118,6 +127,9 @@ class Extractor:
         context: ExtractionContext | list[SemanticRow],
         *,
         allow_retries: bool = True,
+        core_only: bool = False,
+        cancel_check: Callable[[], None] | None = None,
+        deadline_monotonic: float | None = None,
     ) -> ExtractionOutput:
         from contextlib import ExitStack
         from copy import copy
@@ -144,12 +156,22 @@ class Extractor:
             bound = copy(self)
             bound._llm = model
             bound._allow_retries = allow_retries
-            return bound._extract_bound(fragment, context)
+            return bound._extract_bound(
+                fragment,
+                context,
+                core_only=core_only,
+                cancel_check=cancel_check,
+                deadline_monotonic=deadline_monotonic,
+            )
 
     def _extract_bound(
         self,
         fragment: ConversationFragment,
         context: ExtractionContext | list[SemanticRow],
+        *,
+        core_only: bool = False,
+        cancel_check: Callable[[], None] | None = None,
+        deadline_monotonic: float | None = None,
     ) -> ExtractionOutput:
         """抽取一个 fragment。
 
@@ -162,30 +184,95 @@ class Extractor:
             else ExtractionContext.from_existing(context)
         )
         user_content = self._render_input(fragment, extraction_context)
-        messages = [
-            {"role": "system", "content": self._prompt},
+        prompt = self._prompt
+        if core_only:
+            prompt += (
+                "\n\n本次仅同步 Core：只根据本次可信用户原话更新当前核心身份。"
+                "不要把引用、第三方自称或旧记录当作新确认；无需更新的字段保持不变。"
+                "semantic_changes 与 episodic_entries 必须为空数组。"
+            )
+        messages: list[dict[str, object]] = [
+            {"role": "system", "content": prompt},
             {"role": "user", "content": user_content},
         ]
+        output = ExtractionOutput(validation_error="empty_response")
+        for attempt_index in range(2):
+            if cancel_check is not None:
+                cancel_check()
+            output, raw = self._base_attempt(
+                fragment,
+                extraction_context,
+                messages,
+                attempt_index=attempt_index,
+                core_only=core_only,
+                cancel_check=cancel_check,
+                deadline_monotonic=deadline_monotonic,
+            )
+            if output.failure_code is not None:
+                return output
+            if output.validation_error is None:
+                return (
+                    output
+                    if core_only
+                    else self._reconcile_semantic_changes(
+                        fragment, extraction_context, output, call_index=attempt_index + 2
+                    )
+                )
+            if attempt_index == 0:
+                messages.extend(
+                    [
+                        {"role": "assistant", "content": raw},
+                        {
+                            "role": "user",
+                            "content": (
+                                "宿主结构校验未通过，本次没有任何写入。错误："
+                                + output.validation_error
+                                + "。上一条 assistant 内容是未提交的候选，不是用户的新确认。请对照原始材料、精确引用和字段契约，重新输出完整 JSON。"
+                                "这是唯一一次修正机会，不要新增输入未支持的事实。"
+                            ),
+                        },
+                    ]
+                )
+        return output
+
+    def _base_attempt(
+        self,
+        fragment: ConversationFragment,
+        extraction_context: ExtractionContext,
+        messages: list[dict[str, object]],
+        *,
+        attempt_index: int,
+        core_only: bool,
+        cancel_check: Callable[[], None] | None,
+        deadline_monotonic: float | None,
+    ) -> tuple[ExtractionOutput, str]:
         started = perf_counter()
+        kind = (
+            "contract_repair"
+            if attempt_index
+            else ("core_extraction" if core_only else "base_extraction")
+        )
         lineage = self._prompt_cache_lineage.begin(
             session_id=fragment.session_id,
             operation="memory_extraction",
-            call_kind="base_extraction",
-            prompt_contract_revision="1",
+            call_kind=kind,
+            prompt_contract_revision="2",
         )
         try:
             response = self._llm.generate(
                 ModelRequest(
-                    messages=messages,
+                    messages=list(messages),
                     control=ModelCallControl(
-                        allow_retries=self._allow_retries,
+                        allow_retries=self._allow_retries and attempt_index == 0,
+                        cancel_check=cancel_check,
+                        deadline_monotonic=deadline_monotonic,
                         timeout_policy=_MEMORY_TIMEOUT_POLICY,
                         previous_request_witness=lineage.previous_witness,
                         trace_context=ModelCallTraceContext(
                             operation="memory_extraction",
                             session_id=fragment.session_id,
-                            call_kind="base_extraction",
-                            call_index=1,
+                            call_kind=kind,
+                            call_index=attempt_index + 1,
                             comparison_scope=lineage.scope,
                             comparison_precision=lineage.precision,
                             comparison=lineage.comparison_fields(),
@@ -203,13 +290,32 @@ class Extractor:
                 status="llm_error",
                 started=started,
                 error=exc,
+                phase="repair" if attempt_index else ("core" if core_only else "base"),
             )
             return ExtractionOutput(
                 failure_code=type(exc).__name__,
                 retry_after_seconds=getattr(exc, "retry_after_seconds", None),
-            )
+            ), ""
 
         output, status = _parse_output_with_status(raw, allow_legacy=self._allow_legacy_output)
+        if status in {"empty_response", "invalid_json", "invalid_shape"}:
+            output = replace(output, validation_error=output.validation_error or status)
+        if output.validation_error is None:
+            try:
+                _validate_output(output, extraction_context)
+                if core_only and (output.semantic_changes or output.episodic_entries):
+                    raise ExtractionApplyError(
+                        "invalid_core_scope", "Core-only output requires empty other layers"
+                    )
+            except ExtractionApplyError as exc:
+                output = replace(output, validation_error=exc.code)
+            except CoreProfileError:
+                output = replace(output, validation_error="invalid_core_value")
+        if output.validation_error is not None:
+            status = "invalid_shape" if status not in {"invalid_json", "empty_response"} else status
+            logger.warning(
+                "memory output rejected phase=%s detail=%s", kind, output.validation_error
+            )
         self._report_attempt(
             fragment,
             extraction_context,
@@ -217,18 +323,17 @@ class Extractor:
             started=started,
             raw_response=raw,
             output=output,
+            phase="repair" if attempt_index else ("core" if core_only else "base"),
         )
-        if output.validation_error is not None:
-            return output
-        if status in {"empty_response", "invalid_json", "invalid_shape"}:
-            return replace(output, failure_code=status)
-        return self._reconcile_semantic_changes(fragment, extraction_context, output)
+        return output, raw
 
     def _reconcile_semantic_changes(
         self,
         fragment: ConversationFragment,
         context: ExtractionContext,
         base_output: ExtractionOutput,
+        *,
+        call_index: int = 2,
     ) -> ExtractionOutput:
         semantic_update_context = fragment.semantic_update_context
         if semantic_update_context is None or semantic_update_context.is_empty():
@@ -285,7 +390,7 @@ class Extractor:
                             operation="memory_reconciliation",
                             session_id=fragment.session_id,
                             call_kind="semantic_reconciliation",
-                            call_index=2,
+                            call_index=call_index,
                             comparison_scope=lineage.scope,
                             comparison_precision=lineage.precision,
                             comparison=lineage.comparison_fields(),
@@ -404,7 +509,9 @@ class Extractor:
             ),
             raw_response=raw_response,
             error_type=type(error).__name__ if error is not None else None,
-            error_message=str(error) if error is not None else None,
+            error_message=str(error)
+            if error is not None
+            else (output.validation_error if output else None),
             phase=phase,
             semantic_update_source_refs=semantic_update_source_refs,
             semantic_update_selected_turns=semantic_update_selected_turns,
@@ -422,7 +529,9 @@ class Extractor:
         if context.core_entries:
             for ref, entry in context.core_entries:
                 scope = "全局用户" if entry.scope_kind == "user" else f"persona={entry.persona_id}"
-                lines.append(f"[{ref}] {entry.field_key} = {entry.value} ({scope})")
+                lines.append(
+                    f"[{ref}] {entry.field_key} = {entry.value} ({scope}; valid_from={entry.valid_from.isoformat()})"
+                )
         else:
             lines.append("（暂无）")
         lines.extend(("", "## 当前有效普通 Semantic"))
@@ -438,9 +547,12 @@ class Extractor:
             )
         lines.append("")
         lines.append("## 对话片段")
+        lines.append(
+            "以下时间是宿主原始事件时间，不是新用户事实；不要用较早材料覆盖更晚生效的 Core。"
+        )
         for u in fragment.utterances:
             who = "用户" if u.speaker == "user" else "AI"
-            lines.append(f"{who}: {u.text}")
+            lines.append(f"[{u.ts.isoformat()}] {who}: {u.text}")
         return "\n".join(lines)
 
     def _render_reconciliation_input(
@@ -652,12 +764,17 @@ def _parse_output_with_status(
     invalid_operation = False
     raw_core = obj.get("core_updates")
     if isinstance(raw_core, list):
-        for item in raw_core:
-            parsed = _parse_core_update(item, require_reason=strict_reasons)
-            if parsed is None:
-                invalid_operation = True
-            else:
-                core_updates.append(parsed)
+        for index, item in enumerate(raw_core):
+            try:
+                core_updates.append(_parse_core_update(item, require_reason=strict_reasons))
+            except ValueError as exc:
+                # Only structural diagnostics, never the proposed identity or source text.
+                return ExtractionOutput(
+                    validation_error=(
+                        f"invalid_operation_shape_or_reason at core_updates[{index}].{exc}"
+                    ),
+                    output_contract_version=output_contract_version,
+                ), "invalid_shape"
     elif strict_reasons:
         invalid_operation = True
 
@@ -725,38 +842,40 @@ def _parse_entries(obj: dict[str, object]) -> list[str]:
     return []
 
 
-def _parse_core_update(item: object, *, require_reason: bool) -> CoreUpdate | None:
+def _parse_core_update(item: object, *, require_reason: bool) -> CoreUpdate:
     if not isinstance(item, dict):
-        return None
+        raise ValueError("item: expected object")
     op = item.get("op")
     field = item.get("field")
     if op not in ("add", "replace", "remove"):
-        return None
-    if field not in (
-        "user.preferred_name",
-        "user.current_residences",
-        "relationship.kind",
-        "relationship.agent_nickname",
-    ):
-        return None
+        raise ValueError("op: expected add, replace or remove")
+    if not isinstance(field, str) or field not in CORE_FIELD_SPECS:
+        raise ValueError("field: unsupported core field")
     value = item.get("value")
-    if op in ("add", "replace") and (not isinstance(value, str) or not value.strip()):
-        return None
+    # JSON integers preserve UID digits exactly. Normalize only this identifier
+    # field; bools/floats and other Core fields must not be coerced into identity.
+    if field == "user.bilibili_uid" and type(value) is int and 0 < value < 10**19:
+        value = str(value)
+    if op in ("add", "replace"):
+        try:
+            value = validate_core_value(field, value)
+        except CoreProfileError as exc:
+            raise ValueError(f"value: {exc}") from exc
     if op == "remove" and value is not None:
-        return None
+        raise ValueError("value: remove requires absent or null value")
     if not isinstance(value, str) or not value.strip():
         value = None
     target_ref = item.get("target_ref")
     if op in ("replace", "remove") and (not isinstance(target_ref, str) or not target_ref.strip()):
-        return None
+        raise ValueError("target_ref: replace/remove requires nonempty string")
     if op == "add" and target_ref is not None:
-        return None
+        raise ValueError("target_ref: add requires absent or null reference")
     if not isinstance(target_ref, str) or not target_ref.strip():
         target_ref = None
     reason = item.get("reason")
     if not isinstance(reason, str) or not reason.strip():
         if require_reason:
-            return None
+            raise ValueError("reason: expected nonempty string")
         reason = "legacy extractor output without classification rationale"
     return CoreUpdate(
         op=op,

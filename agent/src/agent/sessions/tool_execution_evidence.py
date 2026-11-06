@@ -115,7 +115,7 @@ class ToolExecutionEvidence:
             raise ToolExecutionEvidenceError("evidence record must be an object")
         if value.get("schema_version") != TOOL_EXECUTION_EVIDENCE_SCHEMA_VERSION:
             raise ToolExecutionEvidenceError("unsupported evidence schema version")
-        if value.get("kind") not in {"command_output", "application_launch"}:
+        if value.get("kind") not in {"command_output", "application_launch", "social_comment"}:
             raise ToolExecutionEvidenceError("unsupported evidence kind")
         required_strings = (
             "evidence_ref",

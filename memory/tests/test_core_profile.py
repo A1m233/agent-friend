@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-from memory.core_profile import CoreFieldKey, CoreScopeKind, normalize_core_value
+import pytest
+from memory.core_profile import (
+    CoreFieldKey,
+    CoreProfileError,
+    CoreScopeKind,
+    normalize_core_value,
+    validate_core_value,
+)
 
 from memory import CoreProfileEntry, SemanticRow, SqliteMemoryStore
 
@@ -75,6 +83,48 @@ def test_user_fields_are_global_and_relationship_fields_are_persona_scoped() -> 
     )
     assert p1["relationship"] == {"kind": "知心朋友", "agent_nickname": None}
     assert p2["relationship"] == {"kind": "学习搭档", "agent_nickname": None}
+
+
+@pytest.mark.parametrize(
+    "value", ["0", "00123", "@小陈", "-1", "1e5", "１２３", "https://space.bilibili.com.evil/123"]
+)
+def test_bilibili_identity_rejects_ambiguous_or_spoofed_identifiers(value: str) -> None:
+    with pytest.raises(CoreProfileError):
+        validate_core_value("user.bilibili_uid", value)
+
+
+def test_bilibili_identity_normalizes_exact_homepage() -> None:
+    assert validate_core_value("user.bilibili_uid", "https://space.bilibili.com/12345/") == "12345"
+
+
+def test_bilibili_identity_migrates_v8_without_losing_existing_profile(tmp_path: Path) -> None:
+    path = tmp_path / "memory.db"
+    old = SqliteMemoryStore(path)
+    old.add_core_profile_entry(
+        _entry("name", field_key="user.preferred_name", value="小陈", scope_kind="user")
+    )
+    old._conn.execute("DROP INDEX idx_core_bilibili_uid_active")
+    old._conn.execute("UPDATE schema_meta SET value='8' WHERE key='schema_version'")
+    old._conn.commit()
+    old.close()
+    upgraded = SqliteMemoryStore(path)
+    upgraded.add_core_profile_entry(
+        _entry("bili", field_key="user.bilibili_uid", value="12345", scope_kind="user")
+    )
+    profile = upgraded.core_profile(owner_user_id="local", persona_id="another").as_dict()
+    assert profile["user"] == {
+        "preferred_name": "小陈",
+        "current_residences": [],
+        "bilibili_uid": "12345",
+    }
+    with pytest.raises(sqlite3.IntegrityError):
+        upgraded.add_core_profile_entry(
+            _entry("duplicate", field_key="user.bilibili_uid", value="67890", scope_kind="user")
+        )
+    upgraded.close()
+    reopened = SqliteMemoryStore(path)
+    assert reopened.core_profile(owner_user_id="local", persona_id="p1").as_dict() == profile
+    reopened.close()
 
 
 def test_v4_migration_maps_reliable_fields_and_keeps_ambiguous_singletons_ordinary(
