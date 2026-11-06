@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { http } from "@/services/http";
 import { isTauri } from "@/utils/tauri";
+import { collectMessageExposure, resetMessageExposure } from "./messageExposure";
 
 interface DesktopPresenceProbe {
   windowVisible: boolean;
@@ -16,18 +17,26 @@ const PRESENCE_INTERVAL_MS = 5_000;
 export function startDesktopPresenceReporter(currentSessionId: () => string | null): () => void {
   if (!isTauri()) return () => undefined;
   let disposed = false;
+  let reporting = false;
 
   const report = async () => {
+    if (reporting) return;
+    reporting = true;
     try {
+      const sessionId = currentSessionId();
       const probe = await invoke<DesktopPresenceProbe>("desktop_presence_probe");
       if (disposed) return;
+      const messageObservations = await collectMessageExposure(probe.windowVisible && probe.windowFocused
+        && !probe.windowMinimized && probe.sessionState === "active");
+      if (disposed || sessionId !== currentSessionId()) { resetMessageExposure(); return; }
       const observedAt = new Date();
       const lastInteraction = probe.osIdleMs === null
         ? null
         : new Date(observedAt.getTime() - probe.osIdleMs).toISOString();
       await http.post("/v1/runtime/presence/desktop", {
         observedAt: observedAt.toISOString(),
-        currentSessionId: currentSessionId(),
+        currentSessionId: sessionId,
+        messageObservations,
         windowVisible: probe.windowVisible && document.visibilityState === "visible",
         windowFocused: probe.windowFocused && document.hasFocus(),
         windowMinimized: probe.windowMinimized,
@@ -38,17 +47,21 @@ export function startDesktopPresenceReporter(currentSessionId: () => string | nu
       });
     } catch {
       // Missing/failed probe produces no fresh snapshot; Bridge expires the previous one after 15s.
+      resetMessageExposure();
+    } finally {
+      reporting = false;
     }
   };
 
   void report();
   const timer = window.setInterval(() => void report(), PRESENCE_INTERVAL_MS);
-  const onVisibility = () => void report();
+  const onVisibility = () => { resetMessageExposure(); void report(); };
   document.addEventListener("visibilitychange", onVisibility);
   window.addEventListener("focus", onVisibility);
   window.addEventListener("blur", onVisibility);
   return () => {
     disposed = true;
+    resetMessageExposure();
     window.clearInterval(timer);
     document.removeEventListener("visibilitychange", onVisibility);
     window.removeEventListener("focus", onVisibility);

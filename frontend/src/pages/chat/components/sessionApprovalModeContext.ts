@@ -1,7 +1,7 @@
 import { createContext, useContext } from "react";
 
 export interface SessionAutoApprovalTarget {
-  kind: "command" | "filesystem" | "desktop_application";
+  kind: "command" | "filesystem" | "desktop_application" | "social_comment";
   requestId: string;
   sessionId: string;
   runId: string;

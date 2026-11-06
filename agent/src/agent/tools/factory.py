@@ -205,6 +205,24 @@ def make_default_registry(
         tools.append(SkillReadTool(skill_service))
 
     social_service = social_platform_service or make_default_social_platform_service()
+    if social_service.bilibili_interactions is not None:
+        from .builtin.social_platforms.bilibili_interactions.tool import (
+            BilibiliCommentsTool,
+            BilibiliInteractionsTool,
+            BilibiliReplyTool,
+        )
+
+        tools.extend(
+            (
+                BilibiliCommentsTool(social_service.bilibili_interactions),
+                BilibiliInteractionsTool(social_service.bilibili_interactions),
+                BilibiliReplyTool(
+                    social_service.bilibili_interactions,
+                    approval_broker,
+                    tool_execution_evidence_store,
+                ),
+            )
+        )
     if social_platform_service is None:
         atexit.register(social_service.close)
     tools.extend(
@@ -353,13 +371,17 @@ def make_default_social_platform_service(
         ),
     )
     bilibili_api = BilibiliSdkApi()
+    from .builtin.social_platforms.bilibili_interactions.service import BilibiliInteractionService
+    from .builtin.social_platforms.connectors.bilibili_social import BilibiliSocialApi
+
+    bilibili_auth = BilibiliAuthHandler(bilibili_api)
     auth = SocialAuthManager(
         (
             XiaohongshuAuthHandler(
                 xiaohongshu_process,
                 verify_login=xiaohongshu_api.check_login,
             ),
-            BilibiliAuthHandler(bilibili_api),
+            bilibili_auth,
         )
     )
     return SocialPlatformService(
@@ -368,4 +390,7 @@ def make_default_social_platform_service(
             BilibiliConnector(bilibili_api),
         ),
         auth=auth,
+        bilibili_interactions=BilibiliInteractionService(
+            BilibiliSocialApi(bilibili_api), bilibili_auth
+        ),
     )

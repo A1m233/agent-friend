@@ -155,6 +155,9 @@ class CompanionshipStore:
             if state["active_run_id"] != run_id:
                 raise ValueError("wake no longer active")
             state["baselines"] = json.loads(wake["snapshot"])["baselines"]
+            state["evidence_cursor"] = (
+                json.loads(wake["snapshot"]).get("evidence_changes", {}).get("cursor", 0)
+            )
             state["last_overview_at"] = now.isoformat()
             db.execute("UPDATE wakes SET acknowledged=1,status='running' WHERE run_id=?", (run_id,))
             self._save(db, state)

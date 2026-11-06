@@ -247,6 +247,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         return {"accepted": True, "approval": pending_request.to_dict()}
 
     @router.post("/approvals/{request_id}/application-decision")
+    @router.post("/approvals/{request_id}/social-decision")
     def decide_application_approval(
         request_id: str, body: CommandApprovalDecisionBody
     ) -> dict[str, object]:
@@ -258,10 +259,9 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         pending = next(
             (
                 item
-                for item in broker.pending(
-                    session_id=body.session_id, run_id=body.run_id, kind="desktop_application"
-                )
+                for item in broker.pending(session_id=body.session_id, run_id=body.run_id)
                 if item.request_id == request_id
+                and item.kind in {"desktop_application", "social_comment"}
             ),
             None,
         )
@@ -270,7 +270,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             CommandApprovalDecision(allow=body.allow),
             session_id=body.session_id,
             run_id=body.run_id,
-            expected_kind="desktop_application",
+            expected_kind=pending.kind,
             lifetime=body.lifetime,
         ):
             raise HTTPException(status_code=409, detail={"error": "approval_request_stale"})

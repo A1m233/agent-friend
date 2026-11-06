@@ -182,6 +182,12 @@ function summaryFor(block: ToolBlock, args: Record<string, unknown>): string {
       return "查看网页内容";
     case "social_read":
       return "查看平台内容";
+    case "bilibili_interactions":
+      return "查看 B 站评论互动";
+    case "bilibili_comments":
+      return "读取 B 站评论上下文";
+    case "bilibili_reply":
+      return args.mention_user ? "在 B 站 @ 用户" : "回复 B 站评论";
     case "recall_past_chats":
       return `查找过往对话${quoted(query)}`;
     case "list_conversations":
@@ -268,7 +274,7 @@ function summaryFor(block: ToolBlock, args: Record<string, unknown>): string {
 
 function categoryFor(name: string): ToolActivityCategory {
   if (["web_search", "social_search", "nearby_place_search", "recall_past_chats"].includes(name)) return "search";
-  if (["web_fetch", "social_read", "session_files", "inspect_tool_calls", "recover_tool_result"].includes(name)) return "read";
+  if (["web_fetch", "social_read", "bilibili_comments", "bilibili_interactions", "session_files", "inspect_tool_calls", "recover_tool_result"].includes(name)) return "read";
   if (name === "read_conversation" || name === "list_conversations") return "conversation";
   if (name === "send_conversation_message") return "message";
   if (name === "manage_companionship") return "companionship";
@@ -277,6 +283,7 @@ function categoryFor(name: string): ToolActivityCategory {
   if (name === "propose_persona") return "persona";
   if (name === "request_social_auth") return "auth";
   if (FILESYSTEM_READ_TOOLS.has(name)) return "read";
+  if (name === "bilibili_reply") return "message";
   if (FILESYSTEM_WRITE_TOOLS.has(name) || name === "request_filesystem_access") return "write";
   if (["exec_command", "host_process_start", "write_stdin", "terminate_command"].includes(name)) return "command";
   if (name === "skill_read") return "skill";

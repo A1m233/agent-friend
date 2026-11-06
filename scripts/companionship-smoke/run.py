@@ -32,13 +32,14 @@ from runtime_config import DesktopSettingsReader, credential_source_for_mode
 
 
 class Budget:
-    def __init__(self) -> None:
+    def __init__(self, limit: int = 50) -> None:
         self.calls = 0
+        self.limit = limit
         self.lock = threading.Lock()
 
     def reserve(self) -> None:
         with self.lock:
-            if self.calls >= 50:
+            if self.calls >= self.limit:
                 raise RuntimeError("smoke global model-call limit reached")
             self.calls += 1
 
@@ -127,6 +128,9 @@ def observe_wake(
         "calculate",
         "datetime_calculate",
     }
+    if name.startswith("exposure_"):
+        # This comparison concerns contact decisions, not external exploration.
+        allowed -= {"social_search", "social_read", "web_search", "web_fetch"}
     manager._tool_registry = ToolRegistry(
         [t for t in runtime.tool_registry.all_tools() if t.name in allowed]
     )
@@ -162,6 +166,10 @@ def observe_wake(
         and runtime.session_delivery is not None
     )
     try:
+        if name.startswith("exposure_"):
+            from exposure import seed_exposure
+
+            seed_exposure(runtime, session, name)
         if name == "quiet_curiosity":
             inner_id = service.ensure_inner()
             now = datetime.now(UTC)
@@ -216,6 +224,10 @@ def observe_wake(
             service.store.update(
                 lambda state: state.update(next_wake_at="2099-01-01T00:00:00+00:00")
             )
+        if name.startswith("exposure_"):
+            service.store.update(
+                lambda state: state.update(next_wake_at="2099-01-01T00:00:00+00:00")
+            )
         runtime.agent_runtime.start()
         if name.startswith("control_"):
             conversation = manager.start_conversation(
@@ -232,8 +244,16 @@ def observe_wake(
                 ],
             }
         service.control("enable", user_initiated=True)
-        service.store.update(lambda state: state.update(next_wake_at=None))
-        run_id = service.tick()
+        if name.startswith("exposure_"):
+            # Own exactly one wake; the production background loop shares this lock.
+            with service._submission_lock:
+                service.store.update(lambda state: state.update(next_wake_at=None))
+                run_id = service._tick()
+            if run_id is None:
+                raise RuntimeError("fixture wake was not submitted")
+        else:
+            service.store.update(lambda state: state.update(next_wake_at=None))
+            run_id = service.tick()
         deadline = time.monotonic() + 330
         while service.status()["active_run_id"] and time.monotonic() < deadline:
             runtime.session_delivery.deliver_pending()
@@ -467,7 +487,17 @@ def main() -> None:
     )
     parser.add_argument(
         "--section",
-        choices=("all", "review-memory", "behavior", "controls", "continuity", "compaction"),
+        choices=(
+            "all",
+            "review-memory",
+            "behavior",
+            "controls",
+            "continuity",
+            "compaction",
+            "social-identity",
+            "memory-commit",
+            "exposure",
+        ),
         default="all",
     )
     args = parser.parse_args()
@@ -475,10 +505,13 @@ def main() -> None:
         parser.error("requires --allow-llm and a new output path")
     config = resolve_bridge_runtime_config(credential_source_for_mode("desktop"))
     selection = (DesktopSettingsReader().read() or {}).get(
-        "chatModel", {"model": config.default_model}
+        "memoryModel" if args.section in {"social-identity", "memory-commit"} else "chatModel",
+        {"model": config.default_model},
     )
     selected = ModelRuntimeConfig(selection["model"], selection.get("reasoningPreset", "off"))
-    budget = Budget()
+    budget = Budget(
+        10 if args.section == "memory-commit" else (20 if args.section == "exposure" else 50)
+    )
     factory = config.llm_client_factory
     config = replace(config, llm_client_factory=lambda cfg: ObservedModel(factory(cfg), budget))
     report: dict[str, Any] = {
@@ -496,6 +529,42 @@ def main() -> None:
 
     try:
         with TemporaryDirectory(prefix="af-companionship-smoke-") as temporary:
+            if args.section == "memory-commit":
+                from memory_commit import observe_memory_commit
+
+                def checkpoint_commit(value: dict[str, Any]) -> None:
+                    report["cases"]["memory_commit"] = value
+                    save()
+
+                with bind_language_model(config.llm_client_factory(selected)) as model:
+                    result = observe_memory_commit(Path(temporary), model, checkpoint_commit)
+                    report["cases"]["memory_commit"] = result
+                    save()
+                    if not result["passed"]:
+                        raise RuntimeError("memory commit observation did not pass; see report")
+            if args.section == "exposure":
+                from exposure import EXPOSURE_CASES
+
+                for name, text in EXPOSURE_CASES.items():
+                    if args.case and name not in args.case:
+                        continue
+                    report["cases"][name] = observe_wake(
+                        Path(temporary), config, selection, name, text
+                    )
+                    save()
+                    print(json.dumps({"case": name, "calls": budget.calls}), flush=True)
+            if args.section == "social-identity":
+                from social_identity import observe_social_identity
+
+                def checkpoint_identity(value: dict[str, Any]) -> None:
+                    report["cases"]["social_identity"] = value
+                    save()
+
+                with bind_language_model(config.llm_client_factory(selected)) as model:
+                    report["cases"]["social_identity"] = observe_social_identity(
+                        Path(temporary), model, checkpoint_identity
+                    )
+                    save()
             if args.section == "compaction":
                 with bind_language_model(config.llm_client_factory(selected)) as model:
                     report["cases"]["compaction"] = observe_compacted_inner(

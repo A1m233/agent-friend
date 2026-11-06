@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { Moon, Sun } from "lucide-react";
 import { FeedbackIcon } from "@/components/app/FeedbackIcon";
+import { PlatformAccountsPanel } from "./components/PlatformAccountsPanel";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   Sidebar,
@@ -183,6 +184,7 @@ export function SettingsApp({
             <SettingsPageLayout title="自主陪伴">
               <SettingsGroup title="活动与联系"><CompanionshipSetting /></SettingsGroup>
               <SettingsGroup title="授权"><AuthorizationSetting /></SettingsGroup>
+              <PlatformAccountsPanel />
             </SettingsPageLayout>
           ) : section === "notifications" ? (
             <SettingsPageLayout title="通知">

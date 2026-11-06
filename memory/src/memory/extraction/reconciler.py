@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from ..core_profile import (
@@ -53,20 +53,27 @@ class Reconciler:
         output: ExtractionOutput,
         fragment: ConversationFragment,
         context: ExtractionContext | list[SemanticRow],
+        *,
+        scope: Literal["full", "core"] | None = None,
     ) -> ExtractionResult:
         extraction_context = (
             context
             if isinstance(context, ExtractionContext)
             else ExtractionContext.from_existing(context)
         )
+        scope = scope or fragment.extraction_scope
         _validate_output(output, extraction_context)
+        if scope == "core" and (output.semantic_changes or output.episodic_entries):
+            raise ExtractionApplyError(
+                "invalid_core_scope", "Core-only commit contains other layers"
+            )
 
         now = datetime.now(UTC)
         observed_at = _observed_at(fragment, now)
         source_refs = [utterance.source_ref for utterance in fragment.utterances]
         first_ref = source_refs[0] if source_refs else None
         last_ref = source_refs[-1] if source_refs else None
-        observation_id = _observation_id(fragment, first_ref, last_ref)
+        observation_id = _observation_id(fragment, first_ref, last_ref, scope=scope)
         output_sha256 = hashlib.sha256(
             json.dumps(asdict(output), ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
@@ -370,11 +377,17 @@ def _observed_at(fragment: ConversationFragment, fallback: datetime) -> datetime
 
 
 def _observation_id(
-    fragment: ConversationFragment, first_ref: str | None, last_ref: str | None
+    fragment: ConversationFragment,
+    first_ref: str | None,
+    last_ref: str | None,
+    *,
+    scope: Literal["full", "core"] | None = None,
 ) -> str:
     raw = "\x1f".join(
         (fragment.owner_user_id, fragment.session_id, first_ref or "", last_ref or "")
     )
+    if (scope or fragment.extraction_scope) == "core":
+        raw = "core\x1f" + raw
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

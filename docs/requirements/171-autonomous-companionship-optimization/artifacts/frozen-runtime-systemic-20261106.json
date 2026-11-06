@@ -1,0 +1,32 @@
+{
+  "originalReport": "C:\\Users\\chens\\AppData\\Local\\agent-friend\\build-control\\reports\\4aa1f81a61648489128b75ae\\3fbf4eb53d81b4ff2dd36915-5b4846bfd9a44a5f83ea15ace1157da0.json",
+  "originalSha256": "22dc14f5b3ffd5617bf79a963d4f315784b49351e4a1d4247ce0887803d0f5a8",
+  "runtimeVerification": {
+    "doctor": "passed",
+    "frozenServices": {
+      "bridge": "passed",
+      "voice": "passed"
+    },
+    "identity": {
+      "buildId": "20261106T102818Z-37d704e2abab-3951d776",
+      "buildMode": "local-test",
+      "dirty": true,
+      "distribution": "ordinary",
+      "productVersion": "0.4.1",
+      "profileId": "production",
+      "schemaVersion": 1,
+      "sourceCommit": "37d704e2abab000f72133a8c821d89f8db8bb45c",
+      "sourceTreeSha256": "b01b236e6b3bf6f84b494d4afc99b08366456f698c07bb6c21efea525f809a62"
+    },
+    "runtimeInventorySha256": "38cee61a1702d33f03c583d0618bbb4ec3f39e512f4e564f61361e7bc4f54721",
+    "schemaVersion": 1
+  },
+  "guideBaseline": {
+    "lifecycle": "transient",
+    "snapshot_sha256": "8055e63fa3a40e5272cafe0de15d6be075077f0f3d76993bd59adc0550982fc6",
+    "source_commit": "302369f7232e51e24adeabb16f48b3e6302c5898"
+  },
+  "outerExitCode": 0,
+  "outcome": "succeeded",
+  "scope": "runtime-only; no installer, installation or release; dev retained"
+}

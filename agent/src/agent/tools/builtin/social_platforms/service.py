@@ -5,7 +5,10 @@ from __future__ import annotations
 import threading
 from collections.abc import Collection
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from .bilibili_interactions.service import BilibiliInteractionService
 
 from .auth import (
     SocialAuthChallenge,
@@ -113,7 +116,9 @@ class SocialPlatformService:
         continuations: SocialContinuationStore | None = None,
         auth: SocialAuthManager | None = None,
         auth_requests: SocialAuthRequestStore | None = None,
+        bilibili_interactions: BilibiliInteractionService | None = None,
     ) -> None:
+        self.bilibili_interactions = bilibili_interactions
         self._connectors: dict[SocialPlatform, SocialPlatformConnector] = {}
         for connector in connectors:
             if connector.platform in self._connectors:
@@ -384,6 +389,8 @@ class SocialPlatformService:
         return entry.platform, entry.content_type
 
     def close(self) -> None:
+        if self.bilibili_interactions is not None:
+            self.bilibili_interactions.close()
         with self._auth_challenges_lock:
             self._auth_challenges.clear()
         self._auth_requests.close()

@@ -770,6 +770,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     stack.enter_context(runtime.turn_coordinator.try_hold(summary.session_id))
                 deleted = mgr.delete_archived(query=q)
                 for deleted_id in deleted:
+                    if runtime.message_exposure is not None:
+                        runtime.message_exposure.store.delete_session(deleted_id)
                     if runtime.companionship is not None:
                         runtime.companionship.store.forget_session(deleted_id)
                     if runtime.session_delivery is not None:
@@ -820,6 +822,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     )
                 stack.enter_context(runtime.turn_coordinator.try_hold(session_id))
                 mgr.delete(session_id)
+                if runtime.message_exposure is not None:
+                    runtime.message_exposure.store.delete_session(session_id)
                 if runtime.companionship is not None:
                     runtime.companionship.store.forget_session(session_id)
                 if runtime.session_delivery is not None:

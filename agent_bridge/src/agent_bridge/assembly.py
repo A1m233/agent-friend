@@ -136,6 +136,7 @@ if TYPE_CHECKING:
     from agent.tools.builtin.social_platforms import SocialPlatformService
 
     from .companionship import CompanionshipService
+    from .message_exposure import MessageExposureService
     from .protocols.im import IMRuntime, OnboardSessionRegistry
     from .session_delivery import SessionDeliveryService
 
@@ -299,6 +300,7 @@ class BridgeRuntime:
     application_launch_evidence: ToolExecutionEvidenceStore | None = None
     session_delivery: SessionDeliveryService | None = None
     companionship: CompanionshipService | None = None
+    message_exposure: MessageExposureService | None = None
     """085：进程级 Codex exec-server 命令运行时；不可用时其它能力继续运行。"""
     execution_environment_manager: ExecutionEnvironmentManager | None = None
     """096：共享 base、session overlay 与 run snapshot 的进程级 owner。"""
@@ -677,6 +679,18 @@ def build_runtime(
     scheduled_task_service = ScheduledTaskService(scheduled_task_store, clock=time_provider.now)
     presence_registry = PresenceRegistry()
     social_platform_service = make_default_social_platform_service()
+    if social_platform_service.bilibili_interactions is not None and memory is not None:
+        owner_memory = memory
+        social_platform_service.bilibili_interactions.owner_uid = lambda: next(
+            (
+                e.value
+                for e in owner_memory.store.core_profile(
+                    owner_user_id="local", persona_id=default_persona_info.id
+                ).entries
+                if e.field_key == "user.bilibili_uid"
+            ),
+            None,
+        )
 
     # 048 M48.1: 工具只依赖统一 service；memory 关闭时 service 仍保留 raw history source。
     tool_registry = make_default_registry(
@@ -1042,11 +1056,18 @@ def build_runtime(
     directory_tool = tool_registry.get("list_conversations")
     if isinstance(directory_tool, ListConversationsTool):
         directory_tool.service.destinations = delivery.destinations
+        delivery.source_was_read = directory_tool.service.has_read_message
     sender_tool = tool_registry.get("send_conversation_message")
     if isinstance(sender_tool, SendConversationMessageTool):
         sender_tool.submit = delivery.submit
     final_runtime = dataclasses.replace(final_runtime, session_delivery=delivery)
     if isinstance(directory_tool, ListConversationsTool):
+        from .message_exposure import MessageExposureService
+
+        exposure = MessageExposureService(final_runtime)
+        directory_tool.service.message_evidence = exposure.evidence
+        directory_tool.service.evidence_changes = exposure.changes
+        final_runtime = dataclasses.replace(final_runtime, message_exposure=exposure)
         from agent.tools.builtin.conversation_access.companionship import (
             ManageCompanionshipTool,
             ScheduleNextWakeTool,

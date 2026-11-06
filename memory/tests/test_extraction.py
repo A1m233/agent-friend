@@ -445,7 +445,9 @@ def test_current_extraction_schema_rejects_operations_without_reasons() -> None:
     output = _parse_output(
         '{"core_updates": [{"op": "add", "field": "relationship.kind", "value": "创作伙伴"}], "episodic_entries": [], "semantic_changes": []}'
     )
-    assert output.validation_error == "invalid_operation_shape_or_reason"
+    assert output.validation_error == (
+        "invalid_operation_shape_or_reason at core_updates[0].reason: expected nonempty string"
+    )
     store = SqliteMemoryStore(":memory:")
     fragment = _fragment("我们以后作为创作伙伴相处")
     with pytest.raises(ExtractionApplyError, match="invalid_operation_shape_or_reason"):
@@ -454,6 +456,84 @@ def test_current_extraction_schema_rejects_operations_without_reasons() -> None:
             fragment,
             ExtractionContextBuilder(store).build(fragment),
         )
+
+
+@pytest.mark.parametrize("value", [12345, "12345", "https://space.bilibili.com/12345/"])
+def test_uid_representation_does_not_discard_other_memory(value: object) -> None:
+    payload = {
+        "core_updates": [
+            {"op": "add", "field": "user.bilibili_uid", "value": value, "reason": _REASON}
+        ],
+        "semantic_changes": [
+            {"retirements": [], "new_facts": [{"statement": "用户喜欢天文", "reason": _REASON}]}
+        ],
+        "episodic_entries": ["用户确认了本人的 B 站账号"],
+    }
+    store = SqliteMemoryStore(":memory:")
+    fragment = _fragment("我的 B 站 UID 是 12345，我喜欢天文")
+    context = ExtractionContextBuilder(store).build(fragment)
+    output = Extractor(FakeLLM(json.dumps(payload))).extract(fragment, context)  # type: ignore[arg-type]
+    result = Reconciler(store).apply(output, fragment, context)
+    assert result.committed
+    assert len(result.added_core) == len(result.added_semantic) == len(result.episodic_ids) == 1
+    profile = store.core_profile(owner_user_id="local", persona_id="p1")
+    assert profile.entries[0].value == "12345"
+    assert Reconciler(store).apply(output, fragment, context).duplicate
+    store.close()
+
+
+@pytest.mark.parametrize("value", [True, False, 0, -1, 12345.0, 10**19, "00123", "nickname"])
+def test_invalid_uid_rejects_entire_batch_with_private_safe_diagnostic(value: object) -> None:
+    payload = {
+        "core_updates": [
+            {"op": "add", "field": "user.bilibili_uid", "value": value, "reason": _REASON}
+        ],
+        "semantic_changes": [],
+        "episodic_entries": ["private observation"],
+    }
+    output = _parse_output(json.dumps(payload))
+    assert output.validation_error is not None
+    assert "core_updates[0].value:" in output.validation_error
+    assert "private observation" not in output.validation_error
+    assert "nickname" not in output.validation_error
+    store = SqliteMemoryStore(":memory:")
+    with pytest.raises(ExtractionApplyError, match="core_updates"):
+        Reconciler(store).apply(output, _fragment(), [])
+    assert store.core_profile(owner_user_id="local", persona_id="p1").is_empty()
+    store.close()
+
+
+@pytest.mark.parametrize("value", [1, 10**19 - 1])
+def test_uid_integer_boundaries_are_lossless(value: int) -> None:
+    output = _parse_output(
+        json.dumps(
+            {
+                "core_updates": [
+                    {"op": "add", "field": "user.bilibili_uid", "value": value, "reason": _REASON}
+                ],
+                "semantic_changes": [],
+                "episodic_entries": [],
+            }
+        )
+    )
+    assert output.validation_error is None
+    assert output.core_updates[0].value == str(value)
+
+
+def test_numeric_compatibility_is_not_applied_to_other_identity_fields() -> None:
+    output = _parse_output(
+        json.dumps(
+            {
+                "core_updates": [
+                    {"op": "add", "field": "user.preferred_name", "value": 123, "reason": _REASON}
+                ],
+                "semantic_changes": [],
+                "episodic_entries": [],
+            }
+        )
+    )
+    assert output.validation_error is not None
+    assert "user.preferred_name must be a string" in output.validation_error
 
 
 def test_extractor_renders_full_core_and_reference_addressable_semantic() -> None:
@@ -754,7 +834,9 @@ def test_worker_reports_rejected_batch_without_writing() -> None:
     worker.close()
 
     assert results[0].committed is False
-    assert results[0].error_code == "unknown_semantic_ref"
+    assert results[0].error_code == "invalid_extraction_output"
+    assert results[0].error_message == "unknown_semantic_ref"
+    assert store.extraction_status(results[0].observation_id).status == "blocked"
     assert store.list_semantic(owner_user_id="local") == []
 
 

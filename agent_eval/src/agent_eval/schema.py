@@ -152,6 +152,7 @@ class CaseJudge:
     must_call: str | None = None
     required_first_tool_call: str | None = None
     must_not_call_any: list[str] = field(default_factory=list)
+    forbidden_tool_argument_terms: list[str] = field(default_factory=list)
     must_not_succeed_any: list[str] = field(default_factory=list)
     maximum_tool_call_counts: dict[str, int] = field(default_factory=dict)
     require_non_empty_response: bool = False

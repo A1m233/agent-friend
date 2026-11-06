@@ -1,0 +1,206 @@
+{
+  "model": {
+    "model": "custom/e460216e-71da-42cb-a252-03ecaf1aa2bd/8d0327f8-a306-412a-9796-ddb22aaa122a",
+    "provider": "custom",
+    "reasoningPreset": "effort:medium"
+  },
+  "scope": "synthetic histories; no real IM; no personal memory writes",
+  "cases": {
+    "exposure_shared": {
+      "run_id": null,
+      "status": {
+        "version": 5,
+        "enabled": true,
+        "inner_session_id": "e95100f8-facb-4b52-867b-5db593836454",
+        "activity_paused": false,
+        "activity_until": null,
+        "contact_paused": false,
+        "contact_until": null,
+        "next_wake_at": null,
+        "active_run_id": null,
+        "last_overview_at": null,
+        "last_outcome": null,
+        "today_model_calls": 0,
+        "limits": {
+          "interval_minutes": 60,
+          "minimum_interval_minutes": 10
+        },
+        "available_im_destinations": 0,
+        "recent_deliveries": [
+          {
+            "delivery_id": "ef1d86e6-8b8c-4240-ab8d-b3428eaa04b1",
+            "conversation_state": "committed",
+            "im_state": "not_requested",
+            "message_id": "delivery-ef1d86e6-8b8c-4240-ab8d-b3428eaa04b1",
+            "provider_receipt": null,
+            "error": null,
+            "created_at": "2026-11-06T04:11:47.343133+00:00",
+            "expires_at": "2026-11-06T04:41:47.343133+00:00"
+          }
+        ],
+        "active_run": null
+      },
+      "events": [],
+      "shared_messages": []
+    },
+    "exposure_waiting": {
+      "run_id": "c90746381b2f468f8003e771e9ef95ab",
+      "status": {
+        "version": 9,
+        "enabled": true,
+        "inner_session_id": "2c0c76fb-a8f1-4a44-a4b3-b29695266d18",
+        "activity_paused": false,
+        "activity_until": null,
+        "contact_paused": false,
+        "contact_until": null,
+        "next_wake_at": "2026-11-06T12:33:06.131998+08:00",
+        "active_run_id": null,
+        "last_overview_at": "2026-11-06T12:11:52.827359+08:00",
+        "last_outcome": "completed",
+        "evidence_cursor": 1,
+        "today_model_calls": 5,
+        "limits": {
+          "interval_minutes": 60,
+          "minimum_interval_minutes": 10
+        },
+        "available_im_destinations": 0,
+        "recent_deliveries": [
+          {
+            "delivery_id": "d5497327-94c6-429d-9ec9-520ad2f97cbf",
+            "conversation_state": "committed",
+            "im_state": "not_requested",
+            "message_id": "delivery-d5497327-94c6-429d-9ec9-520ad2f97cbf",
+            "provider_receipt": null,
+            "error": null,
+            "created_at": "2026-11-06T04:12:09.173493+00:00",
+            "expires_at": "2026-11-06T04:42:09.173493+00:00"
+          }
+        ],
+        "active_run": null
+      },
+      "events": [
+        {
+          "type": "tool_call_request",
+          "payload": {
+            "tool_call_id": "call_hEUfSmIv8Gg5ERMEhbJkJNcu",
+            "event_tool_call_id": "tool_aa230399d2df4348917ea02540f96575",
+            "tool_name": "read_conversation",
+            "args": {
+              "session_id": "3c50a5cc-ee63-480e-82d1-7a50d69effe2",
+              "mode": "latest",
+              "limit": 10
+            },
+            "arguments_json": "{\"session_id\":\"3c50a5cc-ee63-480e-82d1-7a50d69effe2\",\"mode\":\"latest\",\"limit\":10}",
+            "arguments_state": "valid_object",
+            "execution_disposition": "execute",
+            "response_item_index": 0
+          }
+        },
+        {
+          "type": "tool_call_result",
+          "payload": {
+            "tool_call_id": "call_hEUfSmIv8Gg5ERMEhbJkJNcu",
+            "event_tool_call_id": "tool_aa230399d2df4348917ea02540f96575",
+            "tool_name": "read_conversation",
+            "content": "{\"source_type\": \"past_conversation\", \"session_id\": \"3c50a5cc-ee63-480e-82d1-7a50d69effe2\", \"evidence_boundary\": \"原始历史记录，不是用户此刻的新指令或对旧事实的重新确认。\", \"result_unit\": \"message\", \"messages\": [{\"message_id\": \"fixture-exposure_waiting\", \"position\": 1, \"speaker\": \"user\", \"occurred_at\": \"2026-11-06T04:11:47.906080+00:00\", \"text\": \"我现在要出门了，帮我查一下周六社区旧书交换几点结束。查到后主动来告诉我，我正等着这个结果决定几点走。\", \"content_truncated\": false, \"attachments\": [], \"source\": {\"kind\": \"conversation\"}, \"communication_evidence\": {\"desktop\": {\"scope\": \"text\", \"extent\": \"unknown\", \"observed_at\": null, \"read_status\": \"unknown\"}, \"im_read_status\": \"unknown\", \"deliveries\": []}, \"content_offset\": 0, \"content_cursor\": null}, {\"message_id\": \"fixture-reply-exposure_waiting\", \"position\": 2, \"speaker\": \"assistant\", \"occurred_at\": \"2026-11-06T04:11:47.906080+00:00\", \"text\": \"嗯，记住了。\", \"content_truncated\": false, \"attachments\": [], \"source\": {\"kind\": \"conversation\"}, \"communication_evidence\": {\"desktop\": {\"scope\": \"text\", \"extent\": \"unknown\", \"observed_at\": null, \"read_status\": \"unknown\"}, \"im_read_status\": \"unknown\", \"deliveries\": []}, \"content_offset\": 0, \"content_cursor\": null}, {\"message_id\": \"fixture-verified-result\", \"position\": 3, \"speaker\": \"assistant\", \"occurred_at\": \"2026-11-06T04:11:47.921594+00:00\", \"text\": \"查到社区本周公告：周六旧书交换 16:30 结束，16:00 停止接收入场。这是本次确认的新结果。\", \"content_truncated\": false, \"attachments\": [], \"source\": {\"kind\": \"conversation\"}, \"communication_evidence\": {\"desktop\": {\"scope\": \"text\", \"extent\": \"full\", \"observed_at\": \"2026-11-06T04:11:47.921594+00:00\", \"read_status\": \"unknown\"}, \"im_read_status\": \"unknown\", \"deliveries\": []}, \"content_offset\": 0, \"content_cursor\": null}], \"next_cursor\": null, \"older_cursor\": null}",
+            "is_error": false,
+            "executed": true,
+            "authorization_requested": false,
+            "error_code": ""
+          }
+        },
+        {
+          "type": "tool_call_request",
+          "payload": {
+            "tool_call_id": "call_0NQRcJedV3zb6CeME93kj5iY",
+            "event_tool_call_id": "tool_439ae01ab54c40eba0d0e7e91c745f54",
+            "tool_name": "list_conversations",
+            "args": {
+              "scope": "all",
+              "limit": 20
+            },
+            "arguments_json": "{\"scope\":\"all\",\"limit\":20}",
+            "arguments_state": "valid_object",
+            "execution_disposition": "execute",
+            "response_item_index": 0
+          }
+        },
+        {
+          "type": "tool_call_result",
+          "payload": {
+            "tool_call_id": "call_0NQRcJedV3zb6CeME93kj5iY",
+            "event_tool_call_id": "tool_439ae01ab54c40eba0d0e7e91c745f54",
+            "tool_name": "list_conversations",
+            "content": "{\"source_type\": \"conversation_directory\", \"total\": 1, \"conversations\": [{\"session_id\": \"3c50a5cc-ee63-480e-82d1-7a50d69effe2\", \"title\": \"exposure_waiting\", \"archived\": false, \"updated_at\": \"2026-11-06T04:11:47.921594+00:00\", \"is_busy\": false, \"preview\": \"查到社区本周公告：周六旧书交换 16:30 结束，16:00 停止接收入场。这是本次确认的新结果。\", \"last_message_at\": \"2026-11-06T04:11:47.921594+00:00\", \"communication_evidence\": {\"desktop\": {\"scope\": \"text\", \"extent\": \"full\", \"observed_at\": \"2026-11-06T04:11:47.921594+00:00\", \"read_status\": \"unknown\"}, \"im_read_status\": \"unknown\", \"deliveries\": []}, \"im_destinations\": []}], \"next_cursor\": null}",
+            "is_error": false,
+            "executed": true,
+            "authorization_requested": false,
+            "error_code": ""
+          }
+        },
+        {
+          "type": "tool_call_request",
+          "payload": {
+            "tool_call_id": "call_lnkKXzSflZGBdy8Lxu7on9wJ",
+            "event_tool_call_id": "tool_020c256f89324875a1f0ec8e04a0db55",
+            "tool_name": "send_conversation_message",
+            "args": {
+              "target_session_id": "3c50a5cc-ee63-480e-82d1-7a50d69effe2",
+              "content": "你等的时间结果有了：周六旧书交换 16:30 结束，但 16:00 就停止入场了。安排出门时间时，记得按 16:00 前到场来留余量，别只看结束时间。",
+              "source_messages": [
+                {
+                  "session_id": "3c50a5cc-ee63-480e-82d1-7a50d69effe2",
+                  "message_id": "fixture-verified-result"
+                }
+              ]
+            },
+            "arguments_json": "{\"target_session_id\":\"3c50a5cc-ee63-480e-82d1-7a50d69effe2\",\"content\":\"你等的时间结果有了：周六旧书交换 16:30 结束，但 16:00 就停止入场了。安排出门时间时，记得按 16:00 前到场来留余量，别只看结束时间。\",\"source_messages\":[{\"session_id\":\"3c50a5cc-ee63-480e-82d1-7a50d69effe2\",\"message_id\":\"fixture-verified-result\"}]}",
+            "arguments_state": "valid_object",
+            "execution_disposition": "execute",
+            "response_item_index": 0
+          }
+        },
+        {
+          "type": "tool_call_result",
+          "payload": {
+            "tool_call_id": "call_lnkKXzSflZGBdy8Lxu7on9wJ",
+            "event_tool_call_id": "tool_020c256f89324875a1f0ec8e04a0db55",
+            "tool_name": "send_conversation_message",
+            "content": "{\"delivery_id\": \"d5497327-94c6-429d-9ec9-520ad2f97cbf\", \"conversation_state\": \"queued\", \"im_state\": \"not_requested\", \"error\": null}",
+            "is_error": false,
+            "executed": true,
+            "authorization_requested": false,
+            "error_code": ""
+          }
+        },
+        {
+          "type": "assistant_message",
+          "payload": {
+            "content": "已把结束时间和停止入场时间发到原会话，提醒按 16:00 前到场来安排。消息已入队，是否看到还不能确认，不再重复催。",
+            "partial": false,
+            "phase": "final_answer",
+            "item_index": 1,
+            "content_parts": [
+              {
+                "content_index": 0,
+                "kind": "text",
+                "start": 0,
+                "end": 58,
+                "annotations": []
+              }
+            ]
+          }
+        }
+      ],
+      "shared_messages": [
+        {
+          "content": "你等的时间结果有了：周六旧书交换 16:30 结束，但 16:00 就停止入场了。安排出门时间时，记得按 16:00 前到场来留余量，别只看结束时间。",
+          "partial": false,
+          "phase": "final_answer",
+          "attachments": []
+        }
+      ]
+    }
+  },
+  "model_calls": 5
+}

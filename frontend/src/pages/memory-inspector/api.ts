@@ -38,6 +38,7 @@ export interface CoreProfileEntry {
   field_key:
     | "user.preferred_name"
     | "user.current_residences"
+    | "user.bilibili_uid"
     | "relationship.kind"
     | "relationship.agent_nickname";
   value: string;

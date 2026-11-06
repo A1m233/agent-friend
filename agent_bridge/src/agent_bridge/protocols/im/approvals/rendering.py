@@ -139,7 +139,7 @@ def approval_text(snapshot: dict[str, object], title: str) -> str:
     details: object
     if kind == "filesystem":
         details = {key: snapshot[key] for key in ("items", "actions")}
-    elif kind == "command":
+    elif kind in {"command", "social_comment"}:
         details = snapshot["details"]
     else:
         raise ValueError("unsupported approval kind")
@@ -157,7 +157,7 @@ def approval_text(snapshot: dict[str, object], title: str) -> str:
     if fallback and isinstance(review, dict) and isinstance(review.get("rationale"), str):
         fallback += "：" + plain_literal(review["rationale"])
     text = (
-        "本地操作等待授权\n"
+        ("B 站公开评论等待授权\n" if kind == "social_comment" else "本地操作等待授权\n")
         + plain_literal(f"会话：{title}\n")
         + (fallback or mode_label(str(snapshot.get("approval_mode"))))
         + "\n"

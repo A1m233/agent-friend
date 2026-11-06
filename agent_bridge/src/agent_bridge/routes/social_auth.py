@@ -10,6 +10,9 @@ from agent.tools.builtin.social_platforms import (
     SocialAuthRequestConflictError,
     SocialAuthRequestNotFoundError,
 )
+from agent.tools.builtin.social_platforms.bilibili_interactions.service import (
+    BilibiliInteractionService,
+)
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict
 
@@ -25,6 +28,42 @@ class _ActionBody(BaseModel):
 
 def register_routes(app: Any, runtime: BridgeRuntime) -> None:
     router = APIRouter(prefix="/v1/social-auth", tags=["social-auth"])
+
+    def bilibili() -> BilibiliInteractionService:
+        service = runtime.social_platform_service
+        if service is None or service.bilibili_interactions is None:
+            raise HTTPException(status_code=503, detail="B 站账号管理不可用")
+        return service.bilibili_interactions
+
+    @router.get("/bilibili/account")
+    def bilibili_account(verify: bool = Query(default=False)) -> dict[str, Any]:
+        return bilibili().account(verify=verify)
+
+    @router.post("/bilibili/login")
+    def bilibili_login() -> dict[str, Any]:
+        return bilibili().start_login()
+
+    @router.get("/bilibili/login/{login_id}/challenge")
+    def bilibili_challenge(login_id: str) -> Response:
+        challenge = bilibili().challenge(login_id)
+        if challenge is None:
+            raise HTTPException(status_code=404, detail="二维码已过期或尚未就绪")
+        return Response(
+            challenge.content,
+            media_type=challenge.media_type,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.post("/bilibili/logout")
+    def bilibili_logout() -> dict[str, Any]:
+        try:
+            if runtime.social_platform_service is not None:
+                runtime.social_platform_service.cancel_login("bilibili")
+            return bilibili().logout()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503, detail="退出未完成，请重试；不会继续使用旧内存凭据。"
+            ) from exc
 
     def orchestrator() -> SocialAuthOrchestrator:
         value = runtime.social_auth_orchestrator

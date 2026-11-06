@@ -183,7 +183,7 @@ def test_legacy_is_explicit_and_does_not_accept_arbitrary_objects() -> None:
         assert _parse_output_with_status(raw, allow_legacy=True)[1] == "invalid_shape"
 
 
-def test_invalid_output_remains_pending_then_valid_empty_commits_once() -> None:
+def test_invalid_output_is_isolated_then_new_valid_empty_commits_once() -> None:
     class Model(EmptyModel):
         reply = "{}"
 
@@ -195,19 +195,22 @@ def test_invalid_output_remains_pending_then_valid_empty_commits_once() -> None:
     now = [100.0]
     model = Model()
     worker = AsyncExtractionWorker(store, Extractor(model), Reconciler(store), clock=lambda: now[0])
-    worker.submit(fragment(1))
+    invalid = worker.submit(fragment(1))
     worker.flush()
-    assert len(store.pending_extractions()) == 1
+    assert store.extraction_status(invalid.observation_id).status == "blocked"
+    assert model.calls == 2
+    assert not store.pending_extractions()
     assert store._conn.execute("SELECT COUNT(*) FROM extraction_commit").fetchone()[0] == 0
     now[0] += 61
     model.reply = '{"core_updates":[],"semantic_changes":[],"episodic_entries":[]}'
-    worker.submit(fragment(1))
+    valid = worker.submit(fragment(2))
     worker.flush()
     assert not store.pending_extractions()
+    assert store.extraction_status(valid.observation_id).status == "committed"
     now[0] += 61
-    worker.submit(fragment(1))
+    worker.submit(fragment(2))
     worker.flush()
-    assert model.calls == 2
+    assert model.calls == 3
     assert store._conn.execute("SELECT COUNT(*) FROM extraction_commit").fetchone()[0] == 1
     worker.close()
     store.close()

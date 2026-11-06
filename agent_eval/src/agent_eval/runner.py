@@ -26,6 +26,11 @@ from agent.system_prompt import InteractionSurfaceId
 from agent.tool_runtime import ToolRunContext, ToolRunPolicy
 from agent.tools.builtin.skills import SkillReadTool
 from agent.tools.builtin.social_platforms import SocialReadTool, SocialSearchTool
+from agent.tools.builtin.social_platforms.bilibili_interactions.tool import (
+    BilibiliCommentsTool,
+    BilibiliInteractionsTool,
+    BilibiliReplyTool,
+)
 from agent.tools.builtin.todo_manage import TodoManageTool
 from agent.tools.builtin.weather_query import WeatherQueryTool
 from agent.tools.builtin.web_fetch import WebFetchTool
@@ -313,6 +318,18 @@ class _FixtureTool:
         elif fixture.name == "web_fetch":
             self.description = WebFetchTool.description
             self.parameters_schema = WebFetchTool.parameters_schema
+        elif fixture.name in {"bilibili_comments", "bilibili_interactions", "bilibili_reply"}:
+            social_type: (
+                type[BilibiliCommentsTool]
+                | type[BilibiliInteractionsTool]
+                | type[BilibiliReplyTool]
+            ) = {
+                "bilibili_comments": BilibiliCommentsTool,
+                "bilibili_interactions": BilibiliInteractionsTool,
+                "bilibili_reply": BilibiliReplyTool,
+            }[fixture.name]
+            self.description = social_type.description
+            self.parameters_schema = social_type.parameters_schema
         elif fixture.name == "social_search":
             self.description = SocialSearchTool.description
             self.parameters_schema = SocialSearchTool.parameters_schema

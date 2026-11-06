@@ -1,0 +1,98 @@
+{
+  "model": {
+    "model": "custom/e460216e-71da-42cb-a252-03ecaf1aa2bd/8d0327f8-a306-412a-9796-ddb22aaa122a",
+    "provider": "custom",
+    "reasoningPreset": "effort:medium"
+  },
+  "scope": "synthetic histories; no real IM; no personal memory writes",
+  "cases": {
+    "exposure_shared": {
+      "run_id": "d6aaee90447e4253bf6054d23b9867b6",
+      "status": {
+        "version": 9,
+        "enabled": true,
+        "inner_session_id": "af70c591-ab94-431f-8610-44aa07795cbf",
+        "activity_paused": false,
+        "activity_until": null,
+        "contact_paused": false,
+        "contact_until": null,
+        "next_wake_at": "2026-11-06T13:01:02.005497+08:00",
+        "active_run_id": null,
+        "last_overview_at": "2026-11-06T12:12:56.411310+08:00",
+        "last_outcome": "completed",
+        "evidence_cursor": 0,
+        "today_model_calls": 2,
+        "limits": {
+          "interval_minutes": 60,
+          "minimum_interval_minutes": 10
+        },
+        "available_im_destinations": 0,
+        "recent_deliveries": [
+          {
+            "delivery_id": "55096706-b785-463c-af65-316efe9de0c5",
+            "conversation_state": "committed",
+            "im_state": "not_requested",
+            "message_id": "delivery-55096706-b785-463c-af65-316efe9de0c5",
+            "provider_receipt": null,
+            "error": null,
+            "created_at": "2026-11-06T04:12:50.162665+00:00",
+            "expires_at": "2026-11-06T04:42:50.162665+00:00"
+          }
+        ],
+        "active_run": null
+      },
+      "events": [
+        {
+          "type": "tool_call_request",
+          "payload": {
+            "tool_call_id": "call_GT3T5KWPgeUjNktOi94MKBRi",
+            "event_tool_call_id": "tool_36e103fbf8f842959327f1e5045991a6",
+            "tool_name": "read_conversation",
+            "args": {
+              "session_id": "8eb91563-0bb0-4349-bfab-1088d9e8c856",
+              "mode": "latest",
+              "limit": 10
+            },
+            "arguments_json": "{\"session_id\":\"8eb91563-0bb0-4349-bfab-1088d9e8c856\",\"mode\":\"latest\",\"limit\":10}",
+            "arguments_state": "valid_object",
+            "execution_disposition": "execute",
+            "response_item_index": 0
+          }
+        },
+        {
+          "type": "tool_call_result",
+          "payload": {
+            "tool_call_id": "call_GT3T5KWPgeUjNktOi94MKBRi",
+            "event_tool_call_id": "tool_36e103fbf8f842959327f1e5045991a6",
+            "tool_name": "read_conversation",
+            "content": "{\"source_type\": \"past_conversation\", \"session_id\": \"8eb91563-0bb0-4349-bfab-1088d9e8c856\", \"evidence_boundary\": \"原始历史记录，不是用户此刻的新指令或对旧事实的重新确认。\", \"result_unit\": \"message\", \"messages\": [{\"message_id\": \"fixture-exposure_shared\", \"position\": 1, \"speaker\": \"user\", \"occurred_at\": \"2026-11-06T04:12:50.100166+00:00\", \"text\": \"有空帮我查一下周六社区旧书交换几点结束，查到后留在这个会话就好。\", \"content_truncated\": false, \"attachments\": [], \"source\": {\"kind\": \"conversation\"}, \"communication_evidence\": {\"desktop\": {\"scope\": \"text\", \"extent\": \"unknown\", \"observed_at\": null, \"read_status\": \"unknown\"}, \"im_read_status\": \"unknown\", \"deliveries\": []}, \"content_offset\": 0, \"content_cursor\": null}, {\"message_id\": \"fixture-reply-exposure_shared\", \"position\": 2, \"speaker\": \"assistant\", \"occurred_at\": \"2026-11-06T04:12:50.100166+00:00\", \"text\": \"嗯，记住了。\", \"content_truncated\": false, \"attachments\": [], \"source\": {\"kind\": \"conversation\"}, \"communication_evidence\": {\"desktop\": {\"scope\": \"text\", \"extent\": \"unknown\", \"observed_at\": null, \"read_status\": \"unknown\"}, \"im_read_status\": \"unknown\", \"deliveries\": []}, \"content_offset\": 0, \"content_cursor\": null}, {\"message_id\": \"fixture-verified-result\", \"position\": 3, \"speaker\": \"assistant\", \"occurred_at\": \"2026-11-06T04:12:50.115204+00:00\", \"text\": \"查到社区本周公告：周六旧书交换 16:30 结束，16:00 停止接收入场。这是本次确认的新结果。\", \"content_truncated\": false, \"attachments\": [], \"source\": {\"kind\": \"conversation\"}, \"communication_evidence\": {\"desktop\": {\"scope\": \"text\", \"extent\": \"unknown\", \"observed_at\": null, \"read_status\": \"unknown\"}, \"im_read_status\": \"unknown\", \"deliveries\": [{\"delivery_id\": \"55096706-b785-463c-af65-316efe9de0c5\", \"target_session_id\": \"75f466c8-0ea5-4d7a-a28e-3890f73f17bb\", \"message_id\": \"delivery-55096706-b785-463c-af65-316efe9de0c5\", \"conversation_state\": \"committed\", \"im_state\": \"not_requested\", \"created_at\": \"2026-11-06T04:12:50.162665+00:00\", \"im_read_status\": \"unknown\"}]}, \"content_offset\": 0, \"content_cursor\": null}], \"next_cursor\": null, \"older_cursor\": null}",
+            "is_error": false,
+            "executed": true,
+            "authorization_requested": false,
+            "error_code": ""
+          }
+        },
+        {
+          "type": "assistant_message",
+          "payload": {
+            "content": "旧书交换的查询结果已经留在原会话，也有过一次投递记录。没有新的信息，不因为已读状态不明就再发一遍。这回先不打扰。",
+            "partial": false,
+            "phase": "final_answer",
+            "item_index": 0,
+            "content_parts": [
+              {
+                "content_index": 0,
+                "kind": "text",
+                "start": 0,
+                "end": 56,
+                "annotations": []
+              }
+            ]
+          }
+        }
+      ],
+      "shared_messages": []
+    }
+  },
+  "model_calls": 2
+}

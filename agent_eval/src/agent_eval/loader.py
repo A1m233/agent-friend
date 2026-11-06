@@ -695,6 +695,10 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
             data.get("must_not_call_any"),
             label=f"{label}.must_not_call_any",
         ),
+        forbidden_tool_argument_terms=_str_list(
+            data.get("forbidden_tool_argument_terms"),
+            label=f"{label}.forbidden_tool_argument_terms",
+        ),
         must_not_succeed_any=_str_list(
             data.get("must_not_succeed_any"),
             label=f"{label}.must_not_succeed_any",

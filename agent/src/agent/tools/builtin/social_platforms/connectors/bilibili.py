@@ -151,6 +151,7 @@ class BilibiliSdkApi:
         self._credential = credential or Credential()
         self._timeout_seconds = timeout_seconds
         self._credential_lock = threading.RLock()
+        self.credential_generation = 0
 
     @property
     def authenticated(self) -> bool:
@@ -160,6 +161,18 @@ class BilibiliSdkApi:
     def set_credential(self, credential: Credential) -> None:
         with self._credential_lock:
             self._credential = credential
+            self.credential_generation += 1
+
+    def credential_snapshot(self) -> tuple[Credential, int]:
+        with self._credential_lock:
+            return self._credential, self.credential_generation
+
+    def with_credential(self, generation: int, action: Any) -> Any:
+        """Pin the current account across the final dispatch; never reuse an old approval."""
+        with self._credential_lock:
+            if generation != self.credential_generation:
+                raise SocialProviderError("Bilibili account changed; prepare the action again")
+            return action(self._credential)
 
     def search(
         self,

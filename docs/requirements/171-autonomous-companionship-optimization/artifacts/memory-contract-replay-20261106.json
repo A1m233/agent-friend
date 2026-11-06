@@ -1,0 +1,57 @@
+{
+  "date": "2026-11-06",
+  "kind": "isolated_real_input_replay_and_deterministic_counterfactual",
+  "model": "gpt-6-sol",
+  "reasoning": "medium",
+  "base_model_calls": 1,
+  "ordinary_semantic_count": 926,
+  "utterance_count": 3,
+  "base_status": "invalid_shape",
+  "raw_response_sha256": "0281fb4de98007c3b7c632ac344caa7e79046e76a4b094971c361df1fe5b98c9",
+  "failure": {
+    "field": "core_updates[0].value",
+    "actual_type": "JSON integer",
+    "expected_type": "string",
+    "batch_rejected": true
+  },
+  "counterfactual": {
+    "status": "success",
+    "core_updates": [
+      {
+        "op": "add",
+        "field": "user.bilibili_uid",
+        "reason": "用户本轮明确确认16520572是本人B站账号的UID，对应user.bilibili_uid；agent-friend登录账号的UID不属于该字段",
+        "value": "16520572",
+        "target_ref": null
+      }
+    ],
+    "semantic_changes": 3,
+    "committed": true,
+    "active_uid": [
+      "16520572"
+    ]
+  },
+  "production_followup": {
+    "runtime_instance_id": "43fe3336cd2044d6b75e9b928739e0b3",
+    "core_entry_id": "a4d4b5ff-4e04-4b27-913a-c894765e6213",
+    "core_value": "16520572",
+    "created_at": "2026-11-06T08:53:11.688555Z",
+    "source_user_event": "847fdcae-e664-405b-8755-ca03a2964ef1",
+    "manual_memory_writes": false,
+    "processed_after_recovery": 2
+  },
+  "limits": [
+    "Original production malformed responses were not retained; replay is not their exact historical output.",
+    "No evidence that all historical Core failures share this cause.",
+    "Global cooldown and whole-batch atomicity unchanged."
+  ],
+  "verification": {
+    "targeted_memory": "57 passed",
+    "backend_after_memory_fix": "4763 passed, 5 skipped; lint and mypy passed"
+  },
+  "source_sha256": {
+    "memory/src/memory/extraction/extractor.py": "5f4229302e85dac8ebf31d0982a192defdcf3ae03679f3fa1042cd3caee9d445",
+    "memory/src/memory/extraction/prompts/extract.md": "6359e7b7fd63cce97a3dede1028676813584c012bbe0b8b55326d6c43a2e0cb2",
+    "memory/tests/test_extraction.py": "89274780668b5e228a1634eacfdc495513aac9a7a5861a05c5044a5fbb7ce6c9"
+  }
+}

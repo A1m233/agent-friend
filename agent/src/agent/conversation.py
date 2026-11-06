@@ -5502,10 +5502,31 @@ class Conversation:
     ) -> dict[str, Any]:
         """给内置工具补运行时隐藏上下文；不改变 LLM 原始 tool args。"""
         invocation_args = dict(args)
+        if name == "bilibili_reply":
+            from .memory_feed import CORE_MEMORY_BARRIER_ARG, project_core_action_input
+
+            invocation_args[CORE_MEMORY_BARRIER_ARG] = None
+            if self._memory is not None:
+                action_fragment = project_core_action_input(
+                    list(self._session.events[current_turn_start_idx:])
+                    if current_turn_start_idx is not None
+                    else [],
+                    session_id=self._session.session_id,
+                    persona_id=self._session.current_persona_id or "",
+                )
+                action_memory = self._memory
+                invocation_args[CORE_MEMORY_BARRIER_ARG] = lambda cancel_check: (
+                    action_memory.ensure_core_profile(
+                        action_fragment,
+                        ("user.bilibili_uid",),
+                        cancel_check=cancel_check,
+                    )
+                )
         if name in FILESYSTEM_TOOL_NAMES or name in {
             "exec_command",
             "host_process_start",
             "launch_desktop_application",
+            "bilibili_reply",
         }:
             from .approvals.reviewer import (
                 REVIEW_CONTEXT_ARG,
@@ -5623,14 +5644,17 @@ class Conversation:
             "inspect_tool_calls",
             "session_files",
             "view_image",
+            "bilibili_comments",
+            "bilibili_interactions",
         }:
             invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
-        if name == "send_conversation_message":
+        if name in {"send_conversation_message", "bilibili_reply"}:
             invocation_args.update(
                 {
                     _CURRENT_SESSION_ID_ARG: self._session.session_id,
                     "__agent_friend_run_id": self._run_id_override or "",
                     "__agent_friend_tool_call_id": tool_call_id,
+                    "__agent_friend_interaction_surface": str(self._prompt_surface_override or ""),
                 }
             )
         if name in {"manage_companionship", "schedule_next_wake"}:

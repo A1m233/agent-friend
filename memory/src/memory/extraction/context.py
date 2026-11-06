@@ -64,6 +64,12 @@ class ExtractionContextBuilder:
                 persona_id=fragment.persona_id,
             ).entries
         )
+        if fragment.extraction_scope == "core":
+            return ExtractionContext(
+                core_entries=tuple(
+                    (f"C{index:03d}", entry) for index, entry in enumerate(core, start=1)
+                )
+            )
         all_semantic = self._store.list_active_ordinary_semantic(
             owner_user_id=fragment.owner_user_id
         )

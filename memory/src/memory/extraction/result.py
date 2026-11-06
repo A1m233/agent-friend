@@ -27,7 +27,7 @@ ExtractionAttemptStatus = Literal[
     "empty_output",
     "llm_error",
 ]
-ExtractionAttemptPhase = Literal["base", "semantic_reconciliation"]
+ExtractionAttemptPhase = Literal["base", "core", "repair", "semantic_reconciliation"]
 
 
 @dataclass(frozen=True)
