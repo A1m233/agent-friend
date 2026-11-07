@@ -114,10 +114,10 @@ class ExecutionPreparation:
 
         lease = None
         try:
-            check()
-            lease = self._acquire(sid)
             with self._lock:
                 check()
+                # Publish the lease before a foreground claimant can cancel this entry.
+                lease = self._acquire(sid)
                 entry.lease = lease
             session = self._loader(sid, check)
             check()
@@ -135,8 +135,9 @@ class ExecutionPreparation:
         finally:
             if lease is not None:
                 with self._lock:
-                    lease.release()
-                    entry.lease = None
+                    if entry.lease is lease:
+                        lease.release()
+                        entry.lease = None
 
     def peek(self, sid: str) -> Session | None:
         with self._lock:
@@ -155,18 +156,20 @@ class ExecutionPreparation:
                     entry.expiry.daemon = True
                     entry.expiry.start()
 
-    def take(self, session: Session) -> SessionWriterLease | None:
+    def acquire_for_execution(self, session: Session) -> tuple[SessionWriterLease, bool]:
+        """Claim the writer and report whether this exact snapshot was loaded under it."""
+        sid = session.session_id
         with self._lock:
-            if self.status(session.session_id) != "ready":
-                return None
-            entry = self._entries[session.session_id]
-            if entry.session is not session:
-                return None
-            self._entries.pop(session.session_id)
-            if entry.expiry is not None:
-                entry.expiry.cancel()
-            lease, entry.lease = entry.lease, None
-            return lease
+            if self.status(sid) == "ready":
+                entry = self._entries[sid]
+                if entry.session is session and entry.lease is not None:
+                    lease, entry.lease = entry.lease, None
+                    self._discard(sid)
+                    return lease, True
+            # A preload may have started after the foreground read. Cancel it and
+            # acquire the OS lock before another local worker can claim it.
+            self._discard(sid)
+            return self._acquire(sid), False
 
     def close(self) -> None:
         with self._lock:

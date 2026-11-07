@@ -876,16 +876,13 @@ class SessionManager:
         opened_here = session.session_id not in self._runtime_states
         runtime_state = self._runtime_states.get(session.session_id)
         if runtime_state is None:
-            prepared_lease = self._preparation.take(session)
-            writer_lease = prepared_lease or acquire_session_writer_lease(
-                self._store, session.session_id
-            )
+            writer_lease, prepared_under_lease = self._preparation.acquire_for_execution(session)
             try:
                 session, runtime_state = self._restore_runtime_state(
                     session,
                     writer_lease,
                     cancel_check=cancel_check,
-                    prepared_under_lease=prepared_lease is not None,
+                    prepared_under_lease=prepared_under_lease,
                 )
                 check_cancel(cancel_check)
                 validate = getattr(writer_lease, "validate", None)

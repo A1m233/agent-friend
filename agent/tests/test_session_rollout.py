@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import copy
 import json
+import multiprocessing
 import os
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
@@ -23,6 +25,7 @@ from agent.sessions import (
     SessionWriterConflictError,
     restore_rollout,
 )
+from agent.sessions.query import CancelCheck
 from agent.system_prompt import DESKTOP_CHAT_SURFACE, IM_QQ_SURFACE
 from llm_providers.request_witness import witness_from_body
 
@@ -236,6 +239,89 @@ def _open_cached(manager: SessionManager, session_id: str) -> Session:
     loaded = manager.open_for_execution(session_id)
     assert loaded.execution_snapshot_digest is not None
     return loaded
+
+
+def test_scheduled_turn_preempts_preload_started_during_cold_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    model = _RecordingLLM()
+    manager = _manager(tmp_path, model, store=store)
+    sid = _create(manager)
+    foreground = threading.current_thread()
+    preload_holds_lease = threading.Event()
+    finish_preload = threading.Event()
+    preload_resumed = threading.Event()
+    load = store.load_execution
+
+    def overlap(session_id: str, *, cancel_check: CancelCheck = None) -> Session:
+        if threading.current_thread() is foreground:
+            assert manager.prepare_execution(sid) == "preparing"
+            assert preload_holds_lease.wait(5)
+        else:
+            # The worker enters the loader only after acquiring the real file lock.
+            preload_holds_lease.set()
+            finish_preload.wait(10)
+            preload_resumed.set()
+        return load(session_id, cancel_check=cancel_check)
+
+    monkeypatch.setattr(store, "load_execution", overlap)
+    try:
+        conv = manager.start_conversation(manager.open_for_execution(sid))
+        assert not preload_resumed.is_set()
+        finish_preload.set()
+        list(
+            conv.stream(
+                "daily",
+                user_event_id="scheduled:daily",
+                request_source={
+                    "kind": "scheduled_task",
+                    "task_id": "daily",
+                    "occurrence_id": "daily",
+                },
+            )
+        )
+        assert len(model.received) == 1
+        assert [
+            event.uuid for event in manager.query(sid).events if event.type == "user_message"
+        ] == ["scheduled:daily"]
+    finally:
+        finish_preload.set()
+        manager.close()
+
+
+def _hold_foreign_writer(root: Path, sid: str, pipe: Connection) -> None:
+    lease = JsonlSessionStore(root).acquire_writer_lease(sid)
+    try:
+        pipe.send("locked")
+        pipe.recv()
+    finally:
+        lease.release()
+        pipe.close()
+
+
+def test_execution_respects_writer_lease_held_by_another_process(tmp_path: Path) -> None:
+    manager = _manager(tmp_path, _RecordingLLM())
+    sid = _create(manager)
+    ctx = multiprocessing.get_context("spawn")
+    parent, child = ctx.Pipe()
+    owner = ctx.Process(target=_hold_foreign_writer, args=(tmp_path / "sessions", sid, child))
+    owner.start()
+    child.close()
+    try:
+        assert parent.poll(30) and parent.recv() == "locked"
+        with pytest.raises(SessionWriterConflictError):
+            manager.start_conversation(manager.open_for_execution(sid))
+        parent.send("release")
+        owner.join(10)
+        assert owner.exitcode == 0
+        assert manager.start_conversation(manager.open_for_execution(sid)).session.session_id == sid
+    finally:
+        parent.close()
+        if owner.is_alive():
+            owner.terminate()
+            owner.join()
+        manager.close()
 
 
 def test_scheduled_source_reaches_provider_and_survives_followup_and_restart(
