@@ -120,6 +120,7 @@ export function CustomConnections() {
       const next = {
         ...draft,
         name: draft.name.trim(),
+        imageModel: draft.imageModel?.trim() || undefined,
         baseUrl: draft.baseUrl.trim(),
         models: draft.models.map((m) => ({ id: m.id, name: m.name.trim(), contextWindow: m.contextWindow })),
         credentialRevision: key.trim()
@@ -340,6 +341,20 @@ export function CustomConnections() {
                       <SelectItem value="responses">Responses</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="space-y-2">
+                  <label
+                    className="text-sm font-medium"
+                    htmlFor="connection-image-model"
+                  >
+                    图片模型（可选）
+                  </label>
+                  <Input
+                    id="connection-image-model"
+                    value={draft.imageModel ?? ""}
+                    placeholder="留空使用服务默认模型"
+                    onChange={(e) => setDraft({ ...draft, imageModel: e.target.value })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <label

@@ -67,6 +67,12 @@ class ResponsesRoute:
 
 
 @dataclass(frozen=True)
+class ImagesRoute:
+    api_base: str
+    model: str | None = None
+
+
+@dataclass(frozen=True)
 class ProviderSpec:
     """单个 LLM Provider 的完整调用配置。
 
@@ -100,6 +106,7 @@ class ProviderSpec:
     reasoning_replay_scope: str = "none"
     responses: ResponsesRoute | None = None
     timeout_is_default: bool = False
+    images: ImagesRoute | None = None
 
     @classmethod
     def from_config(

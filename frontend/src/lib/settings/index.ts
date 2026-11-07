@@ -32,6 +32,7 @@ export type PetAvatarSize = "normal" | "mini";
 type LegacyPetDisplayMode = "normal" | "edgeRecall";
 
 export interface CustomConnection {
+  imageModel?: string;
   id: string;
   name: string;
   baseUrl: string;

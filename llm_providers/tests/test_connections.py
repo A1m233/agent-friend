@@ -23,7 +23,10 @@ def connection(number: int = 1, protocol: str = "responses") -> ConnectionDefini
 
 
 def test_same_named_models_have_independent_routes_and_credentials() -> None:
-    first, second = connection(), connection(2, "chat_completions")
+    first, second = (
+        connection(),
+        replace(connection(2, "chat_completions"), image_model="custom-image"),
+    )
     directory = ModelDirectory([first, second])
     refs = [model_reference(item.id, item.models[0].id) for item in (first, second)]
     specs = [
@@ -35,6 +38,10 @@ def test_same_named_models_have_independent_routes_and_credentials() -> None:
     assert specs[0].api_base == first.base_url
     assert specs[1].api_base == second.base_url
     assert specs[0].api_key != specs[1].api_key
+    assert specs[0].images and specs[0].images.api_base == first.base_url
+    assert specs[0].images.model is None
+    assert specs[1].images and specs[1].images.api_base == second.base_url
+    assert specs[1].images.model == "custom-image"
     assert directory.credential_name(refs[0]) != directory.credential_name(refs[1])
     assert specs[0].responses and specs[0].responses.model == "same/model"
     assert specs[1].responses is None
@@ -211,3 +218,10 @@ def test_legacy_capability_fields_are_ignored() -> None:
     }
     decoded = decode_connections(raw)
     assert decoded[0].models[0] == CustomModel(item.models[0].id, "fixture", 8192)
+    assert decoded[0].image_model is None
+    entry = raw["connections"][0]  # type: ignore[index]
+    entry["imageModel"] = "selected-image"
+    assert decode_connections(raw)[0].image_model == "selected-image"
+    entry["imageModel"] = " "
+    with pytest.raises(ValueError, match="image model"):
+        decode_connections(raw)

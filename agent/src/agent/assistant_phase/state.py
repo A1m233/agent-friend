@@ -52,13 +52,24 @@ class PhaseRun:
     tool_seen: bool = False
     arrival_text: str = ""
     response_offset: int = 0
+    reserved_output_count: int = 0
+    image_tool_batch_delivered: bool = False
     visible: bool = True
 
     def begin_response(self) -> None:
-        self.response_offset += max((item.index + 1 for item in self.items.values()), default=0)
+        self.response_offset += max(self.reserved_output_count, self.output_count())
+        self.reserved_output_count = 0
         self.items.clear()
         self.arrival_text = ""
         self.tool_seen = False
+
+    def output_count(self) -> int:
+        return max((item.index + 1 for item in self.items.values()), default=0)
+
+    def reserve_image_index(self, after_index: int) -> int:
+        index = max(after_index + 1, self.output_count(), self.reserved_output_count)
+        self.reserved_output_count = index + 1
+        return self.response_offset + index
 
     def start(self, event: LLMAssistantItemStart) -> None:
         self.items[event.item_id] = TextItem(

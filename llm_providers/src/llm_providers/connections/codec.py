@@ -16,7 +16,7 @@ def decode_connections(value: Any) -> tuple[ConnectionDefinition, ...]:
         raise ValueError("Invalid connection list")
     result = []
     for item in value["connections"]:
-        if not isinstance(item, dict) or set(item) != {
+        if not isinstance(item, dict) or set(item) - {"imageModel"} != {
             "id",
             "name",
             "baseUrl",
@@ -60,6 +60,7 @@ def decode_connections(value: Any) -> tuple[ConnectionDefinition, ...]:
                 item["protocol"],
                 tuple(models),
                 item["credentialRevision"],
+                item.get("imageModel"),
             )
         )
     return tuple(result)
