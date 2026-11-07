@@ -1,0 +1,19 @@
+{
+  "kind": "isolated_legacy_read",
+  "real_llm_calls": 0,
+  "journal_sha256": "a487f4bd9a4de44c9fc1200f59693da36ef36dd090484ce88d04a02247d9db66",
+  "journal_bytes": 1608520664,
+  "first_page_ms": 1132.8314999991562,
+  "first_turns": 10,
+  "first_events": 4219,
+  "first_page_sha256": "0347654a5ac895f1682969c26c1694c3e101171ad37dcb40562c0cad16c280a2",
+  "legacy_configuration_bootstrap_ms": 1438.2932000007713,
+  "configuration_after_restart_ms": 6.961799997952767,
+  "older_turns": 19,
+  "original_unchanged": true,
+  "copy_business_bytes_unchanged": true,
+  "limits": [
+    "storage only, OS cache uncontrolled, source journal copied without old derived caches",
+    "no messages, source path, raw session id or model configuration in report"
+  ]
+}

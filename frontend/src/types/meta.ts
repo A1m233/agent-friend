@@ -13,7 +13,8 @@ export interface SessionSummary {
   created_at: string;
   updated_at: string;
   persona: string;
-  model: string;
+  /** Navigation-only summaries omit the model until a session is opened. */
+  model?: string;
   reasoningPreset?: string;
   archived_at?: string | null;
   approval_mode?: "per_request" | "session_auto" | "auto_review" | "full_access";
@@ -32,9 +33,9 @@ export interface SessionEvent {
 interface SessionDetailBase {
   recovery?: { sourceRunId: string; rootRunId: string } | null;
   session_id: string;
-  title: string;
-  persona: string;
-  model: string;
+  title?: string;
+  persona?: string;
+  model?: string;
   reasoningPreset?: string;
   revision?: number;
   history_cursor?: string | null;

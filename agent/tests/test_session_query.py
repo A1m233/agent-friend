@@ -227,6 +227,7 @@ def test_builders_are_per_session_and_append_can_progress_during_parse(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, sid = _store(tmp_path)
+    store.discard_business_index(sid)
     other = Session.new("Other", "default", "test/model", session_id="other")
     store.create(other)
     entered, release = ThreadEvent(), ThreadEvent()

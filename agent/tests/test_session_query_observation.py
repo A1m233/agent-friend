@@ -46,6 +46,7 @@ def test_query_logs_cold_hit_and_external_invalidation_without_counting_file_rea
 ) -> None:
     caplog.set_level(logging.DEBUG, logger=query_observation.__name__)
     store, sid = _store(tmp_path)
+    store.discard_business_index(sid)  # Explicit legacy/cold journal rebuild fixture.
     first = store.query(sid)
     assert store.query(sid) is first
     JsonlSessionStore(tmp_path).append_event(sid, _message("new"))
@@ -77,6 +78,7 @@ def test_coalesced_query_is_distinguished_from_a_second_build(
 ) -> None:
     caplog.set_level(logging.DEBUG, logger=query_observation.__name__)
     store, sid = _store(tmp_path)
+    store.discard_business_index(sid)  # New sessions now create their read projection eagerly.
     parsing, release, waiter_entered = ThreadEvent(), ThreadEvent(), ThreadEvent()
     original_parse = Event.from_jsonl
     original_building = store._query_cache.building

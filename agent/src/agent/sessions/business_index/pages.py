@@ -11,6 +11,7 @@ from ...errors import AgentError
 from ..continuation import continuation_target
 from ..events import Event
 from ..query import CancelCheck, SessionHistoryPage, check_cancel
+from ..read_views.display import display_event
 from ..store_types import SourceVersion
 
 _RECOVERY_TYPES = {
@@ -53,6 +54,8 @@ def page(
     before: str | None = None,
     history_epoch: str | None = None,
     cancel_check: CancelCheck = None,
+    display: bool = False,
+    missing: dict[str, str] | None = None,
 ) -> SessionHistoryPage:
     if turn_limit < 1:
         raise ValueError("turn_limit must be positive")
@@ -98,12 +101,29 @@ def page(
     cursor = start["uuid"] if len(starts) > turn_limit else None
     events = []
     if start is not None:
+        query = "SELECT body,0 FROM events WHERE active=1 AND position>=? AND position<? ORDER BY position"
+        if (
+            display
+            and db.execute("SELECT 1 FROM sqlite_schema WHERE name='chat_bodies'").fetchone()
+        ):
+            query = (
+                "SELECT COALESCE(c.body,e.body),c.uuid IS NULL FROM events e "
+                "LEFT JOIN chat_bodies c ON c.uuid=e.uuid "
+                "WHERE active=1 AND position>=? AND position<? ORDER BY position"
+            )
+        elif display:
+            query = query.replace("body,0", "body,1")
         for row in db.execute(
-            "SELECT body FROM events WHERE active=1 AND position>=? AND position<? ORDER BY position",
+            query,
             (start["position"], end),
         ):
             check_cancel(cancel_check)
-            events.append(Event.from_jsonl(row["body"]))
+            event = Event.from_jsonl(row[0])
+            if display and row[1]:
+                event = display_event(event)
+                if missing is not None:
+                    missing[event.uuid] = event.to_jsonl()
+            events.append(event)
     latest_task = db.execute(
         "SELECT position FROM events WHERE active=1 AND kind IN ('user_message','system_trigger') "
         "ORDER BY position DESC LIMIT 1"

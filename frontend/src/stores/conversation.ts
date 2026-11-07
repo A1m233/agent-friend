@@ -7,6 +7,7 @@
  */
 
 import { create } from "zustand";
+import { openComposerSession, resetComposerSession, useComposerSessionStore } from "./composerSession";
 import { logRunStop } from "@/services/runStop/diagnostics";
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
@@ -121,7 +122,6 @@ interface RunTransport {
 }
 
 const activeTransports = new Map<string, RunTransport>();
-const pendingEditAdmissionBySession = new Map<string, AbortController>();
 const HOME_VIEW_KEY = "__agent_friend_home__";
 const MAX_IDLE_SESSION_VIEWS = 20;
 const MAX_RUN_SNAPSHOTS = 512;
@@ -175,7 +175,7 @@ export interface EditingMessageDescriptor {
   originalText: string;
   originalAttachments: ChatAttachment[];
   originalReferences?: ChatTextReference[];
-  phase: "editing" | "submitting";
+  phase: "editing";
 }
 
 export interface ConversationState {
@@ -189,6 +189,7 @@ export interface ConversationState {
   modelSwitching: boolean;
   modelSwitchTarget: string | null;
   editingMessage: EditingMessageDescriptor | null;
+  pendingEditRuns: Record<string, string>;
   messages: ChatMessage[];
   historyLoading: boolean;
   /** 历史会话加载完成事件序号；UI 用它触发一次 post-layout 滚动校正。 */
@@ -210,6 +211,7 @@ export interface ConversationState {
   resolveNewConversationDraftRuntimeConfig: () => void;
   /** 切换到历史会话并加载其上下文。 */
   openSession: (sessionId: string, options?: OpenSessionOptions) => Promise<boolean>;
+  refreshComposer: () => void;
   /** Shared message navigation for search, scheduled runs and other deep links. */
   openMessage: (sessionId: string, anchorEventUuid: string,
     options?: { query?: string; detached?: boolean; remember?: boolean }) => Promise<boolean>;
@@ -616,6 +618,7 @@ function observeSendLifecycle(event: BaseEvent, sessionId: string, runId: string
 
 /** Reset module-owned async coordinators as well as Zustand state between isolated tests. */
 export function resetConversationCoordinatorsForTests(): void {
+  resetComposerSession();
   detailReads.reset(); historyPages.clear(); olderReads.clear(); appliedDetails = new WeakSet(); cancellations.reset(); pendingInputs.clear();
   activeTransports.clear(); runtimeGeneration += 1;
 }
@@ -737,6 +740,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   modelSwitching: false,
   modelSwitchTarget: null,
   editingMessage: null,
+  pendingEditRuns: {},
   messages: [],
   historyLoading: false,
   historyLoadSeq: 0,
@@ -753,7 +757,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   searchTarget: null,
 
   newSession() {
-    if (get().editingMessage?.phase === "submitting") return;
+    resetComposerSession();
     get().cancelEditing();
     openSessionToken += 1;
     detailReads.invalidateLifecycle();
@@ -811,7 +815,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   async openSession(sessionId, options) {
-    if (get().editingMessage?.phase === "submitting") return false;
     if (!options?.searchTarget) searchNavigationToken += 1;
     get().cancelEditing();
     const failureMode = options?.failureMode ?? "message";
@@ -854,6 +857,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     // Only explicitly opening an existing session triggers this read. Sending a
     // first message selects an optimistic ID before the backend creates it.
     void get().refreshApprovalMode(sessionId);
+    get().refreshComposer();
     if ((cached && activeRun) || cachedAnchor) {
       get().markSessionViewed(sessionId);
       get().pruneCaches();
@@ -886,9 +890,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       set((s) => {
         const view = {
           messages: projectSessionDetail(detail),
-          currentModel: detail.model,
-          currentReasoningPreset: detail.reasoningPreset
-            ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
+          currentModel: detail.model ?? s.currentModel,
+          currentReasoningPreset: detail.model
+            ? detail.reasoningPreset ?? defaultModelRuntimeConfig(detail.model).reasoningPreset
+            : s.currentReasoningPreset,
           ...approvalModeFields(s, sessionId, detail),
           historyLoading: false,
           historyLoadSeq: s.historyLoadSeq + 1,
@@ -960,7 +965,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   async openMessage(sessionId, anchorEventUuid, options) {
-    if (get().editingMessage?.phase === "submitting") return false;
     const token = ++searchNavigationToken;
     const epoch = runtimeGeneration;
     const target: SearchNavigationTarget = {
@@ -1043,12 +1047,36 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     set((state) => (state.searchTarget?.token === token ? { searchTarget: null } : state));
   },
 
+  refreshComposer() {
+    const sessionId = get().currentSessionId;
+    if (!sessionId) return;
+    const epoch = runtimeGeneration;
+    const configMutation = modelMutationSeq;
+    openComposerSession(sessionId, (config) => {
+      if (get().currentSessionId !== sessionId || epoch !== runtimeGeneration) return;
+      set((state) => {
+        const configFields = configMutation === modelMutationSeq
+          ? { currentModel: config.model, currentReasoningPreset: config.reasoningPreset }
+          : {};
+        const fields = { ...configFields, ...approvalModeFields(state, sessionId, config) };
+        return { ...fields,
+          readOnlySessionIds: { ...state.readOnlySessionIds, [sessionId]: config.read_only },
+          sessionViews: { ...state.sessionViews,
+            [sessionId]: { ...(state.sessionViews[sessionId] ?? emptyView()), ...fields } },
+        };
+      });
+    });
+  },
+
   async refreshCurrentSession(sessionId) {
     const seq = detailRefreshSeq + 1;
     detailRefreshSeq = seq;
     const openToken = openSessionToken;
     const epoch = runtimeGeneration;
     if (get().currentSessionId !== sessionId || isSessionBusy(get(), sessionId)) return "stale";
+    // External configuration changes/reconnects refresh their own lightweight
+    // owner immediately, even if the display request below stalls or fails.
+    get().refreshComposer();
     try {
       const detail = await detailReads.read(sessionId);
       if (
@@ -1067,9 +1095,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       set((state) => {
         const view: SessionConversationView = {
           messages: projectSessionDetail(detail),
-          currentModel: detail.model,
-          currentReasoningPreset: detail.reasoningPreset
-            ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
+          currentModel: detail.model ?? state.currentModel,
+          currentReasoningPreset: detail.model
+            ? detail.reasoningPreset ?? defaultModelRuntimeConfig(detail.model).reasoningPreset
+            : state.currentReasoningPreset,
           ...approvalModeFields(state, sessionId, detail),
           historyLoading: false,
           historyLoadSeq: state.historyLoadSeq,
@@ -1107,6 +1136,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       olderReads.clear();
       appliedDetails = new WeakSet();
     }
+    if (previous !== null) get().refreshComposer();
     cancellations.setRuntime(runtimeId);
     set((state) => ({
       runtimeInstanceId: runtimeId,
@@ -1443,8 +1473,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       };
     }
     if (
-      current.historyLoading
-      || current.editingMessage?.phase === "submitting"
+      current.currentSessionId && current.pendingEditRuns[current.currentSessionId]
     ) {
       return {
         status: "failed",
@@ -1478,6 +1507,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           currentReasoningPreset: appliedConfig.reasoningPreset,
         });
       }
+      if (!deferToNextTurn) get().refreshComposer();
       return { status: "applied", ...appliedConfig };
     } catch (error) {
       if (
@@ -1559,7 +1589,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       isSessionBusy(current, current.currentSessionId)
       || current.historyLoading
       || !current.currentSessionId
-      || current.editingMessage?.phase === "submitting"
+      || current.pendingEditRuns[current.currentSessionId]
     ) return false;
     const target = [...current.messages].reverse().find((message) => message.role === "user");
     if (!target || target.id !== messageId) return false;
@@ -1597,8 +1627,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   cancelEditing() {
     const editing = get().editingMessage;
     if (!editing) return;
-    pendingEditAdmissionBySession.get(editing.sessionId)?.abort();
-    pendingEditAdmissionBySession.delete(editing.sessionId);
     useDraftStore.getState().discard(editing.draftKey);
     set((state) => state.editingMessage?.messageId === editing.messageId
       ? { editingMessage: null }
@@ -1612,10 +1640,12 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (!trimmed && attachments.length === 0 && references.length === 0) {
       return { accepted: false, reason: "empty" };
     }
-    if (isSessionBusy(get(), get().currentSessionId)) {
+    if ((currentId && get().pendingEditRuns[currentId]) || isSessionBusy(get(), currentId)) {
       return { accepted: false, reason: "busy" };
     }
-    if (get().historyLoading) return { accepted: false, reason: "history-loading" };
+    const readiness = useComposerSessionStore.getState();
+    if (get().currentSessionId && readiness.sessionId === get().currentSessionId
+      && readiness.phase !== "ready") return { accepted: false, reason: "history-loading" };
     if (get().modelSwitching) return { accepted: false, reason: "model-switching" };
     if (get().editingMessage) return { accepted: false, reason: "editing" };
 
@@ -1907,6 +1937,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       state.historyLoading ||
       state.modelSwitching ||
       !state.currentSessionId ||
+      state.pendingEditRuns[state.currentSessionId] ||
       !editing ||
       editing.phase !== "editing" ||
       editing.sessionId !== state.currentSessionId
@@ -1940,13 +1971,25 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       userMessage(trimmed, sentAt, optimisticAttachments, newId(), effectiveReferences),
       placeholder,
     ];
-    set((current) => current.editingMessage?.messageId === editing.messageId
-      ? { editingMessage: { ...editing, phase: "submitting" } }
-      : current);
+    // Keep the submitted edit in its own workspace until admission. The
+    // composer immediately returns to the session's normal, writable draft.
+    const navigationAtSubmit = openSessionToken;
+    const draftAtSubmit = useDraftStore.getState().workspaces[draftKey(sessionId)];
+    set((current) => ({
+      editingMessage: null,
+      pendingEditRuns: { ...current.pendingEditRuns, [sessionId]: runId },
+    }));
+    function releaseAdmission() {
+      set((current) => {
+        if (current.pendingEditRuns[sessionId] !== runId) return current;
+        const pendingEditRuns = { ...current.pendingEditRuns };
+        delete pendingEditRuns[sessionId];
+        return { pendingEditRuns };
+      });
+    }
 
     const controller = new AbortController();
     activeTransports.set(runId, { sessionId, controller });
-    pendingEditAdmissionBySession.set(sessionId, controller);
     const projectDirectStream = !isTauri();
 
     const patch = (fn: (m: ChatMessage) => ChatMessage) =>
@@ -1990,7 +2033,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           onAdmitted: () => {
             if (admitted || controller.signal.aborted) return;
             admitted = true;
-            pendingEditAdmissionBySession.delete(sessionId);
             useDraftStore.getState().beginSubmission(
               editing.draftKey,
               sessionId,
@@ -2012,10 +2054,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
                 ...(current.currentSessionId === sessionId
                   ? { messages: nextMessages }
                   : {}),
-                editingMessage:
-                  current.editingMessage?.messageId === editing.messageId
-                    ? null
-                    : current.editingMessage,
                 sessionViews: {
                   ...current.sessionViews,
                   [sessionId]: view,
@@ -2028,6 +2066,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
                 runFence: touchSnapshotKey(current.runFence, runId),
               };
             });
+            releaseAdmission();
           },
         },
       )) {
@@ -2052,13 +2091,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       streamUpdates?.flush();
       if (!admitted) {
         outcome = "rejected";
-        set((current) => current.editingMessage?.messageId === editing.messageId
-          ? {
-              editingMessage: {
-                ...current.editingMessage,
-                phase: "editing",
-              },
-            }
+        set((current) => current.currentSessionId === sessionId && !current.editingMessage
+          && openSessionToken === navigationAtSubmit
+          && useDraftStore.getState().workspaces[draftKey(sessionId)] === draftAtSubmit
+          ? { editingMessage: editing }
           : current);
       } else if (controller.signal.aborted) {
         outcome = "interrupted";
@@ -2071,7 +2107,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     } finally {
       streamUpdates?.dispose();
       activeTransports.delete(runId);
-      pendingEditAdmissionBySession.delete(sessionId);
+      releaseAdmission();
       if (admitted) {
         useDraftStore.getState().finishSubmission(runId, false);
         let runStillActive = controller.signal.aborted;
@@ -2115,9 +2151,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
               const nextView = {
                 ...view,
                 messages: nextMessages,
-                currentModel: detail.model,
-                currentReasoningPreset: detail.reasoningPreset
-                  ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
+                currentModel: detail.model ?? view.currentModel,
+                currentReasoningPreset: detail.model
+                  ? detail.reasoningPreset ?? defaultModelRuntimeConfig(detail.model).reasoningPreset
+                  : view.currentReasoningPreset,
                 ...approvalModeFields(s, sessionId, detail),
                 revision: detail.revision ?? view.revision,
                 historyLoadSeq: view.historyLoadSeq + 1,
@@ -2127,9 +2164,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
                 ...(s.currentSessionId === sessionId
                   ? {
                       ...viewFields(nextView),
-                      currentModel: detail.model,
-                      currentReasoningPreset: detail.reasoningPreset
-                        ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
                     }
                   : {}),
               };
@@ -2153,6 +2187,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       state.historyLoading ||
       state.modelSwitching ||
       !state.currentSessionId ||
+      state.pendingEditRuns[state.currentSessionId] ||
       target?.id !== messageId ||
       !target.canContinue || !target.runId
     ) return;

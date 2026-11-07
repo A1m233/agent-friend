@@ -1,0 +1,43 @@
+{
+  "kind": "isolated_legacy_read",
+  "real_llm_calls": 0,
+  "journal_sha256": "a487f4bd9a4de44c9fc1200f59693da36ef36dd090484ce88d04a02247d9db66",
+  "journal_bytes": 1608520664,
+  "first_page_ms": 1169.5714000015869,
+  "page_samples_ms": [
+    1169.5714000015869,
+    994.5335000011255,
+    1003.0248000039137,
+    1194.9627000067267,
+    911.17029999441
+  ],
+  "first_turns": 10,
+  "first_events": 4219,
+  "event_counts": {
+    "user_message": 10,
+    "assistant_phase": 987,
+    "assistant_message": 46,
+    "tool_call_request": 967,
+    "tool_call_result": 967,
+    "tool_execution_checkpoint": 929,
+    "provider_reasoning_state": 277,
+    "run_terminal": 14,
+    "run_started": 13,
+    "compaction": 2,
+    "skill_catalog_state": 2,
+    "channel_change": 1,
+    "run_error": 4
+  },
+  "business_event_bytes": 96165229,
+  "journal_tail_span_bytes": 750724175,
+  "first_page_sha256": "0347654a5ac895f1682969c26c1694c3e101171ad37dcb40562c0cad16c280a2",
+  "legacy_configuration_bootstrap_ms": 1301.5818000058061,
+  "configuration_after_restart_ms": 4.815599997527897,
+  "older_turns": 19,
+  "original_unchanged": true,
+  "copy_business_bytes_unchanged": true,
+  "limits": [
+    "storage only, OS cache uncontrolled, source journal copied without old derived caches",
+    "no messages, source path, raw session id or model configuration in report"
+  ]
+}

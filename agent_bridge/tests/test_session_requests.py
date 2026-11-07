@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 import threading
 import time
 from collections.abc import AsyncIterator, Iterator
@@ -25,10 +26,12 @@ from agent_bridge.settings import BridgeSettings
 from agent import (
     AttachmentStore,
     Conversation,
+    Event,
     JsonlSessionStore,
     MarkdownPromptBuilder,
     NaiveContextManager,
     PersonaCatalog,
+    Session,
     SessionManager,
     make_default_registry,
 )
@@ -40,6 +43,85 @@ from llm_providers import (
     ModelResponse,
     ModelRuntimeConfig,
 )
+
+
+@pytest.mark.asyncio
+async def test_startup_attachment_gc_preserves_old_journal_reference_without_index(
+    tmp_path: Path,
+) -> None:
+    assets = AttachmentStore(tmp_path / "assets")
+
+    async def chunks(content: bytes) -> AsyncIterator[bytes]:
+        yield content
+
+    refs = []
+    for content in (b"referenced", b"orphan"):
+        draft, ref = await assets.import_stream(chunks(content), display_name="document.txt")
+        assets.consume_draft(draft)
+        assets.release_draft(draft)
+        os.utime(assets.metadata_dir / f"{ref.asset_id}.json", (1, 1))
+        refs.append(ref)
+    root = tmp_path / "sessions"
+    store = JsonlSessionStore(root)
+    session = Session.new("old", "default", "test/model", session_id="legacy")
+    session.events.append(
+        Event(
+            "user_message",
+            "u",
+            datetime.now(UTC),
+            {"content": "hi", "attachments": [refs[0].to_dict()]},
+        )
+    )
+    store._path("legacy").write_text(
+        "\n".join(e.to_jsonl() for e in session.events) + "\n", encoding="utf-8"
+    )
+    manager = SessionManager(store)
+    try:
+        runtime = cast(
+            BridgeRuntime,
+            SimpleNamespace(
+                attachment_store=assets,
+                persistent_session_manager=manager,
+                persistent_store=store,
+                scheduled_task_store=None,
+                session_request_service=None,
+            ),
+        )
+        result = reconcile_attachments(runtime, threading.Event())
+        assert result and result["removed_assets"] == 1
+        assert assets.verify(refs[0].asset_id).read_bytes() == b"referenced"
+        assert not store._business_index.path("legacy").exists()
+        assert not store._configuration.path("legacy").exists()
+    finally:
+        manager.close()
+
+
+def test_prepared_admission_avoids_rebuilding_business_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = JsonlSessionStore(tmp_path)
+    session = Session.new("prepared", "default", "deepseek/deepseek-chat")
+    store.create(session)
+    manager = SessionManager(store)
+    service = object.__new__(SessionRequestService)
+    service.runtime = cast(BridgeRuntime, SimpleNamespace(persistent_session_manager=manager))
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("full business query")
+
+    try:
+        manager.prepare_execution(session.session_id)
+        deadline = time.monotonic() + 3
+        while manager.preparation_status(session.session_id) == "preparing":
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        monkeypatch.setattr(manager, "query", forbidden)
+        service.validate_target(session.session_id)
+        manager.cancel_preparation(session.session_id)
+        with pytest.raises(AssertionError, match="full business query"):
+            service.validate_target(session.session_id)
+    finally:
+        manager.close()
 
 
 def test_common_service_serializes_requests_and_uses_isolated_overrides(tmp_path: Path) -> None:

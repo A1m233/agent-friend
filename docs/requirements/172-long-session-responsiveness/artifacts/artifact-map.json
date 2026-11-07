@@ -1,0 +1,173 @@
+[
+  {
+    "original_relative_to_local_temp": "agent-friend-172-desktop/history-01/report.json",
+    "original_sha256": "2c828f86148eb62ba3a6ba234478a855f41d83bd3fa52f00fc1e7e23dab47a38",
+    "archive": "pilot-history-setup.json",
+    "archive_sha256": "d6c2c08627de757b226412cc9af3b6f985c684ed3665d8d30d74b0abe300810e",
+    "transformation": "machine identity paths hashed; all message fixtures synthetic"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-desktop/history-02/report.json",
+    "original_sha256": "88b703408100bbb8531dda066acee4c713e27aa2ef537fe216958f2dc8fcc2fb",
+    "archive": "pilot-history.json",
+    "archive_sha256": "d145d850c795d81eec96afe069fcc733ee9539c567831784bff7342918a6b1a1",
+    "transformation": "machine identity paths hashed; all message fixtures synthetic"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-desktop/history-final/report.json",
+    "original_sha256": "f7cc72644d314fa82fcd1c677c5440d6aeb1014974d71ead017d17ba08c1a3fe",
+    "archive": "desktop-history.json",
+    "archive_sha256": "3252fd277942093a504a4ab2c3d97ce7f9c8e7f6a610d9be312c720911ee0905",
+    "transformation": "machine identity paths hashed; all message fixtures synthetic"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-desktop/responsiveness-01/report.json",
+    "original_sha256": "d1bd4e812361cfdf0b8dc05d5779d0a91a9547a7ac57b5e90431aa9528e8aff4",
+    "archive": "pilot-desktop-selector.json",
+    "archive_sha256": "11c1133d96e0aa676bcf3ea218c84adc357e7f87876c36cec0caf6ab48870f0b",
+    "transformation": "machine identity paths hashed; all message fixtures synthetic"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-desktop/responsiveness-02/report.json",
+    "original_sha256": "24f11f99acb120c37051f64da2e449bbea841ccdb5d1f6655652a34536148103",
+    "archive": "pilot-desktop-normal.json",
+    "archive_sha256": "972a7be4cd0d00fa0c2cc399823692130aaa4c24d1668776997d0bbc2861d5d6",
+    "transformation": "machine identity paths hashed; all message fixtures synthetic"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-desktop/responsiveness-final/report.json",
+    "original_sha256": "222ea1a21c143bace3f56d5cf6cfed50dd69617dee9052b54ed204d9d563b236",
+    "archive": "desktop-normal.json",
+    "archive_sha256": "9b0d538fffa071f6eb8c69e79f06d8cb823fb433011d0cafafef93af630ed6e8",
+    "transformation": "machine identity paths hashed; all message fixtures synthetic"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-growth/responsiveness-01/report.json",
+    "original_sha256": "04b9a52978b3d7cf6e7080b9d7cd008c5ba74452c112a38de001e14059282104",
+    "archive": "pilot-growth-01.json",
+    "archive_sha256": "ec7ea95bb26c1f372f6919df8f9f7e2cea572ac98bae1a8e1fe417b81ad2806a",
+    "transformation": "machine identity paths hashed; all message fixtures synthetic"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-growth/responsiveness-02/report.json",
+    "original_sha256": "4778ebb06a65e89b4febb320866fabc0799a7a30238f71b6591ddfe679b88ade",
+    "archive": "pilot-growth-02.json",
+    "archive_sha256": "7c9d2e4170108f104cf4bc82cb6594295f1449a7aeeaa4dfa2e852008c0c415b",
+    "transformation": "machine identity paths hashed; all message fixtures synthetic"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-growth/responsiveness-03/report.json",
+    "original_sha256": "e7b3ef41c03831f93d8d2d4abd4b33097a60c43c36cab33c4d7db533e7be2b5f",
+    "archive": "pilot-growth-03.json",
+    "archive_sha256": "2418d770353435668a330b8613212868f4b4197015db7190281e9fc6d1059d4e",
+    "transformation": "machine identity paths hashed; all message fixtures synthetic"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-growth/responsiveness-04/report.json",
+    "original_sha256": "a59f1a5a9b86452ae9ecb5ae92a3b5e5529135cf52200a17bdff6c74d5e8503a",
+    "archive": "pilot-growth-04.json",
+    "archive_sha256": "a1b437662873b62aecb2749e7e6d67f644e13428e92fe6fae88558479db7ed52",
+    "transformation": "machine identity paths hashed; all message fixtures synthetic"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-growth-final/responsiveness-01/report.json",
+    "original_sha256": "0d625d86184b1ca823619d513f1f4b3c842f8369071285341987b2ef457500b6",
+    "archive": "desktop-growth.json",
+    "archive_sha256": "f110a43c0ce07ce7a03d7ff5faf2bbbb8f5522ef88807748863d97a434c51926",
+    "transformation": "machine identity paths hashed; all message fixtures synthetic"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-growth/send-01/report.json",
+    "original_sha256": "25d940b5699185193783e6c93f871a68b6f4c03425352d1af8a19416958c16d4",
+    "archive": "pilot-send.json",
+    "archive_sha256": "25d940b5699185193783e6c93f871a68b6f4c03425352d1af8a19416958c16d4",
+    "transformation": "machine identity paths hashed; all message fixtures synthetic"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-growth/send-02/report.json",
+    "original_sha256": "a35a73aa639ea637ca09ba9676fc1fccdaa9a9f08629088230cdcc92d0356f2f",
+    "archive": "desktop-send.json",
+    "archive_sha256": "a35a73aa639ea637ca09ba9676fc1fccdaa9a9f08629088230cdcc92d0356f2f",
+    "transformation": "machine identity paths hashed; all message fixtures synthetic"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-growth-final/responsiveness-01/delayed-history-editable.png",
+    "archive": "delayed-history-editable.png",
+    "archive_sha256": "325aa3c8460cf364bfb8632480514d45abfe1c35309726cbfc08740f45dffb55",
+    "transformation": "none; synthetic fixture screenshot"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-desktop/responsiveness-final/normal.png",
+    "archive": "normal-history.png",
+    "archive_sha256": "100b1f9e8eec1008945a463ccede96d1ff7c412a75fe5af30ba224597592b104",
+    "transformation": "none; synthetic fixture screenshot"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-desktop/history-final/11-reference-unloaded-assistant.png",
+    "archive": "reference-navigation.png",
+    "archive_sha256": "b98a6e8a1f4957f8486ec77bd1081caa839437258bd587b745957f1544ead2f0",
+    "transformation": "none; synthetic fixture screenshot"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-desktop/responsiveness-layout-final/report.json",
+    "original_sha256": "cf67fedfbb28b0c006b63fd32d9dc56a7237175e39253de9cd5116f86256bf55",
+    "archive": "desktop-final-layout.json",
+    "archive_sha256": "39b206f6644a2afa5fb5f6901e67583f30e1078f18cd6dfb0234684208f35537",
+    "transformation": "machine identity paths hashed"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-desktop/responsiveness-silent-final/report.json",
+    "archive": "desktop-silent-loading.json",
+    "archive_sha256": "5879dd3f0dee6b6dc231bfdba01dbf9676e3e3029e7f808ab85765911b57bdb9",
+    "transformation": "worktree path hashed; all message fixtures synthetic",
+    "original_sha256": "97565a8900d5cb6d0f2645035fc0c850ae8a3400f017336bd2b4645f850fef38"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-desktop/responsiveness-silent-final/delayed-history-editable.png",
+    "archive": "silent-loading-editable.png",
+    "archive_sha256": "a8963b69104b6b00c21cb1898dd3f2130ac8e1b657544f1cfda4242d59e3e1c1",
+    "transformation": "none; synthetic fixture screenshot"
+  },
+  {
+    "original_sha256": "8dbf5637d13c1bb8cd6270b3e4a2e51944b61f7ecaa318e62602a09d36eae820",
+    "original_relative_to_local_temp": "agent-friend-172-projection-e2e/legacy/report.json",
+    "archive_sha256": "d6e6f6fae56d69762c54a83a1da128e6e58a7d278f0577768dd82033f240a7a4",
+    "archive": "display-desktop-legacy-pilot.json",
+    "transformation": "worktree path hashed; legacy reports contain timings and counts only"
+  },
+  {
+    "original_sha256": "6edb13abaf056f855ea24d3f4b9bfa11912ac8bc840f5e39e7df75f8bc8e347e",
+    "original_relative_to_local_temp": "agent-friend-172-projection-final/ordinary/report.json",
+    "archive_sha256": "d535b39e9200fa32bfa17cb859429293cfa96ccad18250a2dd049667d8eb4a95",
+    "archive": "display-desktop-normal.json",
+    "transformation": "worktree path hashed; legacy reports contain timings and counts only"
+  },
+  {
+    "original_sha256": "d8703f5d51d6c8afb6827d7ae586a5c10c0abef5274e7fabd6c1242ab1032fa6",
+    "original_relative_to_local_temp": "agent-friend-172-projection-final/legacy/report.json",
+    "archive_sha256": "b3fefdf086dff76f4b10324114dc23d29839dcc68cdedd002c30ad0c9b7ced97",
+    "archive": "display-desktop-legacy.json",
+    "transformation": "worktree path hashed; legacy reports contain timings and counts only"
+  },
+  {
+    "archive": "edit-admission-desktop.json",
+    "original_relative_to_local_temp": "agent-friend-172-desktop/edit-admission-ui-03/report.json",
+    "transformation": "worktree path hashed; all message fixtures synthetic",
+    "original_sha256": "73537d91dde3473271f8773a0af36aa9cdb403474b8fe0539101aa5cd634f454",
+    "archive_sha256": "c32a804cc353ea7f4add7d470dfb74a1f65009f2eb74342b0599d76d0b3f0bf4"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-merge-acceptance/desktop-final/report.json",
+    "original_sha256": "3b8ba577290a6804c86da55481b5df07362243640e6fe4ffea7d78fd86bb470f",
+    "archive": "merge-desktop-final.json",
+    "archive_sha256": "616bd611d17598069283841031ed2593fcf75f6f0b78e4df5a9759414d34392f",
+    "transformation": "machine identity paths hashed where present; all message fixtures synthetic"
+  },
+  {
+    "original_relative_to_local_temp": "agent-friend-172-merge-acceptance/send-final/report.json",
+    "original_sha256": "278242b7db8f167417dab884c7fe40505cb4895f5117afaa4b7302db8eb9910a",
+    "archive": "merge-send-final.json",
+    "archive_sha256": "d97365fc163f451df887ca7e08d3fb4f59f7ac2db76b5232328f6c97510cad45",
+    "transformation": "machine identity paths hashed where present; all message fixtures synthetic"
+  }
+]

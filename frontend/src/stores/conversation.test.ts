@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import { STOP_FEEDBACK } from "@/pages/chat/components/stopFeedback";
 
+// These tests exercise conversation mutation/transport. Composer loading and its
+// real API coordination are covered independently in composerSession.test.ts.
+vi.mock("./composerSession", () => ({
+  openComposerSession: vi.fn(), resetComposerSession: vi.fn(),
+  useComposerSessionStore: { getState: () => ({ sessionId: null, phase: "idle" }) },
+}));
+
 const { isTauriMock } = vi.hoisted(() => ({
   isTauriMock: vi.fn(() => false),
 }));
@@ -70,6 +77,7 @@ import {
   type SendStartResult,
 } from "./conversation";
 import { HOME_DRAFT_KEY, useDraftStore } from "./drafts";
+import { openComposerSession } from "./composerSession";
 import { useRuntimeCredentialStore } from "./runtimeCredentials";
 import { emptySnapshotFence } from "./snapshotFence";
 import { isSessionBusy, sessionActiveRun } from "./runPresentation";
@@ -591,6 +599,7 @@ beforeEach(() => {
     modelSwitching: false,
     modelSwitchTarget: null,
     editingMessage: null,
+    pendingEditRuns: {},
     sessionViews: {},
     runSnapshots: {},
     runtimeInstanceId: null,
@@ -1888,6 +1897,48 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     expect(isSessionBusy(useConversationStore.getState(), "sid-1")).toBe(false);
   });
 
+  it.each(["accepted", "rejected"] as const)(
+    "编辑等待期间可以继续输入、切换会话；迟到的 %s 响应只处理原编辑",
+    async (outcome) => {
+      mockGet.mockImplementation(async (id) => ({
+        ...historyPage([id], null), session_id: id,
+      }));
+      const gate = deferred<void>();
+      mockEditStream.mockImplementation((_input, opts) => (async function* () {
+        await gate.promise;
+        if (outcome === "rejected") throw new StreamAdmissionError("rejected");
+        opts?.onAdmitted?.();
+        yield ev({ type: EventType.RUN_FINISHED });
+      })());
+      const chat = () => useConversationStore.getState();
+      const drafts = () => useDraftStore.getState();
+      await chat().openSession("source");
+      expect(chat().beginEditingMessage("source:user")).toBe(true);
+      const editKey = chat().editingMessage!.draftKey;
+      drafts().setText(editKey, "修改后提交的内容");
+      const send = chat().editResendLatest("修改后提交的内容", [], []);
+      expect(chat().editingMessage).toBeNull();
+      drafts().setText("source", "下一条草稿");
+      expect(chat().send("重复发送")).toMatchObject({ accepted: false, reason: "busy" });
+      expect(chat().beginEditingMessage("source:user")).toBe(false);
+      expect(await chat().openSession("destination")).toBe(true);
+      drafts().setText("destination", "另一个会话的草稿");
+      expect(chat().beginEditingMessage("destination:user")).toBe(true);
+      gate.resolve();
+      await expect(send).resolves.toBe(outcome === "rejected" ? "rejected" : "completed");
+      expect(chat().currentSessionId).toBe("destination");
+      expect(chat().editingMessage?.sessionId).toBe("destination");
+      expect(chat().pendingEditRuns.source).toBeUndefined();
+      expect(drafts().workspaces.source.text).toBe("下一条草稿");
+      expect(drafts().workspaces.destination.text).toBe("另一个会话的草稿");
+      if (outcome === "rejected") {
+        await chat().openSession("source");
+        expect(chat().beginEditingMessage("source:user")).toBe(true);
+        expect(drafts().workspaces[editKey].text).toBe("修改后提交的内容");
+      }
+    },
+  );
+
   it("编辑重发后立即停止时，活跃 run 不用旧 detail 覆盖新分支", async () => {
     mockGet.mockResolvedValueOnce({
       session_id: "sid-1",
@@ -2104,6 +2155,19 @@ describe("conversation store · continue tool result", () => {
 });
 
 describe("conversation store · background detail refresh", () => {
+  it("refreshes external configuration independently when history refresh fails", async () => {
+    useConversationStore.setState({ currentSessionId: "independent", runSnapshots: {}, runCalibrationPhase: "ready" });
+    mockGet.mockRejectedValueOnce(new Error("history unavailable"));
+    const refresh = useConversationStore.getState().refreshCurrentSession("independent");
+    expect(openComposerSession).toHaveBeenCalledWith("independent", expect.any(Function));
+    const apply = vi.mocked(openComposerSession).mock.calls.at(-1)![1];
+    apply({ session_id: "independent", model: "deepseek/deepseek-chat", reasoningPreset: "none",
+      read_only: false, approval_mode: "per_request", approval_mode_version: 0 });
+    expect(useConversationStore.getState().currentModel).toBe("deepseek/deepseek-chat");
+    expect(await refresh).toBe("failed");
+    expect(useConversationStore.getState().currentModel).toBe("deepseek/deepseek-chat");
+  });
+
   it("旧 run terminal 只结束自己，新 run 继续保持 active", () => {
     const oldRun = runSnapshot("run-old", "sid-shared", "running", 2);
     const newRun = {

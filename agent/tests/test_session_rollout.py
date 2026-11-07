@@ -195,6 +195,43 @@ def _run(manager: SessionManager, session_id: str, text: str) -> None:
     list(conversation.stream(text, surface=DESKTOP_CHAT_SURFACE))
 
 
+def test_background_prepare_reuses_verified_input_without_second_load_or_hash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+
+    first = _manager(tmp_path, _RecordingLLM())
+    sid = _create(first)
+    _run(first, sid, "first")
+    first.close()
+    model = _RecordingLLM()
+    store = JsonlSessionStore(tmp_path / "sessions")
+    manager = _manager(tmp_path, model, store=store)
+    try:
+        before = (tmp_path / "sessions" / f"{sid}.jsonl").read_bytes()
+        manager.prepare_execution(sid)
+        deadline = time.monotonic() + 3
+        while manager.preparation_status(sid) == "preparing" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert manager.preparation_status(sid) == "ready"
+        assert not model.received
+        assert (tmp_path / "sessions" / f"{sid}.jsonl").read_bytes() == before
+
+        def forbidden(*args: object, **kwargs: object) -> None:
+            raise AssertionError("prepared history must not be loaded/hashed again")
+
+        monkeypatch.setattr(store, "load_execution", forbidden)
+        monkeypatch.setattr(store, "_hash_source", forbidden)
+        conversation = manager.start_conversation(manager.open_for_execution(sid))
+        list(conversation.stream("second", surface=DESKTOP_CHAT_SURFACE))
+        assert len(model.received) == 1
+        assert any(item.get("content") == "first" for item in model.received[0])
+        assert any(item.get("content") == "second" for item in model.received[0])
+    finally:
+        manager.close()
+
+
 def _open_cached(manager: SessionManager, session_id: str) -> Session:
     loaded = manager.open_for_execution(session_id)
     assert loaded.execution_snapshot_digest is not None

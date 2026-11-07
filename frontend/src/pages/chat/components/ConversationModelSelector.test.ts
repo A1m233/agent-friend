@@ -175,6 +175,27 @@ describe("ConversationModelSelector", () => {
     expect(trigger.textContent).toContain("最高");
   });
 
+  it("allows selecting a model while history and configuration are pending", async () => {
+    await act(async () => {
+      useConversationStore.setState({ historyLoading: true });
+      root.render(createElement(TooltipProvider, null, createElement(ConversationModelSelector, {
+        selectedModel: "deepseek/deepseek-v4-flash", selectedReasoningPreset: "off", configurationPending: true,
+      })));
+    });
+    const trigger = container.querySelector<HTMLButtonElement>("button")!;
+    expect(trigger.disabled).toBe(false);
+    expect(trigger.textContent).toBe("模型");
+    expect(trigger.getAttribute("aria-label")).toBe("选择模型");
+    await act(async () => trigger.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 })));
+    const modelRow = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+      .find((element) => element.textContent?.trim() === "模型");
+    expect(modelRow).toBeDefined();
+    await moveMousePointer(modelRow!);
+    await act(async () => exactText("DeepSeek V4 Flash").click());
+    await settle();
+    expect(selectRuntimeConfig).toHaveBeenCalledWith({model:"deepseek/deepseek-v4-flash", reasoningPreset:"off"});
+  });
+
   it("opens submenus on pointer movement and keeps the root open after concrete selections", async () => {
     const trigger = container.querySelector<HTMLButtonElement>("button");
     if (!trigger) throw new Error("missing trigger");

@@ -27,7 +27,7 @@ from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import ExitStack
 from datetime import UTC, datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 from ag_ui.encoder import EventEncoder
@@ -38,6 +38,7 @@ from agent.runtime.errors import SessionBusyError
 from agent.runtime.models import RunRequest
 from agent.sessions.continuation import continuation_target
 from agent.sessions.query import CancelCheck, SessionHistoryPage, SessionQuerySnapshot
+from agent.sessions.read_views.display import display_event, public_reasoning_payload
 from agent.system_prompt import DESKTOP_CHAT_SURFACE
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -195,14 +196,93 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     router = APIRouter(prefix="/v1", tags=["meta"])
     mgr = runtime.persistent_session_manager
 
+    @app.get("/v1/sessions/{session_id}/composer")
+    async def get_composer(session_id: str, request: Request) -> dict[str, Any]:
+        session = await read_session(
+            request, lambda cancel: mgr.composer_session(session_id, cancel_check=cancel)
+        )
+        return {
+            "session_id": session_id,
+            "model": session.current_model,
+            "reasoningPreset": session.current_model_config.reasoning_preset,
+            "read_only": session.origin_kind == "inner_world",
+            **mgr.approval_mode_state(session).to_dict(),
+        }
+
+    @app.get("/v1/sessions/{session_id}/history")
+    async def get_history_window(
+        session_id: str,
+        request: Request,
+        turn_limit: int = Query(10, ge=1, le=100),
+        before: str | None = None,
+        history_epoch: str | None = None,
+    ) -> dict[str, Any]:
+        def load(cancel: CancelCheck) -> dict[str, Any]:
+            reader = getattr(runtime.persistent_store, "history_window", None)
+            if not callable(reader):
+                raise HTTPException(status_code=503, detail="History reader unavailable")
+            revision = mgr.current_revision(session_id)
+            page = reader(
+                session_id,
+                turn_limit=turn_limit,
+                before=before,
+                history_epoch=history_epoch,
+                cancel_check=cancel,
+            )
+            return {
+                "session_id": session_id,
+                "revision": revision,
+                "active_events": [
+                    _public_event_dict(event, chat_view=True) for event in page.active_events
+                ],
+                "history_cursor": page.history_cursor,
+                "history_epoch": page.history_epoch,
+                "read_only": page.read_only,
+                "recovery": {
+                    "sourceRunId": page.recovery.source_run_id,
+                    "rootRunId": page.recovery.root_run_id,
+                }
+                if page.recovery
+                else None,
+            }
+
+        return cast(dict[str, Any], await read_session(request, load))
+
+    @app.post("/v1/sessions/{session_id}/prepare")
+    async def prepare_session(session_id: str, request: Request) -> dict[str, str]:
+        session = await read_session(
+            request, lambda cancel: mgr.composer_session(session_id, cancel_check=cancel)
+        )
+        if session.origin_kind == "inner_world":
+            raise HTTPException(status_code=403, detail="Session is read-only")
+        return {"session_id": session_id, "state": mgr.prepare_execution(session_id)}
+
+    @app.get("/v1/sessions/{session_id}/prepare")
+    def preparation_status(session_id: str) -> dict[str, str]:
+        return {"session_id": session_id, "state": mgr.preparation_status(session_id)}
+
+    @app.delete("/v1/sessions/{session_id}/prepare")
+    def cancel_preparation(session_id: str) -> dict[str, str]:
+        mgr.cancel_preparation(session_id)
+        return {"session_id": session_id, "state": "idle"}
+
     @router.get("/sessions")
     def list_sessions(
         archived: bool = Query(False, description="是否返回已归档会话"),
         q: str | None = Query(None, description="按展示标题搜索"),
+        navigation: bool = False,
     ) -> list[dict[str, Any]]:
         """返回 ``list[SessionSummary]``（按最近活跃时间倒序）。"""
         try:
-            return [_session_summary_to_dict(s) for s in mgr.list(archived=archived, query=q)]
+            rows = [
+                _session_summary_to_dict(s)
+                for s in mgr.list(archived=archived, query=q, navigation=navigation)
+            ]
+            if navigation:
+                for row in rows:
+                    row.pop("model")
+                    row.pop("reasoningPreset")
+            return rows
         except SessionPersistError as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -428,18 +508,14 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         accept = request.headers.get("accept") or ""
         run_id = body.run_id or uuid4().hex
 
-        try:
-            preflight_session = mgr.query(session_id)
-        except SessionNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        target = next(
-            (
-                event
-                for event in reversed(preflight_session.active_events)
-                if event.type == "user_message"
-            ),
-            None,
-        )
+        def read_edit_target(cancel: CancelCheck) -> tuple[Event | None, str]:
+            snapshot = mgr.query(session_id, cancel_check=cancel)
+            target = next(
+                (e for e in reversed(snapshot.active_events) if e.type == "user_message"), None
+            )
+            return target, snapshot.current_model
+
+        target, model = await read_session(request, read_edit_target)
         if target is None:
             raise HTTPException(status_code=400, detail="当前会话没有可编辑重发的用户消息")
         target_content = target.payload.get("content", "")
@@ -512,7 +588,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
 
         attachment_plan = prepare_attachment_input(
             attachment_inputs,
-            model_id=preflight_session.current_model,
+            model_id=model,
             store=runtime.attachment_store,
             capability_resolver=runtime.attachment_capabilities,
             session_files_available=runtime.session_files_available,
@@ -993,12 +1069,16 @@ def _dataclass_to_dict(obj: Any) -> dict[str, Any]:
 def _public_event_dict(obj: Any, *, chat_view: bool = False) -> dict[str, Any]:
     """Serialize an event without exposing provider reasoning continuation payloads."""
     if chat_view and isinstance(obj, Event):
-        # Context accounting contains per-message diagnostics that can dwarf the
-        # conversation itself. Chat does not consume them; retain them in the
-        # journal and full/debug reads. Filter before asdict's recursive copy.
-        obj = dataclasses.replace(
-            obj, meta={key: value for key, value in obj.meta.items() if key != "context_usage"}
-        )
+        # Payload and metadata are JSON values; the response encoder consumes
+        # them read-only. Avoid recursively copying every tool result a second time.
+        item = display_event(obj)
+        return {
+            "type": item.type,
+            "uuid": item.uuid,
+            "ts": item.ts,
+            "payload": item.payload,
+            "meta": item.meta,
+        }
     event = _dataclass_to_dict(obj)
     if event.get("type") != "provider_reasoning_state":
         return event
@@ -1008,21 +1088,7 @@ def _public_event_dict(obj: Any, *, chat_view: bool = False) -> dict[str, Any]:
         event["payload"] = {"redacted": True}
         return event
 
-    public_payload = {
-        key: payload[key]
-        for key in ("provider", "model", "format", "replayScope")
-        if key in payload
-    }
-    data = payload.get("data")
-    if isinstance(data, str):
-        public_payload["dataCharCount"] = len(data)
-    elif isinstance(data, list):
-        public_payload["detailCount"] = len(data)
-    for key in ("dataCharCount", "detailCount"):
-        if key in payload and key not in public_payload:
-            public_payload[key] = payload[key]
-    public_payload["redacted"] = True
-    event["payload"] = public_payload
+    event["payload"] = public_reasoning_payload(payload)
     return event
 
 

@@ -105,6 +105,7 @@ def test_append_during_initial_build_publishes_caught_up_index_without_rescan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = make_store(tmp_path)
+    store.discard_business_index("one")
     entered, release = Signal(), Signal()
     original = store._read_records
     calls = 0
@@ -182,6 +183,7 @@ def test_cancelled_build_is_not_published_and_other_sessions_remain_available(
 ) -> None:
     store = make_store(tmp_path)
     store.append_events("one", [event("user_message", f"u{i}", content="hi") for i in range(20)])
+    store.discard_business_index("one")
     calls = 0
 
     def cancel() -> None:

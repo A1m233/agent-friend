@@ -38,6 +38,7 @@ interface ConversationModelSelectorProps {
   selectedReasoningPreset?: string;
   disabled?: boolean;
   disabledReason?: string;
+  configurationPending?: boolean;
 }
 
 export function ConversationModelSelector({
@@ -45,6 +46,7 @@ export function ConversationModelSelector({
   selectedReasoningPreset,
   disabled = false,
   disabledReason,
+  configurationPending = false,
 }: ConversationModelSelectorProps) {
   const catalog = useModelCatalogStore((state) => state.catalog);
   const modelSwitching = useConversationStore((state) => state.modelSwitching);
@@ -52,7 +54,6 @@ export function ConversationModelSelector({
   const currentReasoningPreset = useConversationStore(
     (state) => state.currentReasoningPreset,
   );
-  const historyLoading = useConversationStore((state) => state.historyLoading);
   const selectRuntimeConfig = useConversationStore((state) => state.selectRuntimeConfig);
   const [announcement, setAnnouncement] = useState("");
   const [open, setOpen] = useState(false);
@@ -61,7 +62,7 @@ export function ConversationModelSelector({
   const selectedOption = catalog?.providers
     .flatMap((provider) => provider.models)
     .find((model) => model.id === selectedModel);
-  const selectedLabel = selectedOption?.label ?? selectedModel;
+  const selectedLabel = configurationPending ? "模型" : selectedOption?.label ?? selectedModel;
   const selectedReasoning = selectedOption?.reasoning ?? {
     control: "unsupported" as const,
     defaultPreset: "none",
@@ -78,20 +79,18 @@ export function ConversationModelSelector({
     (preset) => preset.id === selectedConfig.reasoningPreset,
   );
   const reasoningLabel = selectedPreset?.label ?? (selectedReasoning.allowCustom && selectedConfig.reasoningPreset.startsWith("effort:") ? selectedConfig.reasoningPreset.slice(7) : selectedConfig.reasoningPreset);
-  const unavailable = disabled || !catalog || modelSwitching || historyLoading;
+  const unavailable = disabled || !catalog || modelSwitching;
   const reason = modelSwitching
     ? `正在切换到 ${modelSwitchTarget ?? "目标模型"}`
     : disabled
       ? disabledReason ?? "暂时不可用"
-      : historyLoading
-          ? "正在加载会话历史"
-          : !catalog
+      : !catalog
             ? "模型列表尚未就绪"
             : undefined;
 
   const handleSelect = async (config: ModelRuntimeConfig) => {
     if (
-      (config.model === selectedConfig.model
+      (!configurationPending && config.model === selectedConfig.model
         && config.reasoningPreset === selectedConfig.reasoningPreset)
       || modelSwitching
     ) return;
@@ -144,13 +143,13 @@ export function ConversationModelSelector({
                   size="pill"
                   disabled={unavailable}
                   loading={modelSwitching}
-                  aria-label={reason
+                  aria-label={configurationPending ? "选择模型" : reason
                     ? `当前模型：${selectedLabel}，推理强度：${reasoningLabel}。${reason}`
                     : `当前模型：${selectedLabel}，推理强度：${reasoningLabel}`}
                   className="max-w-52 gap-1 px-2 text-muted hover:text-fg"
                 >
                   <TextEllipsis className="min-w-0 leading-snug" showTooltip={false}>
-                    {`${selectedLabel} · ${reasoningLabel}`}
+                    {configurationPending ? selectedLabel : `${selectedLabel} · ${reasoningLabel}`}
                   </TextEllipsis>
                   {!modelSwitching && <ChevronDown className="size-4" aria-hidden="true" />}
                 </Button>
@@ -174,7 +173,7 @@ export function ConversationModelSelector({
             >
               <span>模型</span>
               <span className="ml-auto max-w-36 truncate text-muted group-data-[state=open]:text-accent-fg">
-                {selectedLabel}
+                {configurationPending ? null : selectedLabel}
               </span>
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent
@@ -201,7 +200,7 @@ export function ConversationModelSelector({
                       disabled={modelSwitching}
                     >
                       <span className="min-w-0 flex-1 truncate">{model.label}</span>
-                      {model.id === selectedModel && (
+                      {!configurationPending && model.id === selectedModel && (
                         <Check
                           className="size-4 text-accent group-focus:text-accent-fg"
                           aria-label="当前模型"
@@ -222,11 +221,12 @@ export function ConversationModelSelector({
           >
             <DropdownMenuSubTrigger
               className="group"
+              disabled={configurationPending}
               onFocus={() => setOpenSubmenu("reasoning")}
             >
               <span>推理强度</span>
               <span className="ml-auto text-muted group-data-[state=open]:text-accent-fg">
-                {reasoningLabel}
+                {configurationPending ? null : reasoningLabel}
               </span>
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent

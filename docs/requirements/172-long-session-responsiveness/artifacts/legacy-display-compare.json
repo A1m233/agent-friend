@@ -1,0 +1,98 @@
+{
+  "kind": "isolated_legacy_read",
+  "real_llm_calls": 0,
+  "journal_sha256": "2d6d7c9dc67514fcea8a5b60a96913e6c5c58a3c0e8aca8f33a2b87feee9edc4",
+  "journal_bytes": 96302290,
+  "first_page_ms": 74.0273999999772,
+  "reopened_page_samples_ms": [
+    6.599199999982375,
+    5.696499999885418,
+    6.105700000034631
+  ],
+  "first_turns": 10,
+  "first_events": 165,
+  "event_counts": {
+    "system_trigger": 2,
+    "assistant_message": 14,
+    "run_started": 9,
+    "skill_catalog_state": 1,
+    "user_message": 8,
+    "assistant_phase": 48,
+    "run_terminal": 9,
+    "todo_reminder": 1,
+    "tool_call_request": 30,
+    "tool_call_result": 30,
+    "provider_reasoning_state": 8,
+    "tool_execution_checkpoint": 4,
+    "tool_context_edit": 1
+  },
+  "display_event_bytes": 296339,
+  "bytes_by_event_type": {
+    "system_trigger": {
+      "payload_bytes": 1056,
+      "meta_bytes": 429
+    },
+    "assistant_message": {
+      "payload_bytes": 9456,
+      "meta_bytes": 8365
+    },
+    "run_started": {
+      "payload_bytes": 1633,
+      "meta_bytes": 1019
+    },
+    "skill_catalog_state": {
+      "payload_bytes": 239,
+      "meta_bytes": 133
+    },
+    "user_message": {
+      "payload_bytes": 3135,
+      "meta_bytes": 1132
+    },
+    "assistant_phase": {
+      "payload_bytes": 2226,
+      "meta_bytes": 2288
+    },
+    "run_terminal": {
+      "payload_bytes": 2162,
+      "meta_bytes": 1019
+    },
+    "todo_reminder": {
+      "payload_bytes": 944,
+      "meta_bytes": 2
+    },
+    "tool_call_request": {
+      "payload_bytes": 20891,
+      "meta_bytes": 15812
+    },
+    "tool_call_result": {
+      "payload_bytes": 163857,
+      "meta_bytes": 30518
+    },
+    "provider_reasoning_state": {
+      "payload_bytes": 2000,
+      "meta_bytes": 1408
+    },
+    "tool_execution_checkpoint": {
+      "payload_bytes": 1088,
+      "meta_bytes": 516
+    },
+    "tool_context_edit": {
+      "payload_bytes": 2528,
+      "meta_bytes": 50
+    }
+  },
+  "public_encoding_ms": 8.359500000096887,
+  "public_event_bytes": 297494,
+  "journal_tail_span_bytes": 32276572,
+  "first_page_sha256": "81bf8bd131aa834d31f90eb8cf0e00bcf7e673df87ab1f4e7a2ed9b05aa709fa",
+  "legacy_configuration_bootstrap_ms": 86.13960000002407,
+  "configuration_after_restart_ms": 5.661500000087472,
+  "older_turns": 30,
+  "full_public_projection_equal": true,
+  "original_unchanged": true,
+  "copy_business_bytes_unchanged": true,
+  "limits": [
+    "storage only, OS cache uncontrolled, source journal copied without old derived caches",
+    "no messages, source path, raw session id or model configuration in report"
+  ]
+}

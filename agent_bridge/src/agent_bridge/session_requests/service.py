@@ -75,7 +75,13 @@ class SessionRequestService:
     def validate_target(self, session_id: str) -> None:
         manager = self.runtime.persistent_session_manager
         try:
-            manager.query(session_id)
+            if not manager.exists(session_id):
+                raise SessionNotFoundError(f"会话不存在: {session_id}")
+            # A ready execution state already validated the journal under its
+            # retained writer lease. Actual bind rechecks source ownership;
+            # admission need not rebuild the full business history as well.
+            if manager.preparation_status(session_id) != "ready":
+                manager.query(session_id)
         except SessionNotFoundError as exc:
             raise SessionRequestError(
                 "target_session_missing", "目标会话已不存在，请选择其它会话。"

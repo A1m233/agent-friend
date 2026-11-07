@@ -145,6 +145,20 @@ CDP等待条件使用先await加载状态模块、再同步waitForFunction的方
 
 `session-latency/run.* isolated prepare|serve --session-id ID --directory PATH` 是本需求独立后端实验入口：prepare复制长会话、固定短会话和persona到项目外；serve在18820启动独立bridge，保留memory与notifications，关闭IM/bedtime/idle。它不是完整用户profile克隆（不复制附件、原记忆库与IM凭据）。serve必须另获覆盖后台调用的授权，不能自动续用需求120既有额度。HTTPX同步/异步transport统一限制4次外部POST，文本JSON按wire字节保守预留至多100万输入token上界，拒绝多模态，未使用部分不按估计实际消耗宣称；budget.json存在时拒绝重启重置额度。该上界与真实usage分别对账。
 
+`session-latency/run.* responsiveness --output NEW_JSON [--repeats 20]` 离线生成固定最近 10 轮、增长历史前缀与 64 MiB 内部记录的隔离数据，比较尾部兼容和持久索引读取；禁止网络，不访问真实用户会话。报告只覆盖存储与 JSON 编码，不代表 HTTP 或桌面首屏时间。
+
+`session-latency/run.* desktop-responsiveness --cdp http://127.0.0.1:9222 --identity FIXTURE_IDENTITY --output NEW_DIRECTORY` 仅附着身份与源码新鲜度匹配的真实 Tauri，要求独立的 `desktop-fixture --synthetic-only` 数据。测量实际点击到真实可见消息的时间，并通过单独延迟历史及准备响应检查输入、菜单、切换与草稿；不发送消息、不调用模型。报告区分正常链路和 UI 故障注入，不将 DOM 几何等同于 GPU 绘制。`desktop-history` 同步验证首屏 10 轮、续页 30 轮及引用导航。
+
+`session-latency/run.* desktop-growth-fixture --identity SYNTHETIC_IDENTITY --prefix-turns 100000 --output NEW_DIRECTORY` 校验源合成数据 hash，只增加长会话的旧前缀，保留最近正文逐字节相同，生成无索引的独立数据供 `desktop-responsiveness` 比较。不接受真实数据，不启动运行态；新增前缀不在原 `expected.turns` 列表中，不能用作 `desktop-history` 的 65 轮夹具。
+
+`desktop-responsiveness` 可加 `--invalidate-derived true`，仅在上述合成副本上更新 mtime、保持正文 hash 不变，逐次覆盖派生视图失效路径。异步 UI 条件通过宿主轮询后等待已解析的布尔值，避免 WebView 对 async predicate 提前返回。
+
+`session-latency/run.* legacy-read --source JOURNAL --output NEW_JSON [--full-compare] [--repeats 3]` 在禁止联网的临时副本上分别记录首次补建和新 store 再次打开的耗时。`--full-compare` 逐事件核对完整业务投影经过相同公开过滤后的结果。
+
+`desktop-responsiveness` 可加 `--legacy-source JOURNAL`，使用新建的临时 `agent-friend-172-*` 夹具和关闭了自主活动的桌面实例。探针独占创建日志副本，从短会话点击打开旧会话，分别记录首次和三次重新加载 WebView 后的可见耗时。只记录计数、源 hash 与时间，禁用截图并阻止页面外部资源请求。副本和派生数据仅用于本地验证，桌面实例停止后随临时夹具一起清理。
+
+`session-latency/run.* desktop-send-smoke SYNTHETIC_IDENTITY NEW_DIRECTORY --background-calls-authorized` 需要本次明确 LLM 授权；在已校验身份的真实 Tauri 隔离运行态中创建一个测试会话，用当前配置模型发送两条短消息，核对界面与落盘，不自动重试发送。自主活动必须已关闭；正常记忆及通知钩子仍可能产生后台模型调用，授权预算必须包含它们。报告中的客户端 run 创建时间不是服务端接收耗时，所有 provider 调用须另从日志对账。
+
 `session-latency/run.* long-runtime DIRECTORY [REPORT_NAME]` 必须在上述独立后端已授权且尚未消耗预算时使用。临时重定向当前真实Tauri chat WebView的REST/SSE至18820，核对runtime身份后发送一次calculate任务、切换长短会话并检查通知；结束恢复原路由并重载。检查报告terminal/outcome，失败不得算通过；测试结束显式清理仅属于本次启动的独立后端进程树，保留用户要求保留的原dev。两个平台wrapper参数一致，Windows后台启动应隐藏窗口。
 
 `notification-visual` 先用 `dev/run.* status` 核对当前 worktree、源码新鲜度与 CDP 9222 运行态。`settings inspect/off/on` 进入“设置 → 通知”操作真实声音开关；`reload-pet`、`reload-bubble`、`reload-chat` 刷新指定 WebView；`expand ID`、`close ID` 通过真实按钮检查展开/关闭；`tooltip '按钮名称'` 悬停并记录朝向、边界及桌宠 WebView 截图，不点击该按钮。使用 `--help` 查看完整命令。报告和气泡截图默认位于系统临时目录的 `agent-friend-notification-visual-117/`，可用 `--output=<私有目录>` 指定；可能包含用户通知正文，不应提交。ActionBar 的四个调试按钮仅在 dev 提供，固定文案不调用模型、不写记忆，清空仅作用于调试来源。

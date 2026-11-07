@@ -18,7 +18,11 @@ from portalocker.exceptions import LockException
 from ..events import ROLLOUT_EVENT_TYPES, Event
 from ..message_access import MessagePage, read_message_page
 from ..query import CancelCheck, SessionHistoryPage, SessionQuerySnapshot, check_cancel
+from ..read_views.display import display_event
+from ..read_views.journal import HistoryWindow
+from ..session import Session
 from ..store_types import SessionLoadDiagnostics, SourceVersion
+from . import chat_tail
 from .pages import page, recovery_body
 
 
@@ -27,6 +31,7 @@ def dump(value: object) -> str:
 
 
 _SCHEMA = 4
+_CHAT_BODIES = "CREATE TABLE IF NOT EXISTS chat_bodies (uuid TEXT PRIMARY KEY, body TEXT NOT NULL)"
 _DDL = (
     "CREATE TABLE state (id INTEGER PRIMARY KEY CHECK(id=1), version TEXT NOT NULL, "
     "count INTEGER NOT NULL, diagnostics TEXT NOT NULL, epoch TEXT NOT NULL, metadata TEXT NOT NULL)",
@@ -104,6 +109,7 @@ class BusinessIndex:
                 with closing(sqlite3.connect(path, timeout=0)) as db:
                     db.row_factory = sqlite3.Row
                     db.set_progress_handler(progress, 1000)
+                    db.execute("PRAGMA journal_mode=WAL")
                     db.execute("BEGIN")
                     with db:
                         version = db.execute("PRAGMA user_version").fetchone()[0]
@@ -119,6 +125,7 @@ class BusinessIndex:
                             for statement in _DDL:
                                 db.execute(statement)
                             db.execute(f"PRAGMA user_version={_SCHEMA}")
+                        db.execute(_CHAT_BODIES)
                         yield db
                         check_cancel(cancel_check)
             except sqlite3.Error as exc:
@@ -187,6 +194,31 @@ class BusinessIndex:
                 return None
             return self._snapshot(db, row, cancel_check)
 
+    def read_existing(
+        self, session_id: str, version: SourceVersion, cancel_check: CancelCheck
+    ) -> Session | None:
+        """Return an owned business session without migrating or building a database."""
+        path = self.path(session_id)
+        if not path.exists():
+            return None
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0)) as db:
+            db.execute("BEGIN")
+            if db.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA:
+                return None
+            state = db.execute(
+                "SELECT diagnostics FROM state WHERE version=?", (dump(version),)
+            ).fetchone()
+            if state is None:
+                return None
+            events = []
+            for (body,) in db.execute("SELECT body FROM events ORDER BY position"):
+                check_cancel(cancel_check)
+                events.append(Event.from_jsonl(body))
+            session = Session.from_events(events)
+            session.load_diagnostics = SessionLoadDiagnostics(**json.loads(state[0]))
+            session.loaded_source_version = version
+            return session
+
     @staticmethod
     def _metadata(snapshot: SessionQuerySnapshot) -> dict[str, Any]:
         return {
@@ -209,7 +241,10 @@ class BusinessIndex:
         with self.database(snapshot.session_id, cancel_check) as db:
             if not is_current():
                 return False
-            for table in ("state", "events", "inactive"):
+            if db.execute("SELECT 1 FROM sqlite_schema WHERE name='chat_tail_state'").fetchone():
+                db.execute("DELETE FROM chat_tail_state")
+                db.execute("DELETE FROM chat_tail_rows")
+            for table in ("state", "events", "inactive", "chat_bodies"):
                 db.execute(f"DELETE FROM {table}")
             inactive = {
                 str(uuid)
@@ -248,6 +283,10 @@ class BusinessIndex:
             "INSERT INTO events VALUES (?,?,?,?,?,?)",
             (position, event.uuid, event.type, event.to_jsonl(), int(active), recovery_body(event)),
         )
+        db.execute(
+            "INSERT OR REPLACE INTO chat_bodies VALUES (?,?)",
+            (event.uuid, display_event(event).to_jsonl()),
+        )
 
     def advance(
         self,
@@ -256,10 +295,22 @@ class BusinessIndex:
         after: SourceVersion,
         events: list[Event],
         is_current: Callable[[], bool],
+        encoded: list[bytes] | None = None,
     ) -> None:
         if not self.path(session_id).exists():
             return
         with self.database(session_id, wait=False) as db:
+            if not is_current():
+                return
+            if encoded is not None:
+
+                def positioned() -> Iterator[tuple[int, Event]]:
+                    offset = before[2]
+                    for event, data in zip(events, encoded, strict=True):
+                        yield offset, event
+                        offset += len(data)
+
+                chat_tail.advance(db, before, after, positioned())
             row = db.execute("SELECT * FROM state WHERE id=1").fetchone()
             if row is None or row["version"] != dump(before) or not is_current():
                 return
@@ -285,11 +336,21 @@ class BusinessIndex:
                     in {"persona_change", "model_change", "model_config_change", "channel_change"}
                     for event in events
                 ):
-                    updated = db.execute("SELECT * FROM state WHERE id=1").fetchone()
-                    snapshot = self._snapshot(db, updated, None)
-                    db.execute(
-                        "UPDATE state SET metadata=? WHERE id=1", (dump(self._metadata(snapshot)),)
+                    metadata = json.loads(row["metadata"])
+                    session = Session.new(
+                        metadata["title"],
+                        metadata["persona"],
+                        metadata["model"],
+                        session_id=session_id,
+                        reasoning_preset=metadata["reasoningPreset"],
                     )
+                    session.events.extend(events)
+                    metadata.update(
+                        persona=session.current_persona,
+                        model=session.current_model,
+                        reasoningPreset=session.current_model_config.reasoning_preset,
+                    )
+                    db.execute("UPDATE state SET metadata=? WHERE id=1", (dump(metadata),))
         if current is not None:
             self.publish(current, is_current)
 
@@ -297,6 +358,71 @@ class BusinessIndex:
         with self.database(session_id, kwargs.get("cancel_check")) as db:
             return page(db, version, **kwargs)
 
+    def page_nowait(
+        self, session_id: str, version: SourceVersion, **kwargs: Any
+    ) -> SessionHistoryPage | None:
+        """Read a compatible snapshot only; never create, migrate or take a file lock."""
+        path = self.path(session_id)
+        if not path.exists():
+            return None
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0)) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("BEGIN")
+            if db.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA:
+                return None
+            state = db.execute("SELECT version FROM state WHERE id=1").fetchone()
+            if state is None or state["version"] != dump(version):
+                return None
+            missing: dict[str, str] = {}
+            result = page(db, version, display=True, missing=missing, **kwargs)
+        if missing:
+            # Older compatible business index: fill only the rows just requested.
+            try:
+                with self.database(session_id, kwargs.get("cancel_check"), wait=False) as db:
+                    if db.execute(
+                        "SELECT 1 FROM state WHERE version=?", (dump(version),)
+                    ).fetchone():
+                        db.executemany(
+                            "INSERT OR REPLACE INTO chat_bodies VALUES (?,?)", missing.items()
+                        )
+            except (sqlite3.Error, OSError, LockException):
+                pass
+        return result
+
     def message_page(self, session_id: str, version: SourceVersion, **kwargs: Any) -> MessagePage:
         with self.database(session_id, kwargs.get("cancel_check")) as db:
             return read_message_page(db, version, **kwargs)
+
+    def tail_nowait(
+        self, session_id: str, version: SourceVersion, **kwargs: Any
+    ) -> HistoryWindow | None:
+        path = self.path(session_id)
+        if not path.exists():
+            return None
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0)) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("BEGIN")
+            return chat_tail.read(db, session_id, version, **kwargs)
+
+    def remember_tail(
+        self,
+        window: HistoryWindow,
+        before: str | None,
+        is_current: Callable[[], bool],
+        check: CancelCheck,
+    ) -> None:
+        # The old database may have an unknown business schema. Add only the
+        # independent display tables, without migrating or replacing that schema.
+        path = self.path(window.session_id)
+        with (
+            self._locked(path.with_suffix(".lock"), check, wait=False),
+            closing(sqlite3.connect(path, timeout=0)) as db,
+            db,
+        ):
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("BEGIN IMMEDIATE")
+            if is_current():
+                chat_tail.cache(db, window, before, check)
+                if not is_current():
+                    db.rollback()
