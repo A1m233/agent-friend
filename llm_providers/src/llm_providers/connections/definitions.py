@@ -41,9 +41,17 @@ class ConnectionDefinition:
     protocol: Literal["chat_completions", "responses"]
     models: tuple[CustomModel, ...]
     credential_revision: str | None = None
+    image_model: str | None = None
 
     def __post_init__(self) -> None:
         _identity(self.id)
+        if self.image_model is not None and (
+            not isinstance(self.image_model, str)
+            or not self.image_model.strip()
+            or self.image_model != self.image_model.strip()
+            or any(ord(char) < 32 for char in self.image_model)
+        ):
+            raise ValueError("Invalid connection image model")
         if self.credential_revision is not None:
             _identity(self.credential_revision)
         if not self.name.strip() or self.name != self.name.strip():

@@ -46,6 +46,7 @@ from llm_providers.image_output import LLMImageResult, LLMImageStart
 from llm_providers.multimodal.chat_images import project_tool_image_transport
 from llm_providers.multimodal.tool_images import record_image_rejection, supports_tool_images
 from llm_providers.protocol import DEFAULT_MODEL_RETRIES
+from llm_providers.spec import ProviderSpec
 
 from llm_providers import (
     LanguageModel,
@@ -3893,9 +3894,15 @@ class Conversation:
         if self._voice_latency_disable_tools or self._tool_registry is None:
             return None
         specs = self._tool_registry.to_openai_tools()
+        if self._current_images_spec() is None:
+            specs = [spec for spec in specs if spec["function"]["name"] != "imagegen"]
         if self._message_renderer is None or not supports_tool_images(self._active_llm_client()):
             specs = [spec for spec in specs if spec["function"]["name"] != "view_image"]
         return specs
+
+    def _current_images_spec(self) -> ProviderSpec | None:
+        spec = getattr(self._active_llm_client(), "spec", None)
+        return spec if isinstance(spec, ProviderSpec) and spec.images is not None else None
 
     def _restore_context_usage(self) -> None:
         """从 active assistant event 恢复各模型最近的 usage 校准。"""
@@ -4133,6 +4140,7 @@ class Conversation:
         trace_context_builder: Callable[[int], ModelCallTraceContext] | None = None,
         comparison_witness_builder: Callable[[], ProviderRequestWitness | None] | None = None,
         trace_call_kind: str | None = None,
+        image_only_completion: bool = False,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[Any]:
         """Stream one model response with context and incomplete-output recovery."""
@@ -4320,6 +4328,25 @@ class Conversation:
                 rebuilt_messages = rebuilt if isinstance(rebuilt, list) else (yield from rebuilt)
                 current_messages = self._project_image_transport(rebuilt_messages)
             except LLMEmptyResponseError as exc:
+                if (
+                    image_only_completion
+                    and not request_accepted
+                    and type(exc) is LLMEmptyResponseError
+                ):
+                    # A completed image-only tool batch is already a visible answer.
+                    # Some models close the continuation without additional prose.
+                    self._check_cancel(cancel_check)
+                    checkpoint = self._commit_pending_context_checkpoints()
+                    if checkpoint is not None:
+                        yield checkpoint
+                    snapshot = self._run_model_snapshot
+                    if snapshot is not None:
+                        snapshot.phase.validation = (
+                            "conflict" if snapshot.phase.conflict else "valid"
+                        )
+                        yield self._publish_assistant_phase(snapshot.phase)
+                    yield LLMTurnDone("end_turn")
+                    return
                 if (
                     request_accepted
                     or response_recovery_used
@@ -4665,6 +4692,11 @@ class Conversation:
                 request_observer=observe_request,
                 trace_context_builder=build_trace_context,
                 comparison_witness_builder=lambda: request_comparison.previous_witness,
+                image_only_completion=(
+                    call_kind == "tool_continuation"
+                    and self._run_model_snapshot is not None
+                    and self._run_model_snapshot.phase.image_tool_batch_delivered
+                ),
                 cancel_check=cancel_check,
             ):
                 if (
@@ -5583,7 +5615,22 @@ class Conversation:
                     ),
                 }
             )
-        if name in FILESYSTEM_TOOL_NAMES or name == "view_image":
+        if name == "imagegen":
+            from .tools.builtin.image_gen.tool import (
+                IMAGE_DUPLICATE_ARG,
+                IMAGE_SPEC_ARG,
+                image_request_already_handled,
+            )
+
+            invocation_args[IMAGE_SPEC_ARG] = self._current_images_spec()
+            invocation_args[IMAGE_DUPLICATE_ARG] = image_request_already_handled(
+                self._session.events[current_turn_start_idx:]
+                if current_turn_start_idx is not None
+                else (),
+                tool_call_id,
+                args,
+            )
+        if name in FILESYSTEM_TOOL_NAMES or name in {"view_image", "imagegen"}:
             invocation_args.update(
                 {
                     FILESYSTEM_LEDGER_ARG: (
@@ -6241,7 +6288,38 @@ class Conversation:
             runtime.new_evidence_count = progress.new_evidence_count
             runtime.reused_evidence_count = progress.reused_evidence_count
             runtime.last_intent_signature = progress.last_intent_signature
-            self._append_tool_call_result_event(tc, result, duration)
+            image_event: Event | None = None
+            image: AssistantImage | None = None
+            if result.generated_image is not None:
+                from .tools.builtin.image_gen.tool import image_message_id
+
+                self._check_cancel(cancel_check)
+                mid = image_message_id(self._session.session_id, tc["event_id"])
+                last_index = max((c.get("response_item_index") or 0 for c in tool_calls), default=0)
+                phase = self._run_model_snapshot.phase if self._run_model_snapshot else None
+                index = phase.reserve_image_index(last_index) if phase else last_index + 1
+                image = AssistantImage(mid, index, (result.generated_image,))
+                image_event = Event(
+                    type="assistant_message",
+                    uuid=mid,
+                    ts=datetime.now(UTC),
+                    meta=self._run_event_meta(
+                        {
+                            "model": self._active_model_id(),
+                            "persona": self._session.current_persona_name,
+                        }
+                    ),
+                    payload={
+                        "content": result.text,
+                        "partial": False,
+                        "phase": "unknown",
+                        "item_index": index,
+                        "attachments": [result.generated_image.to_dict()],
+                        "generated_image": {"error_code": None},
+                        "imagegen_call_id": tc["event_id"],
+                    },
+                )
+            self._append_tool_call_result_event(tc, result, duration, image_event=image_event)
             log_run_latency(
                 logger,
                 self._run_latency_context,
@@ -6265,6 +6343,14 @@ class Conversation:
                 duration_seconds=duration,
                 images=result.images if not result.is_error else (),
                 origin=tc.get("origin", "model"),
+            )
+            if image is not None:
+                yield image
+
+        if self._run_model_snapshot is not None:
+            self._run_model_snapshot.phase.image_tool_batch_delivered = bool(executed) and (
+                len(executed) == len(tool_calls)
+                and all(item.result.generated_image is not None for item in executed)
             )
 
     def _apply_skill_tool_result(self, result: ToolResult) -> ToolResult:
@@ -6977,6 +7063,7 @@ class Conversation:
         *,
         run_id: str | None = None,
         history_insert_after_call: bool = False,
+        image_event: Event | None = None,
     ) -> Event:
         """落 ``tool_call_result`` 事件。"""
         meta: dict[str, Any] = self._run_event_meta(
@@ -7039,8 +7126,13 @@ class Conversation:
             payload=payload,
             meta=meta,
         )
-        self._store.append_event(self._session.session_id, event)
-        self._session.append(event)
+        if image_event is None:
+            self._store.append_event(self._session.session_id, event)
+            self._session.append(event)
+        else:
+            append_session_events(self._store, self._session.session_id, [event, image_event])
+            self._session.append(event)
+            self._session.append(image_event)
         append_history_result = (
             self._session_model_history.insert_tool_result_after_call
             if history_insert_after_call

@@ -17,7 +17,7 @@ from ..catalog import (
 from ..custom_reasoning import custom_effort
 from ..errors import LLMAuthError, LLMModelUnavailableError
 from ..model_identity import is_custom_model_reference
-from ..spec import DEFAULT_LLM_TIMEOUT_SECONDS, ProviderSpec, ResponsesRoute
+from ..spec import DEFAULT_LLM_TIMEOUT_SECONDS, ImagesRoute, ProviderSpec, ResponsesRoute
 from .definitions import ConnectionDefinition, model_reference
 
 
@@ -96,6 +96,7 @@ class ModelDirectory:
             model=model.litellm_model,
             api_key=api_key.strip(),
             api_base=owner.base_url,
+            images=ImagesRoute(owner.base_url, owner.image_model),
             timeout_is_default=True,
             defaults={
                 "timeout": DEFAULT_LLM_TIMEOUT_SECONDS,

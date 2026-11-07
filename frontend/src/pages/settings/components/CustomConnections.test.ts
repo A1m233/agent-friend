@@ -123,8 +123,20 @@ it("discovers and selects a model before saving without generating", async () =>
     models: [{ name: "org/my-model", contextWindow: 8192 }],
   });
   expect(keys[connections[0].id]).toBe("fixture-key");
+  expect(connections[0].imageModel).toBeUndefined();
   expect(mock.test).not.toHaveBeenCalled();
   expect(document.querySelector('input[type="password"]')).toBeNull();
+});
+it("saves the image model on the selected connection independently of its chat model", async () => {
+  await connectionFields();
+  await chooseDiscovered();
+  await input("connection-image-model", "  provider/image  ");
+  await click("保存");
+  expect(mock.save.mock.calls[0][1][0]).toMatchObject({
+    imageModel: "provider/image",
+    models: [{ name: "org/my-model" }],
+  });
+  expect(mock.test).not.toHaveBeenCalled();
 });
 it("keeps manual entry available after discovery fails, then preserves a failed save draft", async () => {
   mock.discover.mockRejectedValueOnce(new Error("model_list_unavailable"));

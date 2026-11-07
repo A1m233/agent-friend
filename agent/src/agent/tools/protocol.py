@@ -35,9 +35,14 @@ class ToolResult:
     is_error: bool = False
     meta: dict[str, Any] = field(default_factory=dict)
     images: tuple[AttachmentRef, ...] = ()
+    generated_image: AttachmentRef | None = None
 
     def __post_init__(self) -> None:
         validate_image_refs(self.images)
+        if self.generated_image is not None:
+            validate_image_refs((self.generated_image,))
+            if self.images or self.is_error:
+                raise ValueError("a generated image has exactly one delivery path")
         if self.is_error and self.images:
             raise ValueError("failed tool results cannot contain images")
 
