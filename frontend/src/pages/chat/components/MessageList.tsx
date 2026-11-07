@@ -1597,7 +1597,7 @@ export function MessageList({
       <MessageQuoteSelectionAction
         workspaceKey={quoteWorkspaceKey}
         onFocusComposer={onFocusComposer}
-        disabled={readOnly || historyLoading || editingMessage?.phase === "submitting"}
+        disabled={readOnly || historyLoading}
       />
     </ExecutionDisclosureStateProvider>
   );

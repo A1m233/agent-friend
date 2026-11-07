@@ -57,8 +57,8 @@ def register_migration_routes(
         x_agent_friend_lifecycle_token: str | None = Header(default=None),
     ) -> dict[str, object]:
         authorize(x_agent_friend_lifecycle_token)
-        sessions = len(runtime.persistent_session_manager.list()) + len(
-            runtime.persistent_session_manager.list(archived=True)
+        sessions = len(runtime.persistent_session_manager.list(navigation=True)) + len(
+            runtime.persistent_session_manager.list(archived=True, navigation=True)
         )
         semantic_memories = 0
         episodic_memories = 0

@@ -23,6 +23,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
+from threading import Event as ThreadEvent
 
 from agent.paths import log_dir
 from fastapi import FastAPI
@@ -208,7 +209,6 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if runtime.notification_service is not None:
             runtime.notification_service.start()
-        reconcile_attachments(runtime)
         if runtime.skill_service is not None:
             runtime.skill_service.start()
         if runtime.first_party_skill_updater is not None:
@@ -234,9 +234,15 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
         residency_task = asyncio.create_task(
             maintain_session_residency(runtime, residency_stopping)
         )
+        attachment_stopping = ThreadEvent()
+        attachment_task = asyncio.create_task(
+            asyncio.to_thread(reconcile_attachments, runtime, attachment_stopping)
+        )
         try:
             yield
         finally:
+            attachment_stopping.set()
+            await attachment_task
             residency_stopping.set()
             await residency_task
             if runtime.notification_service is not None:

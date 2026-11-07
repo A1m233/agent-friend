@@ -15,7 +15,7 @@ from uuid import uuid4
 from .events import Event
 from .query import CancelCheck, check_cancel, load_business_session, load_session
 from .session import Session
-from .store import SessionStore
+from .store import SessionStore, navigation_summaries
 from .tool_execution_evidence import (
     ToolExecutionEvidenceError,
     ToolExecutionEvidenceStore,
@@ -129,7 +129,7 @@ class ToolTransactionReconciler:
         """Best-effort startup scan sharing the same per-session idempotency guard."""
 
         reports: list[ReconciliationSummary] = []
-        for summary in self._store.list():
+        for summary in navigation_summaries(self._store):
             try:
                 reports.append(self._reconcile_summary(summary.session_id))
             except Exception:

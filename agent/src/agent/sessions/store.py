@@ -15,7 +15,7 @@ import sqlite3
 import stat
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass, replace
 from datetime import datetime
 from hashlib import sha256
@@ -66,6 +66,9 @@ from .query_observation import (
     observe_query_maintenance_failure,
     observe_session_query,
 )
+from .read_views import HistoryWindow, read_configuration, read_window
+from .read_views.activity import ActivityTimes, latest_timestamp
+from .read_views.configuration import ConfigurationCache
 from .recall import RecallBuilder, SessionRecallSnapshot, query_session_recall
 from .recall.index import RecallIndex
 from .rollout_encoding import RolloutDecoder
@@ -77,8 +80,6 @@ if TYPE_CHECKING:
 
 _LOCK_TIMEOUT_SECONDS = 10.0
 """Maximum wait for a session file lock; timeout alone does not identify its owner."""
-
-_REVERSE_READ_CHUNK_BYTES = 8192
 
 
 class SessionWriterLease(Protocol):
@@ -119,33 +120,6 @@ class _PortalockerWriterLease:
         finally:
             self._handle = None
             self._on_release()
-
-
-def _iter_lines_reverse(path: Path, cancel_check: CancelCheck = None) -> Iterator[str]:
-    """Yield non-empty UTF-8 lines from a file in reverse order."""
-    with path.open("rb") as file:
-        file.seek(0, 2)
-        position = file.tell()
-        pending = b""
-        while position > 0:
-            check_cancel(cancel_check)
-            read_size = min(_REVERSE_READ_CHUNK_BYTES, position)
-            position -= read_size
-            file.seek(position)
-            pending = file.read(read_size) + pending
-            lines = pending.split(b"\n")
-            pending = lines[0]
-            for line in reversed(lines[1:]):
-                if line.strip():
-                    try:
-                        yield line.decode("utf-8")
-                    except UnicodeDecodeError:
-                        continue
-        if pending.strip():
-            try:
-                yield pending.decode("utf-8")
-            except UnicodeDecodeError:
-                return
 
 
 _WINDOWS_RESERVED_FILENAMES = {
@@ -197,6 +171,12 @@ class SessionSummary:
     origin_kind: str | None = None
     origin_id: str | None = None
     origin_occurrence_id: str | None = None
+
+
+def navigation_summaries(store: SessionStore) -> list[SessionSummary]:
+    """Identity, title and activity only. The head model is not current configuration."""
+    method = getattr(store, "list_navigation", store.list)
+    return cast(list[SessionSummary], method())
 
 
 class SessionStore(Protocol):
@@ -295,6 +275,8 @@ class JsonlSessionStore:
         self._business_index = BusinessIndex(self._base_dir)
         self._business_builds = BusinessBuilds()
         self._source_digests = SourceDigestTracker()
+        self._configuration = ConfigurationCache(self._base_dir)
+        self._activity_times = ActivityTimes(self._base_dir)
         self._execution_cache = ExecutionSnapshotCache(
             self._base_dir, self._source_digests, maintenance_guard=self.maintenance_guard
         )
@@ -391,6 +373,17 @@ class JsonlSessionStore:
                 binary.flush()
                 os.fsync(binary.fileno())
                 created_version = self._handle_version(binary, path)
+                try:
+                    self._configuration.publish(session, created_version)
+                    snapshot = SessionQuerySnapshot.build(
+                        enumerate(session.events),
+                        raw_event_count=len(session.events),
+                        diagnostics=SessionLoadDiagnostics(),
+                        source_version=created_version,
+                    )
+                    self._business_index.publish(snapshot, lambda: True)
+                except Exception as exc:
+                    observe_query_maintenance_failure(session.session_id, exc)
         except LockException as e:
             raise SessionPersistError(
                 f"获取会话文件写锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {path}: {e}"
@@ -457,6 +450,12 @@ class JsonlSessionStore:
                     os.fsync(binary.fileno())
                 with observation.phase("version"):
                     after = self._handle_version(binary, path)
+                    try:
+                        self._configuration.advance(session_id, before, after, events)
+                        if clean_boundary:
+                            self._activity_times.advance(session_id, before, after, events)
+                    except Exception as exc:
+                        observe_query_maintenance_failure(session_id, exc)
                     if session_id in self._writer_versions:
                         self._writer_versions[session_id] = after
                     # Capture durable bytes before another local append can overtake them.
@@ -501,6 +500,7 @@ class JsonlSessionStore:
                     after,
                     events,
                     is_current=lambda: self._source_version(path) == after,
+                    encoded=encoded,
                 )
             except AlreadyLocked:
                 observe_query_maintenance_deferred(session_id, projection_kind="business")
@@ -631,13 +631,25 @@ class JsonlSessionStore:
         )
 
     def load_business(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
-        snapshot = self.query(session_id, cancel_check=cancel_check)
-        # Return owned mutable events, never the immutable shared query objects.
-        session = Session.from_events(
-            [Event.from_jsonl(event.to_jsonl()) for event in snapshot.events]
+        # Maintenance (including orphan recovery) must not build a persistent
+        # chat index for every unopened session. Read only the business journal.
+        path = self._existing_path(session_id)
+        if path is None:
+            raise SessionNotFoundError(f"会话不存在: {session_id}")
+        try:
+            indexed = self._business_index.read_existing(
+                session_id, self._source_version(path), cancel_check
+            )
+            if indexed is not None and self.can_reuse_loaded(indexed):
+                return indexed
+        except (OSError, sqlite3.Error, SessionCorruptError, ValueError):
+            check_cancel(cancel_check)
+        records, diagnostics, version, _ = self._read_records(
+            session_id, query_only=True, cancel_check=cancel_check
         )
-        session.load_diagnostics = snapshot.load_diagnostics
-        session.loaded_source_version = snapshot.source_version
+        session = Session.from_events([event for _, event in records])
+        session.load_diagnostics = diagnostics
+        session.loaded_source_version = version
         return session
 
     def load_execution(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
@@ -665,6 +677,110 @@ class JsonlSessionStore:
         if session.restored_rollout is not None and session.restored_rollout.disposition == "exact":
             self.publish_execution_snapshot(session, session.restored_rollout.commit)
         return session
+
+    def session_head(self, session_id: str) -> Session:
+        """Immutable identity/origin only; no summary enumeration or history read."""
+        path = self._existing_path(session_id)
+        if path is None:
+            raise SessionNotFoundError(f"会话不存在: {session_id}")
+        with path.open("r", encoding="utf-8") as source:
+            return Session.from_events([Event.from_jsonl(source.readline())])
+
+    def composer_session(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
+        """Configuration only. Never load history, rebuild an index or restore execution."""
+        path = self._existing_path(session_id)
+        if path is None:
+            raise SessionNotFoundError(f"会话不存在: {session_id}")
+        version = self._source_version(path)
+        cached = self._configuration.read(session_id, version)
+        if cached is not None:
+            return cached
+        session = read_configuration(path, version, cancel_check)
+        if self._source_version(path) != version:
+            raise ValueError("History changed; reload the session configuration")
+        try:
+            self._configuration.publish(session, version)
+        except OSError as exc:
+            observe_query_maintenance_failure(session_id, exc)
+        return session
+
+    def history_window(
+        self,
+        session_id: str,
+        *,
+        turn_limit: int,
+        before: str | None = None,
+        history_epoch: str | None = None,
+        cancel_check: CancelCheck = None,
+    ) -> HistoryWindow:
+        """Lazy display reader. Absence of a derived index never triggers a full rebuild."""
+        path = self._existing_path(session_id)
+        if path is None:
+            raise SessionNotFoundError(f"会话不存在: {session_id}")
+        version = self._source_version(path)
+        # Use existing compatible indexes, but do not wait behind maintenance.
+        if not (before and before.startswith("tail-")):
+            try:
+                page = self._business_index.page_nowait(
+                    session_id,
+                    version,
+                    turn_limit=turn_limit,
+                    before=before,
+                    history_epoch=history_epoch,
+                    cancel_check=cancel_check,
+                )
+            except (OSError, sqlite3.Error, LockException):
+                page = None
+            if page is not None:
+                with path.open("r", encoding="utf-8") as source:
+                    head = Session.from_events([Event.from_jsonl(source.readline())])
+                if self._source_version(path) != version:
+                    raise ValueError("History changed; reload the latest page")
+                return HistoryWindow(
+                    session_id,
+                    page.active_events,
+                    page.history_cursor,
+                    page.history_epoch,
+                    page.recovery,
+                    head.origin_kind == "inner_world",
+                )
+            if before is not None:
+                raise ValueError("History changed; reload the latest page")
+        try:
+            cached = self._business_index.tail_nowait(
+                session_id,
+                version,
+                turn_limit=turn_limit,
+                before=before,
+                history_epoch=history_epoch,
+                cancel_check=cancel_check,
+            )
+        except (OSError, sqlite3.Error):
+            cached = None
+        if cached is not None:
+            if self._source_version(path) != version:
+                raise ValueError("History changed; reload the latest page")
+            return cached
+        result = read_window(
+            path,
+            version,
+            turn_limit=turn_limit,
+            before=before,
+            history_epoch=history_epoch,
+            cancel_check=cancel_check,
+        )
+        try:
+            self._business_index.remember_tail(
+                result,
+                before,
+                lambda: self._source_version(path) == version,
+                cancel_check,
+            )
+        except (OSError, sqlite3.Error, LockException) as exc:
+            observe_query_maintenance_failure(session_id, exc)
+        if self._source_version(path) != version:
+            raise ValueError("History changed; reload the latest page")
+        return result
 
     def _hash_source(
         self, path: Path, cancel_check: CancelCheck
@@ -1263,7 +1379,10 @@ class JsonlSessionStore:
             unhandled_tail_corruption=not handled,
         )
 
-    def list(self) -> list[SessionSummary]:
+    def list_navigation(self) -> list[SessionSummary]:
+        return self._list_summaries(navigation=True)
+
+    def _list_summaries(self, *, navigation: bool) -> list[SessionSummary]:
         summaries: list[SessionSummary] = []
         try:
             files = sorted(self._base_dir.glob("*.jsonl"))
@@ -1271,12 +1390,19 @@ class JsonlSessionStore:
             raise SessionPersistError(f"列出 base_dir 失败: {self._base_dir}: {e}") from e
 
         for path in files:
-            summary = self._read_summary(path)
+            summary = (
+                self._read_uncached_summary(path, navigation=True)
+                if navigation
+                else self._read_summary(path)
+            )
             if summary is not None:
                 summaries.append(summary)
 
         summaries.sort(key=lambda s: s.updated_at, reverse=True)
         return summaries
+
+    def list(self) -> list[SessionSummary]:
+        return self._list_summaries(navigation=False)
 
     def delete(self, session_id: str) -> None:
         with self.maintenance_guard(session_id):
@@ -1294,7 +1420,13 @@ class JsonlSessionStore:
                 self._activity_cache.pop(path, None)
         except OSError as e:
             raise SessionPersistError(f"删除会话文件失败: {path}: {e}") from e
-        for projection in (self._recall_index, self._business_index, self._execution_cache):
+        for projection in (
+            self._recall_index,
+            self._business_index,
+            self._execution_cache,
+            self._configuration,
+            self._activity_times,
+        ):
             try:
                 projection.delete(session_id)
             except Exception as exc:
@@ -1379,7 +1511,7 @@ class JsonlSessionStore:
                         head.uuid,
                         head.ts,
                         self._last_conversation_event_at(
-                            path, fallback=head.ts, cancel_check=cancel_check
+                            path, sid=head.uuid, fallback=head.ts, cancel_check=cancel_check
                         ),
                     )
                     with self._summary_lock:
@@ -1400,7 +1532,9 @@ class JsonlSessionStore:
         except OSError as exc:
             raise SessionPersistError("枚举会话活动失败") from exc
 
-    def _read_uncached_summary(self, path: Path) -> SessionSummary | None:
+    def _read_uncached_summary(
+        self, path: Path, *, navigation: bool = False
+    ) -> SessionSummary | None:
         """读取首行与最后会话消息构造摘要；首行损坏则跳过返回 ``None``。"""
         try:
             with path.open("r", encoding="utf-8") as f:
@@ -1421,16 +1555,20 @@ class JsonlSessionStore:
         model = payload.get("initial_model")
         if not isinstance(title, str) or not isinstance(persona, str) or not isinstance(model, str):
             return None
-        updated_at = self._last_conversation_event_at(path, fallback=head.ts)
+        updated_at = self._last_conversation_event_at(path, sid=head.uuid, fallback=head.ts)
         initial_reasoning_preset = (
             str(payload["initial_reasoning_preset"])
             if isinstance(payload.get("initial_reasoning_preset"), str)
             else None
         )
-        runtime_config = self._latest_model_runtime_config(
-            path,
-            initial_model=model,
-            initial_reasoning_preset=initial_reasoning_preset,
+        runtime_config = (
+            None
+            if navigation
+            else self._latest_model_runtime_config(
+                path,
+                initial_model=model,
+                initial_reasoning_preset=initial_reasoning_preset,
+            )
         )
         return SessionSummary(
             session_id=head.uuid,
@@ -1438,8 +1576,8 @@ class JsonlSessionStore:
             created_at=head.ts,
             updated_at=updated_at,
             persona=persona,
-            model=runtime_config.model_id,
-            reasoning_preset=runtime_config.reasoning_preset,
+            model=runtime_config.model_id if runtime_config else model,
+            reasoning_preset=runtime_config.reasoning_preset if runtime_config else None,
             origin_kind=(
                 str(payload["origin_kind"]) if isinstance(payload.get("origin_kind"), str) else None
             ),
@@ -1453,9 +1591,8 @@ class JsonlSessionStore:
             ),
         )
 
-    @staticmethod
     def _last_conversation_event_at(
-        path: Path, *, fallback: datetime, cancel_check: CancelCheck = None
+        self, path: Path, *, sid: str, fallback: datetime, cancel_check: CancelCheck = None
     ) -> datetime:
         """Return the newest raw user/assistant timestamp without loading the session.
 
@@ -1464,16 +1601,17 @@ class JsonlSessionStore:
         ignored for summary projection; full ``load()`` remains strict.
         """
         try:
-            for line in _iter_lines_reverse(path, cancel_check):
-                try:
-                    event = Event.from_jsonl(line)
-                except SessionCorruptError:
-                    continue
-                if event.type in {"user_message", "assistant_message"}:
-                    return event.ts
+            version = self._source_version(path)
+            cached = self._activity_times.read(sid, version)
+            if cached is not None:
+                return cached
+            stamp = latest_timestamp(path, fallback, cancel_check) if version[2] else fallback
+            if self._source_version(path) == version:
+                with suppress(OSError):
+                    self._activity_times.publish(sid, version, stamp)
+            return stamp
         except OSError:
             return fallback
-        return fallback
 
     @staticmethod
     def _event_model_config(event: Event) -> ModelRuntimeConfig | None:
@@ -1500,8 +1638,8 @@ class JsonlSessionStore:
                     return None
         return None
 
-    @staticmethod
     def _latest_model_runtime_config(
+        self,
         path: Path,
         *,
         initial_model: str,
@@ -1522,36 +1660,13 @@ class JsonlSessionStore:
             initial = initial_default
 
         try:
-            for line in _iter_lines_reverse(path):
-                try:
-                    event = Event.from_jsonl(line)
-                except SessionCorruptError:
-                    continue
-                if event.type == "model_config_change":
-                    target = event.payload.get("to")
-                    if not isinstance(target, dict):
-                        continue
-                    model = target.get("model")
-                    preset = target.get("reasoningPreset")
-                    if not isinstance(model, str) or not isinstance(preset, str):
-                        continue
-                    try:
-                        return validate_model_runtime_config(ModelRuntimeConfig(model, preset))
-                    except ValueError:
-                        try:
-                            return default_model_runtime_config(model)
-                        except ValueError:
-                            continue
-                if event.type == "model_change":
-                    target = event.payload.get("to")
-                    if isinstance(target, str):
-                        try:
-                            return default_model_runtime_config(target)
-                        except ValueError:
-                            continue
-        except OSError:
+            with path.open("r", encoding="utf-8") as source:
+                session_id = Event.from_jsonl(source.readline()).uuid
+            # Sidebar refreshes must share the small configuration projection.
+            # Parsing every old business event here can starve unrelated reads.
+            return self.composer_session(session_id).current_model_config
+        except (OSError, ValueError, SessionCorruptError, SessionNotFoundError):
             return initial
-        return initial
 
 
 class NullSessionStore:
@@ -1646,6 +1761,24 @@ class NotifyingSessionStore:
     def load(self, session_id: str) -> Session:
         return self._inner.load(session_id)
 
+    def session_head(self, session_id: str) -> Session:
+        method = getattr(self._inner, "session_head", None)
+        if callable(method):
+            return cast(Session, method(session_id))
+        return self._inner.load(session_id)
+
+    def composer_session(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
+        method = getattr(self._inner, "composer_session", None)
+        if callable(method):
+            return cast(Session, method(session_id, cancel_check=cancel_check))
+        return load_session(self._inner, session_id, cancel_check=cancel_check)
+
+    def history_window(self, session_id: str, **kwargs: Any) -> HistoryWindow:
+        method = getattr(self._inner, "history_window", None)
+        if not callable(method):
+            raise ValueError("lazy history reader unavailable")
+        return cast(HistoryWindow, method(session_id, **kwargs))
+
     def query_messages(self, session_id: str, **kwargs: Any) -> MessagePage:
         query = getattr(self._inner, "query_messages", None)
         if not callable(query):
@@ -1724,6 +1857,9 @@ class NotifyingSessionStore:
             exclude_session_ids=exclude_session_ids,
             cancel_check=cancel_check,
         )
+
+    def list_navigation(self) -> list[SessionSummary]:
+        return navigation_summaries(self._inner)
 
     def list(self) -> list[SessionSummary]:
         return self._inner.list()

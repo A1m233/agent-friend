@@ -271,10 +271,12 @@ def test_gc_marks_tool_image_events(tmp_path: Path, monkeypatch: pytest.MonkeyPa
             payload={"images": [ref.to_dict()]},
         )
     )
-    manager = SimpleNamespace(list=lambda **_kwargs: [session], query=lambda _id: session)
+    store = JsonlSessionStore(tmp_path / "sessions")
+    store.create(session)
     runtime = SimpleNamespace(
         attachment_store=assets,
-        persistent_session_manager=manager,
+        persistent_store=store,
+        persistent_session_manager=SimpleNamespace(list=lambda **_kwargs: [session]),
         scheduled_task_store=None,
         session_request_service=None,
     )

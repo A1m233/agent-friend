@@ -1,0 +1,95 @@
+{
+  "kind": "isolated_legacy_read",
+  "real_llm_calls": 0,
+  "journal_sha256": "a487f4bd9a4de44c9fc1200f59693da36ef36dd090484ce88d04a02247d9db66",
+  "journal_bytes": 1608520664,
+  "first_page_ms": 1060.13710000002,
+  "page_samples_ms": [
+    1060.13710000002
+  ],
+  "first_turns": 10,
+  "first_events": 4219,
+  "event_counts": {
+    "user_message": 10,
+    "assistant_phase": 987,
+    "assistant_message": 46,
+    "tool_call_request": 967,
+    "tool_call_result": 967,
+    "tool_execution_checkpoint": 929,
+    "provider_reasoning_state": 277,
+    "run_terminal": 14,
+    "run_started": 13,
+    "compaction": 2,
+    "skill_catalog_state": 2,
+    "channel_change": 1,
+    "run_error": 4
+  },
+  "business_event_bytes": 96165229,
+  "bytes_by_event_type": {
+    "user_message": {
+      "payload_bytes": 7602,
+      "meta_bytes": 1430
+    },
+    "assistant_phase": {
+      "payload_bytes": 48223,
+      "meta_bytes": 49350
+    },
+    "assistant_message": {
+      "payload_bytes": 25217,
+      "meta_bytes": 4726687
+    },
+    "tool_call_request": {
+      "payload_bytes": 1218085,
+      "meta_bytes": 83063591
+    },
+    "tool_call_result": {
+      "payload_bytes": 4568711,
+      "meta_bytes": 768187
+    },
+    "tool_execution_checkpoint": {
+      "payload_bytes": 252688,
+      "meta_bytes": 123557
+    },
+    "provider_reasoning_state": {
+      "payload_bytes": 643237,
+      "meta_bytes": 49306
+    },
+    "run_terminal": {
+      "payload_bytes": 3384,
+      "meta_bytes": 1594
+    },
+    "run_started": {
+      "payload_bytes": 2350,
+      "meta_bytes": 1479
+    },
+    "compaction": {
+      "payload_bytes": 24684,
+      "meta_bytes": 100
+    },
+    "skill_catalog_state": {
+      "payload_bytes": 478,
+      "meta_bytes": 266
+    },
+    "channel_change": {
+      "payload_bytes": 31,
+      "meta_bytes": 2
+    },
+    "run_error": {
+      "payload_bytes": 792,
+      "meta_bytes": 8
+    }
+  },
+  "public_encoding_ms": 186.37499999999818,
+  "public_event_bytes": 8386342,
+  "journal_tail_span_bytes": 750724175,
+  "first_page_sha256": "0347654a5ac895f1682969c26c1694c3e101171ad37dcb40562c0cad16c280a2",
+  "legacy_configuration_bootstrap_ms": 1415.3312999999343,
+  "configuration_after_restart_ms": 5.887799999982235,
+  "older_turns": 19,
+  "original_unchanged": true,
+  "copy_business_bytes_unchanged": true,
+  "limits": [
+    "storage only, OS cache uncontrolled, source journal copied without old derived caches",
+    "no messages, source path, raw session id or model configuration in report"
+  ]
+}

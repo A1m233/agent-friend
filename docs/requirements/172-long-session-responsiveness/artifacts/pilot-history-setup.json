@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "kind": "desktop_complete_turn_history_ui_probe",
+  "status": "failed",
+  "started_at": "2026-11-06T16:59:51.760Z",
+  "identity_sha256": "1e05e058e84914a5c9066fdf69218f085c6c7693d3bd5227a38befcec5742e27",
+  "script_sha256": "d3114f52670cb7ef8ff385b177687f22badebc7f8519e89ecd1db55019a93039",
+  "runtime": {
+    "worktree_sha256": "f01eeb01810bc7ed5b45412c5d2a8c399e9272562a25d11907c10e022f7b3370",
+    "branch_sha256": "3ee94f855aa2db5f5c80756acd78c5f95502b64a5d775e29e3da0f89c63487c5",
+    "owner_pid": 50908,
+    "started_at": "2026-11-06T16:59:50.016850+00:00",
+    "source_newest_at": "2026-11-06T16:56:06.245Z",
+    "cdp_port": 9222,
+    "freshness_scope": "runtime_source_excluding_frontend_test_and_spec_modules"
+  },
+  "evidence": "real_tauri_webview_dom_and_interaction",
+  "screenshot_kind": "complete_webview_viewport_without_native_titlebar",
+  "limits": [
+    "No send, tool execution, provider invocation or product-state injection. Read-only execution preparation is allowed.",
+    "Lease freshness is a guard; caller must also verify resident-process source freshness.",
+    "DOM marker geometry proves viewport visibility, not native-window/GPU rendering.",
+    "JSON excludes message text, titles, request URLs and clipboard plaintext."
+  ],
+  "steps": [],
+  "requests": [],
+  "screenshots": [],
+  "failures": [],
+  "prohibited_request_count": 0,
+  "focus": "complete",
+  "scroll_probes": [],
+  "voice_prewarm_network_blocked": {
+    "enabled": true,
+    "blocked_request_count": 0,
+    "scope": "only_local_voice_transcriptions_prewarm_after_cdp_attachment",
+    "response_status": "disabled"
+  },
+  "failure_code": "probe_setup_or_connection_failed",
+  "failure_type": "Error",
+  "history_response_budget": {
+    "turn_limit": 30,
+    "checked_count": 0,
+    "largest_response_bytes": 0,
+    "exceeded_count": 0,
+    "measurement": "complete_turns_with_unabridged_event_bodies_no_byte_truncation"
+  },
+  "finished_at": "2026-11-06T16:59:51.773Z"
+}

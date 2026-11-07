@@ -63,7 +63,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
     set({ loading: true, error: false });
     try {
       const [list, providers] = await Promise.all([
-        sessionsApi.list(),
+        sessionsApi.list({ navigation: true }),
         imApi.listProviders().catch(() => null),
       ]);
       if (seq === refreshSeq) {
@@ -136,7 +136,7 @@ export const useArchivedSessionsStore = create<ArchivedSessionsState>((set, get)
     const query = get().query;
     set({ loading: true });
     try {
-      const list = await sessionsApi.list({ archived: true, q: query });
+      const list = await sessionsApi.list({ archived: true, q: query, navigation: true });
       if (seq === archivedRefreshSeq) {
         set({ list, loading: false, loaded: true });
       }

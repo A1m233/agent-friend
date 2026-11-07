@@ -1,0 +1,88 @@
+{
+  "kind": "desktop_two_turn_send_smoke",
+  "session_id": "60ab16bb-a8f4-4474-bfa8-b00c57654c59",
+  "status": "passed",
+  "turns": [
+    {
+      "turn": 1,
+      "run_id": "8537d7e4-3077-43a1-b5c6-2e7c1d0545d8",
+      "accepted_ms": 49,
+      "total_ms": 16494,
+      "run": {
+        "run_id": "8537d7e4-3077-43a1-b5c6-2e7c1d0545d8",
+        "session_id": "60ab16bb-a8f4-4474-bfa8-b00c57654c59",
+        "status": "terminal",
+        "outcome": "completed",
+        "reason_code": "end_turn",
+        "channel": "text",
+        "origin": "session_request",
+        "control_scope": "desktop_text",
+        "created_at": "2026-11-06T17:27:48.166159Z",
+        "started_at": "2026-11-06T17:27:48.172158Z",
+        "finished_at": "2026-11-06T17:28:04.445116Z",
+        "version": 5,
+        "runtime_instance_id": "b621c0814a2941149c03737d4177c238",
+        "input_accepted": true,
+        "source_kind": null,
+        "presentation": "conversation",
+        "output_visibility": "user",
+        "turn_status": "completed",
+        "total_tool_calls": 0,
+        "tool_call_items": 0,
+        "model_calls": 1,
+        "model_continuations": 0,
+        "budget_dimension": null,
+        "source_run_id": null,
+        "root_run_id": null
+      },
+      "visible": true
+    },
+    {
+      "turn": 2,
+      "run_id": "651d2bee-519a-4307-8310-c32f5b6c9449",
+      "accepted_ms": 44,
+      "total_ms": 8679,
+      "run": {
+        "run_id": "651d2bee-519a-4307-8310-c32f5b6c9449",
+        "session_id": "60ab16bb-a8f4-4474-bfa8-b00c57654c59",
+        "status": "terminal",
+        "outcome": "completed",
+        "reason_code": "end_turn",
+        "channel": "text",
+        "origin": "session_request",
+        "control_scope": "desktop_text",
+        "created_at": "2026-11-06T17:28:05.271405Z",
+        "started_at": "2026-11-06T17:28:05.276650Z",
+        "finished_at": "2026-11-06T17:28:13.631574Z",
+        "version": 5,
+        "runtime_instance_id": "b621c0814a2941149c03737d4177c238",
+        "input_accepted": true,
+        "source_kind": null,
+        "presentation": "conversation",
+        "output_visibility": "user",
+        "turn_status": "completed",
+        "total_tool_calls": 0,
+        "tool_call_items": 0,
+        "model_calls": 1,
+        "model_continuations": 0,
+        "budget_dimension": null,
+        "source_run_id": null,
+        "root_run_id": null
+      },
+      "visible": true
+    }
+  ],
+  "limits": [
+    "Uses configured desktop model and permits normal post-turn memory hooks",
+    "No retry of a send",
+    "Cold lease reuse separately covered by deterministic tests"
+  ],
+  "model_ref": "e38443e78edc014b",
+  "persistence": {
+    "users": 2,
+    "matching_assistants": 2,
+    "tools": 0,
+    "sha256": "d380b674f73388b2458d8468b4504e0807dc4c5ec0d9c9131ce1ca6806ea691b"
+  },
+  "finished_at": "2026-11-06T17:28:13.907Z"
+}

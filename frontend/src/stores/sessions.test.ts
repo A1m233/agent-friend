@@ -301,8 +301,8 @@ describe("sessions store", () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(mockList).toHaveBeenCalledWith();
-    expect(mockList).toHaveBeenCalledWith({ archived: true, q: "codex" });
+    expect(mockList).toHaveBeenCalledWith({ navigation: true });
+    expect(mockList).toHaveBeenCalledWith({ archived: true, q: "codex", navigation: true });
     expect(useSessionsStore.getState().list.map((s) => s.session_id)).toEqual(["sid-new"]);
     expect(useArchivedSessionsStore.getState().list.map((s) => s.session_id)).toEqual([
       "sid-archived-new",
@@ -328,7 +328,7 @@ describe("archived sessions store", () => {
 
     await useArchivedSessionsStore.getState().refresh();
 
-    expect(mockList).toHaveBeenCalledWith({ archived: true, q: "codex" });
+    expect(mockList).toHaveBeenCalledWith({ archived: true, q: "codex", navigation: true });
     expect(useArchivedSessionsStore.getState().list.map((s) => s.session_id)).toEqual([
       "sid-archived",
     ]);
@@ -343,8 +343,8 @@ describe("archived sessions store", () => {
 
     expect(ok).toBe(true);
     expect(mockUnarchive).toHaveBeenCalledWith("sid-1");
-    expect(mockList).toHaveBeenCalledWith({ archived: true, q: "" });
-    expect(mockList).toHaveBeenCalledWith();
+    expect(mockList).toHaveBeenCalledWith({ archived: true, q: "", navigation: true });
+    expect(mockList).toHaveBeenCalledWith({ navigation: true });
     expect(useArchivedSessionsStore.getState().pendingIds).toEqual([]);
   });
 
@@ -356,8 +356,8 @@ describe("archived sessions store", () => {
 
     expect(ok).toBe(true);
     expect(mockDelete).toHaveBeenCalledWith("sid-1");
-    expect(mockList).toHaveBeenCalledWith({ archived: true, q: "" });
-    expect(mockList).toHaveBeenCalledWith();
+    expect(mockList).toHaveBeenCalledWith({ archived: true, q: "", navigation: true });
+    expect(mockList).toHaveBeenCalledWith({ navigation: true });
   });
 
   it("deletes all archived sessions through backend endpoint", async () => {

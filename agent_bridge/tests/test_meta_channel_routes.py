@@ -8,16 +8,18 @@ from collections.abc import AsyncIterator, Generator, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event as ThreadEvent
 from typing import Any, ClassVar
 
 import pytest
 from agent.scheduled_tasks import ScheduledTaskService, ScheduledTaskStatus, ScheduledTaskStore
 from agent.scheduling import OnceSchedule
-from agent.sessions.query import CancelCheck
+from agent.sessions.query import CancelCheck, SessionQuerySnapshot
 from agent_bridge.app import create_app_with_runtime
 from agent_bridge.assembly import BridgeRuntime
 from agent_bridge.settings import BridgeSettings
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from agent import (
     AttachmentStore,
@@ -111,6 +113,16 @@ def client(runtime: BridgeRuntime) -> TestClient:
 
 
 # ===== POST /v1/sessions =====
+
+
+def test_navigation_list_omits_execution_configuration(client: TestClient) -> None:
+    sid = client.post("/v1/sessions", json={}).json()["session_id"]
+    nav = next(
+        row for row in client.get("/v1/sessions?navigation=true").json() if row["session_id"] == sid
+    )
+    full = next(row for row in client.get("/v1/sessions").json() if row["session_id"] == sid)
+    assert "model" not in nav and "reasoningPreset" not in nav
+    assert full["model"] and nav["updated_at"] == full["updated_at"]
 
 
 @pytest.mark.parametrize("delete", [False, True])
@@ -489,6 +501,40 @@ class TestEditResendLatestEndpoint:
             assert sum(e["type"] == "run_error" for e in detail["active_events"]) == 1
         finally:
             engine.stop()
+
+    @pytest.mark.asyncio
+    async def test_pending_edit_check_does_not_block_other_chat_history(
+        self, client: TestClient, runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async with AsyncClient(
+            transport=ASGITransport(app=client.app), base_url="http://test"
+        ) as http:
+            source = (await http.post("/v1/sessions", json={})).json()["session_id"]
+            other = (await http.post("/v1/sessions", json={})).json()["session_id"]
+            manager = runtime.persistent_session_manager
+            query = manager.query
+            loop = asyncio.get_running_loop()
+            entered, release = asyncio.Event(), ThreadEvent()
+
+            def slow_query(
+                session_id: str, *, cancel_check: CancelCheck = None
+            ) -> SessionQuerySnapshot:
+                loop.call_soon_threadsafe(entered.set)
+                assert release.wait(5)
+                return query(session_id, cancel_check=cancel_check)
+
+            monkeypatch.setattr(manager, "query", slow_query)
+            edit = asyncio.create_task(
+                http.post(f"/v1/sessions/{source}/edit-resend-latest", json={"text": "edit"})
+            )
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                history = await asyncio.wait_for(http.get(f"/v1/sessions/{other}/history"), 3)
+                assert history.status_code == 200
+                assert not edit.done()
+            finally:
+                release.set()
+            assert (await edit).status_code == 400  # empty source has no target, and no LLM call
 
     def test_edit_resend_latest_streams_and_exposes_active_events(
         self, client: TestClient, runtime: BridgeRuntime

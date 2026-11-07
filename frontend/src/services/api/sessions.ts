@@ -11,6 +11,7 @@ import type { ModelRuntimeConfig } from "@/lib/model-config";
 interface ListSessionsOptions {
   archived?: boolean;
   q?: string;
+  navigation?: boolean;
 }
 
 interface DeleteArchivedSessionsOptions {
@@ -30,6 +31,17 @@ export interface SessionApprovalModeState {
   approval_mode_version: number;
 }
 
+export interface SessionComposerState extends SessionApprovalModeState {
+  model: string;
+  reasoningPreset: string;
+  read_only: boolean;
+}
+
+export interface SessionPreparation {
+  session_id: string;
+  state: "idle" | "preparing" | "ready" | "failed";
+}
+
 export interface EnableSessionAutoForApprovalInput {
   requestId: string;
   sessionId: string;
@@ -40,6 +52,7 @@ export interface EnableSessionAutoForApprovalInput {
 
 function sessionQuery(options?: ListSessionsOptions | DeleteArchivedSessionsOptions): string {
   const params = new URLSearchParams();
+  if (options && "navigation" in options && options.navigation) params.set("navigation", "true");
   if (hasArchivedOption(options)) {
     params.set("archived", String(options.archived));
   }
@@ -94,7 +107,7 @@ export const sessionsApi = {
 
   /** 单个会话详情只取当前有效事件，避免重复传输原始事件流。 */
   async get(sessionId: string): Promise<SessionDetail> {
-    const url = `/v1/sessions/${encodeURIComponent(sessionId)}?view=active&turn_limit=30`;
+    const url = `/v1/sessions/${encodeURIComponent(sessionId)}/history?turn_limit=10`;
     try {
       return await http.get<unknown, SessionDetail>(url);
     } catch (error) {
@@ -112,8 +125,24 @@ export const sessionsApi = {
   },
 
   getOlder(sessionId: string, before: string, epoch: string): Promise<SessionDetail> {
-    const query = new URLSearchParams({ view: "active", turn_limit: "30", before, history_epoch: epoch });
-    return http.get<unknown, SessionDetail>(`/v1/sessions/${encodeURIComponent(sessionId)}?${query}`);
+    const query = new URLSearchParams({ turn_limit: "30", before, history_epoch: epoch });
+    return http.get<unknown, SessionDetail>(`/v1/sessions/${encodeURIComponent(sessionId)}/history?${query}`);
+  },
+
+  composer(sessionId: string, signal?: AbortSignal): Promise<SessionComposerState> {
+    return http.get<unknown, SessionComposerState>(`/v1/sessions/${encodeURIComponent(sessionId)}/composer`, { signal });
+  },
+
+  prepare(sessionId: string, signal?: AbortSignal): Promise<SessionPreparation> {
+    return http.post<unknown, SessionPreparation>(`/v1/sessions/${encodeURIComponent(sessionId)}/prepare`, {}, { signal });
+  },
+
+  preparation(sessionId: string, signal?: AbortSignal): Promise<SessionPreparation> {
+    return http.get<unknown, SessionPreparation>(`/v1/sessions/${encodeURIComponent(sessionId)}/prepare`, { signal });
+  },
+
+  cancelPreparation(sessionId: string): Promise<SessionPreparation> {
+    return http.delete<unknown, SessionPreparation>(`/v1/sessions/${encodeURIComponent(sessionId)}/prepare`);
   },
 
   getApprovalMode(sessionId: string): Promise<SessionApprovalModeState> {

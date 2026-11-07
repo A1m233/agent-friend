@@ -5,16 +5,15 @@ import type { ChatTextReference } from "@/types/chat";
 import { FeedbackIcon } from "@/components/app/FeedbackIcon";
 import { LinkInteractionBoundary } from "@/components/app/link-interactions/LinkInteractionBoundary";
 import { Button, StatusDot, type StatusDotProps } from "@/components/ui";
-import { runtimeCredentialApplyReason } from "@/lib/runtime-config";
 import { openFeedback } from "@/lib/settings/navigation";
 import {
   useConnectionStore,
   useConversationStore,
-  useRuntimeCredentialStore,
   type ConnectionStatus,
 } from "@/stores";
 import { focusVoiceCallWindow, useVoiceStore } from "@/stores/voice";
 import { isVoiceCallBlockingText } from "@/stores/voiceStateMachine";
+import { retryComposerPreparation, useComposerSessionStore } from "@/stores/composerSession";
 import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX, CHAT_CONTENT_CONTAINER_CLASS } from "../layout";
 import { ApprovalDock } from "./ApprovalDock";
 import { usePrimaryActivity } from "./activity/usePrimaryActivity";
@@ -34,9 +33,9 @@ export function ChatContentSurface() {
   const readOnly = useConversationStore((state) => Boolean(state.currentSessionId && state.readOnlySessionIds[state.currentSessionId]));
   const messageCount = useConversationStore((state) => state.messages.length);
   const historyLoading = useConversationStore((state) => state.historyLoading);
+  const preparation = useComposerSessionStore();
   const voiceSessionId = useVoiceStore((state) => state.sessionId);
   const voicePhase = useVoiceStore((state) => state.phase);
-  const runtimeCredentialGroups = useRuntimeCredentialStore((state) => state.groups);
   const [composerHeight, setComposerHeight] = useState(CHAT_COMPOSER_FALLBACK_HEIGHT_PX);
   const composerRef = useRef<ComposerHandle>(null);
   const [referenceNavigation, setReferenceNavigation] = useState<{
@@ -53,17 +52,12 @@ export function ChatContentSurface() {
     Boolean(currentSessionId && voiceSessionId === currentSessionId) &&
     isVoiceCallBlockingText(voicePhase);
   const runtimeUnavailable = status !== "online";
-  const composerDisabled = runtimeUnavailable || voiceBlocksText || historyLoading;
-  const credentialApplyReason = runtimeCredentialApplyReason(
-    runtimeCredentialGroups,
-    "restartBridge",
-  );
-  const composerDisabledReason = runtimeUnavailable
-    ? credentialApplyReason ??
-      (status === "unknown" ? "服务正在初始化..." : "本机服务暂未连接")
-    : historyLoading
-      ? "正在打开这段对话..."
-      : "语音通话中，文字输入已暂时停用";
+  const composerDisabled = voiceBlocksText;
+  const preparing = Boolean(currentSessionId && preparation.sessionId === currentSessionId
+    && preparation.phase !== "ready");
+  const sendUnavailable = runtimeUnavailable || voiceBlocksText || preparing;
+  const composerDisabledReason = "语音通话中，文字输入已暂时停用";
+  const preparationFailed = preparation.sessionId === currentSessionId && preparation.phase === "failed";
   const isHome = !currentSessionId && messageCount === 0 && !historyLoading;
   const focusComposer = useCallback(() => composerRef.current?.focus(), []);
 
@@ -95,7 +89,8 @@ export function ChatContentSurface() {
         </div>
       ) : null}
       {isHome ? (
-        <HomeStart disabled={composerDisabled} disabledReason={composerDisabledReason} />
+        <HomeStart disabled={composerDisabled} disabledReason={composerDisabledReason}
+          sendUnavailable={sendUnavailable} />
       ) : (
         <>
           <MessageList
@@ -110,8 +105,12 @@ export function ChatContentSurface() {
             ref={composerRef}
             disabled={composerDisabled}
             disabledReason={composerDisabledReason}
+            sendUnavailable={sendUnavailable}
+            sendUnavailableReason={preparationFailed ? preparation.error ?? "会话准备失败，请重试" : undefined}
             onHeightChange={setComposerHeight}
-            topSlot={<><PendingRequests key={currentSessionId} sessionId={currentSessionId} /><ApprovalDock activity={primaryActivity} /></>}
+            topSlot={<>{preparationFailed
+              ? <Button className="pointer-events-auto" variant="ghost" size="sm" onClick={retryComposerPreparation}>重试会话准备</Button> : null}
+              <PendingRequests key={currentSessionId} sessionId={currentSessionId} /><ApprovalDock activity={primaryActivity} /></>}
             onReferenceSelect={selectReference}
           />}
         </>
@@ -125,15 +124,18 @@ export function ChatContentSurface() {
 function HomeStart({
   disabled,
   disabledReason,
+  sendUnavailable,
 }: {
   disabled: boolean;
   disabledReason: string;
+  sendUnavailable: boolean;
 }) {
   return (
     <div className="grid min-h-0 flex-1 place-items-center">
       <div className={`${CHAT_CONTENT_CONTAINER_CLASS} -translate-y-10`}>
         <h1 className="mb-8 text-center text-xl font-medium text-fg">今天想聊点什么？</h1>
-        <Composer placement="inline" disabled={disabled} disabledReason={disabledReason} />
+        <Composer placement="inline" disabled={disabled} disabledReason={disabledReason}
+          sendUnavailable={sendUnavailable} />
       </div>
     </div>
   );

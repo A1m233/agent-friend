@@ -271,6 +271,18 @@ class AttachmentStore:
                 removed_assets += 1
         return {"expired_drafts": expired_drafts, "removed_assets": removed_assets}
 
+    def reconcile_if_no_gc_candidates(self) -> dict[str, int] | None:
+        """Expire draft leases without reading journals if no blob can be swept."""
+        with self._lock:
+            now = time.time()
+            if any(
+                path.stat().st_mtime <= now - DEFAULT_GC_GRACE_SECONDS
+                for path in self.metadata_dir.glob("*.json")
+            ):
+                return None
+            # Use the same instant for both the eligibility check and the sweep.
+            return self.reconcile(set(), now=now)
+
     def _load_draft(self, draft_id: str) -> tuple[Path, AttachmentRef, float]:
         path = self._draft_path(draft_id)
         try:

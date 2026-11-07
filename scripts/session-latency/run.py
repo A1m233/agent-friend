@@ -10,6 +10,39 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "legacy-read":
+        return subprocess.call(
+            [sys.executable, str(Path(__file__).with_name("legacy_read_probe.py")), *sys.argv[2:]],
+            cwd=ROOT,
+        )
+    if len(sys.argv) > 1 and sys.argv[1] == "desktop-send-smoke":
+        return subprocess.call(
+            ["node", str(Path(__file__).with_name("desktop_send_smoke.mjs")), *sys.argv[2:]],
+            cwd=ROOT,
+        )
+    if len(sys.argv) > 1 and sys.argv[1] == "desktop-growth-fixture":
+        return subprocess.call(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("desktop_growth_fixture.py")),
+                *sys.argv[2:],
+            ],
+            cwd=ROOT,
+        )
+    if len(sys.argv) > 1 and sys.argv[1] == "desktop-responsiveness":
+        return subprocess.call(
+            ["node", str(Path(__file__).with_name("responsiveness_desktop.mjs")), *sys.argv[2:]],
+            cwd=ROOT,
+        )
+    if len(sys.argv) > 1 and sys.argv[1] == "responsiveness":
+        return subprocess.call(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("responsiveness_probe.py")),
+                *sys.argv[2:],
+            ],
+            cwd=ROOT,
+        )
     if len(sys.argv) > 1 and sys.argv[1] == "desktop-history":
         return subprocess.call(
             ["node", str(Path(__file__).with_name("history_desktop_probe.mjs")), *sys.argv[2:]],

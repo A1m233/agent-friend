@@ -1627,6 +1627,31 @@ def test_buffered_command_persists_host_observed_output_evidence(
     assert evidence.output_seq > 0
 
 
+def test_terminal_state_is_hidden_until_evidence_listeners_finish(runtime: CommandRuntime) -> None:
+    observed = []
+    delivered = threading.Event()
+
+    def observe(snapshot: CommandProcessSnapshot) -> None:
+        if snapshot.terminal() and not delivered.is_set():
+            visible = runtime.wait(
+                snapshot.process_id,
+                session_id=snapshot.session_id,
+                run_id=snapshot.run_id,
+                timeout_seconds=0,
+            )
+            observed.append(visible.status)
+            delivered.set()
+
+    runtime.add_evidence_listener(observe)
+    process = _start(runtime, "fake:buffered")
+    terminal = runtime.wait(
+        process.process_id, session_id="session-a", run_id="run-a", timeout_seconds=3
+    )
+    assert delivered.wait(3)
+    assert observed == ["running"]
+    assert terminal.status == "exited"
+
+
 def test_streaming_handle_is_closed_with_tool_run(runtime: CommandRuntime, tmp_path: Path) -> None:
     broker = ApprovalBroker()
     tool = ExecCommandTool(runtime, broker)

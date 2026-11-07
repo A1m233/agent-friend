@@ -18,17 +18,14 @@ import { useSessionApprovalModeActions } from "./sessionApprovalModeContext";
 
 export function SessionApprovalModeControl() {
   const status = useConnectionStore((state) => state.status);
-  const historyLoading = useConversationStore((state) => state.historyLoading);
   const mode = useConversationStore((state) => state.approvalMode);
   const changing = useConversationStore((state) => state.approvalModeChanging);
   const {
     requestSessionAutoFromComposer,
     switchReviewMode,
   } = useSessionApprovalModeActions();
-  const disabled = historyLoading || status !== "online" || changing;
-  const disabledReason = historyLoading
-    ? "正在加载会话"
-    : status !== "online"
+  const disabled = status !== "online" || changing;
+  const disabledReason = status !== "online"
       ? "本机服务连接后可调整授权模式"
       : changing
         ? "正在切换授权模式"

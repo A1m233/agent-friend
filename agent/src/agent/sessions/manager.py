@@ -46,6 +46,7 @@ from .events import Event
 from .metadata import SessionMetadataStore
 from .model_context import SessionModelContext
 from .model_history import SessionModelHistory
+from .preparation import ExecutionPreparation
 from .query import (
     CancelCheck,
     SessionHistoryPage,
@@ -66,6 +67,7 @@ from .store import (
     acquire_session_writer_lease,
     append_session_events,
     delete_session_writer_lease,
+    navigation_summaries,
 )
 from .tool_execution_evidence import ToolExecutionEvidenceError, ToolExecutionEvidenceStore
 
@@ -182,6 +184,13 @@ class SessionManager:
         self._skill_service = skill_service
         self._time_provider = time_provider or SystemTimeProvider()
         self._runtime_states: dict[str, _SessionRuntimeState] = {}
+        self._preparation = ExecutionPreparation(
+            lambda sid, check: self._load_for_preparation(sid, check),
+            lambda sid: acquire_session_writer_lease(self._store, sid),
+            lambda session: bool(
+                getattr(self._store, "can_reuse_loaded", lambda _: False)(session)
+            ),
+        )
         self._transaction_reconciler = transaction_reconciler
         self._tool_execution_evidence_store = tool_execution_evidence_store
         self._runtime_instance_id = runtime_instance_id
@@ -212,6 +221,7 @@ class SessionManager:
     def close(self) -> None:
         """Release all resident writer leases during a clean Bridge shutdown."""
 
+        self._preparation.close()
         states = tuple(self._runtime_states.values())
         self._runtime_states.clear()
         for state in states:
@@ -371,6 +381,9 @@ class SessionManager:
         return self._store.exists(session_id)
 
     def is_inner(self, session_id: str) -> bool:
+        head = getattr(self._store, "session_head", None)
+        if callable(head):
+            return bool(head(session_id).origin_kind == "inner_world")
         return self._summary(session_id).origin_kind == "inner_world"
 
     def open(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
@@ -424,7 +437,45 @@ class SessionManager:
             if callable(validate):
                 validate()
             return state.rollout_recorder.session
+        prepared = self._preparation.peek(session_id)
+        if prepared is not None:
+            return prepared
+        self._preparation.cancel(session_id)
         loader = getattr(self._store, "load_execution", None)
+        if callable(loader):
+            return cast(Session, loader(session_id, cancel_check=cancel_check))
+        return self.open(session_id, cancel_check=cancel_check)
+
+    def _load_for_preparation(self, session_id: str, cancel_check: CancelCheck) -> Session:
+        loader = getattr(self._store, "load_execution", None)
+        session = (
+            cast(Session, loader(session_id, cancel_check=cancel_check))
+            if callable(loader)
+            else self.open(session_id, cancel_check=cancel_check)
+        )
+        restored = session.restored_rollout
+        if restored is not None and (
+            restored.runtime_blocked
+            or restored.disposition in {"corrupt_committed_history", "incompatible_rollout_schema"}
+        ):
+            raise SessionCorruptError("会话历史无法恢复，请检查会话状态")
+        return session
+
+    def prepare_execution(self, session_id: str) -> str:
+        if session_id in self._runtime_states:
+            return "ready"
+        return self._preparation.request(session_id)
+
+    def preparation_status(self, session_id: str) -> str:
+        return (
+            "ready" if session_id in self._runtime_states else self._preparation.status(session_id)
+        )
+
+    def cancel_preparation(self, session_id: str) -> None:
+        self._preparation.cancel(session_id)
+
+    def composer_session(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
+        loader = getattr(self._store, "composer_session", None)
         if callable(loader):
             return cast(Session, loader(session_id, cancel_check=cancel_check))
         return self.open(session_id, cancel_check=cancel_check)
@@ -437,6 +488,7 @@ class SessionManager:
         The caller owns the session mutation reservation. A cold session also needs
         the cross-process writer lease; resident state already owns that lease.
         """
+        self.cancel_preparation(session_id)
         state = self._runtime_states.get(session_id)
         lease = acquire_session_writer_lease(self._store, session_id) if state is None else None
         try:
@@ -444,7 +496,7 @@ class SessionManager:
             current = (
                 session.current_model_config
                 if session is not None
-                else self.query(session_id).current_model_config
+                else self.composer_session(session_id).current_model_config
             )
             target = validate_model_runtime_config(
                 ModelRuntimeConfig(model or current.model_id, reasoning_preset)
@@ -595,6 +647,7 @@ class SessionManager:
         archived: bool = False,
         query: str | None = None,
         include_scheduled: bool = False,
+        navigation: bool = False,
     ) -> list[SessionSummary]:
         """列出会话摘要（按 ``updated_at`` 倒序）。
 
@@ -604,7 +657,7 @@ class SessionManager:
         """
         metadata = self._metadata_store.load_all() if self._metadata_store is not None else {}
         summaries = []
-        for summary in self._store.list():
+        for summary in navigation_summaries(self._store) if navigation else self._store.list():
             item = metadata.get(summary.session_id)
             summaries.append(
                 dataclasses.replace(
@@ -677,6 +730,7 @@ class SessionManager:
 
     def delete(self, session_id: str) -> None:
         """删除指定会话（hard delete）。"""
+        self.cancel_preparation(session_id)
         state = self._runtime_states.pop(session_id, None)
         lease = (
             state.writer_lease
@@ -822,10 +876,16 @@ class SessionManager:
         opened_here = session.session_id not in self._runtime_states
         runtime_state = self._runtime_states.get(session.session_id)
         if runtime_state is None:
-            writer_lease = acquire_session_writer_lease(self._store, session.session_id)
+            prepared_lease = self._preparation.take(session)
+            writer_lease = prepared_lease or acquire_session_writer_lease(
+                self._store, session.session_id
+            )
             try:
                 session, runtime_state = self._restore_runtime_state(
-                    session, writer_lease, cancel_check=cancel_check
+                    session,
+                    writer_lease,
+                    cancel_check=cancel_check,
+                    prepared_under_lease=prepared_lease is not None,
                 )
                 check_cancel(cancel_check)
                 validate = getattr(writer_lease, "validate", None)
@@ -925,6 +985,7 @@ class SessionManager:
         writer_lease: SessionWriterLease,
         *,
         cancel_check: CancelCheck = None,
+        prepared_under_lease: bool = False,
     ) -> tuple[Session, _SessionRuntimeState]:
         context_manager_factory = self._context_manager_factory
         check_cancel(cancel_check)
@@ -933,7 +994,7 @@ class SessionManager:
         can_reuse = getattr(self._store, "can_reuse_loaded", None)
         revalidate_snapshot = getattr(self._store, "revalidate_execution_snapshot", None)
         source_unchanged = not callable(can_reuse) or can_reuse(session)
-        if source_unchanged and callable(revalidate_snapshot):
+        if source_unchanged and not prepared_under_lease and callable(revalidate_snapshot):
             source_unchanged = revalidate_snapshot(session, cancel_check=cancel_check)
         if not source_unchanged:
             # Opening may precede the writer lease. Revalidate every cold source,

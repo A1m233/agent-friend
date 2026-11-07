@@ -12,20 +12,19 @@ function observedRequestKind(value) {
   let url;
   try { url = new URL(value); } catch { return null; }
   if (url.pathname === "/v1/sessions/search") return "search";
-  if (/^\/v1\/sessions\/[^/]+\/history(?:\/content)?$/.test(url.pathname)) return "removed_history_api";
-  if (!/^\/v1\/sessions\/[a-f0-9-]{36}$/.test(url.pathname)) return null;
-  return url.searchParams.get("view") === "active" && url.searchParams.get("turn_limit") === "30"
-    ? "history" : "unbounded_session_read";
+  if (/^\/v1\/sessions\/[^/]+\/history$/.test(url.pathname)) return "history";
+  if (/^\/v1\/sessions\/[a-f0-9-]{36}$/.test(url.pathname)) return "unbounded_session_read";
+  return null;
 }
 if (process.argv.slice(2).join() === "--self-test-url-classification") {
   const sid = "00000000-0000-0000-0000-000000000001";
   const cases = [
-    [`/v1/sessions/${sid}?view=active&turn_limit=30`, "history"],
-    [`/v1/sessions/${sid}?view=active&turn_limit=30&before=x&history_epoch=e`, "history"],
+    [`/v1/sessions/${sid}/history?turn_limit=10`, "history"],
+    [`/v1/sessions/${sid}/history?turn_limit=30&before=x&history_epoch=e`, "history"],
     [`/v1/sessions/${sid}?view=active`, "unbounded_session_read"],
     [`/v1/sessions/${sid}`, "unbounded_session_read"],
-    [`/v1/sessions/${sid}/history`, "removed_history_api"],
-    [`/v1/sessions/${sid}/history/content?ref=x`, "removed_history_api"],
+    [`/v1/sessions/${sid}/history`, "history"],
+    [`/v1/sessions/${sid}/history/content?ref=x`, null],
     ["/v1/sessions/search?q=history", "search"],
     ["/src/stores/historyProjection.ts", null], ["/src/stores/sessionHistoryPages.ts?t=1", null],
     [`/v1/sessions/${sid}/approval-mode`, null], ["/v1/sessions", null],
@@ -105,7 +104,7 @@ const report = {
     started_at: lease.startedAt, source_newest_at: new Date(sourceNewest).toISOString(), cdp_port: Number(cdp.port),
     freshness_scope: "runtime_source_excluding_frontend_test_and_spec_modules" },
   evidence: "real_tauri_webview_dom_and_interaction", screenshot_kind: "complete_webview_viewport_without_native_titlebar",
-  limits: ["No send, tool execution, provider invocation or product-state injection.",
+  limits: ["No send, tool execution, provider invocation or product-state injection. Read-only execution preparation is allowed.",
     "Lease freshness is a guard; caller must also verify resident-process source freshness.",
     "DOM marker geometry proves viewport visibility, not native-window/GPU rendering.",
     "JSON excludes message text, titles, request URLs and clipboard plaintext."],
@@ -161,7 +160,7 @@ async function snapshot() {
   });
 }
 async function waitReady(id, timeout = 45000) {
-  await page.waitForFunction(async (sessionId) => {
+  await waitForAsync(async (sessionId) => {
     const state = (await import("/src/stores/conversation.ts")).useConversationStore.getState();
     return state.currentSessionId === sessionId && !state.historyLoading && state.messages.length > 0;
   }, id, { timeout });
@@ -523,7 +522,8 @@ try {
   await page.bringToFront();
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (request.method() !== "GET" && /^\/v1\/(runs|sessions|tools|command-runtime)(\/|$)/.test(url.pathname)) {
+    if (request.method() !== "GET" && !/^\/v1\/sessions\/[^/]+\/prepare$/.test(url.pathname)
+      && /^\/v1\/(runs|sessions|tools|command-runtime)(\/|$)/.test(url.pathname)) {
       report.prohibited_request_count++;
     }
     if (observedRequestKind(request.url())) starts.set(request, Date.now());
@@ -548,7 +548,7 @@ try {
         } else turnCount = payload.active_events.filter((event) => ["user_message", "system_trigger"].includes(event.type)).length;
       }
       report.requests.push({ kind, turn_count: turnCount, search_anchors: searchAnchors,
-      session_id: kind === "history" ? url.pathname.split("/").at(-1) : undefined,
+      session_id: kind === "history" ? url.pathname.split("/").at(-2) : undefined,
       direction: url.searchParams.has("before") ? "before" : "latest",
       epoch_supplied: url.searchParams.has("history_epoch"), status: response?.status(), bytes,
       duration_ms: Date.now() - starts.get(request), request_id: headers["x-agent-friend-request-id"] ?? null });
@@ -560,7 +560,7 @@ try {
   });
   if (options["--focus"]) {
     await page.reload({ waitUntil: "domcontentloaded" });
-    await page.waitForFunction(async () => {
+    await waitForAsync(async () => {
       const state = (await import("/src/stores/conversation.ts")).useConversationStore.getState();
       return state.currentSessionId && !state.historyLoading && state.messages.length > 0;
     });
@@ -581,9 +581,9 @@ try {
     return { state, end: await showMarker(short.message_uuid, `${short.answer_marker}_END`, "02-restore"),
       scope: "webview_reload_not_process_restart" };
   });
-  await step("long_latest_30_turns", async () => {
+  await step("long_latest_10_turns", async () => {
     const state = await openFixture(fixtures.long);
-    requireCondition(state.user_count === 30 && state.assistant_count === 30 && state.has_before, "latest_not_30_complete_turns");
+    requireCondition(state.user_count === 10 && state.assistant_count === 10 && state.has_before, "latest_not_10_complete_turns");
     requireCondition(state.tools_per_message.length === 1 && state.tools_per_message[0].tool_count === long.tool_count,
       "tool_run_not_aggregated_into_one_message");
     const begin = await showMarker(long.message_uuid, `${long.answer_marker}_BEGIN`, "03-long-answer-begin");
@@ -654,8 +654,8 @@ try {
       await openFixture(fixtures.long);
       await findRow(long.user_uuid, -1);
       const before = await snapshot();
-      requireCondition(before.user_count === 30 && before.assistant_count === 30 && before.has_before,
-        "reference_initial_page_not_30_turns");
+      requireCondition(before.user_count === 10 && before.assistant_count === 10 && before.has_before,
+        "reference_initial_page_not_10_turns");
       requireCondition(!before.message_ids.includes(reference.source_uuid), "reference_source_already_loaded");
       await Promise.allSettled([...pendingNetwork]);
       const started = report.requests.length;
@@ -681,9 +681,9 @@ try {
       const reads = report.requests.slice(started);
       const pages = reads.filter((request) => request.kind === "history"
         && request.session_id === fixtures.long.session_id && request.direction === "before");
-      requireCondition(pages.map((request) => request.turn_count).join() === "30,5"
+      requireCondition(pages.map((request) => request.turn_count).join() === "30,25"
         && pages.every((request) => request.epoch_supplied && request.status === 200),
-      "reference_did_not_page_30_then_5_turns");
+      "reference_did_not_page_30_then_25_turns");
       requireCondition(!reads.some((request) => ["removed_history_api", "unbounded_session_read"].includes(request.kind)),
         "reference_used_history_or_getFull");
       await screenshot(`11-reference-unloaded-${reference.source_role}`);
@@ -721,3 +721,12 @@ try {
 console.log(JSON.stringify({ status: report.status, output, steps: report.steps.length,
   failures: report.failures, requests: report.requests.length }));
 process.exitCode = report.status === "failed" ? 1 : 0;
+
+async function waitForAsync(predicate, argument, options = {}) {
+  const deadline = Date.now() + (options.timeout ?? 45000);
+  while (Date.now() < deadline) {
+    if (await page.evaluate(predicate, argument)) return;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error("async_condition_timeout");
+}

@@ -1,0 +1,26 @@
+{
+  "kind": "desktop_two_turn_send_smoke",
+  "session_id": "69540ec3-6338-41d9-92cb-9c1252ee8e74",
+  "status": "failed",
+  "turns": [
+    {
+      "turn": 1,
+      "accepted_ms": 23,
+      "total_ms": 27,
+      "run": {
+        "detail": {
+          "error": "run_not_found",
+          "message": "运行记录不存在或已过期。"
+        }
+      }
+    }
+  ],
+  "limits": [
+    "Uses configured desktop model and permits normal post-turn memory hooks",
+    "No retry of a send",
+    "Cold lease reuse separately covered by deterministic tests"
+  ],
+  "model_ref": "e38443e78edc014b",
+  "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ undefined\n- 'completed'\n",
+  "finished_at": "2026-11-06T17:25:21.044Z"
+}

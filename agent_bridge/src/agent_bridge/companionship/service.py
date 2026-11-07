@@ -21,6 +21,7 @@ from agent.paths import companionship_db_path
 from agent.runtime import SystemTriggerEvent
 from agent.runtime.models import ConsumerAbandonPolicy, RunSnapshot, RunStatus
 from agent.sessions.access.service import ConversationAccessService
+from agent.sessions.store import navigation_summaries
 from agent.time_provider import read_host_time
 
 from agent import Conversation
@@ -82,7 +83,7 @@ class CompanionshipService:
             # Recover a creation completed just before the state transaction was lost.
             existing = [
                 item
-                for item in self.runtime.persistent_store.list()
+                for item in navigation_summaries(self.runtime.persistent_store)
                 if item.origin_kind == "inner_world"
             ]
             if existing:

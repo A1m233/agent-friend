@@ -28,6 +28,58 @@ def history_client(store: JsonlSessionStore) -> tuple[TestClient, BridgeRuntime]
     return client, runtime
 
 
+def test_composer_is_independent_of_history_and_prepare_does_not_write_business_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event as Signal
+
+    store = JsonlSessionStore(tmp_path)
+    session = Session.new("isolated", "default", "deepseek/deepseek-chat")
+    store.create(session)
+    entered, release = Signal(), Signal()
+    original = store.history_window
+
+    def slow(*args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        entered.set()
+        assert release.wait(3)
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(store, "history_window", slow)
+    monkeypatch.setattr(store, "query", MagicMock(side_effect=AssertionError("full query")))
+    client, runtime = history_client(store)
+    url = f"/v1/sessions/{session.session_id}"
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pending = pool.submit(client.get, url + "/history")
+            assert entered.wait(2)
+            try:
+                composer = pool.submit(client.get, url + "/composer").result(timeout=1)
+                assert composer.status_code == 200
+                assert composer.json()["model"] == "deepseek/deepseek-chat"
+                assert "active_events" not in composer.json()
+            finally:
+                release.set()
+            page = pending.result(timeout=2)
+            assert page.status_code == 200
+            assert "model" not in page.json()
+        source = tmp_path / f"{session.session_id}.jsonl"
+        before = source.read_bytes()
+        assert client.post(url + "/prepare").status_code == 200
+        deadline = time.monotonic() + 2
+        state = "preparing"
+        while state == "preparing" and time.monotonic() < deadline:
+            state = client.get(url + "/prepare").json()["state"]
+            time.sleep(0.01)
+        assert state == "ready"
+        assert source.read_bytes() == before
+        assert client.delete(url + "/prepare").json()["state"] == "idle"
+    finally:
+        runtime.persistent_session_manager.close()
+
+
 @pytest.mark.parametrize("turn_limit", [None, 1])
 def test_chat_history_omits_accounting_diagnostics_but_preserves_full_history(
     tmp_path: Path, turn_limit: int | None
@@ -223,7 +275,10 @@ def test_original_active_route_reads_only_complete_page_and_removes_fragment_pro
     assert older.status_code == 200
     assert older.json()["history_cursor"] is None
     assert len(older.json()["active_events"]) == 21
-    assert client.get(url + "/history").status_code == 404
+    initial = client.get(url + "/history")
+    assert initial.status_code == 200
+    assert len([e for e in initial.json()["active_events"] if e["type"] == "user_message"]) == 10
+    assert "history_items" not in initial.json()
     assert client.get(url + "/history/content").status_code == 404
     assert client.get(url, params={"turn_limit": 1}).status_code == 400
     fail.assert_not_called()

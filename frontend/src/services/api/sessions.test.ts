@@ -18,7 +18,7 @@ describe("sessionsApi.get", () => {
     sessionsApi.get("im:qq/group 1");
 
     expect(http.get).toHaveBeenCalledWith(
-      "/v1/sessions/im%3Aqq%2Fgroup%201?view=active&turn_limit=30",
+      "/v1/sessions/im%3Aqq%2Fgroup%201/history?turn_limit=10",
     );
   });
 
@@ -26,7 +26,7 @@ describe("sessionsApi.get", () => {
     sessionsApi.getOlder("im:qq/group 1", "turn:31/user", "epoch 1");
 
     expect(http.get).toHaveBeenCalledWith(
-      "/v1/sessions/im%3Aqq%2Fgroup%201?view=active&turn_limit=30&before=turn%3A31%2Fuser&history_epoch=epoch+1",
+      "/v1/sessions/im%3Aqq%2Fgroup%201/history?turn_limit=30&before=turn%3A31%2Fuser&history_epoch=epoch+1",
     );
   });
 

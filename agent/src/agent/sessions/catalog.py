@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Literal
 
 from .metadata import SessionMetadataStore
-from .store import SessionStore
+from .store import SessionStore, navigation_summaries
 
 _LEADING_TITLE_RE = re.compile(r"^\s*(.+?)\s*[（(【\[]")
 
@@ -55,7 +55,7 @@ class SessionCatalog:
     def list_all(self) -> tuple[SessionDescriptor, ...]:
         metadata = self._metadata_store.load_all() if self._metadata_store is not None else {}
         descriptors: list[SessionDescriptor] = []
-        for summary in self._store.list():
+        for summary in navigation_summaries(self._store):
             if summary.origin_kind in {"scheduled_task", "inner_world"}:
                 continue
             item = metadata.get(summary.session_id)
