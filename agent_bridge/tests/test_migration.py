@@ -31,7 +31,8 @@ class FakeImRuntime:
 
 
 class FakeSessionManager:
-    def list(self, *, archived: bool = False) -> list[object]:
+    def list(self, *, archived: bool = False, navigation: bool = False) -> list[object]:
+        assert navigation
         return [object()] if archived else [object(), object()]
 
 
