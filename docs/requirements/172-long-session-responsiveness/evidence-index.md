@@ -18,7 +18,7 @@
 | E-019 | 合入前桌面首屏、编辑与真实发送 | `artifacts/merge-desktop-final.json`，短、长各 10 次。2 轮中位 153 ms、最大 254 ms；65 轮中位 233 ms、最大 487 ms。暂缓并拒绝编辑请求时输入、切换、两个会话草稿和旧编辑内容保留。 `artifacts/merge-send-final.json`，两次发送受理 62 / 56 ms，两条用户和两条助手消息已落盘，无工具调用。 | real desktop / confirmed |
 | E-017 | 编辑重发等待期间仍可输入与切换 | `artifacts/edit-admission-desktop.json`。在真实桌面中暂缓一次合成会话的编辑请求，输入下一条草稿并按回车，切到另一个会话编辑，然后拒绝原请求。只收到一次编辑请求，两个普通草稿和原编辑内容均保留。状态测试另覆盖迟到的成功响应。Bridge 测试挂起原会话编辑校验，在释放之前从同一事件循环读取另一个会话的真实历史 | desktop interaction（注入延迟和拒绝）+ 后端并发回归；未计量真实编辑至模型首字时延 |
 | E-014 | 展示数据落盘与兼容 | `artifacts/legacy-display-compare.json` 的 96 MB 样本公开逐事件比较一致，首次 74 ms，三个新 store 重开 6–7 ms。1.6 GB 样本留有两次独立记录 `legacy-display-large*.json`，首次为 1,163 / 1,136 ms。后者五次重开中位 82 ms。两份原日志与副本业务字节均未改变 | storage-only，不能作为桌面耗时 |
-| E-015 | 实际首屏首次与重开 | `artifacts/display-desktop-legacy.json` 用新鲜桌面实例与无派生数据的独立旧日志副本。从短会话点击，首开 1,717 ms，重开 705 / 538 / 545 ms，每次目标消息可见且有 10 个用户回合。此前候选的 2,102 / 566 / 629 / 565 ms 保留在 `display-desktop-legacy-pilot.json`。OS 文件缓存无控制，首开各仅一次。常规 65 轮最终中位 289 ms / 最大 400 ms，见 `display-desktop-normal.json` | desktop interaction；重开复用有效，极端首次目标仍开放 |
+| E-015 | 实际首屏首次与重开 | `artifacts/display-desktop-legacy.json` 用新鲜桌面实例与无派生数据的独立旧日志副本。从短会话点击，首开 1,717 ms，重开 705 / 538 / 545 ms，每次目标消息可见且有 10 个用户回合。此前候选的 2,102 / 566 / 629 / 565 ms 保留在 `display-desktop-legacy-pilot.json`。OS 文件缓存无控制，首开各仅一次。常规 65 轮最终中位 289 ms / 最大 400 ms，见 `display-desktop-normal.json` | desktop interaction；重开复用有效，首次 1.72 秒按用户确认的一次性边界验收 |
 | E-016 | 固定首屏内容增加更早历史 | `artifacts/display-storage-growth.json`，100 / 10,000 / 100,000 轮，各 10 次。首次含补齐中位 12.1 / 13.3 / 13.5 ms，重开中位 2.2 / 2.0 / 2.1 ms。最大样本有一次 347 ms 的首次读取，未排除。额外 64 MiB 内部尾部数据时首次中位 71 ms，重开 3.7 ms | controlled storage comparison；不能推导所有硬件或历史的绝对上界 |
 | E-012 | 去除正常加载提示后的桌面复验 | `artifacts/desktop-silent-loading.json`，新鲜 Tauri 实例、各 10 次；65 轮中位数 184 ms / 最大 367 ms，短会话中位数 101 ms / 最大 166 ms。延迟历史和准备时可编辑、打开模型与权限菜单、切换并恢复草稿；正常加载提示数量为 0，解除注入后真实准备就绪。截图 `silent-loading-editable.png` 已查看 | desktop interaction / confirmed / active；延迟注入只证明对应 UI 独立性 |
 | E-013 | 极端旧样本大小拆分 | `artifacts/legacy-breakdown.json`；与 E-007 同一原日志 hash 的隔离副本。10 轮读取 1,060 ms，工具请求 meta 约 83 MB；既有公开过滤后的事件编码为 8,386,342 字节，编码另耗 186 ms。原日志及副本业务字节不变，网络禁止 | runtime-observed / confirmed / active；尚非 HTTP/UI 端到端结果 |
@@ -61,10 +61,10 @@
 | 极端 10 轮正文的端到端首屏 | E-015 已测实际桌面，首次 1.72 秒，重开 0.54–0.71 秒；公开过滤后的响应约 8.39 MB | 用户接受按实际访问一次性补齐并持久复用。实测保留，不将 1 秒估计当作该场景的合入门槛。 |
 | 冷启动侧栏与未打开的旧会话 | 仅调用一次 `SessionManager.list()`，3 个仅有 JSONL 的隔离会话触发 3 次 `read_configuration`，产生 3 个配置快照、0 个展示索引。另用 3 个各有 1 MiB 内部尾记录的会话，新建 store 两次，配置初始化分别为 3 / 0 次，查最后消息时间两次均解析了 3,146,073 字节的内部记录。E-015 从可点击的侧栏项开始计时，未覆盖列表等待。 | 修复前的复现。导航摘要独立维护最后聊天时间，按源版本复用；修复后的回归和桌面冷启动见 E-018。未测实际用户整库总耗时。 |
 | 剪贴板复制 | 无法证明能恢复原剪贴板，未操作 | 可由用户手验；不是本次变更的核心机制证据 |
-| 用户验收 | 自动化与上述场景已记录 | `progress.md` 保持 IN_PROGRESS，不自动合入或标记 COMPLETED |
+| 用户验收 | 用户授权验收、验证齐备后合入并推送；九项 AC 和完整检查均已核实 | 见 `progress.md`，旧日志首次补齐与重开分别留有实测。 |
 
 ## Artifact 映射与对账
 
-原始桌面产物在本机临时目录的 `agent-friend-172-*` 子树；`artifacts/artifact-map.json` 保存原始相对位置、原始 hash、归档位置及去标识转换。原始日志/真实用户正文未归档；真实旧日志报告只包含计数、耗时与 hash。归档完整性由 `artifacts/MANIFEST.sha256` 校验。
+归档 JSON 统一采用 LF 换行，清单按实际 Git 文件字节验证。原始桌面产物在本机临时目录的 `agent-friend-172-*` 子树；`artifacts/artifact-map.json` 保存原始相对位置、原始 hash、归档位置及去标识转换。原始日志/真实用户正文未归档；真实旧日志报告只包含计数、耗时与 hash。归档完整性由 `artifacts/MANIFEST.sha256` 校验。
 
 最近对账：2026-11-07。本索引保留失败样本，未用均值掩盖极端旧日志；需求、方案、进度均不得宣称全部旧会话性能已验收。
