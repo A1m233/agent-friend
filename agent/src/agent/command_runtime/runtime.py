@@ -19,6 +19,7 @@ import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Mapping
 from contextlib import suppress
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -103,6 +104,7 @@ class _ProcessState:
         self.started_monotonic = time.monotonic()
         self.last_published_monotonic = self.started_monotonic
         self.pending_publish_bytes = 0
+        self.finalizing = False
         self.publish_timer: threading.Timer | None = None
         self.termination_reason: str | None = None
         self.termination_rpc_status: str | None = None
@@ -1525,6 +1527,8 @@ class CommandRuntime:
         except (ValueError, binascii.Error):
             return
         with state.condition:
+            if state.finalizing or state.snapshot.terminal():
+                return
             current = getattr(state.snapshot, f"{stream}_tail")
             combined = current + chunk
             overflow = max(0, len(combined) - self._output_tail_bytes)
@@ -1544,23 +1548,33 @@ class CommandRuntime:
         with self._lock:
             self._network_grants.discard(state.snapshot.process_id)
         with state.condition:
-            if state.snapshot.terminal():
+            if state.finalizing or state.snapshot.terminal():
                 return
+            state.finalizing = True
             timer = state.publish_timer
             state.publish_timer = None
             state.pending_publish_bytes = 0
-            state.snapshot.status = status
-            state.snapshot.terminal_reason = reason
-            state.snapshot.finished_at = datetime.now(UTC).isoformat()
-            state.snapshot.duration_seconds = max(0.0, time.monotonic() - state.started_monotonic)
-            state.snapshot.version += 1
+            final = replace(
+                state.snapshot,
+                status=status,
+                terminal_reason=reason,
+                finished_at=datetime.now(UTC).isoformat(),
+                duration_seconds=max(0.0, time.monotonic() - state.started_monotonic),
+                version=state.snapshot.version + 1,
+            )
         if timer is not None:
             timer.cancel()
         # A terminal waiter may immediately commit the formal tool result and
         # clean up its transient checkpoint. Make the final evidence snapshot
         # durable before exposing the terminal state to that waiter.
-        self._publish_evidence_state(state)
+        self._publish_evidence(final)
         with state.condition:
+            state.snapshot.status = status
+            state.snapshot.terminal_reason = reason
+            state.snapshot.finished_at = final.finished_at
+            state.snapshot.duration_seconds = final.duration_seconds
+            state.snapshot.version += 1
+            state.finalizing = False
             state.condition.notify_all()
         self._publish_state(state, include_evidence=False)
         self._prune_terminal_processes()
@@ -1592,11 +1606,6 @@ class CommandRuntime:
         self._publish(snapshot)
         if include_evidence:
             self._publish_evidence(snapshot)
-
-    def _publish_evidence_state(self, state: _ProcessState) -> None:
-        with state.condition:
-            snapshot = self._copy_snapshot(state.snapshot)
-        self._publish_evidence(snapshot)
 
     def _publish_evidence(self, snapshot: CommandProcessSnapshot) -> None:
         with self._lock:
