@@ -5,6 +5,7 @@
  * `open_im_connect` 打开独立 Tauri 窗口，由窗口负责拖动、关闭即隐藏。
  */
 
+import { PageHeader } from "@/components/app/PageHeader";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, MessageSquarePlus, Plug, RefreshCcw, Trash2 } from "lucide-react";
 import QRCode from "qrcode";
@@ -271,15 +272,12 @@ export function IMConnectPanel({ active = true }: Props) {
 
   return (
     <div className="flex h-full flex-col bg-bg text-fg">
-      <header className="border-b border-border px-4 py-3">
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="text-lg font-semibold text-fg">接入 IM</h1>
-          <Button variant="link" size="sm" onClick={() => void openSettings({ target: "chat" })}>调整回复风格</Button>
-        </div>
-        <p className="mt-1 text-sm text-fg/70">
-          在 IM 里也能跟我聊。同人格，共享记忆。
-        </p>
-      </header>
+      <PageHeader
+        className="border-b border-border p-4"
+        title="接入 IM"
+        description="在 IM 里也能跟我聊。同人格，共享记忆。"
+        actions={<Button variant="link" size="sm" onClick={() => void openSettings({ target: "chat" })}>调整回复风格</Button>}
+      />
 
       <main ref={mainRef} className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto p-4">
         <section>

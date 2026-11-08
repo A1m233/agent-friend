@@ -1,3 +1,17 @@
+.chat-content-surface {
+  --chat-corner-clearance: calc(var(--spacing) * 28);
+}
+
+.chat-content-surface[data-connection="online"] {
+  --chat-corner-clearance: calc(var(--spacing) * 12);
+}
+
+/* Keep the reading column centered until the corner controls need its right margin. */
+.chat-content-surface[data-home="false"] .chat-reading-column {
+  width: calc(100% - var(--chat-corner-clearance));
+  margin-inline-end: max(var(--chat-corner-clearance), calc((100% - var(--container-3xl)) / 2));
+}
+
 .chat-composer-fade {
   /*
    * 调整消息区底部渐隐：

@@ -38,6 +38,12 @@ it("loads only while active, searches the server and prioritizes reminders over 
   expect(host.textContent).not.toContain("Agent · 编辑内容");
   expect(host.textContent).toContain("未设置提醒");
   const input = host.querySelector('[aria-label="搜索待办"]') as HTMLInputElement;
+  const items = host.querySelector('[aria-label="待办条目"] [data-slot="scroll-area-viewport"]');
+  const detail = host.querySelector('[aria-label="待办详情"] [data-slot="scroll-area-viewport"]');
+  expect(items?.textContent).toContain(todo.title);
+  expect(detail).not.toBeNull();
+  expect(items!.contains(detail)).toBe(false);
+  expect(input.closest('[data-slot="scroll-area-viewport"]')).toBeNull();
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "附件");
     input.dispatchEvent(new Event("input", { bubbles: true }));
