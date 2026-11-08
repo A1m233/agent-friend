@@ -29,8 +29,7 @@ import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
-  SidebarGroupAction,
-  SidebarGroupContent,
+  ScrollArea,
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
@@ -39,9 +38,6 @@ import {
   SidebarMenuItem,
   Spinner,
   TextEllipsis,
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
 } from "@/components/ui";
 import type { IMType } from "@/services";
 import {
@@ -553,17 +549,7 @@ export function HistorySidebar({
       <SidebarContent className="overflow-hidden">
         <SidebarGroup className="min-h-0 flex-1">
           <SidebarGroupLabel className="text-sm font-normal">对话</SidebarGroupLabel>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <SidebarGroupAction aria-label="新对话" onClick={onNewConversation}>
-                <span className="flex size-3.5 items-center justify-center">
-                  <SquarePen className="size-full" />
-                </span>
-              </SidebarGroupAction>
-            </TooltipTrigger>
-            <TooltipContent side="right">新对话</TooltipContent>
-          </Tooltip>
-          <SidebarGroupContent className="min-h-0 flex-1 overflow-y-auto">
+          <ScrollArea className="-mr-2 min-h-0 flex-1" viewportClassName="vertical-page-viewport" aria-label="对话历史" role="region">
             {list.length === 0 ? (
               <HistorySidebarStatus
                 loaded={sessionsLoaded}
@@ -573,7 +559,7 @@ export function HistorySidebar({
                 onRetry={() => void refresh()}
               />
             ) : (
-              <SidebarMenu className="gap-1">
+              <SidebarMenu className="gap-1 pr-2.5">
                 {list.map((s) => {
                   const ageText = formatSessionAge(s.updated_at || s.created_at, now);
                   const title = s.title || "新对话";
@@ -650,7 +636,7 @@ export function HistorySidebar({
                               currentSessionId,
                               s.session_id,
                             )}
-                            className={NAVIGATION_BUTTON_CLASS}
+                            className="px-2 text-sm font-normal focus-visible:ring-inset data-[active=true]:bg-accent/10 data-[active=true]:font-medium transition-none"
                             onContextMenu={(event) => {
                               pointerContextMenuSessionRef.current =
                                 event.button === 2 ? s.session_id : null;
@@ -798,7 +784,7 @@ export function HistorySidebar({
                 })}
               </SidebarMenu>
             )}
-          </SidebarGroupContent>
+          </ScrollArea>
         </SidebarGroup>
       </SidebarContent>
       <ConfirmDialog

@@ -4,12 +4,11 @@ import type { ChatTextReference } from "@/types/chat";
 
 import { FeedbackIcon } from "@/components/app/FeedbackIcon";
 import { LinkInteractionBoundary } from "@/components/app/link-interactions/LinkInteractionBoundary";
-import { Button, StatusDot, type StatusDotProps } from "@/components/ui";
+import { Button, StatusDot } from "@/components/ui";
 import { openFeedback } from "@/lib/settings/navigation";
 import {
   useConnectionStore,
   useConversationStore,
-  type ConnectionStatus,
 } from "@/stores";
 import { focusVoiceCallWindow, useVoiceStore } from "@/stores/voice";
 import { isVoiceCallBlockingText } from "@/stores/voiceStateMachine";
@@ -64,11 +63,14 @@ export function ChatContentSurface() {
   return (
     <LinkInteractionBoundary context={{ kind: "session", sessionId: currentSessionId }}>
     <SessionApprovalModeController>
-      <div className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden">
-      <header className="flex items-center justify-end gap-2 border-b border-border px-4 py-2.5">
+      <div className="chat-content-surface relative flex h-full min-w-0 flex-1 flex-col overflow-hidden" data-connection={status} data-home={isHome}>
+      <div role="group" aria-label="对话窗口操作" className="absolute right-4 top-2 z-10 flex items-center gap-2">
         <Button
-          size="sm"
+          size="icon-sm"
           variant="ghost"
+          className="text-muted"
+          title="反馈问题"
+          aria-label="反馈问题"
           onClick={() =>
             void openFeedback(
               currentSessionId ? { preselectSessionId: currentSessionId } : undefined,
@@ -76,12 +78,16 @@ export function ChatContentSurface() {
           }
         >
           <FeedbackIcon className="size-4" />
-          反馈问题
         </Button>
-        <ConnectionDot status={status} />
-      </header>
+        {runtimeUnavailable && (
+          <span role="status" className="flex items-center gap-1.5 text-xs text-muted">
+            <StatusDot tone={status === "offline" ? "danger" : "warning"} size="sm" />
+            {status === "offline" ? "未连接" : "连接中"}
+          </span>
+        )}
+      </div>
       {voiceBlocksText ? (
-        <div className="flex items-center justify-between border-b border-border bg-surface px-4 py-2 text-sm">
+        <div className="flex min-h-12 items-center justify-between gap-2 border-b border-border bg-surface py-2 pl-4 pr-(--chat-corner-clearance) text-sm">
           <span className="text-muted">这段对话正在语音通话中</span>
           <Button size="xs" variant="outline" onClick={() => void focusVoiceCallWindow()}>
             查看通话
@@ -133,26 +139,10 @@ function HomeStart({
   return (
     <div className="grid min-h-0 flex-1 place-items-center">
       <div className={`${CHAT_CONTENT_CONTAINER_CLASS} -translate-y-10`}>
-        <h1 className="mb-8 text-center text-xl font-medium text-fg">今天想聊点什么？</h1>
+        <h1 className="mb-8 text-center text-xl font-medium text-fg">今天想和 AF 聊点什么？</h1>
         <Composer placement="inline" disabled={disabled} disabledReason={disabledReason}
           sendUnavailable={sendUnavailable} />
       </div>
     </div>
-  );
-}
-
-const CONNECTION_TONE: Record<ConnectionStatus, StatusDotProps["tone"]> = {
-  online: "success",
-  offline: "danger",
-  unknown: "warning",
-};
-
-function ConnectionDot({ status }: { status: ConnectionStatus }) {
-  const label = status === "online" ? "已连接" : status === "offline" ? "未连接" : "连接中";
-  return (
-    <span className="flex items-center gap-1.5 text-xs text-muted">
-      <StatusDot tone={CONNECTION_TONE[status]} size="md" />
-      {label}
-    </span>
   );
 }

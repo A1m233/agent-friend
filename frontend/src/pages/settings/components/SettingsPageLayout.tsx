@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
 
+import { PageHeader } from "@/components/app/PageHeader";
+import { ScrollArea } from "@/components/ui";
+
 interface SettingsPageLayoutProps {
   title: string;
   actions?: ReactNode;
@@ -12,16 +15,11 @@ export function SettingsPageLayout({
   children,
 }: SettingsPageLayoutProps) {
   return (
-    <div className="h-screen overflow-y-auto">
+    <ScrollArea className="h-screen min-h-0" viewportClassName="vertical-page-viewport">
       <div className="mx-auto flex max-w-2xl flex-col gap-4 p-4">
-        <div className="flex items-center justify-between gap-3 h-7">
-          <h2 className="text-xl font-semibold">{title}</h2>
-          {actions ? (
-            <div className="flex shrink-0 items-center gap-2">{actions}</div>
-          ) : null}
-        </div>
+        <PageHeader title={title} actions={actions} />
         {children}
       </div>
-    </div>
+    </ScrollArea>
   );
 }

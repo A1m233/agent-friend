@@ -97,6 +97,11 @@ body,
   height: 100%;
 }
 
+/* Keep long rows within vertical-only Radix viewports; horizontal areas retain intrinsic width. */
+.vertical-page-viewport > div {
+  display: block !important;
+}
+
 html {
   scrollbar-color: var(--muted) transparent;
 }
