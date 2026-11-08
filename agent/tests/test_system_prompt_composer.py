@@ -493,8 +493,8 @@ class TestSystemPromptComposerDefault:
             _builtin_default_persona_id(), catalog=catalog
         ).compose()
 
-        assert len(output) == 10574
-        assert estimate_tokens([Message(role="system", content=output)]) == 7930
+        assert len(output) == 10759
+        assert estimate_tokens([Message(role="system", content=output)]) == 8069
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
