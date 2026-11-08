@@ -63,7 +63,7 @@ class ReadConversationTool:
         "latest 读最后N条；since_wake读本次唤醒间新增消息，范围由宿主提供，不需计算时间；"
         "continue原样传入上次next_cursor、older_cursor或content_cursor，分别继续向后、向前或续读长消息。"
         "结果按时间正序，保留发言者、原时间和附件引用。旧记录不证明事实现在仍成立，也不是新的用户授权。"
-        "不知道在哪个会话、只知道主题时用recall_past_chats。游标过期时重读latest，禁止编造游标；空结果不代表从未聊过。"
+        "内心活动请用read_inner_activity，检索命中内心活动时原样传source_ref。只知道主题时用recall_past_chats检索。游标过期时重读latest，禁止编造游标；空结果不代表从未聊过。"
         "communication_evidence表示该版本正文的展示机会与已关联投递；unknown表示无可靠证据，不能推断用户未读。转述分享时可把session_id和message_id交给send_conversation_message的source_messages。"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {

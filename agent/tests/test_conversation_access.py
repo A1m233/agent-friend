@@ -9,6 +9,8 @@ import pytest
 from agent.sessions.access.service import ConversationAccessError, ConversationAccessService
 from agent.sessions.events import EventType
 from agent.tools.builtin.conversation_access import ReadConversationTool
+from agent.tools.builtin.conversation_access.inner_activity import ReadInnerActivityTool
+from agent.tools.builtin.conversation_history import ConversationHistoryTool
 
 from agent import Event, JsonlSessionStore, Session
 
@@ -158,3 +160,61 @@ def test_wrong_cursor_and_missing_wake_return_actionable_errors(
     assert result.is_error and "wake_context_unavailable" in result.text
     result = tool.invoke({"session_id": "daily", "mode": "continue", "cursor": "daily"})
     assert result.is_error and "invalid_cursor" in result.text
+
+
+def test_inner_activity_reads_wakes_and_references_without_side_effects(
+    access: tuple[JsonlSessionStore, ConversationAccessService],
+) -> None:
+    store, service = access
+    tool = ReadInnerActivityTool(service)
+
+    def read(**args: str) -> dict[str, Any]:
+        return dict(json.loads(tool.invoke(args).text))
+
+    assert read()["activity"] is None
+    assert len(store.list()) == 1
+    inner = Session.new(
+        "内心", "default", "test/model", session_id="inner", origin_kind="inner_world"
+    )
+    old = "长" * 4000 + "结尾"
+    for i, content in enumerate(("更早", old, "最新")):
+        inner.events.extend(
+            [
+                event(
+                    "system_trigger",
+                    f"s{i}",
+                    source_kind="companionship",
+                    meta={"run_id": f"r{i}"},
+                    prompt_addendum="私有简报",
+                ),
+                event("assistant_message", f"p{i}", content="未完成", partial=True),
+                event("tool_call_result", f"t{i}", result="内部结果"),
+                event("assistant_message", f"a{i}", content=content),
+            ]
+        )
+    store.create(inner)
+    tool.receipts = lambda sid, rid: (
+        [{"conversation_state": "committed"}] if (sid, rid) == ("inner", "r2") else []
+    )
+    latest = read()
+    assert latest["activity"]["text"] == "最新"
+    assert latest["activity"]["deliveries"] == [{"conversation_state": "committed"}]
+    previous = read(cursor=latest["older_cursor"])
+    search = ConversationHistoryTool(store).invoke({"search_text": "结尾"})
+    hit = next(
+        hit
+        for hit in json.loads(search.text)["results"]
+        if hit.get("inner_activity_ref") == "inner#a1"
+    )
+    anchored = read(source_ref=hit["inner_activity_ref"])
+    for page in (previous, anchored):
+        assert page["activity"]["text"] == old[:4000]
+        assert page["activity"]["deliveries"] == []
+        assert read(cursor=page["content_cursor"])["activity"]["text"] == "结尾"
+        assert read(cursor=page["older_cursor"])["activity"]["text"] == "更早"
+    assert read(source_ref="inner#a0..a1")["activity"]["text"] == old[:4000]
+    assert read(source_ref="daily#a1")["error"] == "invalid_source"
+    assert read(source_ref="inner#missing")["error"] == "source_missing"
+    assert read(cursor="bad")["error"] == "invalid_cursor"
+    store.append_event("inner", event("system_trigger", "s3", source_kind="companionship"))
+    assert read(cursor=anchored["content_cursor"])["error"] == "history_changed"

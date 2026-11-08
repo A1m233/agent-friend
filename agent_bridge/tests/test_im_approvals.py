@@ -423,6 +423,8 @@ class FileWorkflowLLM:
     def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
         self.calls += 1
         if self.calls == 1:
+            assert "Use request_filesystem_access for the exact file" in str(request.messages)
+            assert "This surface cannot grant" not in str(request.messages)
             args = {
                 "reason": "创建临时验收文件",
                 "items": [

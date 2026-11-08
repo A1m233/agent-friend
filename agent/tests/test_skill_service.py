@@ -98,7 +98,7 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
     )
     assert (
         manifest["skills"]["agent-friend-guide"]["source_commit"]
-        == "b26c637f9a3518fa32da157462334ef9d38ad900"
+        == "80c121cbd7b097be5afb2982e2c9563bdb633dd6"
     )
     assert (
         manifest["skills"]["skill-installer"]["source_commit"]
@@ -307,7 +307,7 @@ def test_activation_does_not_preload_resources_or_execute_scripts(tmp_path: Path
     turn = service.begin_turn((SkillSelection(record.id),), model_window=100_000)
     runtime_capabilities = render_runtime_capability_notice(
         FILESYSTEM_TOOL_NAMES,
-        surface="desktop_chat",
+        approval_available=True,
     )
     rendered = render_activated_skill(
         turn.activations[0],
@@ -322,14 +322,14 @@ def test_activation_does_not_preload_resources_or_execute_scripts(tmp_path: Path
 
 
 def test_runtime_capability_notice_follows_tools_and_surface() -> None:
-    unavailable = render_runtime_capability_notice((), surface="desktop_chat")
+    unavailable = render_runtime_capability_notice((), approval_available=False)
     desktop = render_runtime_capability_notice(
         FILESYSTEM_TOOL_NAMES,
-        surface="desktop_chat",
+        approval_available=True,
     )
     non_desktop = render_runtime_capability_notice(
         FILESYSTEM_TOOL_NAMES,
-        surface="openai_compatible",
+        approval_available=False,
     )
 
     assert "No governed filesystem search/read tools" in unavailable

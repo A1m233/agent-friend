@@ -144,6 +144,7 @@ def read_window(
     turn_limit: int,
     before: str | None = None,
     history_epoch: str | None = None,
+    anchor_event_uuid: str | None = None,
     cancel_check: CancelCheck = None,
 ) -> HistoryWindow:
     if turn_limit < 1:
@@ -169,6 +170,7 @@ def read_window(
     turns = 0
     has_older = False
     boundary_seen = before is None
+    found_anchor = anchor_event_uuid is None
     with path.open("rb") as source:
         if version[2] == 0:
             raise SessionCorruptError("会话文件为空")
@@ -197,6 +199,14 @@ def read_window(
                     if start == boundary and event.type in _TURNS:
                         boundary_seen = True
                     continue
+                if not found_anchor:
+                    retained.append((start, event))
+                    if event.uuid == anchor_event_uuid:
+                        found_anchor = True
+                        turns = int(event.type in _TURNS)
+                    elif event.type in _TURNS:
+                        retained.clear()
+                    continue
                 if event.type in _TURNS:
                     turns += 1
                     if turns > turn_limit:
@@ -205,6 +215,8 @@ def read_window(
                 retained.append((start, event))
             if not boundary_seen:
                 raise ValueError("history cursor must point to a complete turn boundary")
+            if not found_anchor:
+                raise KeyError(anchor_event_uuid)
     # Records between the preceding turn and this page's first input belong to
     # the preceding turn. Keep metadata at file start only on the oldest page.
     retained.reverse()

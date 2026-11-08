@@ -157,6 +157,7 @@ class EvidenceCandidate:
     fused_score: float | None = None
     excerpts: tuple[EvidenceExcerpt, ...] = ()
     session_id: str | None = None
+    inner_activity_ref: str | None = None
 
 
 class EvidenceSource(Protocol):

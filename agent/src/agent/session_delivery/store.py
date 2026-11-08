@@ -55,6 +55,8 @@ class SessionDeliveryStore:
                 # A replay of an automatic delivery keeps the recipient pinned at acceptance.
                 if request.get("auto_qq") and saved.get("auto_qq"):
                     saved["destination_id"] = request.get("destination_id")
+                if saved.get("first_contact") and request.get("first_contact"):
+                    saved["target_session_id"] = request["target_session_id"]
                 if saved != request:
                     raise ValueError("delivery_operation_conflict")
                 return self._decode(existing)
@@ -119,6 +121,29 @@ class SessionDeliveryStore:
                     "SELECT * FROM deliveries WHERE conversation_state='queued' OR (conversation_state='committed' AND im_state='pending') ORDER BY created_at LIMIT 100"
                 )
             ]
+
+    def for_source_run(self, session_id: str, run_id: str) -> list[dict[str, Any]]:
+        with self.connection() as db:
+            return [
+                dict(row)
+                for row in db.execute(
+                    """SELECT delivery_id, conversation_state, im_state, message_id, created_at,
+                    json_extract(request_json,'$.target_session_id') AS target_session_id
+                    FROM deliveries WHERE json_extract(request_json,'$.source_session_id')=?
+                    AND json_extract(request_json,'$.source_run_id')=? ORDER BY created_at LIMIT 100""",
+                    (session_id, run_id),
+                )
+            ]
+
+    def bind_first_target(self, delivery_id: str, target: str, destination: str | None) -> None:
+        with self.connection() as db:
+            db.execute(
+                """UPDATE deliveries SET request_json=json_set(request_json,
+                   '$.target_session_id', ?, '$.destination_id', ?), im_state=?
+                   WHERE delivery_id=? AND conversation_state='queued'
+                   AND json_extract(request_json,'$.target_session_id')=''""",
+                (target, destination, "pending" if destination else "not_requested", delivery_id),
+            )
 
     def recent(self, source_session_id: str, *, limit: int = 10) -> list[dict[str, Any]]:
         with self.connection() as db:

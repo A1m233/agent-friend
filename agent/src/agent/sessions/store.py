@@ -711,6 +711,7 @@ class JsonlSessionStore:
         turn_limit: int,
         before: str | None = None,
         history_epoch: str | None = None,
+        anchor_event_uuid: str | None = None,
         cancel_check: CancelCheck = None,
     ) -> HistoryWindow:
         """Lazy display reader. Absence of a derived index never triggers a full rebuild."""
@@ -718,6 +719,18 @@ class JsonlSessionStore:
         if path is None:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
         version = self._source_version(path)
+        if anchor_event_uuid is not None:
+            window = read_window(
+                path,
+                version,
+                turn_limit=turn_limit,
+                anchor_event_uuid=anchor_event_uuid,
+                history_epoch=history_epoch,
+                cancel_check=cancel_check,
+            )
+            if self._source_version(path) != version:
+                raise ValueError("History changed; reload the latest page")
+            return window
         # Use existing compatible indexes, but do not wait behind maintenance.
         if not (before and before.startswith("tail-")):
             try:
@@ -1513,6 +1526,7 @@ class JsonlSessionStore:
                         self._last_conversation_event_at(
                             path, sid=head.uuid, fallback=head.ts, cancel_check=cancel_check
                         ),
+                        head.payload.get("origin_kind"),
                     )
                     with self._summary_lock:
                         try:

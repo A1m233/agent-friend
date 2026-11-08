@@ -67,7 +67,7 @@ class SkillReadTool:
         snapshot = args.get(SKILL_CATALOG_SNAPSHOT_ARG)
         runtime_capabilities = args.get(SKILL_RUNTIME_CAPABILITIES_ARG)
         if not isinstance(runtime_capabilities, str) or not runtime_capabilities.strip():
-            runtime_capabilities = render_runtime_capability_notice((), surface=None)
+            runtime_capabilities = render_runtime_capability_notice((), approval_available=False)
         if not isinstance(skill_id, str) or not skill_id.strip():
             return self._argument_error(
                 "skill_id 必须是当前 catalog 中的非空稳定 Skill ID；"

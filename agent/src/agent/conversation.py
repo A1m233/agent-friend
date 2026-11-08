@@ -151,6 +151,7 @@ from .filesystem.tools import (
     FILESYSTEM_SURFACE_ARG,
     FILESYSTEM_TOOL_CALL_ID_ARG,
     FILESYSTEM_TOOL_NAMES,
+    RequestFilesystemAccessTool,
 )
 from .latency import (
     RunLatencyContext,
@@ -569,6 +570,7 @@ class Conversation:
         self._runtime_instance_id = ""
         self._runtime_start_reason = "direct_start"
         self._turn_context_override = ""
+        self.run_instruction = ""  # Host-owned instruction for this prepared Conversation only.
         self._turn_prompt_builder: PromptBuilder | None = None
         self._last_built_model_messages: list[Message] | None = None
         self._last_built_system_prompt = ""
@@ -663,6 +665,8 @@ class Conversation:
             and self._run_model_snapshot.phase.visible
         ):
             prompt += "\n\n" + phase_instruction()
+        if self.run_instruction:
+            prompt += "\n\n" + self.run_instruction
         return prompt
 
     def _snapshot_prompt_builder(self) -> PromptBuilder:
@@ -2010,15 +2014,26 @@ class Conversation:
                 )
         return payloads
 
+    def _filesystem_approval_available(self) -> bool:
+        registry = self._tool_registry
+        if registry is None or RequestFilesystemAccessTool.name not in registry:
+            return False
+        tool = registry.get(RequestFilesystemAccessTool.name)
+        return isinstance(tool, RequestFilesystemAccessTool) and tool.approval_available(
+            self._session.session_id,
+            self._run_id_override or "",
+            str(self._prompt_surface_override or ""),
+        )
+
     def _skill_runtime_capability_notice(self) -> str:
         tool_names = (
             tuple(tool.name for tool in self._tool_registry.all_tools())
-            if self._tool_registry is not None
+            if self._tool_registry is not None and not self._voice_latency_disable_tools
             else ()
         )
         return render_runtime_capability_notice(
             tool_names,
-            surface=str(self._prompt_surface_override or ""),
+            approval_available=self._filesystem_approval_available(),
         )
 
     def _skill_context_messages(self) -> list[Message]:
@@ -3161,7 +3176,7 @@ class Conversation:
             ),
             runtime_capabilities=render_runtime_capability_notice(
                 tuple(sorted(name for name in callable_names if name)),
-                surface=current_surface,
+                approval_available=self._filesystem_approval_available(),
             ),
             capability_catalog=(
                 capability_catalog

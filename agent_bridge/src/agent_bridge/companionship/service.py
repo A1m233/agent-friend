@@ -21,7 +21,6 @@ from agent.paths import companionship_db_path
 from agent.runtime import SystemTriggerEvent
 from agent.runtime.models import ConsumerAbandonPolicy, RunSnapshot, RunStatus
 from agent.sessions.access.service import ConversationAccessService
-from agent.sessions.store import navigation_summaries
 from agent.time_provider import read_host_time
 
 from agent import Conversation
@@ -32,6 +31,15 @@ if TYPE_CHECKING:
     from ..assembly import BridgeRuntime
 
 logger = logging.getLogger(__name__)
+
+
+FIRST_ACTIVITY_INTRO = """
+
+这是你第一次自主醒来。用你平常说话的口吻，向对方打个简短的招呼，让对方知道，即使他们没有先开口，
+你也会自己找些感兴趣的事做，偶尔带点见闻回来聊。让对方知道，以后随口说一句就能影响你怎么过这段时间，
+比如想让你多写点故事，有好玩的再来分享，或者觉得你想摸鱼就摸鱼。挑一个贴合你们的例子就好，给对方留出不用马上回复的余地。
+用 send_conversation_message 发送这条招呼，省略 target_session_id 让宿主选择可回复的会话。
+"""
 
 
 class CompanionshipService:
@@ -81,13 +89,9 @@ class CompanionshipService:
         def create() -> str:
             manager = self.runtime.persistent_session_manager
             # Recover a creation completed just before the state transaction was lost.
-            existing = [
-                item
-                for item in navigation_summaries(self.runtime.persistent_store)
-                if item.origin_kind == "inner_world"
-            ]
+            existing = self.access.existing_inner_id()
             if existing:
-                return sorted(existing, key=lambda item: item.created_at)[0].session_id
+                return existing
             persona = self.runtime.catalog.find_by_name(self.runtime.default_persona)
             config = self._model_config()
             return manager.create(
@@ -165,6 +169,10 @@ class CompanionshipService:
         if state["inner_session_id"] != session_id or not state["active_run_id"]:
             return None
         return self.store.snapshot(state["active_run_id"])
+
+    def may_introduce(self, source: str, run_id: str) -> bool:
+        snapshot = self.current_snapshot(source)
+        return bool(snapshot and snapshot["wake_id"] == run_id and snapshot.get("introduce"))
 
     def observe_read(self, source: str, target: str, messages: list[str]) -> None:
         state = self.store.read()
@@ -267,6 +275,8 @@ class CompanionshipService:
         inner = self.ensure_inner()
         run_id = uuid4().hex
         snapshot = capture_changes(self.access, state, run_id)
+        contact_paused = self.store.paused(state, "contact", now)
+        snapshot["introduce"] = snapshot["first_overview"] and not contact_paused
         overview = render_overview(self.access, snapshot)
         presence = self.runtime.presence_registry
         last_input = presence.last_desktop_interaction(now=now) if presence else None
@@ -282,7 +292,7 @@ class CompanionshipService:
                     "last_overview_at": state["last_overview_at"],
                     "previous_outcome": state["last_outcome"],
                     "limits": asdict(config),
-                    "contact_paused": self.store.paused(state, "contact", now),
+                    "contact_paused": contact_paused,
                     "changes": overview,
                     "recent_deliveries": self.runtime.session_delivery.store.recent(inner)
                     if self.runtime.session_delivery is not None
@@ -318,6 +328,8 @@ class CompanionshipService:
                 cancel_check=cancel_check,
                 allow_inner=True,
             )
+            if snapshot["introduce"]:
+                conv.run_instruction = FIRST_ACTIVITY_INTRO.strip()
             if conv.current_model_config != model_config:
                 conv.switch_model_config(model_config)
             conv.model_guard = lambda model: GovernedModel(
