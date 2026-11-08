@@ -93,6 +93,11 @@ def format_evidence(
 def _format_evidence_one(candidate: EvidenceCandidate, now: datetime) -> dict[str, object]:
     if candidate.excerpts:
         return {
+            **(
+                {"inner_activity_ref": candidate.inner_activity_ref}
+                if candidate.inner_activity_ref
+                else {}
+            ),
             "session_id": candidate.session_id,
             "source_refs": list(candidate.provenance),
             "recalled_at": _format_time(candidate.excerpts[-1].occurred_at, now),

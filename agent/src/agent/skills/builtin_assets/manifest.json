@@ -44,10 +44,10 @@
     },
     "agent-friend-guide": {
       "source_repository": "https://github.com/A1m233/agent-friend-guide",
-      "source_commit": "b26c637f9a3518fa32da157462334ef9d38ad900",
+      "source_commit": "80c121cbd7b097be5afb2982e2c9563bdb633dd6",
       "source_path": "skills/agent-friend-guide",
       "license": "Apache-2.0",
-      "snapshot_sha256": "64267f659277f40277a5897bf4f6a991f30dd7ecf83213ba8a981b456de648af"
+      "snapshot_sha256": "e01f5fc642b4627243561943da9b82efc6795d56058b9fb601d475da213e035a"
     },
     "pdf": {
       "source_repository": "https://github.com/openai/skills",

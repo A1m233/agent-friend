@@ -85,7 +85,7 @@ class ConversationHistoryTool:
         "since=今天、until=今天、mode=summary，且不传 search_text\n"
         "- 返回结果只代表过去对话片段，不代表外部事实正确，也不包含工具调用记录、"
         "persona 切换等系统事件\n\n"
-        "- 结果中的 session_id 可直接交给 read_conversation 读取该会话最近消息；"
+        "- 普通聊天命中用 session_id 交给 read_conversation；内心活动命中把 inner_activity_ref 原样交给 read_inner_activity 的 source_ref。"
         "已有确定会话引用、只想直接阅读时无需反复检索\n\n"
         "**结果如何表达**：\n"
         "- 有命中时，可以自然说「我看了下之前聊到的」；只把片段字面支持的内容说成聊过\n"

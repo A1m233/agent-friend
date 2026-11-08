@@ -16,6 +16,7 @@ from agent.runtime import SessionBusyError
 from agent.session_delivery import SessionDeliveryStore
 from agent.sessions.access.service import ConversationAccessError
 from agent.sessions.errors import SessionNotFoundError, SessionWriterConflictError
+from agent.sessions.manager import delivered_message_events
 
 from ..protocols.im.delivery.once import DeliveryAttempt, deliver_once
 
@@ -33,6 +34,7 @@ class SessionDeliveryService:
             session_delivery_db_path(runtime.settings.sessions_dir.parent)
         )
         self.contact_allowed: Callable[[str], bool] = lambda _sid: True
+        self.may_introduce: Callable[[str, str], bool] = lambda *_: False
         self.source_was_read: Callable[[str, str, str, str], bool] = lambda *_args: False
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -70,7 +72,32 @@ class SessionDeliveryService:
             raise ConversationAccessError(
                 "contact_paused", "自主联系已暂停，请安静结束，不要换通道重试。"
             )
-        target = str(args["target_session_id"])
+        target = str(args.get("target_session_id", ""))
+        if not target:
+            if not self.may_introduce(source, run_id):
+                raise ConversationAccessError(
+                    "target_missing", "请选择 list_conversations 返回的目标会话。"
+                )
+            if (
+                args.get("destination_id")
+                or args.get("notify_im")
+                or args.get("source_messages")
+                or args.get("attachment_asset_ids")
+            ):
+                raise ConversationAccessError("invalid_intro", "首次招呼只发送问候正文。")
+            request = {
+                "first_contact": True,
+                "source_session_id": source,
+                "source_run_id": run_id,
+                "target_session_id": "",
+                "destination_id": None,
+                "content": str(args["content"]),
+                "auto_qq": "notify_im" not in args,
+            }
+            with self.contact_lock:
+                if not self.contact_allowed(source):
+                    raise ConversationAccessError("contact_paused", "自主联系已暂停。")
+                return self.receipt(self.store.submit(f"{source}:{run_id}:first-contact", request))
         if target == source:
             raise ConversationAccessError(
                 "same_conversation", "当前会话直接回复即可，无需跨会话发送。"
@@ -139,27 +166,30 @@ class SessionDeliveryService:
             and sessions.is_inner(source)
             and (not attachments or (len(attachments) == 1 and attachments[0]["kind"] == "image"))
         ):
-            candidates = [
-                p
-                for p in self.destinations()
-                if p["session_id"] == target
-                and p["channel"] == "qq"
-                and p["recipient"] == "owner"
-                and p["proactive_supported"]
-            ]
-            preferred = max(
-                candidates,
-                key=lambda p: (
-                    p["online"],
-                    p["last_user_interaction_at"] or "",
-                    p["destination_id"],
-                ),
-                default=None,
-            )
             request["auto_qq"] = True
-            request["destination_id"] = preferred["destination_id"] if preferred else None
+            request["destination_id"] = self._preferred_qq(target)
         row = self.store.submit(f"{source}:{run_id}:{call_id}", request)
         return self.receipt(row)
+
+    def _preferred_qq(self, target: str) -> str | None:
+        candidates = [
+            p
+            for p in self.destinations()
+            if p["session_id"] == target
+            and p["channel"] == "qq"
+            and p["recipient"] == "owner"
+            and p["proactive_supported"]
+        ]
+        preferred = max(
+            candidates,
+            key=lambda p: (
+                p["online"],
+                p["last_user_interaction_at"] or "",
+                p["destination_id"],
+            ),
+            default=None,
+        )
+        return str(preferred["destination_id"]) if preferred else None
 
     @staticmethod
     def receipt(row: dict[str, Any]) -> dict[str, Any]:
@@ -215,6 +245,43 @@ class SessionDeliveryService:
             self._delivery_lock.release()
 
     def _deliver(self, row: dict[str, Any]) -> None:
+        if row["request"].get("first_contact"):
+            with self.contact_lock:
+                self._deliver_ready(row)
+        else:
+            self._deliver_ready(row)
+
+    def _resolve_first_target(self, row: dict[str, Any]) -> bool:
+        """Resolve at delivery time. A newly published conversation already contains its greeting."""
+        manager = self.runtime.persistent_session_manager
+        did = row["delivery_id"]
+        request = row["request"]
+        with manager.creation_lock:
+            active = manager.list(navigation=True)
+            # A crash may have published the greeting before the outbox pinned its target.
+            if manager.exists(did):
+                target = did
+            elif active:
+                target = active[0].session_id
+            elif manager.list(archived=True, navigation=True):
+                return False
+            else:
+                persona = self.runtime.catalog.find_by_name(self.runtime.default_persona)
+                events = delivered_message_events(
+                    did, request["content"], request["source_session_id"], request["source_run_id"]
+                )
+                target = manager.create(
+                    persona.name,
+                    self.runtime.default_model,
+                    persona_id=persona.id,
+                    session_id=did,
+                    initial_events=tuple(events),
+                ).session_id
+            destination = self._preferred_qq(target) if request["auto_qq"] else None
+            self.store.bind_first_target(did, target, destination)
+            return True
+
+    def _deliver_ready(self, row: dict[str, Any]) -> None:
         row = self.store.get(row["delivery_id"])
         if row["conversation_state"] != "queued" and not (
             row["conversation_state"] == "committed" and row["im_state"] == "pending"
@@ -244,6 +311,14 @@ class SessionDeliveryService:
             close("delivery_expired", "expired")
             return
         runtime = self.runtime
+        if request.get("first_contact") and not request["target_session_id"]:
+            if runtime.agent_runtime is None:
+                return
+            if not self._resolve_first_target(row):
+                close("only_archived_conversations", "cancelled")
+                return
+            row = self.store.get(did)
+            request = row["request"]
         target = request["target_session_id"]
         message_id = row["message_id"]
         try:

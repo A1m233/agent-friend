@@ -76,6 +76,7 @@ class SessionActivity:
     session_id: str
     created_at: datetime
     updated_at: datetime
+    origin_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -472,6 +473,8 @@ def list_session_activity(
             selected is None or summary.session_id in selected
         ) and summary.session_id not in excluded:
             result.append(
-                SessionActivity(summary.session_id, summary.created_at, summary.updated_at)
+                SessionActivity(
+                    summary.session_id, summary.created_at, summary.updated_at, summary.origin_kind
+                )
             )
     return tuple(result)

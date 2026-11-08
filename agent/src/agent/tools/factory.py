@@ -331,9 +331,16 @@ def make_default_registry(
         from ..sessions.access import ConversationAccessService
         from .builtin.conversation_access import ListConversationsTool, ReadConversationTool
         from .builtin.conversation_access.delivery import SendConversationMessageTool
+        from .builtin.conversation_access.inner_activity import ReadInnerActivityTool
 
         access = ConversationAccessService(session_store, session_catalog)
-        tools.extend((ListConversationsTool(access), ReadConversationTool(access)))
+        tools.extend(
+            (
+                ListConversationsTool(access),
+                ReadConversationTool(access),
+                ReadInnerActivityTool(access),
+            )
+        )
         tools.append(SendConversationMessageTool())
         from .builtin.conversation_access.companionship import (
             ManageCompanionshipTool,

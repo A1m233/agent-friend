@@ -1049,6 +1049,7 @@ def build_runtime(
     )
     from agent.tools.builtin.conversation_access import ListConversationsTool
     from agent.tools.builtin.conversation_access.delivery import SendConversationMessageTool
+    from agent.tools.builtin.conversation_access.inner_activity import ReadInnerActivityTool
 
     from .session_delivery import SessionDeliveryService
 
@@ -1082,6 +1083,11 @@ def build_runtime(
             companionship.store.read()["inner_session_id"] == sid
         )
         delivery.contact_allowed = companionship.contact_allowed
+        delivery.may_introduce = companionship.may_introduce
+        inner_reader = tool_registry.get("read_inner_activity")
+        if isinstance(inner_reader, ReadInnerActivityTool):
+            inner_reader.receipts = delivery.store.for_source_run
+            inner_reader.inner_id = lambda: companionship.store.read()["inner_session_id"]
         manage_tool = tool_registry.get("manage_companionship")
         schedule_tool = tool_registry.get("schedule_next_wake")
         if isinstance(manage_tool, ManageCompanionshipTool):

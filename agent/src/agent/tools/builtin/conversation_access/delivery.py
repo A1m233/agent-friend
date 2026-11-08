@@ -15,6 +15,7 @@ class SendConversationMessageTool:
     description: ClassVar[str] = (
         "把已准备好的最终内容发到另一个用户会话，可同时通知一个已绑定的用户本人IM。"
         "不会让目标会话重新执行任务，也不会广播。target_session_id和destination_id必须来自list_conversations，不能猜测。"
+        "仅在首次自主活动发送介绍时，可省略target_session_id，只提交问候正文，让宿主选择用户会话。"
         "当前会话直接回复不使用此工具。省略notify_im时，自主陪伴默认通知目标会话已绑定的用户本人QQ，普通会话仅写入会话。"
         "明确只投递会话用false；显式通知用true并指定该会话已发现的destination_id。"
         "返回queued只代表已接受，不代表用户已收到；不要为等待结果反复发送。"
@@ -26,7 +27,7 @@ class SendConversationMessageTool:
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
         "additionalProperties": False,
-        "required": ["target_session_id", "content"],
+        "required": ["content"],
         "properties": {
             "source_messages": {
                 "type": "array",
@@ -77,6 +78,11 @@ class SendConversationMessageTool:
                 "minLength": 1,
                 "description": "目标会话im_destinations中的精确destination_id，仅notify_im=true时填写。",
             },
+        },
+        "dependencies": {
+            "source_messages": ["target_session_id"],
+            "attachment_asset_ids": ["target_session_id"],
+            "destination_id": ["target_session_id"],
         },
         "oneOf": [
             {

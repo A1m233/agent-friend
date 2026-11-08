@@ -325,5 +325,5 @@ def test_builder_and_skill_capabilities_agree_on_real_surface(
         if compress:
             assert session.latest_compaction() is not None
         content = _host_messages(conv)["runtime_capabilities"].content
-        assert render_runtime_capability_notice(names, surface=surface) in content
-        assert ("cannot grant a new local-file approval" in content) == (surface != "desktop_chat")
+        assert render_runtime_capability_notice(names, approval_available=False) in content
+        assert "cannot grant a new local-file approval" in content  # Fixture tools have no broker.

@@ -8,20 +8,12 @@ from html import escape
 from .models import ActivatedSkill, SkillActivationIssue
 
 _FILESYSTEM_READ_TOOLS = frozenset({"filesystem_search", "filesystem_read_text"})
-_FILESYSTEM_AUTHORING_TOOLS = frozenset(
-    {
-        "filesystem_create_directory",
-        "filesystem_write_text",
-        "filesystem_apply_patch",
-        "request_filesystem_access",
-    }
-)
 
 
 def render_runtime_capability_notice(
     tool_names: Collection[str],
     *,
-    surface: str | None,
+    approval_available: bool,
 ) -> str:
     """Project the current host tool surface into one authoritative Skill boundary."""
 
@@ -39,11 +31,11 @@ def render_runtime_capability_notice(
     else:
         parts.append("No governed filesystem search/read tools are registered on this turn.")
 
-    if available >= _FILESYSTEM_AUTHORING_TOOLS:
-        if surface == "desktop_chat":
+    if "request_filesystem_access" in available:
+        if approval_available:
             parts.append(
-                "Creating or editing personal Skill files requires an explicit one-turn "
-                "filesystem approval before the authoring tools are used."
+                "Use request_filesystem_access for the exact file and needed permissions. An explicit one-turn "
+                "filesystem approval is required before accessing that file. A request can be declined."
             )
         else:
             parts.append(
@@ -65,7 +57,9 @@ def render_activated_skill(
     runtime_capabilities: str | None = None,
 ) -> str:
     record = activation.record
-    capabilities = runtime_capabilities or render_runtime_capability_notice((), surface=None)
+    capabilities = runtime_capabilities or render_runtime_capability_notice(
+        (), approval_available=False
+    )
     return (
         "<skill>\n"
         f"<name>{escape(record.name)}</name>\n"
@@ -84,7 +78,9 @@ def render_activation_issue(
     *,
     runtime_capabilities: str | None = None,
 ) -> str:
-    capabilities = runtime_capabilities or render_runtime_capability_notice((), surface=None)
+    capabilities = runtime_capabilities or render_runtime_capability_notice(
+        (), approval_available=False
+    )
     return (
         "<skill_load_error>\n"
         f"<skill_id>{escape(issue.skill_id)}</skill_id>\n"

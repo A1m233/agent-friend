@@ -15,7 +15,7 @@ from ...message_exposure import content_version
 from ..catalog import SessionCatalog
 from ..message_access import MessagePage, message_payload
 from ..query import CancelCheck, check_cancel
-from ..store import SessionStore
+from ..store import SessionStore, navigation_summaries
 
 
 class ConversationAccessError(ValueError):
@@ -42,16 +42,25 @@ class ConversationAccessService:
         self._read_refs: dict[str, dict[tuple[str, str], str]] = {}
         self._read_lock = RLock()
 
+    def existing_inner_id(self) -> str | None:
+        summaries = (
+            item for item in navigation_summaries(self.store) if item.origin_kind == "inner_world"
+        )
+        oldest = min(summaries, key=lambda item: item.created_at, default=None)
+        return oldest.session_id if oldest else None
+
     def has_read_message(self, caller: str, session_id: str, message_id: str, version: str) -> bool:
         with self._read_lock:
             return self._read_refs.get(caller, {}).get((session_id, message_id)) == version
 
-    def _encode(self, payload: dict[str, Any]) -> str:
+    def encode_cursor(self, payload: dict[str, Any]) -> str:
         data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         signed = hmac.digest(self._key, data, "sha256") + data
         return base64.urlsafe_b64encode(signed).decode().rstrip("=")
 
-    def _decode(self, cursor: str, *, kind: str, session_id: str | None = None) -> dict[str, Any]:
+    def decode_cursor(
+        self, cursor: str, *, kind: str, session_id: str | None = None
+    ) -> dict[str, Any]:
         try:
             if len(cursor) > 8192:
                 raise ValueError("large cursor")
@@ -115,7 +124,7 @@ class ConversationAccessService:
             identity = hashlib.sha256(json.dumps(entries, sort_keys=True).encode()).hexdigest()
         offset = 0
         if cursor:
-            data = self._decode(cursor, kind="directory")
+            data = self.decode_cursor(cursor, kind="directory")
             if data["scope"] != scope or data["snapshot"] != identity:
                 raise ConversationAccessError(
                     "directory_changed", "会话目录发生变化，请不带游标重新列出。"
@@ -161,7 +170,7 @@ class ConversationAccessService:
             "source_type": "conversation_directory",
             "total": len(entries),
             "conversations": selected,
-            "next_cursor": self._encode(
+            "next_cursor": self.encode_cursor(
                 {"kind": "directory", "scope": scope, "snapshot": identity, "offset": next_offset}
             )
             if next_offset < len(entries)
@@ -199,7 +208,7 @@ class ConversationAccessService:
                 raise ConversationAccessError(
                     "invalid_cursor", "continue 需要上次结果原样返回的 cursor。"
                 )
-            data = self._decode(cursor, kind="messages", session_id=session_id)
+            data = self.decode_cursor(cursor, kind="messages", session_id=session_id)
             options.update(data["range"])
             content_cursor = data.get("content")
         page = self.page(
@@ -219,7 +228,7 @@ class ConversationAccessService:
             item["content_offset"] = offset
             item["content_truncated"] = len(text) > offset + 4000
             item["content_cursor"] = (
-                self._encode(
+                self.encode_cursor(
                     {
                         "kind": "messages",
                         "session_id": session_id,
@@ -245,7 +254,7 @@ class ConversationAccessService:
             next_range["lower" if options["forward"] else "upper"] = (
                 page.messages[-1][0] if options["forward"] else page.messages[0][0]
             )
-            continuation = self._encode(
+            continuation = self.encode_cursor(
                 {"kind": "messages", "session_id": session_id, "range": next_range}
             )
         self.observe_read(

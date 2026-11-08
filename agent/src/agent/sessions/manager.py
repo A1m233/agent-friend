@@ -17,6 +17,7 @@ import builtins
 import dataclasses
 import logging
 import shutil
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -119,6 +120,48 @@ def _default_title(now: datetime | None = None) -> str:
     return f"会话 {dt:%Y-%m-%d %H:%M}"
 
 
+def delivered_message_events(
+    delivery_id: str,
+    content: str,
+    source_session_id: str,
+    source_run_id: str,
+    attachments: list[dict[str, Any]] | None = None,
+) -> list[Event]:
+    message_id = f"delivery-{delivery_id}"
+    source = {
+        "kind": "agent_initiated",
+        "delivery_id": delivery_id,
+        "source_session_id": source_session_id,
+        "source_run_id": source_run_id,
+    }
+    now = datetime.now(UTC)
+    return [
+        Event(
+            type="system_trigger",
+            uuid=f"delivery-source-{delivery_id}",
+            ts=now,
+            payload={
+                "source_kind": "cross_session_message",
+                "presentation": "conversation",
+                "output_visibility": "user",
+            },
+            meta={"run_id": message_id, "message_source": source},
+        ),
+        Event(
+            type="assistant_message",
+            uuid=message_id,
+            ts=now,
+            payload={
+                "content": content,
+                "partial": False,
+                "phase": "final_answer",
+                "attachments": attachments or [],
+            },
+            meta={"run_id": message_id, "message_source": source},
+        ),
+    ]
+
+
 class SessionManager:
     """会话业务编排。
 
@@ -167,6 +210,7 @@ class SessionManager:
         runtime_instance_id: str = "",
         runtime_start_reason: str = "direct_start",
     ) -> None:
+        self.creation_lock = threading.RLock()
         self._store = store
         self.approval_mode_provider: Callable[[str], SessionApprovalModeState] | None = None
         self._llm_client_factory = llm_client_factory
@@ -311,6 +355,7 @@ class SessionManager:
         origin_kind: str | None = None,
         origin_id: str | None = None,
         origin_occurrence_id: str | None = None,
+        initial_events: tuple[Event, ...] = (),
     ) -> Session:
         """创建新会话并落盘首行 ``session_meta`` 事件。
 
@@ -373,7 +418,10 @@ class SessionManager:
                     payload=new_payload,
                     meta=head.meta,
                 )
-        self._store.create(session)
+        for event in initial_events:
+            session.append(event)
+        with self.creation_lock:
+            self._store.create(session)
         return session
 
     def exists(self, session_id: str) -> bool:
@@ -589,38 +637,9 @@ class SessionManager:
                     restored.cache_epoch,
                 )
                 recorder = SessionRolloutRecorder(self._store, session, restored.commit)
-            source = {
-                "kind": "agent_initiated",
-                "delivery_id": delivery_id,
-                "source_session_id": source_session_id,
-                "source_run_id": source_run_id,
-            }
-            now = datetime.now(UTC)
-            events = [
-                Event(
-                    type="system_trigger",
-                    uuid=f"delivery-source-{delivery_id}",
-                    ts=now,
-                    payload={
-                        "source_kind": "cross_session_message",
-                        "presentation": "conversation",
-                        "output_visibility": "user",
-                    },
-                    meta={"run_id": message_id, "message_source": source},
-                ),
-                Event(
-                    type="assistant_message",
-                    uuid=message_id,
-                    ts=now,
-                    payload={
-                        "content": content,
-                        "partial": False,
-                        "phase": "final_answer",
-                        "attachments": attachments or [],
-                    },
-                    meta={"run_id": message_id, "message_source": source},
-                ),
-            ]
+            events = delivered_message_events(
+                delivery_id, content, source_session_id, source_run_id, attachments
+            )
             # A crash after the business append is recovered by existing rollout
             # reconciliation; the stable message UUID prevents duplicate append.
             append_session_events(self._store, session_id, events)

@@ -237,9 +237,14 @@ class RequestFilesystemAccessTool:
         self._broker = broker
         self._policy = policy
 
+    def approval_available(self, session_id: str, run_id: str, surface: str) -> bool:
+        return self._broker is not None and self._broker.surface_available(
+            session_id, run_id, surface
+        )
+
     def invoke(self, args: dict[str, Any]) -> ToolResult:
         surface = str(args.get(FILESYSTEM_SURFACE_ARG) or "")
-        if self._broker is None or not self._broker.surface_available(
+        if self._broker is None or not self.approval_available(
             str(args.get(FILESYSTEM_SESSION_ID_ARG) or ""),
             str(args.get(FILESYSTEM_RUN_ID_ARG) or ""),
             surface,

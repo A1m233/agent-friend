@@ -134,7 +134,13 @@ class SessionHistorySource:
                     and _recall_content(event) is not None
                 ):
                     active_conversation.append(event)
-            for turn in _conversation_turns(active_conversation):
+            inner = summary.origin_kind == "inner_world"
+            turns = (
+                [(event,) for event in active_conversation]
+                if inner
+                else _conversation_turns(active_conversation)
+            )
+            for turn in turns:
                 check_cancel(cancel_check)
                 visible_events = tuple(
                     event
@@ -196,6 +202,7 @@ class SessionHistorySource:
                     ),
                     excerpts=window,
                     session_id=summary.session_id,
+                    inner_activity_ref=f"{summary.session_id}#{matched.uuid}" if inner else None,
                 )
                 ranked.append(
                     (
