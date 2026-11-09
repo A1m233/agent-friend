@@ -5,7 +5,7 @@ import { MessageSquare, Pause, Pencil, Play, Square, Trash2 } from "lucide-react
 import { useModelCatalogStore } from "@/lib/model-config";
 import { loadVisiblePages } from "./paging";
 import {
-  Button, Alert, AlertDescription, TooltipButton, TooltipProvider,
+  Button, Alert, AlertDescription, ScrollArea, TooltipButton, TooltipProvider,
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui";
@@ -196,7 +196,7 @@ function ScheduledTasksView({ id, active }: { id: string | null; active: boolean
   const current = task?.id === id ? task : null;
   if (editing !== false && editing === id && (!id || current))
     return (
-      <div className="h-full overflow-y-auto">
+      <ScrollArea className="h-full" viewportClassName="vertical-page-viewport">
         <TaskEditor
           key={id ?? "new"}
           task={id ? editingTask : undefined}
@@ -207,7 +207,7 @@ function ScheduledTasksView({ id, active }: { id: string | null; active: boolean
             refresh((n) => n + 1);
           }}
         />
-      </div>
+      </ScrollArea>
     );
   return (
     <TooltipProvider>
