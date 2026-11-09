@@ -4,6 +4,7 @@ import {
   Badge,
   Button,
   Input,
+  ScrollArea,
   Select,
   SelectContent,
   SelectItem,
@@ -145,22 +146,24 @@ export function RecallTracePanel({ personaId, onHitClick }: Props) {
 
       {error && <div className="px-3 py-2 text-sm text-danger bg-danger/10">{error}</div>}
 
-      <div className="flex-1 overflow-auto p-3 space-y-3">
-        {traces.map((trace, idx) => (
-          <TraceCard
-            key={idx}
-            trace={trace}
-            expanded={expanded.has(idx)}
-            onToggle={() => toggleExpand(idx)}
-            onHitClick={onHitClick}
-          />
-        ))}
-        {traces.length === 0 && !loading && (
-          <div className="py-8 text-center text-sm text-muted">
-            暂无 recall trace；让 agent 自然召回或点上方"试一下"
-          </div>
-        )}
-      </div>
+      <ScrollArea className="min-h-0 flex-1" viewportClassName="vertical-page-viewport">
+        <div className="space-y-3 p-3 [overflow-wrap:anywhere]">
+          {traces.map((trace, idx) => (
+            <TraceCard
+              key={idx}
+              trace={trace}
+              expanded={expanded.has(idx)}
+              onToggle={() => toggleExpand(idx)}
+              onHitClick={onHitClick}
+            />
+          ))}
+          {traces.length === 0 && !loading && (
+            <div className="py-8 text-center text-sm text-muted">
+              暂无 recall trace；让 agent 自然召回或点上方"试一下"
+            </div>
+          )}
+        </div>
+      </ScrollArea>
     </div>
   );
 }

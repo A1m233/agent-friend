@@ -1,4 +1,4 @@
-import { Button, StatusDot, TextEllipsis } from "@/components/ui";
+import { Button, ScrollArea, StatusDot, TextEllipsis } from "@/components/ui";
 import { toast } from "sonner";
 import { openSettings } from "@/lib/settings/navigation";
 import {
@@ -76,9 +76,14 @@ function PendingApprovalPanel({
       {current.reviewFallback && <p className="text-xs text-muted">{current.reviewFallback}</p>}
       <p className="text-sm font-medium text-fg">{current.reason}</p>
       {current.command ? (
-        <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface/60 p-2 text-xs text-fg">
-          {current.command}
-        </pre>
+        <ScrollArea
+          className="rounded-md border border-border bg-surface/60"
+          viewportClassName="vertical-page-viewport max-h-28"
+        >
+          <pre className="whitespace-pre-wrap break-words p-2 pr-3 text-xs text-fg">
+            {current.command}
+          </pre>
+        </ScrollArea>
       ) : null}
       <div className="space-y-1 text-xs text-muted">
         {current.riskCode ? (

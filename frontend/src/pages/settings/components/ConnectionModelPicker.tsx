@@ -4,6 +4,7 @@ import {
   Button,
   Input,
   Checkbox,
+  ScrollArea,
   Collapsible,
   CollapsibleTrigger,
   CollapsibleContent,
@@ -130,49 +131,53 @@ export function ConnectionModelPicker({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <div
-            className="max-h-64 space-y-1 overflow-y-auto rounded-md border border-border p-2"
+          <ScrollArea
+            className="rounded-md border border-border"
+            viewportClassName="vertical-page-viewport max-h-64"
+            role="region"
             aria-label="可用模型"
           >
-            {models
-              .filter((m) => m.id.toLowerCase().includes(query.toLowerCase()))
-              .map((m) => (
-                <label
-                  key={m.id}
-                  className="flex cursor-pointer select-none items-start gap-3 rounded-md p-2 hover:bg-surface"
-                >
-                  <Checkbox
-                    disabled={busy}
-                    checked={selected.has(m.id)}
-                    onCheckedChange={(checked) =>
-                      checked
-                        ? add(m)
-                        : onChange(
-                            draft.models.filter((item) => item.name !== m.id),
-                          )
-                    }
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block break-all text-sm">{m.id}</span>
-                    <span className="text-xs text-muted">
-                      {m.contextWindow
-                        ? `${m.contextWindow.toLocaleString()} tokens · ${m.contextLabel}`
-                        : "上下文未知，添加后补充"}
+            <div className="space-y-1 p-2">
+              {models
+                .filter((m) => m.id.toLowerCase().includes(query.toLowerCase()))
+                .map((m) => (
+                  <label
+                    key={m.id}
+                    className="flex cursor-pointer select-none items-start gap-3 rounded-md p-2 hover:bg-surface"
+                  >
+                    <Checkbox
+                      disabled={busy}
+                      checked={selected.has(m.id)}
+                      onCheckedChange={(checked) =>
+                        checked
+                          ? add(m)
+                          : onChange(
+                              draft.models.filter((item) => item.name !== m.id),
+                            )
+                      }
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block break-all text-sm">{m.id}</span>
+                      <span className="text-xs text-muted">
+                        {m.contextWindow
+                          ? `${m.contextWindow.toLocaleString()} tokens · ${m.contextLabel}`
+                          : "上下文未知，添加后补充"}
+                      </span>
                     </span>
-                  </span>
-                  {selected.has(m.id) && (
-                    <span className="text-xs text-muted">已添加</span>
-                  )}
-                </label>
-              ))}
-            {!models.some((m) =>
-              m.id.toLowerCase().includes(query.toLowerCase()),
-            ) && (
-              <p className="p-2 text-sm text-muted">
-                没有匹配模型，可以手动添加。
-              </p>
-            )}
-          </div>
+                    {selected.has(m.id) && (
+                      <span className="text-xs text-muted">已添加</span>
+                    )}
+                  </label>
+                ))}
+              {!models.some((m) =>
+                m.id.toLowerCase().includes(query.toLowerCase()),
+              ) && (
+                <p className="p-2 text-sm text-muted">
+                  没有匹配模型，可以手动添加。
+                </p>
+              )}
+            </div>
+          </ScrollArea>
         </div>
       )}
       <Collapsible open={manual} onOpenChange={setManual}>
