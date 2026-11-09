@@ -66,6 +66,66 @@ describe("independent composer lifecycle", () => {
     expect(sessionsApi.prepare).not.toHaveBeenCalled();
   });
 
+  it("recovers from a history conflict silently and only applies the successful read", async () => {
+    vi.mocked(sessionsApi.composer).mockRejectedValueOnce({ code: "history_changed", status: 409 })
+      .mockResolvedValue(config("one"));
+    const apply = vi.fn();
+    openComposerSession("one", apply);
+    await vi.advanceTimersByTimeAsync(299);
+    expect(useComposerSessionStore.getState()).toMatchObject({ phase: "loading", showPreparing: false, canRetry: false });
+    await vi.advanceTimersByTimeAsync(201);
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(useComposerSessionStore.getState()).toMatchObject({ phase: "ready", showPreparing: false });
+  });
+
+  it("bounds retries even when preparation starts successfully but its worker keeps failing", async () => {
+    vi.mocked(sessionsApi.composer).mockResolvedValue(config("one"));
+    vi.mocked(sessionsApi.preparation).mockResolvedValue({ session_id: "one", state: "failed" });
+    openComposerSession("one", vi.fn());
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(useComposerSessionStore.getState()).toMatchObject({ phase: "preparing", showPreparing: true, canRetry: false });
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(sessionsApi.prepare).toHaveBeenCalledTimes(4);
+    expect(useComposerSessionStore.getState()).toMatchObject({ phase: "failed", canRetry: true, showPreparing: false });
+    vi.mocked(sessionsApi.preparation).mockResolvedValue({ session_id: "one", state: "ready" });
+    retryComposerPreparation();
+    retryComposerPreparation();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(useComposerSessionStore.getState().phase).toBe("ready");
+    expect(sessionsApi.prepare).toHaveBeenCalledTimes(5);
+    expect(sessionsApi.composer).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a failed background status check without restarting the prepared session", async () => {
+    vi.mocked(sessionsApi.composer).mockResolvedValue(config("one"));
+    openComposerSession("one", vi.fn());
+    await vi.advanceTimersByTimeAsync(200);
+    vi.mocked(sessionsApi.preparation).mockRejectedValueOnce({ code: "network" });
+    await vi.advanceTimersByTimeAsync(10300);
+    expect(useComposerSessionStore.getState()).toMatchObject({ phase: "ready", showPreparing: false });
+    expect(sessionsApi.prepare).toHaveBeenCalledTimes(1);
+    expect(sessionsApi.composer).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops pending retries and their notice when switching to a different session", async () => {
+    vi.mocked(sessionsApi.composer).mockRejectedValueOnce({ code: "network" }).mockResolvedValue(config("two"));
+    openComposerSession("one", vi.fn());
+    await vi.advanceTimersByTimeAsync(100);
+    openComposerSession("two", vi.fn());
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(sessionsApi.composer).toHaveBeenCalledTimes(2);
+    expect(useComposerSessionStore.getState()).toMatchObject({ sessionId: "two", phase: "ready", showPreparing: false });
+  });
+
+  it("explains a missing session without offering or scheduling a retry", async () => {
+    vi.mocked(sessionsApi.composer).mockRejectedValueOnce({ code: "http_error", status: 404 });
+    openComposerSession("gone", vi.fn());
+    await vi.advanceTimersByTimeAsync(10000);
+    retryComposerPreparation();
+    expect(sessionsApi.composer).toHaveBeenCalledTimes(1);
+    expect(useComposerSessionStore.getState()).toMatchObject({ phase: "failed", error: "会话已不存在", canRetry: false });
+  });
+
   it("waits for the previous cancellation before preparing the same session again", async () => {
     vi.mocked(sessionsApi.composer).mockResolvedValue(config("one"));
     openComposerSession("one", vi.fn());
