@@ -36,6 +36,7 @@ dirs = "5"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 futures-util = "0.3"
 rand = "0.8"
+png = "0.17"
 # 016 · bubble window 显隐 → 跟随轮询 task 唤醒（park / unpark 语义）
 tokio = { version = "1", features = ["sync", "time"] }
 tauri-plugin-opener = "2.5.4"
@@ -63,7 +64,6 @@ tauri-plugin-single-instance = "2"
 winreg = "0.10.1"
 # 053 · WebView2 profile permission inspection + passive OS microphone access probe.
 webview2-com = "0.38.2"
-png = "0.17"
 windows = { version = "0.61.3", features = [
     "Devices_Enumeration",
     "Security_Authorization_AppCapabilityAccess",
@@ -93,6 +93,7 @@ windows = { version = "0.61.3", features = [
     "Win32_System_SystemServices",
     "Win32_System_Threading",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_HiDpi",
     "Win32_UI_Accessibility",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
@@ -102,6 +103,8 @@ windows = { version = "0.61.3", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSWindow", "NSResponder"] }
+# tray-icon's status item requires a main-thread marker from objc2 0.6.
+objc2-current = { package = "objc2", version = "0.6" }
 security-framework = "3"
 core-foundation-sys = "0.8.7"
 # 0004 / 017 · pet 窗切 NSPanel 路径（业界 macOS Tauri overlay 标准方案）

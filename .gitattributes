@@ -1,6 +1,9 @@
 # Keep the Tauri manifest stable across Windows/macOS dev runs.
 frontend/src-tauri/Cargo.toml text eol=lf
 
+# Preserve the design package's original SVG bytes across checkouts.
+frontend/src-tauri/icons/source/*.svg -text whitespace=trailing-space,space-before-tab,cr-at-eol
+
 # Shell scripts must stay LF even when Windows core.autocrlf is enabled.
 scripts/dev/run.sh text eol=lf
 scripts/_lib/python312.sh text eol=lf
