@@ -15,7 +15,7 @@ import { STOP_FEEDBACK } from "./stopFeedback";
 import { Ban, Plus, Upload } from "lucide-react";
 import { Attachments, type TdAttachmentItem } from "@tdesign-react/chat";
 import { useDropzone } from "react-dropzone";
-import { Input, TooltipButton, TooltipProvider } from "@/components/ui";
+import { Button, Input, TooltipButton, TooltipProvider } from "@/components/ui";
 import { modelOption, useModelCatalogStore } from "@/lib/model-config";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import {
@@ -86,6 +86,7 @@ interface ComposerProps {
   disabledReason?: string;
   sendUnavailable?: boolean;
   sendUnavailableReason?: string;
+  onRetryPreparation?: () => void;
   placement?: "bottom" | "inline";
   onHeightChange?: (height: number) => void;
   topSlot?: ReactNode;
@@ -109,6 +110,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   disabledReason,
   sendUnavailable = false,
   sendUnavailableReason,
+  onRetryPreparation,
   placement = "bottom",
   onHeightChange,
   topSlot,
@@ -614,7 +616,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         }
       >
         <div className="pointer-events-auto relative">
-          {sendUnavailableReason ? <div className="px-4 py-1 text-xs text-muted" role="status">{sendUnavailableReason}</div> : null}
+          {sendUnavailableReason ? (
+            <div className="flex items-center gap-2 px-4 py-1 text-xs text-muted">
+              <span role="status">{sendUnavailableReason}</span>
+              {onRetryPreparation && <Button size="xs" variant="ghost" onClick={onRetryPreparation}>重试</Button>}
+            </div>
+          ) : null}
           {editingMessage && (
             <ComposerEditStatus
               summary={editSummary}
