@@ -16,6 +16,7 @@ export interface FriendlyError {
   friendly: string;
   /** 归一化错误码，便于上层分支处理（不展示给用户）。 */
   code?: string;
+  status?: number;
 }
 
 export function friendlyErrorMessage(error: unknown): string {
@@ -71,8 +72,10 @@ export function toFriendlyError(err: unknown): FriendlyError {
   if (axios.isAxiosError(err)) {
     if (err.response) {
       const backendDetail = backendDetailOf(err.response.data);
-      if (backendDetail) return backendDetail;
-      return { friendly: "出了点小状况，我稍后再帮你试试。", code: "http_error" };
+      return {
+        ...(backendDetail ?? { friendly: "出了点小状况，我稍后再帮你试试。", code: "http_error" }),
+        status: err.response.status,
+      };
     }
     return { friendly: "网络好像不太顺畅，待会儿再聊？", code: "network" };
   }

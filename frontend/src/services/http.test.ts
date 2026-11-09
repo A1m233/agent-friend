@@ -37,6 +37,7 @@ describe("toFriendlyError", () => {
     const error = {
       isAxiosError: true,
       response: {
+        status: 404,
         data: {},
       },
     };
@@ -44,6 +45,7 @@ describe("toFriendlyError", () => {
     expect(toFriendlyError(error)).toEqual({
       friendly: "出了点小状况，我稍后再帮你试试。",
       code: "http_error",
+      status: 404,
     });
   });
 
