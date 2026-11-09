@@ -40,6 +40,7 @@ mod settings;
 mod shell_diagnostics;
 mod startup_instance_gate;
 mod todos;
+mod tray_artwork;
 mod ui_state;
 mod webview_diagnostics;
 mod window_placement;
@@ -1080,18 +1081,14 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let toggle_pet_menu_item = toggle_pet_i.clone();
     let toggle_pet_tray_item = toggle_pet_i.clone();
 
-    let mut builder = TrayIconBuilder::new()
+    let initial = tray_artwork::initial();
+    let tray = TrayIconBuilder::new()
+        .icon(initial.image()?)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .tooltip("agent-friend")
         // 菜单栏文字标签，避免纯图标在拥挤/刘海屏下找不到
-        .title("🐾");
-    match app.default_window_icon() {
-        Some(icon) => builder = builder.icon(icon.clone()),
-        None => log::warn!("default_window_icon is None; tray shows title only"),
-    }
-
-    builder
+        .title("🐾")
         .on_menu_event(
             move |app, event| match tray_menu_action(event.id.as_ref()) {
                 Some(TrayMenuAction::OpenWorkspace) => {
@@ -1135,6 +1132,7 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             _ => {}
         })
         .build(app)?;
+    app.manage(tray_artwork::watch(tray, initial));
     log::info!("tray icon created");
     Ok(())
 }
@@ -2026,6 +2024,9 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(watch) = app_handle.try_state::<tray_artwork::Watch>() {
+                    watch.stop();
+                }
                 if let Some(manager) =
                     app_handle.try_state::<pet_input_evidence::PetInputEvidence>()
                 {
