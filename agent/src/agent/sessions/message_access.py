@@ -20,6 +20,7 @@ class MessagePage:
     messages: tuple[tuple[int, Event], ...]
     has_more: bool
     counts: dict[str, int]
+    anchor_position: int | None
 
 
 # Business messages only: never mistake a synthetic user input or a hidden
@@ -44,6 +45,7 @@ def read_message_page(
     lower: int = -1,
     upper: int | None = None,
     epoch: str | None = None,
+    anchor_message_id: str | None = None,
     forward: bool = False,
     cancel_check: CancelCheck = None,
 ) -> MessagePage:
@@ -58,6 +60,14 @@ def read_message_page(
     current_epoch = str(metadata["history_epoch"])
     if epoch is not None and epoch != current_epoch:
         raise ValueError("history_changed")
+    anchor_position = None
+    if anchor_message_id is not None:
+        anchor = db.execute(
+            f"SELECT e.position FROM events e WHERE e.uuid=? AND {_VISIBLE}",
+            (anchor_message_id,),
+        ).fetchone()
+        if anchor is not None:
+            anchor_position = int(anchor["position"])
     end = state["count"] if upper is None else upper
     if end < 0 or end > state["count"] or lower >= end:
         raise ValueError("invalid message range")
@@ -84,7 +94,13 @@ def read_message_page(
     messages = tuple((r["position"], Event.from_jsonl(r["body"])) for r in selected)
     check_cancel(cancel_check)
     return MessagePage(
-        str(metadata["session_id"]), current_epoch, end, messages, len(rows) > limit, counts
+        str(metadata["session_id"]),
+        current_epoch,
+        end,
+        messages,
+        len(rows) > limit,
+        counts,
+        anchor_position,
     )
 
 

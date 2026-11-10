@@ -8,7 +8,7 @@ import pytest
 from agent.companionship.config import CompanionshipConfig
 from agent.companionship.snapshot import capture_changes, render_overview
 from agent.companionship.store import CompanionshipStore
-from agent.sessions.access.service import ConversationAccessService
+from agent.sessions.access.service import ConversationAccessError, ConversationAccessService
 
 from agent import Event, JsonlSessionStore, Session
 
@@ -124,6 +124,104 @@ def test_controls_validate_time_and_deletion_does_not_reenable(tmp_path: Path) -
     state.forget_session("inner")
     assert not state.read()["enabled"]
     assert state.read()["inner_session_id"] is None
+
+
+@pytest.mark.parametrize(("rebuild", "legacy"), [(False, False), (True, False), (True, True)])
+def test_index_rebuild_preserves_wake_counts_and_read_range(
+    tmp_path: Path, rebuild: bool, legacy: bool
+) -> None:
+    sessions = JsonlSessionStore(tmp_path / "sessions")
+    sessions.create(Session.new("长会话", "default", "test/model", session_id="daily"))
+    sessions.append_event(
+        "daily", Event(type="assistant_message", uuid="old", ts=NOW, payload={"content": "old"})
+    )
+    access = ConversationAccessService(sessions)
+    store = CompanionshipStore(tmp_path / "state.db")
+    first = capture_changes(access, store.read(), "r1")
+    if legacy:
+        del first["baselines"]["daily"]["last_message_id"]
+    assert store.begin("r1", first, now=NOW)
+    store.acknowledge("r1", now=NOW)
+    store.finish("r1", outcome="completed", now=NOW, fallback_seconds=0)
+    messages = []
+    for i in range(4):
+        ts = NOW + timedelta(minutes=i + 1)
+        messages.extend(
+            [
+                Event(type="user_message", uuid=f"u{i}", ts=ts, payload={"content": "more"}),
+                Event(type="assistant_message", uuid=f"a{i}", ts=ts, payload={"content": "reply"}),
+            ]
+        )
+    sessions.append_events("daily", messages)
+    if rebuild:
+        sessions.discard_business_index("daily")
+    state = CompanionshipStore(store.path).read()
+    second = capture_changes(access, state, "r2")
+    assert (second["sessions"]["daily"]["epoch"] != first["sessions"]["daily"]["epoch"]) == rebuild
+    overview = render_overview(access, second)["conversations"][0]
+    assert overview["change"] == "updated"
+    assert overview["counts"] == {"user": 4, "assistant": 4, "proactive": 0, "assistant_replies": 4}
+    access.wake_snapshot = lambda _: second
+    assert [
+        item["message_id"]
+        for item in access.read_conversation(session_id="daily", mode="since_wake")["messages"]
+    ] == [m.uuid for m in messages]
+
+
+@pytest.mark.parametrize("cause", ["rewrite", "missing_anchor", "unverifiable_legacy"])
+def test_unverifiable_boundary_reports_unknown_then_resumes(tmp_path: Path, cause: str) -> None:
+    sessions = JsonlSessionStore(tmp_path / "sessions")
+    sessions.create(Session.new("Daily", "default", "test/model", session_id="daily"))
+    sessions.append_event(
+        "daily", Event(type="user_message", uuid="old", ts=NOW, payload={"content": "old"})
+    )
+    access = ConversationAccessService(sessions)
+    state = CompanionshipStore(tmp_path / "state.db").read()
+    first = capture_changes(access, state, "r1")
+    state.update(baselines=first["baselines"], last_overview_at=NOW.isoformat())
+    if cause == "rewrite":
+        sessions.append_event(
+            "daily",
+            Event(
+                type="turn_rewrite", uuid="edit", ts=NOW, payload={"inactive_event_uuids": ["old"]}
+            ),
+        )
+    elif cause == "missing_anchor":
+        state["baselines"]["daily"]["last_message_id"] = "no-longer-present"
+    else:
+        del state["baselines"]["daily"]["last_message_id"]
+    sessions.append_event(
+        "daily",
+        Event(
+            type="user_message",
+            uuid="new",
+            ts=NOW + timedelta(minutes=1),
+            payload={"content": "new"},
+        ),
+    )
+    sessions.discard_business_index("daily")
+    second = capture_changes(access, state, "r2")
+    entry = render_overview(access, second)["conversations"][0]
+    assert entry["change"] == "history_changed"
+    assert entry["counts"] is None
+    assert entry["preview"] == "new"
+    access.wake_snapshot = lambda _: second
+    with pytest.raises(ConversationAccessError, match="latest"):
+        access.read_conversation(session_id="daily", mode="since_wake")
+    assert (
+        access.read_conversation(session_id="daily", limit=1)["messages"][0]["message_id"] == "new"
+    )
+    state["baselines"] = second["baselines"]
+    sessions.append_event(
+        "daily",
+        Event(
+            type="user_message",
+            uuid="later",
+            ts=NOW + timedelta(minutes=2),
+            payload={"content": "later"},
+        ),
+    )
+    assert capture_changes(access, state, "r3")["entries"][0]["counts"]["user"] == 1
 
 
 @pytest.mark.parametrize("explicit_disable", [True, False])
