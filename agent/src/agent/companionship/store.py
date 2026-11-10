@@ -52,6 +52,34 @@ class CompanionshipStore:
                 if row and json.loads(row[0]) == (initial_state() | {"enabled": False}):
                     self._save(db, initial_state())
             db.execute("INSERT OR IGNORE INTO state VALUES (1,?)", (json.dumps(initial_state()),))
+            self._restore_message_anchors(db)
+
+    def _restore_message_anchors(self, db: sqlite3.Connection) -> None:
+        """Older baselines stored the last visible message ID only in the wake entry."""
+        state = json.loads(db.execute("SELECT body FROM state WHERE id=1").fetchone()[0])
+        baselines = state["baselines"]
+        missing = {sid for sid, old in baselines.items() if "last_message_id" not in old}
+        if not missing:
+            return
+        restored = False
+        for row in db.execute(
+            "SELECT snapshot FROM wakes WHERE acknowledged=1 ORDER BY rowid DESC"
+        ):
+            snapshot = json.loads(row["snapshot"])
+            for entry in snapshot.get("entries", []):
+                sid = entry["session_id"]
+                if (
+                    sid in missing
+                    and "preview_message_id" in entry
+                    and snapshot["baselines"].get(sid) == baselines[sid]
+                ):
+                    baselines[sid]["last_message_id"] = entry["preview_message_id"]
+                    missing.remove(sid)
+                    restored = True
+            if not missing:
+                break
+        if restored:
+            self._save(db, state)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:

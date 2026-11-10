@@ -201,6 +201,11 @@ class ConversationAccessService:
                 raise ConversationAccessError(
                     "wake_context_unavailable", "当前唤醒没有此会话的范围，请读取 latest。"
                 )
+            if bounds["lower"] is None:
+                raise ConversationAccessError(
+                    "history_changed",
+                    "无法核实上次唤醒的消息边界，新增数量未知，请用 latest 读取。",
+                )
             options.update({k: bounds[k] for k in ("lower", "upper", "epoch")})
             options["forward"] = True
         elif mode == "continue":

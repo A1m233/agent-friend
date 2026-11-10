@@ -5,6 +5,20 @@ from __future__ import annotations
 from typing import Any
 
 from ..sessions.access.service import ConversationAccessService
+from ..sessions.message_access import MessagePage
+
+
+def _increment_start(old: dict[str, Any], latest: MessagePage) -> int | None:
+    if old["epoch"] == latest.epoch:
+        return int(old["upper"]) - 1
+    # history_epoch is projection fingerprint:last turn rewrite UUID (or "initial").
+    # Rebuilding a disposable index can change the fingerprint on an append-only journal.
+    _, separator, rewrite = latest.epoch.partition(":")
+    if not separator or old["epoch"].partition(":")[2] != rewrite:
+        return None
+    if "last_message_id" in old and old["last_message_id"] is None:
+        return -1  # The acknowledged overview had no visible messages.
+    return latest.anchor_position
 
 
 def capture_changes(
@@ -31,14 +45,25 @@ def capture_changes(
                 "epoch": old["epoch"],
             }
             continue
-        latest = access.page(sid, limit=1)
-        reset = old is not None and old["epoch"] != latest.epoch
-        lower = latest.upper - 1 if first or reset else old["upper"] - 1 if old else -1
+        latest = access.page(
+            sid, limit=1, anchor_message_id=old.get("last_message_id") if old else None
+        )
+        lower: int | None = latest.upper - 1 if first else -1
+        if old is not None and not first:
+            lower = _increment_start(old, latest)
         bounds = {"lower": lower, "upper": latest.upper, "epoch": latest.epoch}
         sessions[sid] = bounds
-        baselines[sid] = {**identity, "upper": latest.upper, "epoch": latest.epoch}
-        delta = access.page(sid, limit=1, **bounds)
         position, event = latest.messages[-1] if latest.messages else (None, None)
+        baselines[sid] = {
+            **identity,
+            "upper": latest.upper,
+            "epoch": latest.epoch,
+            "last_message_id": event.uuid if event else None,
+        }
+        counts = None
+        if lower is not None:
+            counts = access.page(sid, limit=1, **bounds).counts.copy()
+            counts["assistant_replies"] = counts["assistant"] - counts["proactive"]
         entries.append(
             {
                 "session_id": sid,
@@ -46,14 +71,11 @@ def capture_changes(
                 "change": "initial"
                 if first
                 else "history_changed"
-                if reset
+                if lower is None
                 else "new"
                 if old is None
                 else "updated",
-                "counts": {
-                    **delta.counts,
-                    "assistant_replies": delta.counts["assistant"] - delta.counts["proactive"],
-                },
+                "counts": counts,
                 "preview_position": position,
                 "preview_message_id": event.uuid if event else None,
                 "last_message_at": event.ts.isoformat() if event else None,
