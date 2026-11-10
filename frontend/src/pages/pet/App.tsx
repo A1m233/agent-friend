@@ -1,4 +1,5 @@
 import { startDprSync } from "./dprSync";
+import { createPetDisplayTopologyHandler, type PetDisplayTopologyChangedPayload } from "./petDisplayTopology";
 import {
   useCallback,
   useEffect,
@@ -111,14 +112,6 @@ function safeUnlisten(fn: (() => void) | null | undefined): void {
 
 const PET_DISPLAY_TOPOLOGY_CHANGED_EVENT = "pet://display-topology-changed";
 const PET_INITIAL_PLACEMENT_SETTLE_MS = 150;
-interface PetDisplayTopologyChangedPayload {
-  reason: string;
-  generation: number;
-  bounds: OverlayPhysicalBounds;
-  previousBounds?: OverlayPhysicalBounds | null;
-  previousMonitors?: MonitorPhysicalSnapshot[] | null;
-  monitors: MonitorPhysicalSnapshot[];
-}
 
 interface PendingTopologyAnchor {
   generation: number;
@@ -130,16 +123,6 @@ interface PendingTopologyAnchor {
 interface AvatarPlacementIntent {
   generation: number;
   point: PetPoint;
-}
-
-function displayTopologySignature(payload: Pick<
-  PetDisplayTopologyChangedPayload,
-  "bounds" | "monitors"
->): string {
-  return JSON.stringify({
-    bounds: payload.bounds,
-    monitors: payload.monitors,
-  });
 }
 
 /**
@@ -168,8 +151,6 @@ export function PetApp() {
   const userMovedPetRef = useRef(false);
   const placementIntentGenerationRef = useRef(0);
   const pendingTopologyAnchorRef = useRef<PendingTopologyAnchor | null>(null);
-  const lastTopologyGenerationRef = useRef(0);
-  const lastTopologySignatureRef = useRef<string | null>(null);
   const [webviewDpr, setWebviewDpr] = useState(readWebviewDevicePixelRatio);
   const [displayTopologyGeneration, setDisplayTopologyGeneration] = useState(0);
   // AC-6 hover gate · 双源：cursorOnSprite（Rust 60Hz cursor channel 驱动）
@@ -458,21 +439,10 @@ export function PetApp() {
     updateViewport("effect-init");
     const onWindowResize = () => updateViewport("window-resize");
     window.addEventListener("resize", onWindowResize);
-    const handleTopologyChanged = (event: { payload: PetDisplayTopologyChangedPayload }) => {
-      const signature = displayTopologySignature(event.payload);
-      if (
-        event.payload.generation <= lastTopologyGenerationRef.current ||
-        signature === lastTopologySignatureRef.current
-      ) {
-        return;
-      }
-      lastTopologyGenerationRef.current = event.payload.generation;
-      lastTopologySignatureRef.current = signature;
-      setDisplayTopologyGeneration(event.payload.generation);
-
-      const previousBounds = event.payload.previousBounds;
-      const previousMonitors = event.payload.previousMonitors;
-      const nextMonitors = event.payload.monitors;
+    const handleTopologyChanged = createPetDisplayTopologyHandler(setDisplayTopologyGeneration, (payload) => {
+      const previousBounds = payload.previousBounds;
+      const previousMonitors = payload.previousMonitors;
+      const nextMonitors = payload.monitors;
       const currentSpriteScreen = spriteScreenRef.current;
       const previousOverlayViewport = topologyOverlayViewportRef.current;
       const nextOverlayViewport = getPetOverlayViewport();
@@ -487,7 +457,7 @@ export function PetApp() {
         const result = rebasePetPointByMonitorAnchorWithDiagnostics({
           point: centerPointOfRect(currentSpriteScreen),
           previousBounds,
-          nextBounds: event.payload.bounds,
+          nextBounds: payload.bounds,
           previousMonitors,
           nextMonitors,
           previousOverlaySize: {
@@ -504,8 +474,8 @@ export function PetApp() {
           result.diagnostics.relativeAnchor
         ) {
           pendingTopologyAnchorRef.current = {
-            generation: event.payload.generation,
-            bounds: event.payload.bounds,
+            generation: payload.generation,
+            bounds: payload.bounds,
             monitors: nextMonitors,
             anchor: {
               monitor: result.diagnostics.nextViewport.monitor,
@@ -520,11 +490,11 @@ export function PetApp() {
       } else {
         topologyOverlayViewportRef.current = nextOverlayViewport;
       }
-    };
+    });
     if (isTauri()) {
       void listen<PetDisplayTopologyChangedPayload>(
         PET_DISPLAY_TOPOLOGY_CHANGED_EVENT,
-        handleTopologyChanged,
+        (event) => { if (!cancelled) handleTopologyChanged(event); },
       ).then((u) => {
         if (cancelled) safeUnlisten(u);
         else topologyUnlisten = u;
