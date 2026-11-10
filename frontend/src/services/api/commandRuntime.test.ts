@@ -1,8 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import executionApprovalKinds from "./fixtures/execution-approval-kinds.json";
 
-const { post } = vi.hoisted(() => ({ post: vi.fn() }));
-vi.mock("../http", () => ({ http: { post } }));
+const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
+vi.mock("../http", () => ({ http: { get, post } }));
 import { commandRuntimeApi, type CommandApprovalRequest, type ApplicationApprovalRequest } from "./commandRuntime";
+
+it("queries the execution approval kinds exercised by the Bridge route contract", async () => {
+  get.mockResolvedValue({ requests: [] });
+  await commandRuntimeApi.pending();
+  expect(get.mock.calls.map(([url]) => url).sort()).toEqual(
+    executionApprovalKinds.map((kind) => `/v1/approvals?kind=${kind}`).sort(),
+  );
+});
 
 describe("command approval decision API", () => {
   beforeEach(() => { post.mockReset(); });

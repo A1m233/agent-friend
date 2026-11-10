@@ -120,6 +120,28 @@ describe("command runtime global sandbox capability", () => {
     });
   });
 
+  it("publishes status while an approval read is pending and preserves approvals on failure", async () => {
+    const gate = deferred<CommandApprovalRequest[]>();
+    vi.mocked(commandRuntimeApi.pending).mockReturnValueOnce(gate.promise);
+    const existing = approval();
+    useCommandRuntimeStore.setState({ approvals: { [existing.request_id]: existing } });
+    const refresh = useCommandRuntimeStore.getState().refresh();
+    await vi.waitFor(() => expect(useCommandRuntimeStore.getState().runtimeStatus).not.toBeNull());
+    gate.reject(new Error("HTTP 422"));
+    await expect(refresh).rejects.toThrow("422");
+    expect(useCommandRuntimeStore.getState().approvals[existing.request_id]).toEqual(existing);
+  });
+
+  it("ignores a late read failure after a newer successful retry", async () => {
+    const gate = deferred<never>();
+    vi.mocked(commandRuntimeApi.status).mockReturnValueOnce(gate.promise);
+    const stale = useCommandRuntimeStore.getState().refreshStatus();
+    await useCommandRuntimeStore.getState().refreshStatus();
+    gate.reject(new Error("timeout"));
+    await expect(stale).rejects.toThrow("timeout");
+    expect(useCommandRuntimeStore.getState().statusReadFailed).toBe(false);
+  });
+
   it("updates the shared readiness state without approving a command", () => {
     useCommandRuntimeStore.getState().handlePush(capabilityEnvelope("setup_required", 1));
     expect(useCommandRuntimeStore.getState().runtimeStatus).toMatchObject({
