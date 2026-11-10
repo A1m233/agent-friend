@@ -15,7 +15,7 @@ import { STOP_FEEDBACK } from "./stopFeedback";
 import { Ban, Plus, Upload } from "lucide-react";
 import { Attachments, type TdAttachmentItem } from "@tdesign-react/chat";
 import { useDropzone } from "react-dropzone";
-import { Button, Input, TooltipButton, TooltipProvider } from "@/components/ui";
+import { Input, TooltipButton, TooltipProvider } from "@/components/ui";
 import { modelOption, useModelCatalogStore } from "@/lib/model-config";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import {
@@ -85,8 +85,7 @@ interface ComposerProps {
   disabled?: boolean;
   disabledReason?: string;
   sendUnavailable?: boolean;
-  sendUnavailableReason?: string;
-  onRetryPreparation?: () => void;
+  preparationFeedback?: { reason: string; failed: boolean; retry?: () => void };
   placement?: "bottom" | "inline";
   onHeightChange?: (height: number) => void;
   topSlot?: ReactNode;
@@ -109,8 +108,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   disabled = false,
   disabledReason,
   sendUnavailable = false,
-  sendUnavailableReason,
-  onRetryPreparation,
+  preparationFeedback,
   placement = "bottom",
   onHeightChange,
   topSlot,
@@ -471,6 +469,30 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     });
   }, [voiceInputError, voiceInputErrorCode, voiceInputLastEventAt]);
 
+  const sendBlockedByEditor = streaming || showStop || disabled || modelSwitching || editSubmitting
+    || !attachmentCompatibility.compatible || draftAttachments.some((item) => item.status !== "ready");
+  const hasSendableContent = (text: string) => Boolean(text.trim() || draftAttachments.length || draftReferences.length);
+  const blockedFeedback = !sendBlockedByEditor && hasSendableContent(draftText) ? preparationFeedback : undefined;
+  const toastId = `composer-preparation-${currentSessionId}`;
+  const feedbackReason = blockedFeedback?.reason;
+  useEffect(() => {
+    if (feedbackReason) return () => { toast.dismiss(toastId); };
+  }, [feedbackReason, toastId]);
+
+  const explainBlockedSend = () => {
+    if (!blockedFeedback) return;
+    const { reason, failed, retry } = blockedFeedback;
+    if (failed) {
+      toast.error(reason, {
+        id: toastId,
+        description: "草稿已保留。",
+        action: retry ? { label: "重新准备", onClick: retry } : undefined,
+      });
+    } else {
+      toast.info("会话正在准备，草稿已保留，请稍后发送", { id: toastId });
+    }
+  };
+
   const submit = (text: string) => {
     if (disabled || sendUnavailable || streaming || cancelling || editSubmitting) return;
     if (!catalog) {
@@ -616,12 +638,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         }
       >
         <div className="pointer-events-auto relative">
-          {sendUnavailableReason ? (
-            <div className="flex items-center gap-2 px-4 py-1 text-xs text-muted">
-              <span role="status">{sendUnavailableReason}</span>
-              {onRetryPreparation && <Button size="xs" variant="ghost" onClick={onRetryPreparation}>重试</Button>}
-            </div>
-          ) : null}
           {editingMessage && (
             <ComposerEditStatus
               summary={editSummary}
@@ -645,6 +661,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               autosize={COMPOSER_AUTOSIZE}
               disabled={disabled}
               sendBlocked={streaming || sendUnavailable || editSubmitting}
+              blockedSendReason={feedbackReason}
+              onBlockedSend={blockedFeedback ? explainBlockedSend : undefined}
               loading={showStop}
               sendBtnLoading={cancelling}
               placeholder={
@@ -687,18 +705,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   toast.error(STOP_FEEDBACK.failed);
                 });
               }}
-              sendBtnDisabled={(value) => streaming
-                || disabled
-                || sendUnavailable
-                || modelSwitching
-                || editSubmitting
-                || !attachmentCompatibility.compatible
-                || draftAttachments.some((item) => item.status !== "ready")
-                || (
-                  !value.trim()
-                  && !attachmentItems.some((item) => item.status === "success")
-                  && draftReferences.length === 0
-                )}
+              sendBtnDisabled={(value) => sendUnavailable || sendBlockedByEditor || !hasSendableContent(value)}
             >
               <ComposerAttachmentStrip
                 attachmentContent={attachmentItems.length > 0 ? (

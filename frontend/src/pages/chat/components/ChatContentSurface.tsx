@@ -112,9 +112,11 @@ export function ChatContentSurface() {
             disabled={composerDisabled}
             disabledReason={composerDisabledReason}
             sendUnavailable={sendUnavailable}
-            sendUnavailableReason={preparationFailed ? preparation.error ?? "会话准备失败"
-              : preparing && preparation.showPreparing ? "正在准备会话…" : undefined}
-            onRetryPreparation={preparationFailed && preparation.canRetry ? retryComposerPreparation : undefined}
+            preparationFeedback={preparing && currentSessionId && !runtimeUnavailable && !voiceBlocksText ? {
+              reason: preparationFailed ? preparation.error ?? "会话准备失败" : "会话正在准备，暂时无法发送",
+              failed: preparationFailed,
+              retry: preparationFailed && preparation.canRetry ? () => retryComposerPreparation(currentSessionId) : undefined,
+            } : undefined}
             onHeightChange={setComposerHeight}
             topSlot={<><PendingRequests key={currentSessionId} sessionId={currentSessionId} /><ApprovalDock activity={primaryActivity} /></>}
             onReferenceSelect={selectReference}
