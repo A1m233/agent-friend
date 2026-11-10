@@ -7,6 +7,8 @@ import {
   useRef,
 } from "react";
 import { ChatSender } from "@tdesign-react/chat";
+import { Navigation2 } from "lucide-react";
+import { TooltipButton, TooltipProvider } from "@/components/ui";
 import { cn } from "@/utils/cn";
 import { readStringEventValue } from "@/utils/webComponentEvents";
 import { extractClipboardFiles } from "./attachmentInput";
@@ -23,6 +25,8 @@ interface ChatSenderBoxProps extends ChatSenderProps {
   onNativeStopClick?: () => void;
   shouldIgnoreNativeValueChange?: () => boolean;
   sendBlocked?: boolean;
+  blockedSendReason?: string;
+  onBlockedSend?: () => void;
   onNativeEditorChange?: (state: ChatSenderEditorState) => void;
   voiceSelection?: { text: string; caret: number } | null;
 }
@@ -37,6 +41,8 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
       onNativeStopClick,
       shouldIgnoreNativeValueChange,
       sendBlocked = false,
+      blockedSendReason,
+      onBlockedSend,
       onNativeEditorChange,
       voiceSelection,
       children,
@@ -94,12 +100,17 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
         if ((e.key === "Enter" || e.key === "Process") && inIme) {
           e.stopPropagation();
           e.stopImmediatePropagation();
+          return;
         }
         if (
           e.key === "Enter" && (sendBlocked || props.loading)
           && e.composedPath().some((target) => target instanceof HTMLTextAreaElement)
         ) {
-          // Keep native newline editing, but do not let TDesign route Enter to stop/send.
+          if (!e.shiftKey && !props.loading && onBlockedSend) {
+            e.preventDefault();
+            if (!e.repeat) onBlockedSend();
+          }
+          // Let Shift+Enter and busy-state draft editing keep their native newline.
           e.stopPropagation();
           e.stopImmediatePropagation();
         }
@@ -144,7 +155,7 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
         el.removeEventListener("change", onNativeChange);
         el.removeEventListener("input", onNativeChange);
       };
-    }, [onNativeEditorChange, onNativePasteFiles, onNativeStopClick, onNativeValueChange, shouldIgnoreNativeValueChange, props.loading, sendBlocked]);
+    }, [onNativeEditorChange, onNativePasteFiles, onNativeStopClick, onNativeValueChange, shouldIgnoreNativeValueChange, props.loading, sendBlocked, onBlockedSend]);
 
     return (
       <div
@@ -153,6 +164,21 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
       >
         <ChatSender ref={senderRef} {...props}>
           {children}
+          {blockedSendReason && !props.loading && (
+            <span slot="actions" className="inline-flex">
+              <TooltipProvider>
+                <TooltipButton
+                  type="button"
+                  aria-label="发送"
+                  aria-disabled="true"
+                  tooltip={blockedSendReason}
+                  size="icon-sm"
+                  className="cursor-not-allowed rounded-full bg-muted/35 text-bg hover:bg-muted/35"
+                  icon={<Navigation2 className="fill-current" />}
+                />
+              </TooltipProvider>
+            </span>
+          )}
         </ChatSender>
       </div>
     );

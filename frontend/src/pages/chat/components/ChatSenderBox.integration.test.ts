@@ -26,6 +26,55 @@ function findInShadowRoots(root: ParentNode, selector: string): HTMLElement | nu
 }
 
 describe("ChatSenderBox real component integration", () => {
+  it("explains a blocked send on Enter or focus without consuming IME or Shift+Enter", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const onSend = vi.fn();
+    const onBlockedSend = vi.fn();
+    const reason = "会话正在准备，暂时无法发送";
+    vi.stubGlobal("ResizeObserver", class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    try {
+      await act(async () => root.render(createElement(ChatSenderBox, {
+        placement: "bottom", value: "草稿", sendBlocked: true, sendBtnDisabled: true,
+        blockedSendReason: reason, onBlockedSend, onSend,
+      })));
+      const textarea = findInShadowRoots(container, "textarea") as HTMLTextAreaElement;
+      const enter = (options: KeyboardEventInit = {}) => textarea.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter", bubbles: true, composed: true, cancelable: true, ...options,
+      }));
+      expect(enter({ isComposing: true })).toBe(true);
+      expect(enter({ shiftKey: true })).toBe(true);
+      expect(onBlockedSend).not.toHaveBeenCalled();
+      expect(enter()).toBe(false);
+      expect(enter({ repeat: true })).toBe(false);
+      expect(onBlockedSend).toHaveBeenCalledOnce();
+      expect(textarea.value).toBe("草稿");
+
+      const button = container.querySelector<HTMLButtonElement>('[slot="actions"] button')!;
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      expect(document.querySelector('[role="tooltip"]')).toBeNull();
+      await act(async () => button.focus());
+      expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(reason);
+      await act(async () => button.blur());
+      await act(async () => {
+        button.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" }));
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      });
+      expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(reason);
+      await act(async () => button.click());
+      expect(onSend).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("observes the native stop click before dispatch, without breaking stop when the observer fails", async () => {
     const container = document.createElement("div");
     document.body.append(container);

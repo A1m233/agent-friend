@@ -7,17 +7,15 @@ export interface ComposerSessionState {
   phase: "idle" | "loading" | "preparing" | "ready" | "failed";
   configuration: SessionComposerState | null;
   error: string | null;
-  showPreparing: boolean;
   canRetry: boolean;
 }
 
 export const useComposerSessionStore = create<ComposerSessionState>(() => ({
-  sessionId: null, phase: "idle", configuration: null, error: null, showPreparing: false, canRetry: false,
+  sessionId: null, phase: "idle", configuration: null, error: null, canRetry: false,
 }));
 
 let controller: AbortController | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
-let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 let retry: (() => void) | null = null;
 const RETRY_DELAYS_MS = [300, 1200, 4000];
 
@@ -25,7 +23,6 @@ export function resetComposerSession(): Promise<void> {
   const previous = useComposerSessionStore.getState().sessionId;
   controller?.abort(); controller = null;
   clearTimeout(timer); timer = undefined;
-  clearTimeout(noticeTimer); noticeTimer = undefined;
   retry = null;
   useComposerSessionStore.setState(useComposerSessionStore.getInitialState());
   if (previous && typeof sessionsApi.cancelPreparation === "function") {
@@ -34,7 +31,9 @@ export function resetComposerSession(): Promise<void> {
   return Promise.resolve();
 }
 
-export function retryComposerPreparation(): void { retry?.(); }
+export function retryComposerPreparation(sessionId: string): void {
+  if (useComposerSessionStore.getState().sessionId === sessionId) retry?.();
+}
 
 /** Metadata and preparation never wait for a history response. */
 export function openComposerSession(
@@ -46,16 +45,8 @@ export function openComposerSession(
   const live = () => controller === current && !current.signal.aborted;
   let attempts = 0;
   useComposerSessionStore.setState({ sessionId, phase: "loading" });
-  const showNoticeIfSlow = () => {
-    if (noticeTimer !== undefined || useComposerSessionStore.getState().showPreparing) return;
-    noticeTimer = setTimeout(() => {
-      noticeTimer = undefined;
-      if (live()) useComposerSessionStore.setState({ showPreparing: true });
-    }, 1200);
-  };
   const settle = (phase: "ready" | "failed", error: string | null = null, canRetry = false) => {
-    clearTimeout(noticeTimer); noticeTimer = undefined;
-    useComposerSessionStore.setState({ phase, error, showPreparing: false, canRetry });
+    useComposerSessionStore.setState({ phase, error, canRetry });
   };
   type Step = "configure" | "prepare" | "poll";
   const fail = (error: unknown, step: Step) => {
@@ -69,7 +60,6 @@ export function openComposerSession(
       || status === 408 || status === 429 || (status !== undefined && status >= 500);
     if (transient && attempts < RETRY_DELAYS_MS.length) {
       useComposerSessionStore.setState({ phase: step === "configure" ? "loading" : "preparing" });
-      showNoticeIfSlow();
       timer = setTimeout(() => void run(step), RETRY_DELAYS_MS[attempts++]);
       return;
     }
@@ -78,7 +68,6 @@ export function openComposerSession(
       retry = null;
       attempts = 0;
       useComposerSessionStore.setState({ phase: step === "configure" ? "loading" : "preparing", error: null, canRetry: false });
-      showNoticeIfSlow();
       void run(step);
     };
   };
@@ -98,7 +87,6 @@ export function openComposerSession(
       }
       if (step === "prepare") {
         useComposerSessionStore.setState({ phase: "preparing" });
-        showNoticeIfSlow();
       }
       const result = step === "prepare"
         ? await sessionsApi.prepare(sessionId, current.signal)
@@ -112,11 +100,9 @@ export function openComposerSession(
         settle("ready");
       } else {
         useComposerSessionStore.setState({ phase: "preparing" });
-        showNoticeIfSlow();
       }
       timer = setTimeout(() => void run("poll"), result.state === "ready" ? 10000 : 200);
     } catch (error) { fail(error, step); }
   };
-  showNoticeIfSlow();
   void run("configure");
 }
