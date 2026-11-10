@@ -16,6 +16,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name: string, lis
 vi.mock("@/utils/tauri", () => ({ isTauri: () => true }));
 
 import { usePetAccessoryLayout } from "./usePetAccessoryLayout";
+import { createPetDisplayTopologyHandler } from "@/pages/pet/petDisplayTopology";
 import { BUBBLE_MEASUREMENT_EVENT } from "./protocol";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -127,6 +128,34 @@ describe("pet layout coordinator", () => {
     await act(async () => root.render(createElement(Probe, { generation: 5 })));
     await act(async () => old(context));
     expect(invokeMock.mock.calls.filter(([cmd]) => cmd === "apply_pet_accessory_layout").at(-1)![1].request.generation).toBe(5);
+  });
+
+  it("places a requested bubble in the new display generation after a same-geometry resume", async () => {
+    let nativeContext = { ...context, generation: 2 };
+    const hidden = { ...measurement, showRequested: false };
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "begin_pet_accessory_layout") return { owner: 9, context: nativeContext, measurement: hidden };
+      if (command === "get_pet_accessory_context") return nativeContext;
+      return {};
+    });
+    const geometryChanged = vi.fn();
+    const onTopology = createPetDisplayTopologyHandler(
+      (generation) => root.render(createElement(Probe, { generation })),
+      geometryChanged,
+    );
+    const payload = { generation: 2, bounds: { x: -1600, y: 0, width: 3200, height: 2000 },
+      monitors: context.monitors, reason: "display-resume-complete" };
+    await act(async () => onTopology({ payload }));
+    nativeContext = { ...nativeContext, generation: 3 };
+    await act(async () => onTopology({ payload: { ...payload, generation: 3 } }));
+    // A delayed event with different bounds must not roll back placement or generation.
+    await act(async () => onTopology({ payload: { ...payload, bounds: { ...payload.bounds, x: 0 } } }));
+    await act(async () => listeners.get(BUBBLE_MEASUREMENT_EVENT)!({ payload: { ...measurement, revision: 2 } }));
+
+    expect(geometryChanged).toHaveBeenCalledTimes(1);
+    const request = invokeMock.mock.calls.filter(([cmd]) => cmd === "apply_pet_accessory_layout").at(-1)![1].request;
+    expect(request).toMatchObject({ owner: 9, generation: 3, measurementRevision: 2,
+      bubble: { width: 450, height: 120 } });
   });
 
   it("keeps the top-edge bar below the pet through hidden, short, tall and hidden measurements", async () => {
