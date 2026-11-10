@@ -79,7 +79,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     def pending_approvals(
         session_id: str | None = Query(default=None, min_length=1),
         run_id: str | None = Query(default=None, min_length=1),
-        kind: Literal["filesystem", "command", "desktop_application"] | None = Query(default=None),
+        kind: Literal["filesystem", "command", "desktop_application", "social_comment"]
+        | None = Query(default=None),
     ) -> dict[str, object]:
         broker = runtime.approval_broker
         if broker is None:

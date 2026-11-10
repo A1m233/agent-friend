@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 from datetime import UTC, datetime
@@ -21,6 +22,24 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agent import Event, JsonlSessionStore, Session, SessionManager, SessionNotFoundError
+
+
+def test_desktop_execution_approval_query_contract() -> None:
+    fixture = (
+        Path(__file__).resolve().parents[2]
+        / "frontend/src/services/api/fixtures/execution-approval-kinds.json"
+    )
+    broker = Mock(spec=ApprovalBroker)
+    broker.pending.return_value = []
+    app = FastAPI()
+    register_routes(app, cast(Any, SimpleNamespace(approval_broker=broker)))
+    with TestClient(app) as client:
+        for kind in json.loads(fixture.read_text(encoding="utf-8")):
+            response = client.get("/v1/approvals", params={"kind": kind})
+            assert response.status_code == 200, kind
+            assert response.json() == {"requests": []}
+            broker.pending.assert_called_with(session_id=None, run_id=None, kind=kind)
+        assert client.get("/v1/approvals", params={"kind": "unknown"}).status_code == 422
 
 
 def test_command_diagnostics_does_not_launch_setup_or_load_sessions(tmp_path: Path) -> None:

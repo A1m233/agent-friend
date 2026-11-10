@@ -26,11 +26,13 @@ interface CommandRuntimeState {
   processes: Record<string, CommandProcessSnapshot>;
   submitting: ReadonlySet<string>;
   runtimeStatus: CommandRuntimeStatus | null;
+  statusReadFailed: boolean;
   approvalFence: SnapshotFenceState;
   processFence: SnapshotFenceState;
   settingUpSandbox: boolean;
   setupError: string | null;
   refresh: () => Promise<void>;
+  refreshStatus: () => Promise<void>;
   handlePush: (envelope: PushEnvelope) => void;
   finishRun: (runId: string) => void;
   decide: (requestId: string, allow: boolean) => Promise<CommandApprovalResult>;
@@ -89,22 +91,43 @@ export function preferNewerCommandRuntimeStatus(
   };
 }
 
+let statusReadSequence = 0;
+
 export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => ({
   approvals: {},
   processes: {},
   submitting: new Set(),
   runtimeStatus: null,
+  statusReadFailed: false,
   approvalFence: emptySnapshotFence(),
   processFence: emptySnapshotFence(),
   settingUpSandbox: false,
   setupError: null,
+  async refreshStatus() {
+    const sequence = ++statusReadSequence;
+    const previous = get().runtimeStatus;
+    try {
+      const status = await commandRuntimeApi.status();
+      if (sequence === statusReadSequence) {
+        set((state) => ({
+          runtimeStatus: preferNewerCommandRuntimeStatus(state.runtimeStatus, status),
+          statusReadFailed: false,
+        }));
+      }
+    } catch (error) {
+      if (sequence === statusReadSequence && get().runtimeStatus === previous) {
+        set({ statusReadFailed: true });
+      }
+      throw error;
+    }
+  },
   async refresh() {
     const approvalRequestEpoch = get().approvalFence.mutationEpoch;
     const processRequestEpoch = get().processFence.mutationEpoch;
-    const [approvals, processes, runtimeStatus] = await Promise.all([
+    const [approvals, processes] = await Promise.all([
       commandRuntimeApi.pending(),
       commandRuntimeApi.processes(),
-      commandRuntimeApi.status(),
+      get().refreshStatus(),
     ]);
     set((state) => {
       const nextApprovals = { ...state.approvals };
@@ -165,7 +188,6 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
         processes: nextProcesses,
         approvalFence,
         processFence,
-        runtimeStatus: preferNewerCommandRuntimeStatus(state.runtimeStatus, runtimeStatus),
       };
     });
   },
@@ -201,6 +223,7 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
         const current = state.runtimeStatus?.sandbox_capability;
         if (current && current.version > capability.version) return {};
         return {
+          statusReadFailed: false,
           runtimeStatus: state.runtimeStatus
             ? {
                 ...state.runtimeStatus,
@@ -320,6 +343,7 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
     try {
       const runtimeStatus = await commandRuntimeApi.setupWindowsSandbox();
       set((state) => ({
+        statusReadFailed: false,
         runtimeStatus: preferNewerCommandRuntimeStatus(state.runtimeStatus, runtimeStatus),
       }));
       return runtimeStatus;
@@ -347,11 +371,13 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
     }));
   },
   clear() {
+    statusReadSequence++;
     set({
       approvals: {},
       processes: {},
       submitting: new Set(),
       runtimeStatus: null,
+      statusReadFailed: false,
       approvalFence: emptySnapshotFence(),
       processFence: emptySnapshotFence(),
       settingUpSandbox: false,

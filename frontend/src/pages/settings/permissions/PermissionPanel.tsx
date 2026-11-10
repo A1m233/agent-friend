@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge, Button } from "@/components/ui";
 import {
   beginPermissionAttempt,
@@ -44,11 +44,16 @@ export function PermissionPanel() {
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const runtimeStatus = useCommandRuntimeStore((state) => state.runtimeStatus);
-  const refreshCommandRuntime = useCommandRuntimeStore((state) => state.refresh);
+  const refreshStatus = useCommandRuntimeStore((state) => state.refreshStatus);
+  const statusReadFailed = useCommandRuntimeStore((state) => state.statusReadFailed);
   const settingUpSandbox = useCommandRuntimeStore((state) => state.settingUpSandbox);
   const setupError = useCommandRuntimeStore((state) => state.setupError);
   const setupWindowsSandbox = useCommandRuntimeStore((state) => state.setupWindowsSandbox);
-  const sandbox = runtimeStatus?.sandbox_capability;
+  const sandbox = statusReadFailed ? undefined : runtimeStatus?.sandbox_capability;
+  useEffect(() => {
+    // The store exposes failed reads beside the retry action.
+    void refreshStatus().catch(() => undefined);
+  }, [refreshStatus]);
   const microphone = snapshot.items.find((item) => item.id === "microphone");
   const activeFlow = snapshot.activeFlow;
   const preparation = systemPreparationPlan(microphone, activeFlow, sandbox);
@@ -134,7 +139,10 @@ export function PermissionPanel() {
   };
 
   const refreshAll = async () => {
-    await Promise.all([refreshPermissions(), refreshCommandRuntime()]);
+    await Promise.all([
+      refreshPermissions().catch((error) => setFeedback(String(error))),
+      refreshStatus().catch(() => undefined),
+    ]);
   };
 
   return (
@@ -193,7 +201,7 @@ export function PermissionPanel() {
             </p>
           </div>
           <Badge variant={sandbox?.state === "ready" ? "default" : "secondary"}>
-            {sandbox ? SANDBOX_STATUS_LABELS[sandbox.state] : "正在读取"}
+            {sandbox ? SANDBOX_STATUS_LABELS[sandbox.state] : statusReadFailed ? "读取失败，可重新检测" : "正在读取"}
           </Badge>
         </div>
 
