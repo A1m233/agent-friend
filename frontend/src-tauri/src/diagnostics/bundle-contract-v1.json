@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 22,
+  "schemaRevision": 23,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -140,6 +140,12 @@
         "diagnostics/webview2-render-evidence.json",
         "render-evidence/*.png"
       ]
+    },
+    {
+      "id": "installer-attempts-v1",
+      "manifestFields": [],
+      "requiredEntries": ["install/attempts/index.json"],
+      "entryPatterns": ["install/attempts/index.json", "install/attempts/attempt-*.log"]
     },
     {
       "id": "install-integrity-v1",

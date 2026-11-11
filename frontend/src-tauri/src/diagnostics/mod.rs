@@ -18,6 +18,7 @@ use tauri::{AppHandle, Manager, State};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 mod contract;
+mod installer_attempts;
 mod native_crash_export;
 mod sandbox_incidents;
 mod staged_log;
@@ -419,6 +420,25 @@ pub async fn generate_diagnostic_bundle(
         "diagnostics/attachments.json",
         &attachment_collection.manifest,
     )?);
+
+    let (attempt_entries, attempt_failures) = tauri::async_runtime::spawn_blocking(|| {
+        let mut entries = Vec::new();
+        let mut failures = Vec::new();
+        let profile = install_contract::embedded_profile()?;
+        installer_attempts::collect(
+            &std::env::temp_dir(),
+            &profile.product_name,
+            &profile.profile_id,
+            cfg!(windows),
+            &mut entries,
+            &mut failures,
+        )?;
+        Ok::<_, String>((entries, failures))
+    })
+    .await
+    .map_err(|e| format!("installer log collector task failed: {e}"))??;
+    entries.extend(attempt_entries);
+    failures.extend(attempt_failures);
 
     let log_dir = paths::log_dir();
     let log_result = tauri::async_runtime::spawn_blocking({
@@ -1455,6 +1475,7 @@ mod tests {
                     "diagnostics/webview2.json",
                     "diagnostics/webview2-render-evidence.json",
                     "install/integrity.json",
+                    "install/attempts/index.json",
                     "diagnostics/attachments.json",
                     "diagnostics/windows-shell/current.json",
                     "diagnostics/pet-input/coverage.json",

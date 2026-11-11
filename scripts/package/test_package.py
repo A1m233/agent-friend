@@ -767,6 +767,11 @@ def test_tauri_cli_is_pinned_for_the_verified_nsis_template() -> None:
 def test_nsis_template_overlay_defaults_chinese_and_enforces_maintenance_state() -> None:
     package = _load("package_run_nsis_overlay_contract", PACKAGE_DIR / "run.py")
     source = (
+        "!insertmacro MUI_PAGE_INSTFILES\n"
+        "Section EarlyChecks\nSectionEnd\nSection WebView2\nSectionEnd\n"
+        '  File "${MAINBINARYSRCPATH}"\n'
+        "  ; Copy resources\n  ; Create file associations\n"
+        "  ; Auto close this page for passive mode\n"
         '{{#if installer_hooks}}\n!include "{{installer_hooks}}"\n{{/if}}\n'
         '  !if "${DISPLAYLANGUAGESELECTOR}" == "true"\n'
         "    !insertmacro MUI_LANGDLL_DISPLAY\n"
@@ -945,11 +950,13 @@ def test_nsis_preinstall_failure_is_first_install_safe_and_persists_diagnostics(
 
     assert "现有版本尚未被替换" not in hooks
     assert "尚未写入或替换程序文件" in hooks
-    assert "$TEMP\\${AGENT_FRIEND_PRODUCT_NAME}-installer-${AGENT_FRIEND_BUILD_ID}.log" in hooks
+    assert (
+        "$TEMP\\${AGENT_FRIEND_PRODUCT_NAME}-installer-${AGENT_FRIEND_BUILD_ID}--$0-$1.log" in hooks
+    )
     assert "FileWriteUTF16LE /BOM" in hooks
     assert "FileSeek $AgentFriendDiagnosticHandle 0 END" in hooks
     assert "installKind=$AgentFriendInstallKind" in hooks
-    assert "schemaVersion=2" in hooks
+    assert "schemaVersion=3" in hooks
     assert "product=${AGENT_FRIEND_PRODUCT_NAME}" in hooks
     assert "version=${AGENT_FRIEND_PRODUCT_VERSION}" in hooks
     assert "phase=${phase}" in hooks

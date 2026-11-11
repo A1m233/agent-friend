@@ -756,6 +756,18 @@ def _build_bundle(
                 "publishedAt": "2026-08-01T00:00:00Z",
             },
         },
+        "install/attempts/index.json": {
+            "supported": True,
+            "gaps": 0,
+            "attempts": [
+                {
+                    "entry": "install/attempts/attempt-01.log",
+                    "buildId": "fixture",
+                    "lastPhase": "extract-resources",
+                    "status": "no-end-record",
+                }
+            ],
+        },
         "install/integrity.json": {
             "schemaVersion": 1,
             "status": "consistent",
@@ -979,6 +991,7 @@ def _build_bundle(
         },
     }
     text_entries = {
+        "install/attempts/attempt-01.log": "schemaVersion=3\nbuildId=fixture\n",
         **pet_entries,
         "diagnostics/windows-shell/events-001.jsonl": json.dumps(shell_journal) + "\n",
         "logs/tauri.log": "safe",
@@ -1065,6 +1078,7 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
     assert "private-id" not in json.dumps(summary["commandRuntime"])
     assert summary["desktopApplications"]["statuses"] == {"accepted": 1}
     assert "private" not in json.dumps(summary["desktopApplications"])
+    assert summary["installerAttempts"]["attempts"][0]["lastPhase"] == "extract-resources"
     assert summary["installIntegrity"]["status"] == "consistent"
     assert summary["installIntegrity"]["evidence"] == "collected"
     assert summary["installIntegrity"]["payload"]["validated"] is True
