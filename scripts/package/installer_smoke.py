@@ -25,11 +25,12 @@ from paths import PackageRoots, create_build_paths
 from releases import validate_release_directory
 from windows_shell_paths import shell_paths, verify_smoke_environment
 
-SMOKE_REPORT_SCHEMA = 3
+SMOKE_REPORT_SCHEMA = 4
 SMOKE_DISK_MARGIN_BYTES = 512 * 1024 * 1024
 REQUIRED_SCENARIOS = {
     "collision_preflight",
     "fresh_install",
+    "interrupted_install_retry",
     "preinstall_launch_failure_diagnostics",
     "legacy_fixed_layout_upgrade",
     "running_shell_upgrade",
@@ -496,12 +497,20 @@ def _run_installer(
     )
 
 
-def _installer_diagnostic_path(build_id: str) -> Path:
-    temp = Path(os.environ["TEMP"]).resolve()
-    path = (temp / f"{INSTALLER_SMOKE_PROFILE.product_name}-installer-{build_id}.log").resolve()
-    if path.parent != temp:
-        raise RuntimeError(f"unsafe installer diagnostics path: {path}")
-    return path
+def _installer_diagnostics(build_id: str) -> set[Path]:
+    if not build_id or any(
+        not (char.isascii() and (char.isalnum() or char == "-")) for char in build_id
+    ):
+        raise RuntimeError("invalid smoke build identifier")
+    prefix = f"{INSTALLER_SMOKE_PROFILE.product_name}-installer-{build_id}--"
+    return set(Path(os.environ["TEMP"]).glob(f"{prefix}*.log"))
+
+
+def _new_installer_log(build_id: str, before: set[Path]) -> Path:
+    created = _installer_diagnostics(build_id) - before
+    if len(created) != 1:
+        raise RuntimeError(f"expected one new installer attempt, found {len(created)}")
+    return created.pop()
 
 
 def _read_installer_diagnostics(path: Path) -> dict[str, list[str]]:
@@ -573,25 +582,15 @@ def run_smoke(
     expected_verification_inputs: InstallerVerificationInputs,
 ) -> Path:
     verify_smoke_environment()
-    completed = False
     try:
-        output = _run_smoke(
+        return _run_smoke(
             roots,
             build_report_path=build_report_path,
             installed_smoke=installed_smoke,
             expected_verification_inputs=expected_verification_inputs,
         )
-        completed = True
-        return output
     finally:
         cleanup_smoke_state()
-        if completed:
-            build_report = _read_json(build_report_path)
-            candidate = build_report.get("candidate")
-            if isinstance(candidate, dict):
-                _installer_diagnostic_path(str(candidate.get("buildId", ""))).unlink(
-                    missing_ok=True
-                )
 
 
 def _run_smoke(
@@ -612,8 +611,6 @@ def _run_smoke(
     candidate_version = str(build_report["projectVersion"])
     candidate_build_id = str(candidate["buildId"])
     paths = _windows_paths()
-    diagnostic_path = _installer_diagnostic_path(candidate_build_id)
-    diagnostic_path.unlink(missing_ok=True)
     candidate_payload = create_build_paths(roots, build_id=str(candidate["buildId"])).payload_stage
     disk_preflight = _smoke_disk_preflight(
         baseline_runtime=baseline_payload / "runtime",
@@ -636,7 +633,7 @@ def _run_smoke(
 
     def fresh_install() -> dict[str, Any]:
         cleanup_smoke_state()
-        diagnostic_path.unlink(missing_ok=True)
+        before = _installer_diagnostics(candidate_build_id)
         result = _run_installer(installer)
         if result.returncode != 0:
             raise RuntimeError(f"fresh installer returned {result.returncode}")
@@ -644,7 +641,7 @@ def _run_smoke(
         registered = _read_registered_install()
         if Path(registered["root"]).resolve() != paths["install"]:
             raise RuntimeError("fresh install did not register the isolated install root")
-        diagnostics = _read_installer_diagnostics(diagnostic_path)
+        diagnostics = _read_installer_diagnostics(_new_installer_log(candidate_build_id, before))
         if diagnostics.get("installKind") != ["first-install"]:
             raise RuntimeError("fresh install diagnostics did not identify first-install")
         if "0" not in diagnostics.get("helperResult", []):
@@ -660,7 +657,7 @@ def _run_smoke(
 
     def preinstall_launch_failure_diagnostics() -> dict[str, Any]:
         cleanup_smoke_state()
-        diagnostic_path.unlink(missing_ok=True)
+        before = _installer_diagnostics(candidate_build_id)
         result = _run_installer(
             installer,
             extra_args=("/AGENTFRIENDSMOKEPREINSTALLLAUNCHFAIL",),
@@ -671,7 +668,7 @@ def _run_smoke(
             )
         if (paths["install"] / f"{INSTALLER_SMOKE_PROFILE.main_binary_name}.exe").exists():
             raise RuntimeError("failed preinstall wrote the main program binary")
-        diagnostics = _read_installer_diagnostics(diagnostic_path)
+        diagnostics = _read_installer_diagnostics(_new_installer_log(candidate_build_id, before))
         if diagnostics.get("installKind") != ["first-install"]:
             raise RuntimeError("failed preinstall diagnostics lost first-install identity")
         if diagnostics.get("phase") != ["preinstall"]:
@@ -694,6 +691,73 @@ def _run_smoke(
             preinstall_launch_failure_diagnostics,
         )
     )
+
+    def interrupted_install_retry() -> dict[str, Any]:
+        cleanup_smoke_state()
+        before = _installer_diagnostics(candidate_build_id)
+        with subprocess.Popen(
+            [str(installer), "/S", "/AGENTFRIENDSMOKEPAUSEBEFORECOPY"]
+        ) as process:
+            try:
+                deadline = time.monotonic() + 90
+                while time.monotonic() < deadline and process.poll() is None:
+                    created = _installer_diagnostics(candidate_build_id) - before
+                    if len(created) == 1:
+                        interrupted = next(iter(created))
+                        try:
+                            first = interrupted.read_text("utf-16")
+                        except (OSError, UnicodeError):
+                            first = ""
+                        if "|copy-main|start" in first:
+                            break
+                    time.sleep(0.1)
+                else:
+                    raise RuntimeError("isolated installer did not reach copy-main")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=10)
+        preserved = interrupted.read_bytes()
+        if "|attempt|end|" in preserved.decode("utf-16"):
+            raise RuntimeError("interrupted installer unexpectedly recorded an end")
+        before_retry = _installer_diagnostics(candidate_build_id)
+        retry = _run_installer(installer)
+        log = _new_installer_log(candidate_build_id, before_retry)
+        if retry.returncode or interrupted.read_bytes() != preserved:
+            raise RuntimeError("retry failed or changed previous attempt")
+        events = _read_installer_diagnostics(log).get("event", [])
+        phases = [
+            (datetime.fromisoformat(t), p, edge)
+            for t, p, edge, *_ in (event.split("|") for event in events)
+        ]
+        if not events or not events[-1].endswith("|attempt|end|ok"):
+            raise RuntimeError("retry did not record a successful finish")
+        for phase in (
+            "attempt",
+            "environment",
+            "webview2",
+            "prepare-helper",
+            "install-checks",
+            "preinstall",
+            "process-check",
+            "copy-main",
+            "extract-resources",
+            "register",
+            "verify",
+            "activate",
+            "cleanup",
+            "restore-shortcuts",
+            "commit",
+        ):
+            if [edge for _, p, edge in phases if p == phase] != ["start", "end"]:
+                raise RuntimeError(f"incomplete retry phase timing: {phase}")
+        return {
+            "lastInterruptedPhase": "copy-main",
+            "retryCommitted": True,
+            "previousLogPreserved": True,
+        }
+
+    scenarios.append(_scenario("interrupted_install_retry", interrupted_install_retry))
 
     def legacy_upgrade() -> dict[str, Any]:
         _stage_legacy_fixture(baseline_shell, baseline_payload / "runtime")

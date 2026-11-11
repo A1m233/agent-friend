@@ -350,3 +350,5 @@ Windows 源码与构建根分属不同卷时，Tauri 封装使用源码卷上的
 `artifact-gc` 预览，`artifact-gc --apply` 执行显式清理，不要求启用自动策略；执行复用 release-root 锁并复核最新身份与保留状态。正式包及 `_symbols` 不进入目标。删除日志持久化在稳定控制目录，部分失败用 `artifact-retry --path <精确目录> --apply` 复核后续删，未知新增内容阻止重试。以上命令均支持 `--releases-dir`，不加载构建依赖。Windows 用 `.\scripts\package\run.ps1`，macOS/Linux 用 `./scripts/package/run.sh`。
 
 `build-storage run.* benchmark` 只在自动移除的隔离 fixture 中比较快速盘点与递归计数，输出环境、样本规模和耗时；不扫描或清理真实缓存。`package run.* plan --purpose runtime-verify|runtime|installer|all|installer-smoke-build` 展示对应用途与生命周期；顶层 `allowed` 合并空间、并发预留与缓存预算，不应只读 `space.allowed`。计划不执行回收，也不代替实际构建时的安全回收与验证门禁。
+
+Windows 安装器的隔离矩阵还会在复制主程序前强制结束一个测试安装进程，再运行同一安装器，检查两次日志独立、阶段起止时间完整。导出诊断压缩包时可在 `install/attempts/index.json` 查看最近五次安装尝试。

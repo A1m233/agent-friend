@@ -200,7 +200,7 @@ def test_smoke_disk_preflight_fails_before_install_mutation(tmp_path: Path) -> N
 def test_required_scenarios_cover_first_install_and_preinstall_diagnostics() -> None:
     assert "fresh_install" in REQUIRED_SCENARIOS
     assert "preinstall_launch_failure_diagnostics" in REQUIRED_SCENARIOS
-    assert installer_smoke.SMOKE_REPORT_SCHEMA == 3
+    assert installer_smoke.SMOKE_REPORT_SCHEMA == 4
 
 
 def test_installer_diagnostics_parser_preserves_repeated_phases_and_equals(

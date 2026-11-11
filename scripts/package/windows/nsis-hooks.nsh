@@ -40,7 +40,123 @@ Var AgentFriendHelperPresentAfterRun
 Var AgentFriendDiagnosticHandle
 Var AgentFriendRuntimeExecutable
 
+Var AgentFriendPhase
+Var AgentFriendEvent
+Var AgentFriendTimestamp
+Var AgentFriendAttemptClosed
+
+; The System plug-in saves all general-purpose registers around instrumentation.
+Function AgentFriendUtcNow
+  System::Store S
+  System::Call '*(&i2,&i2,&i2,&i2,&i2,&i2,&i2,&i2) p .r0'
+  System::Call 'kernel32::GetSystemTime(p r0)'
+  System::Call '*$0(&i2.r1,&i2.r2,&i2,&i2.r3,&i2.r4,&i2.r5,&i2.r6,&i2.r7)'
+  System::Free $0
+  IntFmt $2 "%02u" $2
+  IntFmt $3 "%02u" $3
+  IntFmt $4 "%02u" $4
+  IntFmt $5 "%02u" $5
+  IntFmt $6 "%02u" $6
+  IntFmt $7 "%03u" $7
+  StrCpy $AgentFriendTimestamp "$1-$2-$3T$4:$5:$6.$7Z"
+  System::Store L
+FunctionEnd
+
+; NSIS I/O sets its shared error flag on failure and leaves it unchanged on
+; success. Keep observation independent of errors from the observed operation.
+!macro AGENT_FRIEND_SAVE_ERRORS
+  ${If} ${Errors}
+    Push 1
+  ${Else}
+    Push 0
+  ${EndIf}
+  ClearErrors
+!macroend
+
+!macro AGENT_FRIEND_RESTORE_ERRORS
+  Exch $0
+  ${If} $0 == 1
+    SetErrors
+  ${Else}
+    ClearErrors
+  ${EndIf}
+  Pop $0
+!macroend
+
+Function AgentFriendWriteEvent
+  ${If} $AgentFriendDiagnosticPath == ""
+    Return
+  ${EndIf}
+  !insertmacro AGENT_FRIEND_SAVE_ERRORS
+  Call AgentFriendUtcNow
+  ClearErrors
+  FileOpen $AgentFriendDiagnosticHandle "$AgentFriendDiagnosticPath" a
+  ${IfNot} ${Errors}
+    FileSeek $AgentFriendDiagnosticHandle 0 END
+    FileWriteUTF16LE $AgentFriendDiagnosticHandle "event=$AgentFriendTimestamp|$AgentFriendEvent$\r$\n"
+    FileClose $AgentFriendDiagnosticHandle
+  ${EndIf}
+  !insertmacro AGENT_FRIEND_RESTORE_ERRORS
+FunctionEnd
+
+!macro AGENT_FRIEND_BEGIN phase
+  StrCpy $AgentFriendPhase "${phase}"
+  StrCpy $AgentFriendEvent "$AgentFriendPhase|start"
+  Call AgentFriendWriteEvent
+  !if "${AGENT_FRIEND_PROFILE_ID}" == "installer-smoke"
+    !if "${phase}" == "copy-main"
+      ClearErrors
+      ${GetOptions} $CMDLINE "/AGENTFRIENDSMOKEPAUSEBEFORECOPY" $R9
+      ${IfNot} ${Errors}
+        Sleep 60000
+      ${EndIf}
+    !endif
+  !endif
+!macroend
+
+!macro AGENT_FRIEND_END result
+  ${If} $AgentFriendPhase != ""
+    StrCpy $AgentFriendEvent "$AgentFriendPhase|end|${result}"
+    Call AgentFriendWriteEvent
+    StrCpy $AgentFriendPhase ""
+  ${EndIf}
+!macroend
+
+!macro AGENT_FRIEND_FINISH result
+  ${If} $AgentFriendAttemptClosed != "1"
+    StrCpy $AgentFriendEvent "attempt|end|${result}"
+    Call AgentFriendWriteEvent
+    StrCpy $AgentFriendAttemptClosed "1"
+  ${EndIf}
+!macroend
+
 Function AgentFriendInitializeDiagnostics
+  ${If} $AgentFriendDiagnosticPath != ""
+    Return
+  ${EndIf}
+  System::Store S
+  System::Call 'kernel32::GetSystemTimeAsFileTime(*l .r0)'
+  System::Call 'kernel32::GetCurrentProcessId() i .r1'
+  StrCpy $AgentFriendDiagnosticPath "$TEMP\${AGENT_FRIEND_PRODUCT_NAME}-installer-${AGENT_FRIEND_BUILD_ID}--$0-$1.log"
+  ; CREATE_NEW also protects a previous file if the system clock moves backwards.
+  System::Call 'kernel32::CreateFileW(w "$AgentFriendDiagnosticPath", i 0x40000000, i 1, p 0, i 1, i 0x80, p 0) p .r2'
+  ${If} $2 == -1
+    StrCpy $AgentFriendDiagnosticPath ""
+  ${Else}
+    StrCpy $AgentFriendDiagnosticHandle $2
+    FileWriteUTF16LE /BOM $AgentFriendDiagnosticHandle "schemaVersion=3$\r$\n"
+    FileWriteUTF16LE $AgentFriendDiagnosticHandle "product=${AGENT_FRIEND_PRODUCT_NAME}$\r$\n"
+    FileWriteUTF16LE $AgentFriendDiagnosticHandle "version=${AGENT_FRIEND_PRODUCT_VERSION}$\r$\n"
+    FileWriteUTF16LE $AgentFriendDiagnosticHandle "buildId=${AGENT_FRIEND_BUILD_ID}$\r$\n"
+    FileWriteUTF16LE $AgentFriendDiagnosticHandle "profileId=${AGENT_FRIEND_PROFILE_ID}$\r$\n"
+    FileClose $AgentFriendDiagnosticHandle
+    StrCpy $AgentFriendEvent "attempt|start"
+    Call AgentFriendWriteEvent
+  ${EndIf}
+  System::Store L
+FunctionEnd
+
+Function AgentFriendRecordInstallKind
   StrCpy $AgentFriendInstallKind "first-install"
   ${If} $AgentFriendRegisteredRoot != ""
     StrCpy $AgentFriendInstallKind "in-place"
@@ -48,24 +164,19 @@ Function AgentFriendInitializeDiagnostics
   ${If} $AgentFriendInstallRootMove == "1"
     StrCpy $AgentFriendInstallKind "explicit-move"
   ${EndIf}
-
-  StrCpy $AgentFriendDiagnosticPath "$TEMP\${AGENT_FRIEND_PRODUCT_NAME}-installer-${AGENT_FRIEND_BUILD_ID}.log"
-  ClearErrors
-  FileOpen $AgentFriendDiagnosticHandle "$AgentFriendDiagnosticPath" w
-  ${If} ${Errors}
-    StrCpy $AgentFriendDiagnosticPath ""
-    Return
+  ${If} $AgentFriendDiagnosticPath != ""
+    !insertmacro AGENT_FRIEND_SAVE_ERRORS
+    FileOpen $AgentFriendDiagnosticHandle "$AgentFriendDiagnosticPath" a
+    ${IfNot} ${Errors}
+      FileSeek $AgentFriendDiagnosticHandle 0 END
+      FileWriteUTF16LE $AgentFriendDiagnosticHandle "installKind=$AgentFriendInstallKind$\r$\n"
+      FileWriteUTF16LE $AgentFriendDiagnosticHandle "installRoot=$INSTDIR$\r$\n"
+      FileWriteUTF16LE $AgentFriendDiagnosticHandle "registeredRoot=$AgentFriendRegisteredRoot$\r$\n"
+      FileWriteUTF16LE $AgentFriendDiagnosticHandle "installerPath=$EXEPATH$\r$\n"
+      FileClose $AgentFriendDiagnosticHandle
+    ${EndIf}
+    !insertmacro AGENT_FRIEND_RESTORE_ERRORS
   ${EndIf}
-  FileWriteUTF16LE /BOM $AgentFriendDiagnosticHandle "schemaVersion=2$\r$\n"
-  FileWriteUTF16LE $AgentFriendDiagnosticHandle "product=${AGENT_FRIEND_PRODUCT_NAME}$\r$\n"
-  FileWriteUTF16LE $AgentFriendDiagnosticHandle "version=${AGENT_FRIEND_PRODUCT_VERSION}$\r$\n"
-  FileWriteUTF16LE $AgentFriendDiagnosticHandle "buildId=${AGENT_FRIEND_BUILD_ID}$\r$\n"
-  FileWriteUTF16LE $AgentFriendDiagnosticHandle "profileId=${AGENT_FRIEND_PROFILE_ID}$\r$\n"
-  FileWriteUTF16LE $AgentFriendDiagnosticHandle "installKind=$AgentFriendInstallKind$\r$\n"
-  FileWriteUTF16LE $AgentFriendDiagnosticHandle "installRoot=$INSTDIR$\r$\n"
-  FileWriteUTF16LE $AgentFriendDiagnosticHandle "registeredRoot=$AgentFriendRegisteredRoot$\r$\n"
-  FileWriteUTF16LE $AgentFriendDiagnosticHandle "installerPath=$EXEPATH$\r$\n"
-  FileClose $AgentFriendDiagnosticHandle
 FunctionEnd
 
 !macro AGENT_FRIEND_RECORD_HELPER_RESULT phase
@@ -92,6 +203,7 @@ FunctionEnd
   ${If} ${FileExists} "$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}"
     StrCpy $AgentFriendHelperPresentAfterRun "1"
   ${EndIf}
+  !insertmacro AGENT_FRIEND_END "$AgentFriendHelperResult"
   !insertmacro AGENT_FRIEND_RECORD_HELPER_RESULT "${phase}"
 !macroend
 
@@ -139,17 +251,22 @@ Function AgentFriendRollback
   ${IfNot} ${FileExists} "$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}"
     Return
   ${EndIf}
+  !insertmacro AGENT_FRIEND_BEGIN "rollback"
   nsExec::ExecToStack '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" rollback --install-root "$INSTDIR" --transaction-id "${AGENT_FRIEND_BUILD_ID}"'
   !insertmacro AGENT_FRIEND_CAPTURE_HELPER_RESULT "rollback"
   StrCpy $AgentFriendTransactionStarted "0"
 FunctionEnd
 
 Function .onInstFailed
+  !insertmacro AGENT_FRIEND_END "failed"
   Call AgentFriendRollback
+  !insertmacro AGENT_FRIEND_FINISH "failed"
 FunctionEnd
 
 Function AgentFriendUserAbort
+  !insertmacro AGENT_FRIEND_END "cancelled"
   Call AgentFriendRollback
+  !insertmacro AGENT_FRIEND_FINISH "cancelled"
 FunctionEnd
 
 ; Modern UI owns .onUserAbort and calls this documented extension point after
@@ -158,7 +275,9 @@ FunctionEnd
 
 !macro AGENT_FRIEND_FAIL message exitCode
   !define AgentFriendFailId ${__LINE__}
+  !insertmacro AGENT_FRIEND_END "failed"
   Call AgentFriendRollback
+  !insertmacro AGENT_FRIEND_FINISH "failed"
   IfSilent agent_friend_fail_silent_${AgentFriendFailId} 0
   ${If} $PassiveMode != 1
     MessageBox MB_OK|MB_ICONSTOP "${message}"
@@ -186,8 +305,11 @@ FunctionEnd
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
+  !insertmacro AGENT_FRIEND_END "ok"
+  !insertmacro AGENT_FRIEND_BEGIN "install-checks"
   Call AgentFriendCaptureAutostart
   !insertmacro AGENT_FRIEND_RESOLVE_INSTALL_ROOT_INTENT
+  Call AgentFriendRecordInstallKind
   ClearErrors
   ReadRegStr $R7 SHCTX "${UNINSTKEY}" "DisplayVersion"
   ${If} $R7 != ""
@@ -213,12 +335,13 @@ FunctionEnd
     ${EndIf}
     Goto agent_friend_trusted_warning_done
     agent_friend_trusted_cancel:
+      !insertmacro AGENT_FRIEND_END "cancelled"
+      !insertmacro AGENT_FRIEND_FINISH "cancelled"
       SetErrorLevel 33
       Quit
     agent_friend_trusted_warning_done:
   ${EndIf}
 
-  Call AgentFriendInitializeDiagnostics
 
   ; The isolated smoke installer can deliberately remove only its extracted helper
   ; to prove that launch failures still leave useful pre-install diagnostics.
@@ -230,6 +353,8 @@ FunctionEnd
     ${EndIf}
   !endif
 
+  !insertmacro AGENT_FRIEND_END "ok"
+  !insertmacro AGENT_FRIEND_BEGIN "preinstall"
   nsExec::ExecToStack '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" preinstall --install-root "$INSTDIR" --registered-root "$AgentFriendRegisteredRoot" --move-intent "$AgentFriendMoveIntent" --target-existed-before-install "0" --transaction-id "${AGENT_FRIEND_BUILD_ID}" --main-binary-name "${MAINBINARYNAME}" --registry-product-name "${PRODUCTNAME}" --manufacturer "${MANUFACTURER}" --autostart-value-name "${AGENT_FRIEND_AUTOSTART_VALUE}" --start-menu-shortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" --legacy-start-menu-shortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" --desktop-shortcut "$DESKTOP\${PRODUCTNAME}.lnk"'
   !insertmacro AGENT_FRIEND_CAPTURE_HELPER_RESULT "preinstall"
   ${If} $AgentFriendHelperResult != 0
@@ -240,10 +365,13 @@ FunctionEnd
     ${EndIf}
   ${EndIf}
   StrCpy $AgentFriendTransactionStarted "1"
+  !insertmacro AGENT_FRIEND_BEGIN "process-check"
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  !insertmacro AGENT_FRIEND_END "ok"
   StrCpy $AgentFriendRuntimeExecutable "$INSTDIR\${AGENT_FRIEND_PAYLOAD_RELATIVE}\runtime\python\agent-friend-runtime.exe"
+  !insertmacro AGENT_FRIEND_BEGIN "verify"
   nsExec::ExecToStack '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" verify --install-root "$INSTDIR" --payload-relative-path "${AGENT_FRIEND_PAYLOAD_RELATIVE}" --profile-id "${AGENT_FRIEND_PROFILE_ID}" --build-id "${AGENT_FRIEND_BUILD_ID}"'
   !insertmacro AGENT_FRIEND_CAPTURE_HELPER_RESULT "verify"
   ${If} $AgentFriendHelperResult != 0
@@ -251,6 +379,7 @@ FunctionEnd
   ${EndIf}
 
   ${If} ${FileExists} "$PLUGINSDIR\trusted-credential-seed.bin"
+    !insertmacro AGENT_FRIEND_BEGIN "credentials"
     ${IfNot} ${FileExists} "$PLUGINSDIR\trusted-credential-seed.key"
       Delete "$PLUGINSDIR\trusted-credential-seed.bin"
       !insertmacro AGENT_FRIEND_FAIL "$(AgentFriendCredentialFailed)" 33
@@ -261,17 +390,21 @@ FunctionEnd
     ${If} $R0 != 0
       !insertmacro AGENT_FRIEND_FAIL "$(AgentFriendCredentialFailed)" 33
     ${EndIf}
+    !insertmacro AGENT_FRIEND_END "ok"
   ${ElseIf} ${FileExists} "$PLUGINSDIR\trusted-credential-seed.key"
+    !insertmacro AGENT_FRIEND_BEGIN "credentials"
     Delete "$PLUGINSDIR\trusted-credential-seed.key"
     !insertmacro AGENT_FRIEND_FAIL "$(AgentFriendCredentialFailed)" 33
   ${EndIf}
 
+  !insertmacro AGENT_FRIEND_BEGIN "activate"
   nsExec::ExecToStack '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" activate --install-root "$INSTDIR" --payload-relative-path "${AGENT_FRIEND_PAYLOAD_RELATIVE}" --profile-id "${AGENT_FRIEND_PROFILE_ID}" --build-id "${AGENT_FRIEND_BUILD_ID}" --transaction-id "${AGENT_FRIEND_BUILD_ID}"'
   !insertmacro AGENT_FRIEND_CAPTURE_HELPER_RESULT "activate"
   ${If} $AgentFriendHelperResult != 0
     !insertmacro AGENT_FRIEND_FAIL "$(AgentFriendIntegrityFailed)" 34
   ${EndIf}
 
+  !insertmacro AGENT_FRIEND_BEGIN "cleanup"
   nsExec::ExecToStack '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" cleanup --install-root "$INSTDIR" --profile-id "${AGENT_FRIEND_PROFILE_ID}" --build-id "${AGENT_FRIEND_BUILD_ID}"'
   !insertmacro AGENT_FRIEND_CAPTURE_HELPER_RESULT "cleanup"
   ${If} $AgentFriendHelperResult != 0
@@ -279,6 +412,7 @@ FunctionEnd
   ${EndIf}
 
   ${If} $AgentFriendInstallRootMove == "1"
+    !insertmacro AGENT_FRIEND_BEGIN "retire-source"
     nsExec::ExecToStack '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" retire-source --install-root "$INSTDIR" --transaction-id "${AGENT_FRIEND_BUILD_ID}"'
     !insertmacro AGENT_FRIEND_CAPTURE_HELPER_RESULT "retire-source"
     ${If} $AgentFriendHelperResult != 0
@@ -286,6 +420,7 @@ FunctionEnd
     ${EndIf}
   ${EndIf}
 
+  !insertmacro AGENT_FRIEND_BEGIN "restore-shortcuts"
   ${If} $AgentFriendAutostartBeforeInstall != ""
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" \
       "${AGENT_FRIEND_AUTOSTART_VALUE}" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --autostart"
@@ -298,6 +433,8 @@ FunctionEnd
     CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
   ${EndIf}
 
+  !insertmacro AGENT_FRIEND_END "ok"
+  !insertmacro AGENT_FRIEND_BEGIN "commit"
   nsExec::ExecToStack '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" commit --install-root "$INSTDIR" --profile-id "${AGENT_FRIEND_PROFILE_ID}" --build-id "${AGENT_FRIEND_BUILD_ID}" --transaction-id "${AGENT_FRIEND_BUILD_ID}"'
   !insertmacro AGENT_FRIEND_CAPTURE_HELPER_RESULT "commit"
   ${If} $AgentFriendHelperResult != 0

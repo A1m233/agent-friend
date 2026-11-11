@@ -53,6 +53,7 @@ Before diagnosing, establish:
 - WebView2 render-evidence consent, manual/display/GPU recovery trigger and timing, internal-versus-desktop black/white pixel metrics, included/missing screenshot artifacts, and capture/recovery errors;
 - pet render evidence coverage, independent incident retention, per-record process/build identity and CPU-render versus actual-presentation limits; see the v1 reference;
 - native crash coverage, capture degradation, event/exit distinctions, historical build identity, raw-dump consent and integrity; inventory only metadata and counts, never panic payloads or memory;
+- Windows installer attempts, per-attempt build, final observed phase and missing end records; distinguish retries from the current install integrity snapshot;
 - explicit exclusions.
 - managed execution environment provider status, runtime/version identity, overlay/cache size buckets, payload validation and recent stable error codes; never expect session ids, paths, package names, scripts or command output in this evidence family.
 - command-runtime health, bounded setup/proxy event counts, native error codes and retention gaps; treat hashed runtime/operation identities as correlation keys, not session IDs. A ready export snapshot does not invalidate an earlier helper failure.

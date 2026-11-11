@@ -945,6 +945,44 @@ def _apply_nsis_template_overlay(
     profile: InstallProfile,
     trusted_resources: tuple[Path, Path] | None,
 ) -> str:
+    end_phase = '  !insertmacro AGENT_FRIEND_END "ok"\n'
+    # These are installation-only boundaries in the pinned Tauri template.
+    for anchor, before, after in (
+        (
+            "!insertmacro MUI_PAGE_INSTFILES",
+            "!define MUI_PAGE_CUSTOMFUNCTION_PRE AgentFriendInitializeDiagnostics\n",
+            "",
+        ),
+        (
+            "Section EarlyChecks\n",
+            "",
+            '  Call AgentFriendInitializeDiagnostics\n  !insertmacro AGENT_FRIEND_BEGIN "environment"\n',
+        ),
+        ("Section WebView2\n", "", end_phase + '  !insertmacro AGENT_FRIEND_BEGIN "webview2"\n'),
+        (
+            '  File "${MAINBINARYSRCPATH}"',
+            end_phase + '  !insertmacro AGENT_FRIEND_BEGIN "copy-main"\n',
+            "",
+        ),
+        (
+            "  ; Copy resources\n",
+            end_phase + '  !insertmacro AGENT_FRIEND_BEGIN "extract-resources"\n',
+            "",
+        ),
+        (
+            "  ; Create file associations",
+            end_phase + '  !insertmacro AGENT_FRIEND_BEGIN "register"\n',
+            "",
+        ),
+        (
+            "  ; Auto close this page for passive mode",
+            '  !insertmacro AGENT_FRIEND_FINISH "ok"\n',
+            "",
+        ),
+    ):
+        if source.count(anchor) != 1:
+            raise RuntimeError(f"pinned Tauri NSIS installer timing anchor drifted: {anchor!r}")
+        source = source.replace(anchor, before + anchor + after)
     hooks_anchor = """{{#if installer_hooks}}\n!include \"{{installer_hooks}}\"\n{{/if}}\n"""
     contract_defines = (
         NSIS_RESOURCE_ROOT + "\n" + f'!define AGENT_FRIEND_BUILD_ID "{identity.build_id}"\n'
@@ -976,6 +1014,7 @@ def _apply_nsis_template_overlay(
     section_anchor = """Section Install\n  SetOutPath $INSTDIR\n"""
     plugin_files = (
         section_anchor
+        + '  !insertmacro AGENT_FRIEND_END "ok"\n  !insertmacro AGENT_FRIEND_BEGIN "prepare-helper"\n'
         + '  SetOutPath "$PLUGINSDIR"\n'
         + f'  File /oname=agent-friend-installer-helper.exe "{_nsis_path(helper_path)}"\n'
     )

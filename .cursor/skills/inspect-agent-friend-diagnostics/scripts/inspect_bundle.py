@@ -47,6 +47,7 @@ CAPABILITY_HANDLERS = {
     "webview2-render-evidence-v2": "webView2RenderEvidence",
     "webview2-render-evidence-v3": "webView2RenderEvidence",
     "webview2-render-evidence-v4": "webView2RenderEvidence",
+    "installer-attempts-v1": "installerAttempts",
     "install-integrity-v1": "installIntegrity",
     "desktop-instance-governance-v1": "desktopInstance",
     "managed-execution-environment-v1": "executionEnvironments",
@@ -257,6 +258,40 @@ def summarize_webview2(value: Any) -> dict[str, Any] | None:
                 ).items()
             )
         ),
+    }
+
+
+def summarize_installer_attempts(
+    archive: zipfile.ZipFile, capabilities: list[str], warnings: list[str]
+) -> dict[str, Any]:
+    if "installer-attempts-v1" not in capabilities:
+        return {"evidence": "not-collected"}
+    index = optional_json(archive, "install/attempts/index.json", warnings)
+    if not isinstance(index, dict) or not isinstance(index.get("attempts"), list):
+        warnings.append("installer attempt index is missing or invalid")
+        return {"evidence": "invalid"}
+    attempts = []
+    for position, item in enumerate(index["attempts"][:5], 1):
+        entry = f"install/attempts/attempt-{position:02}.log"
+        if not isinstance(item, dict) or item.get("entry") != entry:
+            warnings.append("invalid installer attempt reference")
+            continue
+        if entry not in archive.namelist() or archive.getinfo(entry).file_size > 512 * 1024:
+            warnings.append("installer attempt log missing or oversized")
+            continue
+        with archive.open(entry) as stream:
+            header = stream.read(1024).splitlines()
+        build = item.get("buildId")
+        if not isinstance(build, str) or f"buildId={build}".encode() not in header:
+            warnings.append("installer attempt identity missing or inconsistent")
+            continue
+        attempts.append(
+            {k: item.get(k) for k in ("entry", "buildId", "time", "legacy", "status", "lastPhase")}
+        )
+    return {
+        "evidence": "collected" if index.get("supported") else "unsupported",
+        "gaps": index.get("gaps"),
+        "attempts": attempts,
     }
 
 
@@ -1943,6 +1978,7 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             },
             "webView2": summarize_webview2(webview2),
             "webView2RenderEvidence": render_evidence_summary,
+            "installerAttempts": summarize_installer_attempts(archive, capabilities, warnings),
             "installIntegrity": summarize_install_integrity(
                 install_integrity,
                 collected=install_integrity_collected,
@@ -2607,6 +2643,7 @@ def print_human(summary: dict[str, Any]) -> None:
         f"artifacts={len(render_evidence.get('includedArtifacts', []))} "
         f"missing={len(render_evidence.get('missingArtifacts', []))}"
     )
+    print("Installer attempts:", json.dumps(summary["installerAttempts"], ensure_ascii=False))
     install_integrity = summary["installIntegrity"]
     print(
         "Install integrity: "

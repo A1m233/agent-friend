@@ -270,6 +270,7 @@ mod tests {
                     "diagnostics/command-runtime-incidents.json",
                     "diagnostics/desktop-applications.json",
                     "install/integrity.json",
+                    "install/attempts/index.json",
                     "diagnostics/webview2.json",
                     "diagnostics/webview2-render-evidence.json",
                     "diagnostics/attachments.json",
