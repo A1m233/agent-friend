@@ -806,6 +806,9 @@ async def test_qq_compaction_progress_does_not_block_full_answer_recovery(
         RuntimeError(
             "QQ Bot API error [400] /v2/users/user/stream_messages: 流式消息已经结束，不能继续发送"
         ),
+        RuntimeError(
+            "QQ Bot API error [400] /v2/users/user/stream_messages: 同一流式消息发送超过时间限制"
+        ),
         TimeoutError("timeout"),
     ],
 )

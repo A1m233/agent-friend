@@ -8,7 +8,7 @@ from ..delivery.models import DeliveryFailure
 
 _HTTP_ERROR = re.compile(r"^QQ Bot API error \[(\d{3})\] /[^\s:]+: (.*)$", re.DOTALL)
 _IMMUTABLE_MESSAGE = "已经提交的消息内容不可修改"
-_ENDED_MESSAGE = "流式消息已经结束，不能继续发送"
+_ENDED_MESSAGES = ("流式消息已经结束，不能继续发送", "同一流式消息发送超过时间限制")
 
 
 def classify_qq_failure(value: object, *, stream: bool = False) -> DeliveryFailure:
@@ -16,6 +16,8 @@ def classify_qq_failure(value: object, *, stream: bool = False) -> DeliveryFailu
         if stream and value.get("message") == _IMMUTABLE_MESSAGE and value.get("code"):
             return DeliveryFailure("failed", "stream_immutable", True)
         if value.get("code"):
+            if stream and value.get("message") in _ENDED_MESSAGES:
+                return DeliveryFailure("failed", "stream_ended", True)
             return DeliveryFailure("failed", "platform_rejected", False)
     if isinstance(value, Exception):
         match = _HTTP_ERROR.fullmatch(str(value))
@@ -23,7 +25,7 @@ def classify_qq_failure(value: object, *, stream: bool = False) -> DeliveryFailu
             status = int(match[1])
             if stream and status == 404 and match[2].strip() == _IMMUTABLE_MESSAGE:
                 return DeliveryFailure("failed", "stream_immutable", True)
-            if stream and status == 400 and match[2].strip() == _ENDED_MESSAGE:
+            if stream and status == 400 and match[2].strip() in _ENDED_MESSAGES:
                 return DeliveryFailure("failed", "stream_ended", True)
             if 400 <= status < 500:
                 return DeliveryFailure("failed", "http_rejected", False)
