@@ -146,6 +146,7 @@ async def test_permission_rejection_and_divergent_content_are_not_resent() -> No
         ),
         (TimeoutError("timeout"), "unknown", True),
         (RuntimeError("already committed"), "unknown", True),
+        ({"code": 1, "message": "同一流式消息发送超过时间限制"}, "failed", True),
         ({"code": 11001, "message": "denied"}, "failed", False),
         ({}, "unknown", True),
     ],
@@ -156,11 +157,12 @@ def test_platform_failure_classification(value: object, outcome: str, recoverabl
     assert failure.recoverable == recoverable
 
 
-def test_stream_ended_message_does_not_enable_static_resend() -> None:
+@pytest.mark.parametrize(
+    "message", ["流式消息已经结束，不能继续发送", "同一流式消息发送超过时间限制"]
+)
+def test_stream_ended_message_does_not_enable_static_resend(message: str) -> None:
     failure = classify_qq_failure(
-        RuntimeError(
-            "QQ Bot API error [400] /v2/users/user/messages: 流式消息已经结束，不能继续发送"
-        )
+        RuntimeError(f"QQ Bot API error [400] /v2/users/user/messages: {message}")
     )
     assert failure.outcome == "failed"
     assert failure.recoverable is False
