@@ -58,6 +58,9 @@ rodio = { version = "=0.20.1", default-features = false, features = ["mp3", "wav
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "windows")'.dependencies]
 # auto-launch 0.5 writes an unquoted Run command; normalize the public Run
 # value after the plugin updates Windows' autostart state.
@@ -106,6 +109,7 @@ objc2-app-kit = { version = "0.2", features = ["NSWindow", "NSResponder"] }
 # tray-icon's status item requires a main-thread marker from objc2 0.6.
 objc2-current = { package = "objc2", version = "0.6" }
 security-framework = "3"
+core-foundation = "0.10"
 core-foundation-sys = "0.8.7"
 # 0004 / 017 · pet 窗切 NSPanel 路径（业界 macOS Tauri overlay 标准方案）
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }

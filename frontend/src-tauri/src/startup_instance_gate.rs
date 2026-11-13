@@ -113,7 +113,7 @@ mod platform {
 #[cfg(not(target_os = "windows"))]
 mod platform {
     use crate::paths;
-    use fs4::FileExt;
+    use fs4::fs_std::FileExt;
     use std::{
         fs::{File, OpenOptions},
         path::PathBuf,
@@ -140,7 +140,7 @@ mod platform {
             .write(true)
             .open(&path)
             .map_err(|error| format!("startup_gate_unavailable: open file lock: {error}"))?;
-        file.lock()
+        FileExt::lock_exclusive(&file)
             .map_err(|error| format!("startup_gate_unavailable: lock file: {error}"))?;
         Ok(Gate {
             file: Some(file),
@@ -152,7 +152,7 @@ mod platform {
         let Some(file) = gate.file.take() else {
             return Ok(());
         };
-        file.unlock()
+        FileExt::unlock(&file)
             .map_err(|error| format!("startup_gate_unavailable: unlock file: {error}"))
     }
 

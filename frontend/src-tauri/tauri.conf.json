@@ -15,6 +15,7 @@
     "windows": [
       {
         "label": "pet",
+        "acceptFirstMouse": true,
         "url": "pet.html",
         "title": "agent-friend",
         "width": 240,

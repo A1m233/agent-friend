@@ -20,7 +20,8 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 
 const EVENT_CHANGED: &str = "runtime-service://changed";
-const READINESS_ATTEMPTS: usize = 50;
+const SOURCE_READINESS_TIMEOUT: Duration = Duration::from_secs(60);
+const PACKAGED_READINESS_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_DELAY: Duration = Duration::from_millis(200);
 const DEFAULT_RUNTIME_START_REASON: &str = "desktop_start";
 const CONTROLLED_RUNTIME_RESTART_REASON: &str = "controlled_restart";
@@ -559,7 +560,12 @@ impl RuntimeServiceSupervisor {
             .observer
             .as_ref()
             .map(|observer| observer.phase("service-readiness", context));
-        for _ in 0..READINESS_ATTEMPTS {
+        let timeout = match self.launch_context {
+            RuntimeLaunchContext::Source(_) => SOURCE_READINESS_TIMEOUT,
+            _ => PACKAGED_READINESS_TIMEOUT,
+        };
+        let deadline = tokio::time::Instant::now() + timeout;
+        while tokio::time::Instant::now() < deadline {
             let mut slot = slot_ref.lock().await;
             if slot.snapshot.generation != generation {
                 return Err("service operation was superseded".to_string());
@@ -578,7 +584,12 @@ impl RuntimeServiceSupervisor {
                 }
             }
             drop(slot);
-            match self.readiness(service, &token).await {
+            let Ok(readiness) =
+                tokio::time::timeout_at(deadline, self.readiness(service, &token)).await
+            else {
+                break;
+            };
+            match readiness {
                 Ok(true) => {
                     let mut slot = slot_ref.lock().await;
                     if slot.snapshot.generation != generation {
@@ -615,7 +626,10 @@ impl RuntimeServiceSupervisor {
                     emit(app, &slot.snapshot);
                     return Err(error_message(&slot.snapshot));
                 }
-                Ok(false) | Err(_) => tokio::time::sleep(POLL_DELAY).await,
+                Ok(false) | Err(_) => {
+                    tokio::time::sleep_until(deadline.min(tokio::time::Instant::now() + POLL_DELAY))
+                        .await;
+                }
             }
         }
 
@@ -636,7 +650,7 @@ impl RuntimeServiceSupervisor {
         slot.fail(
             RuntimeServicePhase::Failed,
             "readiness_timeout",
-            "service did not become ready within 10 seconds".to_string(),
+            format!("service did not become ready within {} seconds", timeout.as_secs()),
         );
         emit(app, &slot.snapshot);
         Err(error_message(&slot.snapshot))
@@ -1471,10 +1485,10 @@ mod tests {
     fn packaged_paths_are_stable_and_do_not_require_python() {
         let context = RuntimeLaunchContext::Packaged {
             launcher: PathBuf::from(
-                r"C:\Program Files\agent-friend\packages\build-123\runtime\python\agent-friend-runtime.exe",
+                "C:/Program Files/agent-friend/packages/build-123/runtime/python/agent-friend-runtime.exe",
             ),
             memory_model_dir: PathBuf::from(
-                r"C:\Program Files\agent-friend\packages\build-123\runtime\models\bge-small-zh-v1.5",
+                "C:/Program Files/agent-friend/packages/build-123/runtime/models/bge-small-zh-v1.5",
             ),
             identity: install_contract::BuildIdentity {
                 schema_version: 1,
