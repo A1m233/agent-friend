@@ -98,6 +98,8 @@ impl ProcessJob {
 
 pub(super) struct ServiceProcess {
     child: Child,
+    #[cfg(unix)]
+    group: Option<libc::pid_t>,
     #[cfg(windows)]
     job: ProcessJob,
 }
@@ -138,8 +140,12 @@ impl ServiceProcess {
         #[cfg(not(windows))]
         {
             let _ = parent_job;
+            use std::os::unix::process::CommandExt;
+            // uv starts Python as a descendant. Own both until the group is empty.
+            let child = command.process_group(0).spawn().map_err(|e| e.to_string())?;
             Ok(Self {
-                child: command.spawn().map_err(|e| e.to_string())?,
+                group: Some(child.id() as libc::pid_t),
+                child,
             })
         }
     }
@@ -150,7 +156,29 @@ impl ServiceProcess {
         if self.job.active_processes()? != 0 {
             return Ok(None);
         }
+        #[cfg(unix)]
+        if root.is_some() && self.signal_group(0)? {
+            return Ok(None);
+        }
         Ok(root)
+    }
+
+    // ESRCH proves this generation is gone. Forget the ID before it can be reused.
+    #[cfg(unix)]
+    fn signal_group(&mut self, signal: libc::c_int) -> io::Result<bool> {
+        let Some(group) = self.group else {
+            return Ok(false);
+        };
+        if unsafe { libc::killpg(group, signal) } == 0 {
+            return Ok(true);
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            self.group = None;
+            Ok(false)
+        } else {
+            Err(error)
+        }
     }
 
     pub(super) fn terminate(&mut self) -> io::Result<()> {
@@ -180,10 +208,8 @@ impl ServiceProcess {
                 }
             }
         }
-        #[cfg(not(windows))]
-        if self.child.try_wait()?.is_none() {
-            self.child.kill()?;
-        }
+        #[cfg(unix)]
+        self.signal_group(libc::SIGKILL)?;
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if self.try_wait()?.is_some() {
@@ -519,5 +545,35 @@ mod tests {
         assert!(fixture.locked());
         process.terminate().unwrap();
         assert!(!fixture.locked());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod unix_tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+
+    #[test]
+    fn terminate_cleans_up_the_service_even_if_its_launcher_exited() {
+        for launcher in ["wait", "exit 0"] {
+            let mut command = Command::new("sh");
+            command
+                .args(["-c", &format!("sleep 120 & echo $!; {launcher}")])
+                .stdout(std::process::Stdio::piped());
+            let mut service = ServiceProcess::spawn(&mut command, None).unwrap();
+            let mut line = String::new();
+            BufReader::new(service.child.stdout.take().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let worker: libc::pid_t = line.trim().parse().unwrap();
+            if launcher == "exit 0" {
+                service.child.wait().unwrap();
+            }
+            assert!(service.try_wait().unwrap().is_none());
+            service.terminate().unwrap();
+            assert_eq!(unsafe { libc::kill(worker, 0) }, -1);
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+            service.terminate().unwrap();
+        }
     }
 }

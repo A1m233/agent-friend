@@ -1,7 +1,8 @@
 use super::{PowerInhibitor, PowerPlatformAdapter};
 use crate::power_policy::model::{PlatformCapability, PowerPolicyError, PowerSource};
+use core_foundation::{base::TCFType, string::CFString};
 use core_foundation_sys::{
-    base::{kCFAllocatorDefault, CFEqual, CFRelease, CFTypeRef},
+    base::{kCFAllocatorDefault, CFRelease, CFTypeRef},
     string::{kCFStringEncodingUTF8, CFStringCreateWithCString, CFStringRef},
 };
 use std::ffi::CString;
@@ -13,10 +14,6 @@ const IO_SUCCESS: i32 = 0;
 
 #[link(name = "IOKit", kind = "framework")]
 extern "C" {
-    static kIOPMAssertionTypePreventUserIdleSystemSleep: CFStringRef;
-    static kIOPSACPowerValue: CFStringRef;
-    static kIOPSBatteryPowerValue: CFStringRef;
-
     fn IOPMAssertionCreateWithName(
         assertion_type: CFStringRef,
         assertion_level: u32,
@@ -55,12 +52,15 @@ impl PowerPlatformAdapter for MacosPowerPlatformAdapter {
             let source = IOPSGetProvidingPowerSourceType(blob);
             let result = if source.is_null() {
                 PowerSource::Unknown
-            } else if CFEqual(source as CFTypeRef, kIOPSACPowerValue as CFTypeRef) != 0 {
-                PowerSource::Ac
-            } else if CFEqual(source as CFTypeRef, kIOPSBatteryPowerValue as CFTypeRef) != 0 {
-                PowerSource::Battery
             } else {
-                PowerSource::Unknown
+                let source = CFString::wrap_under_get_rule(source);
+                if source == "AC Power" {
+                    PowerSource::Ac
+                } else if source == "Battery Power" {
+                    PowerSource::Battery
+                } else {
+                    PowerSource::Unknown
+                }
             };
             CFRelease(blob);
             Ok(result)
@@ -85,7 +85,7 @@ impl PowerPlatformAdapter for MacosPowerPlatformAdapter {
             }
             let mut id = 0;
             let status = IOPMAssertionCreateWithName(
-                kIOPMAssertionTypePreventUserIdleSystemSleep,
+                CFString::from_static_string("PreventUserIdleSystemSleep").as_concrete_TypeRef(),
                 IOPM_ASSERTION_LEVEL_ON,
                 reason_ref,
                 &mut id,
