@@ -1,31 +1,39 @@
 # agent-friend
 
-一个陪伴式 AI 项目。长期形态是常驻桌面的 AI 朋友（桌宠），支持语音、长期记忆、用户自定义人格。
+**agent-friend 是一个常驻桌面的个人 Agent。** 它能帮你查资料、整理文件、按时办事，也会记住你们聊过的事，有时带着自己的新作品主动来找你。
 
-## 想法
+<img src=".github/assets/readme/windowsill-painting.jpg" width="300" alt="《借过一下》：雨后的窗台，一只猫爪刚搭上窗沿。">
 
-- 以类似桌宠的形态出现在桌面上
-- 能听用户说话（语音输入）
-- 有记忆系统，让交互更像一个真实的人
-- 不预设角色名，由用户自行命名
+![agent-friend 主动发来《借过一下》和画这幅画时的构思。](.github/assets/readme/painting-message.png)
+
+## 可以和它做什么
+
+- **主动陪伴。** 应用运行时，它会不时醒来，接着上次的话题探索，遇到想分享的东西再来找你。点开桌宠的「内心活动」，还能看看它最近在琢磨什么。
+- **长期记忆与自定义人格。** 你给它取名字、定性格。开一段新对话，它也可以想起你提过的偏好，接上以前聊过的话题。
+- **处理文件，按时办事。** 你可以把一份 PDF 交给它，让它读完后把要点整理成 Word 文档；也可以请它每周五查一次你关心的消息。它能使用 Skills，在你设定的权限范围内读写文件、运行命令。
+- **从桌面聊到 QQ。** 把 QQ 私聊绑定到一个桌面会话，出门后就能在手机上接着问刚才那份资料，也能收到它发到这个会话的主动分享。
+
+### 主动陪伴
+
+它有时也会带个小游戏来找你。
+
+![agent-friend 主动分享的纸牌游戏《你先挑》：单抽时三袋牌循环占优，改成每人抽两次比总和，甲对乙的胜负又翻了过来。](.github/assets/readme/pick-first-game.png)
+
+你可以在「设置 → 自主陪伴」调整唤醒间隔，也可以在聊天里告诉它暂停主动联系。这样它还能自己探索，等你有空时再聊。电脑休眠、关机或退出应用后，自主活动会暂停。
+
+### 自定义人格
+
+名字和性格由你来定。性格也会体现在很小的地方，比如下面这句招呼。用户只发了一个「ciallo ~」，它用颜文字接了一句，还带着自己的口头禅。
+
+![用户说「ciallo ~」，agent-friend 用颜文字回应，又说「接住你的招呼，再悄悄贴一下喵」。](.github/assets/readme/persona-greeting.png)
+
+桌宠内置 Live2D 形象 Hiyori，也支持导入自己的 Spine 3.8 模型。桌宠、人格、记忆和 QQ 的配置见[用户指南](https://github.com/A1m233/agent-friend-guide)。
 
 ## 当前状态
 
-项目处于持续开发阶段，包含桌面应用、对话引擎、长期记忆、工具执行和多入口接入。
+项目持续开发中，发行安装包当前面向 Windows x64。桌面端采用 Tauri 2 和 React。对话引擎支持多会话、流式响应、会话文件、历史检索、上下文压缩与任务恢复。用户可以配置模型连接和推理选项、查看使用量、管理长期记忆。部分在线服务需要另配凭据。[需求与实现记录](docs/requirements/)
 
-技术栈已锁定（见 [`docs/decisions/0002-incubation-tech-stack`](docs/decisions/0002-incubation-tech-stack/README.md)）：Python 3.12 + uv workspace + LiteLLM + SQLite + FastAPI(HTTP/SSE)。
-
-当前源码包含的主要能力（具体范围见 [`docs/requirements/`](docs/requirements/)）：
-
-- 多会话对话、流式响应、会话文件与历史检索
-- 用户自定义人格、模型连接配置及推理选项
-- 联网搜索、文件操作、受管理命令执行、Skills 与权限审批
-- 上下文压缩、任务恢复与使用量观测
-- 长期记忆、召回与更新管理
-- `agent-bridge`：双协议（OpenAI / AG-UI）HTTP+SSE 服务端
-- 语音通话、QQ 接入、待办、提醒与定时请求（部分能力需另配服务凭据）
-- Tauri 桌面应用：聊天、设置与桌宠窗口；Live2D 使用内置 Hiyori，用户模型导入目前支持 Spine 3.8
-- 记忆召回质量评测（[011](docs/requirements/011-memory-recall-eval/) 机制 + [012](docs/requirements/012-memory-eval-anchor-recall-scoring/) PerLTQA 锚点判分 + baseline 归档；详见 [`memory_eval/README.md`](memory_eval/README.md)）
+后端使用 Python 3.12、uv workspace、LiteLLM、SQLite 和 FastAPI。`agent_bridge` 通过 HTTP/SSE 提供 OpenAI 和 AG-UI 两种协议。仓库同时维护 Agent 行为契约评测和记忆召回质量评测，后者包含 PerLTQA 锚点判分与基线归档。[技术栈决策](docs/decisions/0002-incubation-tech-stack/README.md) · [记忆评测说明](memory_eval/README.md)
 
 ## Monorepo 结构
 
@@ -44,7 +52,7 @@
 
 ## 上手
 
-准备 Python 3.12、uv、Node.js 22.13+、pnpm，以及桌面构建所需的 Rust 工具链和对应系统依赖。前端包管理器版本由 `frontend/package.json` 固定；安装脚本不会替你安装系统级工具。
+从源码启动桌面端需要 Python 3.12、uv、Node.js 22.13+、pnpm，以及 Rust 工具链和对应平台的桌面构建依赖。pnpm 版本以 [frontend/package.json](frontend/package.json) 为准。Linux 还需准备 pkg-config 和 ALSA 开发包。准备好工具后，在仓库根目录运行：
 
 Windows PowerShell：
 
@@ -64,7 +72,7 @@ macOS / Linux：
 
 默认开发入口使用系统凭据存储，不创建或自动读取根目录 `.env`。上例以 DeepSeek 为例；其他模型和可选服务按[用户指南](https://github.com/A1m233/agent-friend-guide)配置。真实模型调用可能产生费用。`.env.example` 仅用于显式启用的存量兼容流程。
 
-开发入口默认启动 Tauri 桌面端。需要浏览器调试时可显式使用 `--web`；启动后可通过 `scripts/dev/run.* status` 查看实例、`scripts/dev/run.* stop` 停止。发行安装包当前以 Windows x64 为目标，不将跨平台脚本的存在等同于所有平台均已通过验收。
+开发入口默认启动 Tauri 桌面端。若安装版已经打开，请先退出再启动开发版。浏览器调试可加 `--web`。使用 `scripts/dev/run.* status` 查看当前实例，使用 `scripts/dev/run.* stop` 停止开发实例。
 
 自动化检查可分别运行 `scripts/check/run.* --stage backend`、`--stage frontend` 和 `--stage rust`；Windows 使用 `.ps1`，macOS / Linux 使用 `.sh`。真实模型评测需自行配置并另行执行，不属于仅凭静态检查即可证明的能力。
 
