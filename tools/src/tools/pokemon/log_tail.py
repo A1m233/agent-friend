@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import BinaryIO
 
 
 def shared_reader(path: Path) -> BinaryIO:
-    if os.name != "nt":
+    if sys.platform != "win32":
         return path.open("rb")
     import ctypes
     import msvcrt

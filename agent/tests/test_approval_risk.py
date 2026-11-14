@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
+import pytest
 from agent.approvals import CatastrophicActionPolicy
 from agent.command_runtime.models import (
     CommandApprovalDetails,
@@ -145,11 +146,13 @@ def test_windows_shell_root_delete_and_narrow_delete_are_distinguished() -> None
     )
 
     assert root.code == "critical-root-recursive-delete"
+    other_drive = policy.assess(_command(("cmd.exe", "/C", "rmdir /s /q D:\\"), workdir="C:/work"))
+    assert other_drive.code == "critical-root-recursive-delete"
     assert narrow.level == "normal"
 
 
-def test_structured_filesystem_root_delete_is_catastrophic_but_child_is_not() -> None:
-    root = Path.cwd().anchor or "C:\\"
+@pytest.mark.parametrize("root", ["C:/", "D:/", "//server/share/"])
+def test_structured_filesystem_root_delete_is_catastrophic_but_child_is_not(root: str) -> None:
     policy = CatastrophicActionPolicy(path_flavor="windows", home=Path("C:/Users/test"))
     catastrophic = PendingFilesystemApproval.create(
         session_id="sid-1",
@@ -157,7 +160,7 @@ def test_structured_filesystem_root_delete_is_catastrophic_but_child_is_not() ->
         tool_call_id="tool-1",
         reason="test",
         items=(),
-        actions=(ApprovalAction("a1", "delete", Path(root), recursive=True),),
+        actions=(ApprovalAction("a1", "delete", Path(str(PureWindowsPath(root))), recursive=True),),
     )
     narrow = PendingFilesystemApproval.create(
         session_id="sid-1",
@@ -165,7 +168,11 @@ def test_structured_filesystem_root_delete_is_catastrophic_but_child_is_not() ->
         tool_call_id="tool-2",
         reason="test",
         items=(),
-        actions=(ApprovalAction("a2", "delete", Path(root) / "tmp" / "build", recursive=True),),
+        actions=(
+            ApprovalAction(
+                "a2", "delete", Path(str(PureWindowsPath(root) / "tmp" / "build")), recursive=True
+            ),
+        ),
     )
 
     assert policy.assess(catastrophic).code == "critical-root-recursive-delete"

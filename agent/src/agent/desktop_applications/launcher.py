@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 from ..tool_runtime.control import ToolInvocationControl
+
+if sys.platform == "win32":
+    from subprocess import CREATE_NO_WINDOW
+else:
+    CREATE_NO_WINDOW = 0
 
 
 class NativeApplicationLauncher:
@@ -18,7 +23,7 @@ class NativeApplicationLauncher:
         self.build_identity = build_identity
 
     def validate(self) -> str | None:
-        if os.name != "nt":
+        if sys.platform != "win32":
             return "unsupported_platform"
         executable = self.executable
         if executable is None:
@@ -46,7 +51,7 @@ class NativeApplicationLauncher:
                 [str(executable), "--identity"],
                 capture_output=True,
                 timeout=5,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=CREATE_NO_WINDOW,
                 check=False,
             )
             if (
@@ -74,7 +79,7 @@ class NativeApplicationLauncher:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=CREATE_NO_WINDOW,
             )
         except OSError:
             return {"status": "failed", "error_code": "launcher_start_failed"}

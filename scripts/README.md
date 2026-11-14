@@ -1,5 +1,7 @@
 # scripts/
 
+Windows 本地测试包和安装矩阵由 `package/run.*` 在独立源码工作树和 Python 环境内运行，包含调用方未提交内容。需要桌面的安装验收在已登录的用户会话中执行。
+
 `package/run.* runtime-verify` 的自主陪伴 capability smoke 还验证消息展示独立存储、B 站凭据恢复/退出、二维码图像生成，以及固定评论端点与 UID 提及表单；使用假凭据与本地 HTTP transport，不访问平台或调用模型。
 
 `companionship-smoke/run.* --allow-llm --section exposure --output NEW_JSON` 使用当前 chatModel 对照完整展示、无展示记录、已分享、明确等待四种隔离自主唤醒，最多 20 次请求，无网络探索或真实 IM；仅观察行为，不将展示视为已读。
@@ -201,7 +203,7 @@ Python通知代码调整后可显式执行 `restart-bridge`，复用前端的 `r
 | 脚本 | 用途 | mac/linux | windows |
 |---|---|---|---|
 | `build-storage/` | 轻量配置、盘点、缓存回收、保留与中断操作核对；仅需已安装的 Python 3.12，不同步项目依赖 | `./scripts/build-storage/run.sh status\|inventory --scan\|gc [--apply]` | `.\scripts\build-storage\run.ps1 status\|inventory --scan\|gc [--apply]` |
-| `setup/` | 一键环境初始化（检查 uv → `uv sync` → 准备固定命令运行时 → 提示配置系统凭据 → 尽力装前端依赖 → 检查 Rust；命令运行时失败会阻止 setup，缺 node/pnpm/Rust 只提示不报错） | `./scripts/setup/run.sh [--clean]` | `.\scripts\setup\run.ps1 [--clean]` |
+| `setup/` | 一键环境初始化（检查 uv → `uv sync` → 准备固定命令运行时 → 提示配置系统凭据 → 尽力装前端依赖 → 检查 cargo（桌面开发）和 rustfmt（完整 Rust 检查）；命令运行时失败会阻止 setup，缺 node/pnpm/Rust 只提示不报错） | `./scripts/setup/run.sh [--clean]` | `.\scripts\setup\run.ps1 [--clean]` |
 | `command-runtime/` | 准备、校验并输出产品固定版本的官方 Codex 命令运行时；`ensure` 使用按 vendor lock 内容寻址的用户级共享 cache，供 setup/dev/bridge 幂等调用并跨 worktree 复用，下载或完整性失败会阻止开发 runtime；`dev status/stop` 保持只读。`status` 检查产品隔离的 Windows 沙箱身份，`setup` 显式触发一次管理员初始化，普通 dev/bridge 不会暗中弹 UAC；`smoke` 无网络、无真实 LLM 地验证 buffered、streaming、显式 host-user、模型可见精确终止、只读沙箱与直接 PowerShell argv；`network-smoke` 显式访问 GitHub API，验证公共 Tool 的 managed HTTPS 通道；`skill-install-smoke` 把公开测试 Skill 安装进隔离临时 catalog 并验证无重启发现 | `./scripts/command-runtime/run.sh ensure\|prepare\|doctor\|path\|status\|setup\|smoke\|network-smoke\|skill-install-smoke` | `.\scripts\command-runtime\run.ps1 ensure\|prepare\|doctor\|path\|status\|setup\|smoke\|network-smoke\|skill-install-smoke` |
 | `agent-friend-guide/` | 准备并校验受管的公开 Guide checkout；`verify` 只读并在成功/失败时回显 checkout 身份，非默认 `--guide-repo` 必须配 `--guide-commit <预期完整 SHA>`，不联网确认最新版本或自动更新，dirty 状态表示校验工作树而非已提交快照；生成完整 Skill ZIP + 兼容 manifest，或通过 `gh` 以 draft-assets-publish 顺序创建并复核 immutable release；仅在桌面基线需要刷新时从已提交且 origin 可见的精确 commit 同步 builtin。包允许 references/scripts/assets 等任意正常资源，构建和更新均不执行包内脚本 | `./scripts/agent-friend-guide/run.sh prepare\|status\|verify ...` / `build-release\|publish-release --release-sequence N --min-product-version X --max-product-version-exclusive Y ...` / `sync --guide-commit SHA` | `.\scripts\agent-friend-guide\run.ps1 prepare\|status\|verify ...` / `build-release\|publish-release --release-sequence N --min-product-version X --max-product-version-exclusive Y ...` / `sync --guide-commit SHA` |
 | `worktree-cleanup/` | 为项目级 `$clean-agent-friend-worktrees` 提供确定性盘点与删除门禁：区分 clean、主干已包含/patch-equivalent、分支独有提交、未引用 detached HEAD、dirty/untracked、活动进程和 dev runtime lease；删除前绑定 exact path + HEAD + dirty fingerprint，只移除 worktree、不删除分支；`--sizes` 按需执行完整体量扫描 | `./scripts/worktree-cleanup/run.sh inventory --json [--sizes]` | `.\scripts\worktree-cleanup\run.ps1 inventory --json [--sizes]` |
@@ -237,7 +239,7 @@ Python通知代码调整后可显式执行 `restart-bridge`，复用前端的 `r
 | `lint/` | lint 检查（`ruff check` + `ruff format --check`；任一子检查失败即返回非零退出码） | `./scripts/lint/run.sh` | `.\scripts\lint\run.ps1` |
 | `fix/` | 自动修复（`ruff check --fix` + `ruff format`） | `./scripts/fix/run.sh` | `.\scripts\fix\run.ps1` |
 | `typecheck/` | mypy 类型检查 | `./scripts/typecheck/run.sh` | `.\scripts\typecheck\run.ps1` |
-| `check/` | 一键全绿门禁：串联 backend → frontend → rust，失败即停并打印阶段耗时（合入 main 前三阶段都必须通过；frontend 依赖未安装时 fail-closed 并提示先运行 `frontend/install`；pytest 参数透传给 backend）。普通终端默认全跑；Codex 为避免命令超时和孤儿构建，必须分别执行 `--stage backend\|frontend\|rust` | `./scripts/check/run.sh [--stage backend\|frontend\|rust] [pytest 参数]` | `.\scripts\check\run.ps1 [--stage backend\|frontend\|rust] [pytest 参数]` |
+| `check/` | `--plan --base origin/main` 只读输出验证计划，按实际影响重复传 `--affected-platform macos\|windows`，仅共享逻辑可省略；合入前刷新基线。全量检查：串联 backend → frontend → rust，失败即停并打印阶段耗时（合入 main 前三阶段都必须通过；frontend 依赖未安装时 fail-closed 并提示先运行 `frontend/install`；pytest 参数透传给 backend）。普通终端默认全跑；Codex 为避免命令超时和孤儿构建，必须分别执行 `--stage backend\|frontend\|rust` | `./scripts/check/run.sh [--stage backend\|frontend\|rust] [pytest 参数]` | `.\scripts\check\run.ps1 [--stage backend\|frontend\|rust] [pytest 参数]` |
 | `frontend/install` | 安装前端依赖（检查 node 22+ / pnpm → `pnpm install` @ frontend/） | `./scripts/frontend/install.sh` | `.\scripts\frontend\install.ps1` |
 | `frontend/dev` | 启动桌面端开发（`pnpm tauri dev`，含桌宠 / 对话双窗口） | `./scripts/frontend/dev.sh` | `.\scripts\frontend\dev.ps1` |
 | `frontend/web` | 仅启动前端 web dev server（浏览器调试，不编译 Rust；访问 /pet.html、/chat.html） | `./scripts/frontend/web.sh` | `.\scripts\frontend\web.ps1` |

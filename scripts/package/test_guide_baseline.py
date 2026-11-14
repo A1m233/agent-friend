@@ -218,3 +218,32 @@ def test_formal_baseline_accepts_exact_committed_source(
     assert active.lifecycle == "committed"
     assert active.guide_commit == GUIDE_COMMIT
     assert active.snapshot_sha256 == SNAPSHOT_SHA256
+
+
+def test_package_checkout_isolates_live_guide_and_captures_local_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from source_checkout import package_checkout
+
+    repo = _product_repo(tmp_path)
+    guide_repo = tmp_path / "guide"
+    guide_repo.mkdir()
+    _use_fake_guide(monkeypatch)
+    changed = repo / "unrelated.txt"
+    changed.write_text("staged\n", encoding="utf-8")
+    _git(repo, "add", "unrelated.txt")
+    changed.write_text("working copy\n", encoding="utf-8")
+    (repo / "new.txt").write_text("new\n", encoding="utf-8")
+    before = guide_baseline._git_status(repo)
+    with package_checkout(repo) as checkout:
+        assert _git(checkout, "show", ":unrelated.txt") == _git(repo, "show", ":unrelated.txt")
+        assert (checkout / "unrelated.txt").read_text("utf-8") == "working copy\n"
+        assert (checkout / "new.txt").read_text("utf-8") == "new\n"
+        with guide_baseline.transient_baseline(checkout, guide_repo, GUIDE_COMMIT):
+            original = repo / guide_baseline.GUIDE_RELATIVE_PATH / "SKILL.md"
+            packaged = checkout / guide_baseline.GUIDE_RELATIVE_PATH / "SKILL.md"
+            assert original.read_text("utf-8") == "old baseline\n"
+            assert packaged.read_text("utf-8") == "package baseline\n"
+            assert guide_baseline._git_status(repo) == before
+    assert not checkout.exists()
+    assert guide_baseline._git_status(repo) == before

@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 # Runtime doctor also exercises Windows read-ACL preparation and reuse on a temporary directory.
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Set-Location (Join-Path $PSScriptRoot "..\..")
+# Local-test builds and installer smoke use a private source checkout.
 # Package writes preflight shell paths and relay through same-user Explorer if redirected.
 # The normal host repeats all checks; AppData overrides remain rejected.
 # Runtime builds enforce Guide provenance, companion hashes, and non-mutating helper load smoke.

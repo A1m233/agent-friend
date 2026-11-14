@@ -42,7 +42,7 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
 
 自动显式调用 `maintain-agent-friend-guide` 的 `package-baseline` 模式，完成只读知识检查并解析最新兼容、已发布且 immutable 的 Guide checkout、commit 与 snapshot；不要再询问用户是否进入该流程。把返回的 checkout 和 commit 作为 `--guide-repo`、`--guide-commit` 传给每次 `runtime-verify`、`runtime`、`installer`、`all`、`installer-smoke-build`、`installer-smoke` 和 `installer-smoke-verify`；内部 candidate 子构建通过受校验 receipt 继承，不自行重新选择版本。自动入口不授权修改公开知识、创建 release 或提交产品仓库；发现公开内容需要更新时只报告。
 
-- `local-test` 与 installer smoke 的 baseline 是临时打包输入。package runner 负责在同一事务内应用并在成功、失败或正常中断后恢复进入前 Git 状态；无关 dirty 必须原样保留，Guide 管理路径预先 dirty 时 fail closed。Agent 不直接运行持久化 `sync`，也不在收尾时留下 baseline overlay。
+- `local-test` 与 installer smoke 的 baseline 是临时打包输入。标准 package 入口从调用者的源码（含未提交内容）创建独立工作树和 Python 环境，临时 Guide 仅在该工作树内应用；无关 dirty 必须原样保留，Guide 管理路径预先 dirty 时 fail closed。Agent 不直接运行持久化 `sync`，也不在收尾时留下 baseline overlay。
 - stable release 与可分发 trusted-beta 只接受已经提交的精确 baseline。package runner 发现不匹配时在构建前返回 `baseline-update-required` 且不修改工作树；随后只有在当前 Git 授权覆盖时，才在任务自有分支用 maintainer `sync` 生成独立 baseline changeset，完成提交后从 clean commit 重新构建。
 
 同一任务内按 `product_state_summary + package:<channel>` 去重 Guide 检查与 baseline 刷新：相同产品 HEAD、tracked diff、untracked 文件集合/内容和相同渠道已经检查或维护后，不重复执行；产品状态实质变化后重新检查。用户直接要求检查或更新知识时直接进入 maintainer Skill。

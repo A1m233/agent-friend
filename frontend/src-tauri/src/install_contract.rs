@@ -156,8 +156,10 @@ fn sha256_file(path: &Path, metrics: &mut VerificationMetrics) -> Result<String,
 }
 
 fn safe_relative_path(value: &str) -> Result<PathBuf, String> {
-    let path = Path::new(value);
+    let normalized = value.replace('\\', "/");
+    let path = Path::new(&normalized);
     if value.is_empty()
+        || value.contains(':')
         || path.is_absolute()
         || path
             .components()

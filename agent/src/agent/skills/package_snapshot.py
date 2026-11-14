@@ -96,7 +96,7 @@ class SkillPackageSnapshot:
 
 def capture_package(root: Path) -> SkillPackageSnapshot:
     owner = tempfile.TemporaryDirectory(prefix="agent-friend-skill-")
-    target = Path(owner.name) / root.name
+    target = Path(owner.name).resolve(strict=True) / root.name
     target.mkdir()
     try:
         fingerprint = package_digest(root, copy_to=target)

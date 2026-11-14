@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -78,7 +79,7 @@ def verify_codex_executable(path: Path) -> Path:
 
 def probe_setup_helper(executable: Path) -> dict[str, object]:
     """Reach argument parsing only: never pass a payload or request elevation."""
-    if os.name != "nt":
+    if sys.platform != "win32":
         return {"status": "not_applicable"}
     helper = executable.parent / "codex-windows-sandbox-setup.exe"
     env = {

@@ -20,7 +20,6 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 
 const EVENT_CHANGED: &str = "runtime-service://changed";
-const SOURCE_READINESS_TIMEOUT: Duration = Duration::from_secs(60);
 const PACKAGED_READINESS_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_DELAY: Duration = Duration::from_millis(200);
 const DEFAULT_RUNTIME_START_REASON: &str = "desktop_start";
@@ -561,7 +560,7 @@ impl RuntimeServiceSupervisor {
             .as_ref()
             .map(|observer| observer.phase("service-readiness", context));
         let timeout = match self.launch_context {
-            RuntimeLaunchContext::Source(_) => SOURCE_READINESS_TIMEOUT,
+            RuntimeLaunchContext::Source(_) => super::source::READINESS_TIMEOUT,
             _ => PACKAGED_READINESS_TIMEOUT,
         };
         let deadline = tokio::time::Instant::now() + timeout;
@@ -627,8 +626,10 @@ impl RuntimeServiceSupervisor {
                     return Err(error_message(&slot.snapshot));
                 }
                 Ok(false) | Err(_) => {
-                    tokio::time::sleep_until(deadline.min(tokio::time::Instant::now() + POLL_DELAY))
-                        .await;
+                    tokio::time::sleep_until(
+                        deadline.min(tokio::time::Instant::now() + POLL_DELAY),
+                    )
+                    .await;
                 }
             }
         }
@@ -650,7 +651,10 @@ impl RuntimeServiceSupervisor {
         slot.fail(
             RuntimeServicePhase::Failed,
             "readiness_timeout",
-            format!("service did not become ready within {} seconds", timeout.as_secs()),
+            format!(
+                "service did not become ready within {} seconds",
+                timeout.as_secs()
+            ),
         );
         emit(app, &slot.snapshot);
         Err(error_message(&slot.snapshot))
@@ -1094,21 +1098,7 @@ fn spawn_service(
     start_reason: &str,
 ) -> Result<ServiceProcess, String> {
     let mut command = match context {
-        RuntimeLaunchContext::Source(root) => {
-            let uv_executable = resolve_path_executable("uv").ok_or_else(|| {
-                "managed_execution_environment_unavailable: uv is not available for source runtime"
-                    .to_string()
-            })?;
-            let mut command = Command::new(&uv_executable);
-            command
-                .args(["run", "python", "-m", service.module()])
-                .current_dir(root)
-                .env("AGENT_BRIDGE_DEV_MODE", "true")
-                .env("AGENT_FRIEND_UV_EXECUTABLE", uv_executable)
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit());
-            command
-        }
+        RuntimeLaunchContext::Source(root) => super::source::command(root, service)?,
         RuntimeLaunchContext::Packaged {
             launcher,
             memory_model_dir,
@@ -1197,23 +1187,6 @@ fn spawn_service(
         .stdin(Stdio::null());
     ServiceProcess::spawn(&mut command, process_job)
         .map_err(|error| format!("failed to launch {}: {error}", service.module()))
-}
-
-fn resolve_path_executable(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    #[cfg(windows)]
-    let suffixes = ["", ".exe", ".cmd", ".bat"];
-    #[cfg(not(windows))]
-    let suffixes = [""];
-    for directory in std::env::split_paths(&path) {
-        for suffix in suffixes {
-            let candidate = directory.join(format!("{name}{suffix}"));
-            if candidate.is_file() {
-                return candidate.canonicalize().ok().or(Some(candidate));
-            }
-        }
-    }
-    None
 }
 
 fn packaged_runtime_stdio(service: RuntimeServiceKind) -> Option<(Stdio, Stdio)> {

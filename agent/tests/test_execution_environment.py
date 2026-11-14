@@ -317,7 +317,18 @@ def test_python_provider_commits_package_revision_and_lock(
 ) -> None:
     health = python_provider.prepare_global()
     environment = python_provider.prepare_session("package-session", health)
-    site_packages = environment.writable_roots[0] / "venv" / "Lib" / "site-packages"
+    site_packages = Path(
+        subprocess.check_output(
+            [
+                environment.executable_aliases["python"],
+                "-c",
+                "import sysconfig; print(sysconfig.get_path('purelib'))",
+            ],
+            env=dict(environment.environment),
+            text=True,
+        ).strip()
+    )
+    assert site_packages.is_relative_to(environment.writable_roots[0])
     metadata = site_packages / "demo_package-1.2.3.dist-info"
     metadata.mkdir(parents=True)
     (metadata / "METADATA").write_text(

@@ -1488,8 +1488,8 @@ mod tests {
 
     #[test]
     fn actual_pet_input_producer_zip_is_readable_by_the_offline_consumer() {
-        let root =
-            std::env::temp_dir().join(format!("agent-friend-pet-bundle-{}", rand::random::<u64>()));
+        let root = crate::pet_input_evidence::test_temp_dir()
+            .join(format!("agent-friend-pet-bundle-{}", rand::random::<u64>()));
         let disk = root.join("pet-input-evidence");
         let manager = pet_input_evidence::PetInputEvidence::start(
             disk.clone(),

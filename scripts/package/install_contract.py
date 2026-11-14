@@ -220,6 +220,8 @@ PACKAGE_SENSITIVE_FILES = {
     "memory/pyproject.toml",
     "runtime_config/pyproject.toml",
     "scripts/package/dependency_policy.py",
+    "scripts/package/dispatch.py",
+    "scripts/package/source_checkout.py",
     "scripts/package/run.ps1",
     "scripts/package/run.sh",
     "scripts/package/runtime_entry.py",
@@ -314,6 +316,26 @@ def max_package_verification_level(
     if not parsed:
         return PackageVerificationLevel.STANDARD
     return max(parsed, key=PACKAGE_VERIFICATION_LEVEL_ORDER.__getitem__)
+
+
+def changed_repository_paths(root: Path, base: str = "main") -> set[str]:
+    """Classify the branch and working tree, including removals and untracked inputs."""
+    ancestor = subprocess.check_output(
+        ["git", "merge-base", "HEAD", base], cwd=root, text=True
+    ).strip()
+    # Include both sides of a rename; removing a protected input is material.
+    commands = [
+        ["diff", "--no-renames", "--name-only", "-z", ancestor, "HEAD"],
+        ["diff", "--no-renames", "--name-only", "-z", "HEAD"],
+        ["diff", "--cached", "--no-renames", "--name-only", "-z"],
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+    ]
+    return {
+        os.fsdecode(path)
+        for args in commands
+        for path in subprocess.check_output(["git", *args], cwd=root).split(b"\0")
+        if path
+    }
 
 
 def classify_installer_impact(paths: set[str]) -> dict[str, Any]:

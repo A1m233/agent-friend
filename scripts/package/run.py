@@ -45,6 +45,7 @@ from install_contract import (
     build_installer_verification_inputs,
     canonical_json_bytes,
     canonical_windows_install_root,
+    changed_repository_paths,
     classify_installed_version,
     classify_installer_impact,
     max_package_verification_level,
@@ -302,31 +303,6 @@ def _repository_paths() -> set[str]:
         capture_output=True,
     ).stdout
     return {os.fsdecode(item) for item in output.split(b"\0") if item}
-
-
-def _changed_repository_paths() -> set[str]:
-    changed = set(
-        line for line in _capture(["git", "diff", "--name-only", "HEAD"]).splitlines() if line
-    )
-    changed.update(
-        line for line in _capture(["git", "diff", "--cached", "--name-only"]).splitlines() if line
-    )
-    changed.update(
-        line
-        for line in _capture(["git", "ls-files", "--others", "--exclude-standard"]).splitlines()
-        if line
-    )
-    try:
-        merge_base = _capture(["git", "merge-base", "HEAD", "main"])
-    except subprocess.CalledProcessError:
-        merge_base = None
-    if merge_base:
-        changed.update(
-            line
-            for line in _capture(["git", "diff", "--name-only", merge_base, "HEAD"]).splitlines()
-            if line
-        )
-    return changed
 
 
 def _toolchain_versions(pnpm: str) -> dict[str, str]:
@@ -1412,7 +1388,7 @@ def _build_installer(
             if trusted_beta
             else None
         )
-        with resource_view(build_paths) as resource_root:
+        with resource_view(build_paths, REPO_ROOT) as resource_root:
             nsis_template = _generate_nsis_template(
                 build_paths,
                 offline=offline,
@@ -1605,7 +1581,7 @@ def _smoke_installed_runtime(
 
 def _resolve_roots(args: argparse.Namespace) -> PackageRoots:
     return resolve_package_roots(
-        REPO_ROOT,
+        Path(os.environ.get("AGENT_FRIEND_PACKAGE_OWNER_WORKTREE", REPO_ROOT)),
         state_dir=args.state_dir,
         releases_dir=args.releases_dir,
     )
@@ -1920,7 +1896,7 @@ def _installer_contract_report(
             "savedLanguage": "preselected",
             "pairedMessageCount": len(language_pairs),
         },
-        "impact": classify_installer_impact(_changed_repository_paths()),
+        "impact": classify_installer_impact(changed_repository_paths(REPO_ROOT)),
         "verificationInputs": current_inputs.to_json_dict(),
     }
 
@@ -2537,7 +2513,7 @@ def _execute(args: argparse.Namespace) -> int:
     verification_inputs = (
         _installer_verification_inputs() if args.step in {"installer", "all"} else None
     )
-    impact = classify_installer_impact(_changed_repository_paths())
+    impact = classify_installer_impact(changed_repository_paths(REPO_ROOT))
     effective_level = _effective_package_verification_level(
         impact,
         requested=args.verification_level,

@@ -59,15 +59,15 @@ def junction_view(target: Path, parent: Path) -> Iterator[Path]:
 
 
 @contextmanager
-def resource_view(paths: Any) -> Iterator[Path]:
-    if os.name != "nt" or volume(paths.build_dir)[0] == volume(paths.roots.repo_root)[0]:
+def resource_view(paths: Any, source: Path) -> Iterator[Path]:
+    if os.name != "nt" or volume(paths.build_dir)[0] == volume(source)[0]:
         yield paths.build_dir
         return
     # Tiny view metadata only; the payload stays in its registered build object.
     parent = Storage(paths.roots.repo_root).control / "tauri-resource-views"
-    if volume(parent)[0] != volume(paths.roots.repo_root)[0]:
-        parent = paths.roots.repo_root.parent
-    if parent == paths.roots.repo_root or parent.is_relative_to(paths.roots.repo_root):
+    if volume(parent)[0] != volume(source)[0]:
+        parent = source.parent
+    if parent.is_relative_to(source):
         raise RuntimeError("Tauri resource view must be outside the source checkout")
     with junction_view(paths.build_dir, parent) as link:
         yield link

@@ -28,6 +28,7 @@ from install_contract import (  # noqa: E402
     build_installer_verification_inputs,
     canonical_json_bytes,
     capability_for_path,
+    changed_repository_paths,
     classify_install_root_transition,
     classify_installed_version,
     classify_installer_impact,
@@ -281,6 +282,35 @@ def test_package_impact_separates_package_trigger_from_verification_level() -> N
     assert installer["minimumVerificationLevel"] == PackageVerificationLevel.FULL_MATRIX
     assert installer["packageRequired"] is True
     assert installer["fullMatrixPaths"] == ["scripts/package/windows/nsis-hooks.nsh"]
+
+
+def test_changed_paths_include_committed_staged_deleted_and_untracked(tmp_path: Path) -> None:
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
+    git("init", "-b", "main")
+    git("config", "user.name", "Fixture")
+    git("config", "user.email", "fixture@example.invalid")
+    (tmp_path / "旧 file").touch()
+    git("add", ".")
+    git("commit", "-m", "base")
+    git("switch", "-c", "fixture")
+    git("mv", "旧 file", "renamed")
+    git("commit", "-m", "rename")
+    (tmp_path / "staged").touch()
+    git("add", "staged")
+    (tmp_path / "untracked").touch()
+    assert changed_repository_paths(tmp_path) == {"旧 file", "renamed", "staged", "untracked"}
+
+
+def test_development_launch_policy_and_installed_supervision_have_distinct_gates() -> None:
+    directory = "frontend/src-tauri/src/runtime_services/"
+    source = directory + "source.rs"
+    supervisor = directory + "supervisor.rs"
+    assert classify_installer_impact({source})["packageRequired"] is False
+    mixed = classify_installer_impact({source, supervisor})
+    assert mixed["fullMatrixPaths"] == [supervisor]
+    assert mixed["packageRequired"] is True
 
 
 def test_installer_verification_fingerprint_ignores_docs_but_binds_code_and_environment(

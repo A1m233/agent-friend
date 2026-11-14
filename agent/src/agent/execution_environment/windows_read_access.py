@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import os
 import subprocess
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -21,6 +22,8 @@ _prepare_lock = threading.Lock()
 
 def _read_dacl(root: Path) -> bytes:
     """Read the root's self-relative DACL descriptor; never request SACL privileges."""
+    if sys.platform != "win32":
+        raise OSError("DACL inspection requires Windows")
     from ctypes import wintypes
 
     get_security = ctypes.WinDLL("advapi32", use_last_error=True).GetFileSecurityW
@@ -57,7 +60,7 @@ def prepare_read_access(roots: Iterable[Path]) -> None:
     same sandbox group and inheritable RX grant, but await propagation first.
     Do not reset ACLs, grant write, elevate, or recursively follow linked roots.
     """
-    if os.name != "nt":
+    if sys.platform != "win32":
         return
     system_root = os.environ.get("SYSTEMROOT")
     if not system_root:

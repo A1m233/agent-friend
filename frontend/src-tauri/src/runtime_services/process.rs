@@ -142,7 +142,10 @@ impl ServiceProcess {
             let _ = parent_job;
             use std::os::unix::process::CommandExt;
             // uv starts Python as a descendant. Own both until the group is empty.
-            let child = command.process_group(0).spawn().map_err(|e| e.to_string())?;
+            let child = command
+                .process_group(0)
+                .spawn()
+                .map_err(|e| e.to_string())?;
             Ok(Self {
                 group: Some(child.id() as libc::pid_t),
                 child,
