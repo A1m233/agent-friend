@@ -39,6 +39,7 @@
     "@tdesign-react/chat": "^1.0.2",
     "@volcengine/rtc": "4.66.20",
     "axios": "^1.7.0",
+    "cherry-markdown": "0.11.0-alpha-2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.0",
     "date-fns": "^4.4.0",

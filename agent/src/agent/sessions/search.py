@@ -177,6 +177,16 @@ class SessionSearchService:
             message_results=tuple(message_results[:message_limit]),
         )
 
+    def conversation_text(self, session_id: str) -> list[dict[str, str]]:
+        """Read only this history and keep each visible block's navigation anchor."""
+        snapshot = query_session(self._store, session_id)
+        return [
+            {"anchor": block.event_uuid, "text": block.text, "role": message.role}
+            for message in _project_search_messages(list(snapshot.active_events))
+            for block in message.content_blocks
+            if block.text
+        ]
+
     def _refresh_documents(
         self,
     ) -> Iterator[tuple[SessionDescriptor, _CachedSearchDocument]]:

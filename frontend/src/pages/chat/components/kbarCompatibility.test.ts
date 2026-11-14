@@ -15,6 +15,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GlobalConversationSearchProvider, SearchResultsList } from "./GlobalConversationSearch";
+import { ConversationFind } from "./ConversationFind";
 
 const waitForDom = async (assertion: () => void): Promise<void> => {
   let lastError: unknown;
@@ -201,15 +202,16 @@ describe("kbar React 19 compatibility", () => {
     });
   });
 
-  it("reserves Ctrl+F and opens global search only with Ctrl+Shift+F", async () => {
+  it("opens the local find bar with Ctrl+F and global search with Ctrl+Shift+F", async () => {
     await act(async () => root.render(createElement(GlobalConversationSearchProvider, {
-      children: createElement("div", null, "Conversation"),
+      children: createElement(ConversationFind, { sessionId: null }),
     })));
     const localSearch = new KeyboardEvent("keydown", {
       bubbles: true, cancelable: true, code: "KeyF", key: "f", ctrlKey: true,
     });
     await act(async () => window.dispatchEvent(localSearch));
-    expect(localSearch.defaultPrevented).toBe(false);
+    expect(localSearch.defaultPrevented).toBe(true);
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("查找当前会话");
     expect(document.querySelector('[role="dialog"]')).toBeNull();
 
     const globalSearch = new KeyboardEvent("keydown", {

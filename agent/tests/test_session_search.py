@@ -174,6 +174,16 @@ def test_search_projects_only_user_visible_history_and_attachment_names(tmp_path
     for event in events:
         store.append_event(session.session_id, event)
 
+    other = _create_session(store, "s-other", "Another session")
+    store.append_event(other.session_id, _event("user_message", "other", 1, {"content": "other"}))
+    assert [block["anchor"] for block in service.conversation_text(session.session_id)] == [
+        "u-visible",
+        "a-first",
+        "a-second",
+        "u-latest",
+        "a-partial",
+    ]
+    assert store.load_count == 1
     response = service.search("needle")
 
     assert response.message_total == 3

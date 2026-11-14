@@ -214,7 +214,8 @@ export interface ConversationState {
   refreshComposer: () => void;
   /** Shared message navigation for search, scheduled runs and other deep links. */
   openMessage: (sessionId: string, anchorEventUuid: string,
-    options?: { query?: string; detached?: boolean; remember?: boolean }) => Promise<boolean>;
+    options?: { query?: string; occurrence?: number; detached?: boolean; remember?: boolean }) => Promise<boolean>;
+  cancelConversationFind: () => void;
   hasOlderHistory: () => boolean;
   loadOlderHistory: () => Promise<boolean>;
   loadReferenceHistory: () => Promise<boolean>;
@@ -968,11 +969,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const token = ++searchNavigationToken;
     const epoch = runtimeGeneration;
     const target: SearchNavigationTarget = {
-      token, sessionId, anchorEventUuid, query: options?.query ?? "", loading: true,
+      token, sessionId, anchorEventUuid, query: options?.query ?? "", occurrence: options?.occurrence, loading: true,
     };
     const isCurrent = get().currentSessionId === sessionId;
     if (isCurrent && !get().historyLoading) {
-      get().cancelEditing();
+      if (options?.occurrence === undefined) get().cancelEditing();
       set({ searchTarget: target,
         detachedSessionId: (options?.detached ?? get().detachedSessionId === sessionId) ? sessionId : null });
     } else {
@@ -983,16 +984,19 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
     const isCurrentTarget = () => token === searchNavigationToken
       && epoch === runtimeGeneration && get().currentSessionId === sessionId;
+    const waitsForHistory = (state: ConversationState) =>
+      state.runCalibrationPhase === "calibrating" || (target.occurrence !== undefined
+        && state.runCalibrationPhase === "ready" && isSessionBusy(state, sessionId));
     try {
       // Preserve contiguous complete turns and stop as soon as the anchor is found.
       const visited = new Set<string>();
       while (isCurrentTarget() && findMessageAnchorIndex(get().messages, anchorEventUuid) < 0) {
         // Session reattachment can still be calibrating after its latest page
         // arrives. Keep navigation pending until run ownership is known.
-        if (get().runCalibrationPhase === "calibrating") {
+        if (waitsForHistory(get())) {
           await new Promise<void>((resolve) => {
             const stop = useConversationStore.subscribe((state) => {
-              if (isCurrentTarget() && state.runCalibrationPhase === "calibrating") return;
+              if (isCurrentTarget() && waitsForHistory(state)) return;
               stop();
               resolve();
             });
@@ -1004,7 +1008,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         if (!await get().loadOlderHistory()) {
           // Calibration may also begin while this page is in flight. The
           // busy guard withheld it; retry after calibration, without dropping it.
-          if (isCurrentTarget() && get().runCalibrationPhase === "calibrating") continue;
+          if (isCurrentTarget() && waitsForHistory(get())) continue;
           break;
         }
         visited.add(cursor);
@@ -1045,6 +1049,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   clearSearchTarget(token) {
     set((state) => (state.searchTarget?.token === token ? { searchTarget: null } : state));
+  },
+  cancelConversationFind() {
+    if (get().searchTarget?.occurrence === undefined) return;
+    searchNavigationToken += 1;
+    set({ searchTarget: null });
   },
 
   refreshComposer() {

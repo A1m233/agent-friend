@@ -65,6 +65,9 @@ importers:
       axios:
         specifier: ^1.7.0
         version: 1.17.0
+      cherry-markdown:
+        specifier: 0.11.0-alpha-2
+        version: 0.11.0-alpha-2
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1

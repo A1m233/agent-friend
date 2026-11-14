@@ -18,6 +18,7 @@ import { ApprovalDock } from "./ApprovalDock";
 import { usePrimaryActivity } from "./activity/usePrimaryActivity";
 import { Composer, type ComposerHandle } from "./Composer";
 import { MessageList } from "./MessageList";
+import { ConversationFind } from "./ConversationFind";
 import { SessionApprovalModeController } from "./SessionApprovalModeController";
 
 /**
@@ -26,7 +27,7 @@ import { SessionApprovalModeController } from "./SessionApprovalModeController";
  * 顶层 workspace 只负责在平级 surface 之间切换；这里保留原 header、消息、
  * Composer 与局部布局层级，避免设置 / IM / Memory Inspector 侵入对话样式。
  */
-export function ChatContentSurface() {
+export function ChatContentSurface({ active = true }: { active?: boolean }) {
   const status = useConnectionStore((state) => state.status);
   const currentSessionId = useConversationStore((state) => state.currentSessionId);
   const readOnly = useConversationStore((state) => Boolean(state.currentSessionId && state.readOnlySessionIds[state.currentSessionId]));
@@ -64,6 +65,7 @@ export function ChatContentSurface() {
     <LinkInteractionBoundary context={{ kind: "session", sessionId: currentSessionId }}>
     <SessionApprovalModeController>
       <div className="chat-content-surface relative flex h-full min-w-0 flex-1 flex-col overflow-hidden" data-connection={status} data-home={isHome}>
+      {active && <ConversationFind key={currentSessionId} sessionId={currentSessionId} />}
       <div role="group" aria-label="对话窗口操作" className="absolute right-4 top-2 z-10 flex items-center gap-2">
         <Button
           size="icon-sm"

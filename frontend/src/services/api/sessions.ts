@@ -105,6 +105,12 @@ export const sessionsApi = {
     );
   },
 
+  searchText(sessionId: string, signal: AbortSignal) {
+    return http.get<unknown, Array<{ anchor: string; text: string; role: "user" | "assistant" }>>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/search-text`, { signal },
+    );
+  },
+
   /** 单个会话详情只取当前有效事件，避免重复传输原始事件流。 */
   async get(sessionId: string): Promise<SessionDetail> {
     const url = `/v1/sessions/${encodeURIComponent(sessionId)}/history?turn_limit=10`;
