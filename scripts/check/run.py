@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -28,6 +29,16 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Allow --stage all under Codex despite the command timeout risk.",
     )
+    parser.add_argument(
+        "--plan", action="store_true", help="Print the verification plan without running checks."
+    )
+    parser.add_argument(
+        "--affected-platform",
+        action="append",
+        choices=("macos", "windows"),
+        help="Platform whose native behavior changes; repeat for both.",
+    )
+    parser.add_argument("--base", help="Git comparison ref for --plan (default: main).")
     return parser
 
 
@@ -95,6 +106,24 @@ def _run_rust() -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args, pytest_args = parser.parse_known_args(argv)
+    if args.plan:
+        if args.stage or pytest_args or args.allow_long_running:
+            parser.error("--plan cannot run a stage or accept test options")
+        from platform_plan import plan_for_checkout
+
+        print(
+            json.dumps(
+                {
+                    "localStages": STAGES,
+                    **plan_for_checkout(ROOT, args.base or "main", args.affected_platform or []),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return 0
+    if args.affected_platform or args.base:
+        parser.error("--affected-platform and --base require --plan")
     if args.stage in {"frontend", "rust"} and pytest_args:
         parser.error("pytest arguments are only accepted by --stage backend or all")
 

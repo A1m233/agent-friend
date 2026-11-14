@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ctypes
-import os
+import sys
 from ctypes import wintypes
 from pathlib import Path
 
@@ -32,7 +32,7 @@ def test_executor_identity_preserved_without_forwarding_credentials(tmp_path: Pa
     }
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows sandbox identity requirement")
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows sandbox identity requirement")
 @pytest.mark.parametrize("username", [None, "", "  "])
 def test_missing_identity_rejected_before_executor_start(
     tmp_path: Path,
@@ -55,8 +55,9 @@ def test_missing_identity_rejected_before_executor_start(
     assert runtime._client is None
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Native Windows ACL access check")
 def test_recreated_marker_acl_remains_readable_by_unelevated_user(tmp_path: Path) -> None:
+    if sys.platform != "win32":
+        pytest.skip("Native Windows ACL access check")
     # Match the pinned helper's protected marker DACL in memory. No files,
     # accounts or system ACLs are changed, and no elevated helper is launched.
     security = pytest.importorskip("win32security")

@@ -151,7 +151,11 @@ class CatastrophicActionPolicy:
         session_id: str,
         workdir: str | None,
     ) -> bool:
+        if self._path_flavor == "windows" and _is_windows_root(ntpath.normpath(raw_target)):
+            return True
         key = self._path_key(raw_target, workdir)
+        if self._path_flavor == "windows" and _is_windows_root(key):
+            return True
         roots = set(self._critical_root_keys)
         if self._workspace_root_provider is not None:
             workspace = self._workspace_root_provider(session_id)
@@ -180,9 +184,6 @@ class CatastrophicActionPolicy:
             if workdir and not ntpath.isabs(value):
                 value = ntpath.join(workdir, value)
             normalized = ntpath.normcase(ntpath.normpath(value))
-            drive, tail = ntpath.splitdrive(normalized)
-            if drive and tail in {"", "."}:
-                normalized = drive + "\\"
             return normalized.rstrip("\\") + "\\" if _is_windows_root(normalized) else normalized
         if workdir and not posixpath.isabs(value):
             value = posixpath.join(workdir, value)
@@ -467,7 +468,7 @@ def _unwrap_direct_wrapper(name: str, args: tuple[str, ...]) -> tuple[str, ...]:
 
 def _is_windows_root(value: str) -> bool:
     drive, tail = ntpath.splitdrive(value)
-    return bool(drive and tail in {"", "\\", "/"})
+    return bool(drive and (tail in {"\\", "/"} or (not tail and drive.startswith("\\\\"))))
 
 
 __all__ = ["CatastrophicActionPolicy", "PathFlavor"]

@@ -372,11 +372,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(verify_archive(bytes.as_slice()).unwrap(), manifest);
-        let restored = extract_archive(bytes.as_slice(), &extracted).unwrap();
-        assert_eq!(restored, manifest);
+        let result = extract_archive(bytes.as_slice(), &extracted);
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(result.unwrap(), manifest);
+            assert_eq!(
+                fs::read(extracted.join("assets/sessions/example.jsonl")).unwrap(),
+                b"event-one\nevent-two\n"
+            );
+        }
+        #[cfg(not(target_os = "windows"))]
         assert_eq!(
-            fs::read(extracted.join("assets/sessions/example.jsonl")).unwrap(),
-            b"event-one\nevent-two\n"
+            result.unwrap_err(),
+            "migration_platform_unsupported: Windows is required"
         );
         fs::remove_dir_all(root).unwrap();
     }

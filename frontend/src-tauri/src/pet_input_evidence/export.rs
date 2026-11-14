@@ -610,7 +610,7 @@ mod tests {
     use super::*;
     #[test]
     fn missing_directory_always_has_coverage_without_claiming_no_incident() {
-        let path = std::env::temp_dir().join(format!(
+        let path = crate::pet_input_evidence::test_temp_dir().join(format!(
             "pet-evidence-missing-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -629,7 +629,7 @@ mod tests {
     }
     #[test]
     fn unavailable_writer_current_failure_is_partial_without_fabricating_history() {
-        let directory = std::env::temp_dir().join(format!(
+        let directory = crate::pet_input_evidence::test_temp_dir().join(format!(
             "pet-evidence-unwritten-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -675,7 +675,7 @@ mod tests {
     }
     #[test]
     fn discarded_invalid_files_still_exhaust_the_total_read_budget() {
-        let directory = std::env::temp_dir().join(format!(
+        let directory = crate::pet_input_evidence::test_temp_dir().join(format!(
             "pet-evidence-read-budget-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -706,7 +706,7 @@ mod tests {
 
     #[test]
     fn frozen_handle_reader_charges_invalid_bytes_before_interpretation() {
-        let path = std::env::temp_dir().join(format!(
+        let path = crate::pet_input_evidence::test_temp_dir().join(format!(
             "pet-evidence-reader-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()

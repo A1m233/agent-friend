@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 import time
 from pathlib import Path
 
@@ -38,6 +40,27 @@ def _package_digest(root: Path) -> str:
         digest.update(path.read_bytes())
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="creating directory symlinks needs optional privileges")
+def test_skill_activation_uses_physical_snapshot_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    physical = tmp_path / "physical"
+    physical.mkdir()
+    alias = tmp_path / "temporary"
+    alias.symlink_to(physical, target_is_directory=True)
+    monkeypatch.setattr(tempfile, "tempdir", str(alias))
+
+    personal = tmp_path / "personal"
+    _write_skill(personal, "test-skill")
+    service = SkillCatalogService(personal_root=personal, shared_root=tmp_path / "shared")
+    record = next(item for item in service.initialize().entries if item.name == "test-skill")
+    turn = service.begin_turn((SkillSelection(record.id, record.version),))
+
+    assert not turn.activation_issues
+    assert len(turn.activations) == 1
+    assert turn.activations[0].resource_root.is_relative_to(physical)
 
 
 def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) -> None:

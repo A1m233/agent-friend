@@ -252,19 +252,26 @@ def test_reconcile_requires_explicit_operation_and_preserves_failed_scene(storag
     assert current["objects"][0]["retainUntil"] > time.time()
 
 
+def _isolated_build_env(tmp_path: Path) -> dict[str, str]:
+    # Resolve Git before isolating HOME: a user's git launcher may depend on it.
+    git_tools = subprocess.check_output(["git", "--exec-path"], text=True).strip()
+    return {
+        **os.environ,
+        "PATH": os.pathsep.join((git_tools, os.environ["PATH"])),
+        "LOCALAPPDATA": str(tmp_path / "local"),
+        "XDG_STATE_HOME": str(tmp_path / "state"),
+        "HOME": str(tmp_path / "home"),
+        "USERPROFILE": str(tmp_path / "home"),
+    }
+
+
 def test_execute_cli_preserves_cwd_arguments_and_records_target(tmp_path):
     import json
 
     repo = Path(__file__).resolve().parents[2]
     cli = repo / "scripts/build-storage/execute.py"
     target = tmp_path / "target"
-    env = {
-        **os.environ,
-        "LOCALAPPDATA": str(tmp_path / "local"),
-        "XDG_STATE_HOME": str(tmp_path / "state"),
-        "HOME": str(tmp_path / "home"),
-        "USERPROFILE": str(tmp_path / "home"),
-    }
+    env = _isolated_build_env(tmp_path)
     code = "import os,pathlib;pathlib.Path(os.environ['CARGO_TARGET_DIR'],'built').write_text(os.getcwd())"
     result = subprocess.run(
         [
@@ -296,13 +303,7 @@ def test_package_management_runs_without_uv_or_virtual_environment(tmp_path):
 
     repo = Path(__file__).resolve().parents[2]
     original = (repo / ".venv").exists()
-    env = {
-        **os.environ,
-        "LOCALAPPDATA": str(tmp_path / "local"),
-        "XDG_STATE_HOME": str(tmp_path / "state"),
-        "HOME": str(tmp_path / "home"),
-        "USERPROFILE": str(tmp_path / "home"),
-    }
+    env = _isolated_build_env(tmp_path)
     # Installed Python directly dispatches management; no uv or dependency group is entered.
     result = subprocess.run(
         [sys.executable, "-B", str(repo / "scripts/package/dispatch.py"), "workspace-status"],

@@ -142,8 +142,10 @@ def test_dedupe_keeps_latest_queued_run() -> None:
 def test_expiry_and_capacity_have_distinct_outcomes() -> None:
     now = datetime(2026, 7, 12, tzinfo=UTC)
     blocker = threading.Event()
+    started = threading.Event()
 
     def execute(_request: RunRequest, _handle: object) -> None:
+        started.set()
         assert blocker.wait(2)
 
     scheduler = RunScheduler(
@@ -156,6 +158,7 @@ def test_expiry_and_capacity_have_distinct_outcomes() -> None:
     scheduler.start()
     expired = scheduler.submit(_system("expired", expires_at=now - timedelta(seconds=1)))
     active = scheduler.submit(_user("active", "hold"))
+    assert started.wait(2)
     queued_1 = scheduler.submit(_user("q", "1"))
     queued_2 = scheduler.submit(_user("q", "2"))
     rejected = scheduler.submit(_user("q", "3"))

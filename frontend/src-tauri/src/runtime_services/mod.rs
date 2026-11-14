@@ -1,6 +1,7 @@
 pub(crate) mod endpoints;
 mod model;
 mod process;
+mod source;
 mod supervisor;
 
 pub use model::{RuntimeServiceKind, RuntimeServicePhase, RuntimeServiceSnapshot};

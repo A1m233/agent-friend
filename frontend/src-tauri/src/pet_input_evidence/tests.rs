@@ -16,7 +16,7 @@ use std::{
 struct Directory(PathBuf);
 impl Directory {
     fn new() -> Self {
-        Self(std::env::temp_dir().join(format!(
+        Self(crate::pet_input_evidence::test_temp_dir().join(format!(
                 "agent-friend-pet-input-test-{}-{}",
                 std::process::id(),
                 SystemTime::now()

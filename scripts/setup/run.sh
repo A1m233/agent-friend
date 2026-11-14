@@ -25,7 +25,7 @@ Usage: scripts/setup/run.sh [--clean]
   4. 准备并校验固定版本的命令运行时
   5. 提示使用 scripts/credentials 配置本机系统凭据
   6. 尽力装前端依赖（node 22+/pnpm 在则 pnpm install；缺则只提示、不报错）
-  7. 检查 Rust/cargo（桌面端 Tauri 需要；缺则只提示）
+  7. 检查桌面编译所需的 cargo 和完整 Rust 检查所需的 rustfmt
 EOF
             exit 0
             ;;
@@ -106,6 +106,11 @@ echo
 echo "==> 检查 Rust（桌面端 Tauri 需要）"
 if command -v cargo >/dev/null 2>&1; then
     echo "  cargo $(cargo --version | awk '{print $2}')"
+    if cargo fmt --version >/dev/null 2>&1; then
+        echo "  [OK] rustfmt 可用"
+    else
+        echo "  [提示] 桌面开发可继续；运行完整 Rust 检查前需要 rustfmt（rustup component add rustfmt）。"
+    fi
 else
     echo "  [SKIP] 未检测到 Rust/cargo。仅 web 调试（./scripts/frontend/web.sh）不需要；"
     echo "         要跑桌面端（./scripts/dev/run.sh）请装：https://rustup.rs"

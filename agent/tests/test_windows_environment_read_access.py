@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -9,7 +10,8 @@ import pytest
 from agent.execution_environment import ManagedEnvironmentError, windows_read_access
 from agent.execution_environment.windows_read_access import prepare_read_access
 
-pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows ACL provisioning")
+if sys.platform != "win32":
+    pytest.skip("Windows ACL provisioning", allow_module_level=True)
 
 
 @pytest.fixture(autouse=True)

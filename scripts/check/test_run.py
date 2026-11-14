@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -44,3 +47,56 @@ def test_frontend_stage_fails_closed_without_dependencies(
 
     assert exc_info.value.code == 2
     assert "frontend dependencies are not installed" in capsys.readouterr().err
+
+
+def test_tracked_shell_entrypoints_are_executable() -> None:
+    # On a POSIX checkout exercise the pending worktree modes too. On Windows
+    # only the Git mode predicts what a fresh POSIX checkout will receive.
+    entries = (
+        subprocess.check_output(
+            ["git", "ls-files", "--stage", "-z", "scripts/*/run.sh"], cwd=MODULE.ROOT
+        )
+        .decode()
+        .split("\0")
+    )
+    assert entries[0], "no tracked shell entrypoints"
+    missing = []
+    for entry in filter(None, entries):
+        metadata, path = entry.split("\t", 1)
+        executable = (
+            metadata.split()[0] == "100755"
+            if os.name == "nt"
+            else os.access(MODULE.ROOT / path, os.X_OK)
+        )
+        if not executable:
+            missing.append(path)
+    assert not missing, missing
+
+
+@pytest.mark.parametrize(
+    ("path", "platforms", "package", "handoff"),
+    [
+        ("frontend/src-tauri/src/power_policy/platform/macos.rs", ["macos"], False, []),
+        (
+            "frontend/src-tauri/src/runtime_services/source.rs",
+            ["macos", "windows"],
+            False,
+            ["windows"],
+        ),
+        ("frontend/src-tauri/src/runtime_services/supervisor.rs", ["macos"], True, ["windows"]),
+    ],
+)
+def test_verification_plan_uses_behavior_targets_and_installer_floor(
+    path: str,
+    platforms: list[str],
+    package: bool,
+    handoff: list[str],
+) -> None:
+    sys.path.insert(0, str(MODULE_PATH.parent))
+    try:
+        from platform_plan import verification_plan
+    finally:
+        sys.path.pop(0)
+    plan = verification_plan({path}, platforms, "macos")
+    assert plan["windowsPackageRequired"] is package
+    assert plan["handoffTo"] == handoff

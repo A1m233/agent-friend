@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import subprocess
+import sys
 import threading
 from collections.abc import Callable, Mapping
 from contextlib import suppress
@@ -64,7 +64,7 @@ class ExecServerClient:
             if self._process is not None:
                 return
             creationflags = 0
-            if os.name == "nt":
+            if sys.platform == "win32":
                 creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
             try:
                 process = subprocess.Popen(

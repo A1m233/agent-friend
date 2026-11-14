@@ -1738,6 +1738,7 @@ def test_installer_build_uses_external_cargo_target_and_generated_resource_confi
         ),
     )
     repo = tmp_path / "repo"
+    monkeypatch.setattr(package, "REPO_ROOT", repo)
     common_git = repo / ".git"
     home = tmp_path / "home"
     common_git.mkdir(parents=True)

@@ -32,7 +32,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: 6ee20d27cf32b924acf789fef97bdfbe5fe9e4353b42f9a65228ca00a0f58bce -->
+<!-- codex-adapter-source-sha256: 58fb39c59d2288c928a460b903fc1aaaccd7e0b1a57724bdec5f949781b50c77 -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -262,6 +262,19 @@ worktree、branch 和端口匹配只证明运行实例的归属，不能证明�
 续做已有分支和合入前同样刷新远端主干，核对工作树归属、未提交改动，并用 `git merge-base HEAD origin/main` 确认共同历史。功能分支落后或双方均有新提交时按现有集成流程同步；无共同祖先、浅克隆无法证明基线或远端出现意外历史替换时暂停，先核实来源。不得用强推或合并无关历史消除分叉。
 
 在持有本地 `main` 的干净工作树中核对 `git rev-list --left-right --count main...origin/main`。单纯落后可用 `git merge --ff-only origin/main` 对齐；本地有独有提交时先核实归属。已经确认的历史替换先留本地备份，再使日常主干跟踪公开历史，旧历史备份不推送。其它工作树未提交的修改不属于主干；交付时分别确认分支提交、远端主干包含关系和实际运行版本。
+
+## 验证平台（需求与修复）
+
+用当前主机的 `scripts/check/run.sh` 或 `run.ps1` 加 `--plan --base origin/main` 查看待执行项。按实际影响为每个原生平台传一次 `--affected-platform macos|windows`；纯共享逻辑无原生行为变化时可省略。计划复用 installer-contract 分类，不代表验证通过。
+
+在当前开发机运行本地检查。合入前需要哪些额外证据取决于变更影响的行为：
+
+- 只影响一个平台的行为（例如 macOS 桌宠首次拖动），由该平台的专项验证覆盖；另一平台没有受影响的行为时无需重跑。
+- 共享逻辑先做确定性验证。若同一变化影响两端的实际启动、超时、重试或进程退出，应对同一提交分别运行两端受影响的专项。缺少目标主机时记录待验平台、命令或操作和预期结果。
+- Windows 截图、桌面应用启动等需要交互桌面的专项，在已登录的用户桌面会话中运行。通用测试应显式提供依赖的工具环境。
+- 涉及安装或冻结运行时的改动，以 installer-contract 的影响分类和 windows-installer-integrity 的验证要求为准。源码开发的本机测试不能替代 Windows 安装矩阵。
+
+交付记录写明平台、提交和实跑结果；区分本机通过、另一受影响平台待验、所需平台均已验证。原有全量检查及 AC 要求仍适用。
 
 ## 需求开发流程
 

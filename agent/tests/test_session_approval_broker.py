@@ -264,7 +264,7 @@ def test_session_auto_fully_approves_skill_replacement_without_pending(
 def test_session_auto_denies_catastrophic_request(tmp_path: Path) -> None:
     broker = _broker(tmp_path)
     broker.set_session_mode("sid-1", mode="session_auto", expected_version=0)
-    request = _request(target=Path("C:/"))
+    request = _request(target=Path("C:\\"))
 
     decision = broker.request(request, timeout_seconds=0.1)
 
@@ -298,7 +298,7 @@ def test_composer_mode_switch_resolves_existing_normal_pending(tmp_path: Path) -
 
 def test_composer_mode_switch_denies_existing_catastrophic_pending(tmp_path: Path) -> None:
     broker = _broker(tmp_path)
-    request = _request(target=Path("C:/"))
+    request = _request(target=Path("C:\\"))
     result: list[Any] = []
     thread = threading.Thread(
         target=lambda: result.append(broker.request(request, timeout_seconds=2)),

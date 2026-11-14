@@ -70,6 +70,7 @@ from agent.skills.models import (
 from agent.tool_runtime import ToolRunContext
 from agent.tools import ToolRegistry, ToolResult
 
+COMMAND_PYTHON = str(Path(sys.executable).resolve(strict=True))
 FIXTURE = Path(__file__).parent / "fixtures" / "fake_exec_server.py"
 
 
@@ -379,7 +380,10 @@ def test_command_output_decoder_ignores_python_utf8_mode_for_legacy_output(
     assert decode_process_output(message.encode("cp936")) == message
 
 
-def test_process_snapshot_and_model_result_use_shared_output_decoder() -> None:
+def test_process_snapshot_and_model_result_use_shared_output_decoder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(locale, "getencoding", lambda: "cp936")
     message = "找不到指定的模块"
     raw = message.encode("cp936")
     snapshot = CommandProcessSnapshot(
@@ -998,7 +1002,7 @@ def test_command_start_optional_reason_reaches_approval_with_tool_specific_fallb
     tool = tool_type(runtime, broker)
     context = ToolRunContext.create("")
     args: dict[str, object] = {
-        "argv": [sys.executable, "-c", "print('must not execute before approval')"],
+        "argv": [COMMAND_PYTHON, "-c", "print('must not execute before approval')"],
         "workdir": str(tmp_path.resolve()),
         "timeout_seconds": 300,
         COMMAND_SESSION_ID_ARG: "session-a",
@@ -1092,7 +1096,7 @@ def test_host_process_start_requires_only_structured_argv(
     access_result = tool.invoke(
         {
             **common,
-            "argv": [sys.executable, "--version"],
+            "argv": [COMMAND_PYTHON, "--version"],
             "access": {"filesystem": "read_only"},
         }
     )
@@ -1106,7 +1110,7 @@ def test_host_user_tool_request_discloses_unrestricted_execution(
     tool = HostProcessStartTool(runtime, broker)
     result_box = []
     args = {
-        "argv": [sys.executable, "fake:buffered"],
+        "argv": [COMMAND_PYTHON, "fake:buffered"],
         "reason": "launch a trusted desktop-user process",
         COMMAND_SESSION_ID_ARG: "session-a",
         COMMAND_RUN_ID_ARG: "run-a",
@@ -2070,8 +2074,15 @@ def test_screenshot_binding_uses_narrow_output_and_current_turn_image_scope(
     (package / "scripts/take_screenshot.ps1").write_text("# fixture", encoding="utf-8")
     activation = _activation(package, skill_id="builtin/screenshot", source="builtin")
     context = ToolRunContext.create("")
+    # Only argv resolution is exercised here. The packaged capability uses real PowerShell.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "pwsh.exe").touch(mode=0o755)
     tool = ExecCommandTool(
-        runtime, ApprovalBroker(), session_workspaces_root=tmp_path / "workspaces"
+        runtime,
+        ApprovalBroker(),
+        session_workspaces_root=tmp_path / "workspaces",
+        base_env={"PATH": str(bin_dir), "SystemRoot": os.environ.get("SYSTEMROOT", "")},
     )
     args = {
         "cmd": "pwsh.exe -File scripts/take_screenshot.ps1",
@@ -2082,7 +2093,7 @@ def test_screenshot_binding_uses_narrow_output_and_current_turn_image_scope(
     }
     if structured:
         args.pop("cmd")
-        args["argv"] = [sys.executable, "scripts/take_screenshot.ps1"]
+        args["argv"] = [COMMAND_PYTHON, "scripts/take_screenshot.ps1"]
     try:
         details, _, roots, _, _ = tool._parse(args, context, session_id="s", run_id="r")
         output = Path(details.environment_overrides[SCREENSHOT_OUTPUT_ENV])
@@ -2131,7 +2142,7 @@ def test_skill_binding_approval_contains_content_fingerprint(
     context = ToolRunContext.create("")
     result_box = []
     args = {
-        **({"argv": [sys.executable, "run.py"]} if structured else {"cmd": "python run.py"}),
+        **({"argv": [COMMAND_PYTHON, "run.py"]} if structured else {"cmd": "python run.py"}),
         "skill": {"skill_id": activation.record.id, "entry": "run.py", "workdir": "."},
         "reason": "run activated helper",
         COMMAND_SESSION_ID_ARG: "session-a",
@@ -2349,7 +2360,7 @@ def test_single_active_skill_binding_is_inferred_without_copying_skill_id(
     broker = ApprovalBroker()
     result_box = []
     args = {
-        **({"argv": [sys.executable, "run.py"]} if structured else {"cmd": "python run.py"}),
+        **({"argv": [COMMAND_PYTHON, "run.py"]} if structured else {"cmd": "python run.py"}),
         "skill": {"entry": "run.py", "workdir": "."},
         "reason": "run the only activated Skill helper",
         COMMAND_SESSION_ID_ARG: "session-a",
@@ -2418,7 +2429,7 @@ def test_skill_binding_without_current_turn_activation_directs_skill_read(
 ) -> None:
     result = ExecCommandTool(runtime, ApprovalBroker()).invoke(
         {
-            **({"argv": [sys.executable, "run.py"]} if structured else {"cmd": "python run.py"}),
+            **({"argv": [COMMAND_PYTHON, "run.py"]} if structured else {"cmd": "python run.py"}),
             "skill": {"entry": "run.py", "workdir": "."},
             "reason": "run helper",
             COMMAND_SESSION_ID_ARG: "session-a",
@@ -2474,7 +2485,7 @@ def test_skill_argv_keeps_data_and_binds_immutable_entry(
     tool = ExecCommandTool(runtime, ApprovalBroker())
     payload = '{"entry":"scripts/run.py","text":"中文 $() & |"}'
     args = {
-        "argv": [sys.executable, entry_arg, "--data", payload, "scripts/run.py"],
+        "argv": [COMMAND_PYTHON, entry_arg, "--data", payload, "scripts/run.py"],
         "skill": {"entry": "scripts/run.py", "workdir": "scripts"},
         COMMAND_SKILL_SNAPSHOT_ARG: _turn_snapshot(activation),
     }
@@ -2506,7 +2517,7 @@ def test_skill_argv_rejects_missing_entry_or_entry_embedded_in_data(
         with pytest.raises(CommandRuntimeError) as error:
             ExecCommandTool(runtime, ApprovalBroker())._parse(
                 {
-                    "argv": [sys.executable, "-c", '{"entry":"run.py"}' if embedded else "pass"],
+                    "argv": [COMMAND_PYTHON, "-c", '{"entry":"run.py"}' if embedded else "pass"],
                     "skill": {"entry": "run.py"},
                     COMMAND_SKILL_SNAPSHOT_ARG: _turn_snapshot(_activation(package)),
                 },

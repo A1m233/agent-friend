@@ -62,7 +62,7 @@ def _smoke_session_files() -> dict[str, Any]:
         yield data
 
     with tempfile.TemporaryDirectory(prefix="session-file-smoke-") as directory:
-        root = Path(directory)
+        root = Path(directory).resolve(strict=True)
         sessions = JsonlSessionStore(root / "sessions")
         session = Session.new(title="smoke", persona="default", model="fake", session_id="smoke")
         sessions.create(session)
