@@ -33,6 +33,8 @@ export interface SearchNavigationTarget {
   sessionId: string;
   anchorEventUuid: string;
   query: string;
+  /** Zero-based occurrence inside the rendered block for in-chat find. */
+  occurrence?: number;
   /** Keep the anchor pending while older turn pages are being loaded. */
   loading?: boolean;
 }

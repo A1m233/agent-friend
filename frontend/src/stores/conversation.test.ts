@@ -304,6 +304,17 @@ describe("paged reference history", () => {
 });
 
 describe("shared message navigation", () => {
+  it("cancels an in-conversation occurrence waiting for a live turn without loading an obsolete page", async () => {
+    mockGet.mockResolvedValueOnce(historyPage(["new"], "new:user"));
+    await useConversationStore.getState().openSession("paged");
+    useConversationStore.setState({ runSnapshots: { busy: runSnapshot("busy", "paged", "running", 2) } });
+    const navigation = useConversationStore.getState().openMessage("paged", "old:user", { query: "old", occurrence: 0 });
+    expect(useConversationStore.getState().searchTarget?.loading).toBe(true);
+    useConversationStore.getState().cancelConversationFind();
+    expect(await navigation).toBe(false);
+    expect(sessionsApi.getOlder).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().searchTarget).toBeNull();
+  });
   it("keeps an older search pending while runtime reattachment calibrates active runs", async () => {
     mockGet.mockResolvedValueOnce(sessionDetail("other", "other"));
     await useConversationStore.getState().openSession("other");

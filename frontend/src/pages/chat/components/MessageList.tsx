@@ -99,6 +99,7 @@ import {
 } from "./messageQuoteSelection";
 import {
   findSearchAnchor,
+  findConversationRange,
   findSearchMessageIndex,
   installSearchTextHighlight,
   scrollToRenderedAnchor,
@@ -1274,9 +1275,12 @@ export function MessageTimeline({
       const anchor = viewport
         ? findSearchAnchor(viewport, searchTarget.anchorEventUuid)
         : null;
-      if (!viewport || !anchor) {
+      const local = searchTarget.occurrence !== undefined;
+      const range = anchor && searchTarget.occurrence !== undefined
+        ? findConversationRange(anchor, searchTarget.query, searchTarget.occurrence) : undefined;
+      if (!viewport || !anchor || (local && !range?.getBoundingClientRect().height)) {
         attempts += 1;
-        if (attempts < SEARCH_ANCHOR_MOUNT_ATTEMPTS) {
+        if (attempts < (local ? 90 : SEARCH_ANCHOR_MOUNT_ATTEMPTS)) {
           searchScrollRafRef.current = window.requestAnimationFrame(finishPositioning);
           return;
         }
@@ -1287,9 +1291,15 @@ export function MessageTimeline({
         return;
       }
 
-      scrollToRenderedAnchor(viewport, anchor, composerInset);
-      searchHighlightCleanupRef.current = installSearchTextHighlight(anchor, searchTarget.query);
-      searchFeedbackTimerRef.current = window.setTimeout(() => {
+      if (range) {
+        const bounds = viewport.getBoundingClientRect();
+        const rect = range.getBoundingClientRect();
+        viewport.scrollBy({ top: rect.top + rect.height / 2 - bounds.top - (bounds.height - composerInset) / 2 });
+      } else {
+        scrollToRenderedAnchor(viewport, anchor, composerInset);
+      }
+      searchHighlightCleanupRef.current = installSearchTextHighlight(anchor, searchTarget.query, range);
+      if (!local) searchFeedbackTimerRef.current = window.setTimeout(() => {
         searchFeedbackTimerRef.current = 0;
         searchHighlightCleanupRef.current?.();
         searchHighlightCleanupRef.current = null;
@@ -1297,7 +1307,7 @@ export function MessageTimeline({
       }, SEARCH_FEEDBACK_MS);
       processingSearchTargetTokenRef.current = 0;
       handledSearchTargetTokenRef.current = searchTarget.token;
-      onSearchTargetHandled?.(searchTarget.token, true);
+      if (!local) onSearchTargetHandled?.(searchTarget.token, true);
     };
     searchScrollRafRef.current = window.requestAnimationFrame(finishPositioning);
 
@@ -1320,6 +1330,11 @@ export function MessageTimeline({
     searchTarget,
     virtualizer,
   ]);
+
+  const localFindToken = searchTarget?.occurrence !== undefined ? searchTarget.token : null;
+  useLayoutEffect(() => {
+    if (localFindToken !== null) return clearSearchFeedback;
+  }, [localFindToken, clearSearchFeedback]);
 
   useEffect(() => {
     const viewport = scrollRef.current;

@@ -10,7 +10,7 @@ export function ExecutionDisclosureStateProvider({ children }: { children: React
   return <DisclosureState.Provider value={state}>{children}</DisclosureState.Provider>;
 }
 
-export function ExecutionDisclosure({ children, label, enabled, collapse, revealTarget, onDisclosureChange, disclosureId = "local", showHeader = true, interactive = true }: {
+export function ExecutionDisclosure({ children, label, enabled, collapse, revealTarget, keepReveal, onDisclosureChange, disclosureId = "local", showHeader = true, interactive = true }: {
   children: (open: boolean) => ReactNode;
   label: ReactNode;
   showHeader?: boolean;
@@ -18,6 +18,7 @@ export function ExecutionDisclosure({ children, label, enabled, collapse, reveal
   interactive?: boolean;
   collapse: boolean;
   revealTarget?: string;
+  keepReveal?: boolean;
   onDisclosureChange?: () => void;
   disclosureId?: string;
 }) {
@@ -31,6 +32,9 @@ export function ExecutionDisclosure({ children, label, enabled, collapse, reveal
     setDismissedReveal(undefined);
   }
   const searchOpen = !!revealTarget && revealTarget !== dismissedReveal;
+  useLayoutEffect(() => {
+    if (interactive && keepReveal && searchOpen) setManualOpen(true);
+  }, [interactive, keepReveal, searchOpen]);
   const open = !enabled || !interactive || searchOpen || (manualOpen ?? !collapse);
   useLayoutEffect(() => {
     if (!interactive) viewState?.delete(disclosureId);

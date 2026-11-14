@@ -192,7 +192,7 @@ export function ChatApp() {
         />
         <div className="relative min-w-0 flex-1 overflow-hidden bg-bg text-fg">
           <WorkspaceSurface active={target === "chat"}>
-            <ChatContentSurface />
+            <ChatContentSurface active={target === "chat"} />
           </WorkspaceSurface>
           {visitedTargets.includes("settings") ? (
             <WorkspaceSurface active={target === "settings"}>

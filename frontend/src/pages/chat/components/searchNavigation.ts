@@ -1,4 +1,5 @@
 export { findMessageAnchorIndex as findSearchMessageIndex } from "@/stores/messageNavigation";
+import { projectFindText } from "./findTextProjection";
 
 export const SEARCH_HIGHLIGHT_NAME = "agent-friend-search-hit";
 
@@ -36,7 +37,7 @@ export function scrollToRenderedAnchor(viewport: HTMLElement, anchor: HTMLElemen
     - (viewportRect.top + availableHeight / 2), behavior: "auto" });
 }
 
-export function installSearchTextHighlight(root: HTMLElement, query: string): (() => void) | null {
+export function installSearchTextHighlight(root: HTMLElement, query: string, selected?: Range): (() => void) | null {
   if (typeof CSS === "undefined") {
     return null;
   }
@@ -54,12 +55,46 @@ export function installSearchTextHighlight(root: HTMLElement, query: string): ((
   ).Highlight;
   if (!registry || !HighlightConstructor) return null;
 
-  const ranges = collectTextRanges(root, query);
+  const ranges = selected ? [selected] : collectTextRanges(root, query);
   if (ranges.length === 0) return null;
+  // Custom highlight styles are scoped to the shadow tree that owns the text.
+  const styles: HTMLStyleElement[] = [];
+  for (const tree of new Set(ranges.map(range => range.startContainer.getRootNode()))) {
+    if (!(tree instanceof ShadowRoot)) continue;
+    const style = document.createElement("style");
+    style.textContent = "::highlight(agent-friend-search-hit) { background-color: var(--search-hit); }";
+    tree.append(style);
+    styles.push(style);
+  }
   registry.set(SEARCH_HIGHLIGHT_NAME, new HighlightConstructor(...ranges));
   return () => {
     registry.delete(SEARCH_HIGHLIGHT_NAME);
+    styles.forEach(style => style.remove());
   };
+}
+
+export function findConversationRange(anchor: HTMLElement, query: string, occurrence: number) {
+  // Search only rendered Markdown, outside TDesign's toolbars, attachments and styles.
+  const roots: ParentNode[] = [anchor];
+  for (let i = 0; i < roots.length; i++) {
+    const preview = roots[i].querySelector<HTMLElement>('.cherry-previewer, [part~="t-chat__text--user"]');
+    if (preview) {
+      const { text, chunks } = projectFindText(preview);
+      const match = findCaseInsensitiveOccurrences(text, query)[occurrence];
+      if (!match) return undefined;
+      const first = chunks.find(({ start, node }) => start <= match.start && match.start < start + node.length);
+      const last = chunks.find(({ start, node }) => start < match.end && match.end <= start + node.length);
+      if (!first || !last || first.node.getRootNode() !== last.node.getRootNode()) return undefined;
+      const range = document.createRange();
+      range.setStart(first.node, match.start - first.start);
+      range.setEnd(last.node, match.end - last.start);
+      return range;
+    }
+    for (const node of roots[i].querySelectorAll("*")) {
+      if (node.shadowRoot) roots.push(node.shadowRoot);
+    }
+  }
+  return undefined;
 }
 
 function collectTextRanges(root: HTMLElement, query: string): Range[] {

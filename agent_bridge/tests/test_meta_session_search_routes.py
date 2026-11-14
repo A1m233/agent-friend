@@ -121,3 +121,13 @@ def test_search_route_is_registered_before_dynamic_session_id() -> None:
 
     assert response.status_code == 200
     service.search.assert_called_once()
+
+
+def test_conversation_search_reads_only_requested_history() -> None:
+    service = MagicMock(spec=SessionSearchService)
+    block = {"anchor": "event", "text": "visible", "role": "assistant"}
+    service.conversation_text.return_value = [block]
+    response = _client(service).get("/v1/sessions/one/search-text")
+    assert response.json() == [block]
+    service.conversation_text.assert_called_once_with("one")
+    service.search.assert_not_called()

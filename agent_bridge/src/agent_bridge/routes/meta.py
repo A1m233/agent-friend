@@ -356,6 +356,18 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         return _dataclass_to_dict(result)
 
+    @router.get("/sessions/{session_id}/search-text")
+    def conversation_search_text(session_id: str) -> list[dict[str, str]]:
+        service = runtime.session_search_service
+        if service is None:
+            raise HTTPException(status_code=503, detail="会话搜索服务未装配")
+        try:
+            return service.conversation_text(session_id)
+        except SessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except SessionPersistError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     @router.get("/sessions/{session_id}/diagnostics")
     def get_session_diagnostics(
         session_id: str,
