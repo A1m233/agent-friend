@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ReasoningSelection } from "@/components/model-config/ReasoningSelection";
+import { ModelSelectionRows } from "./ModelSelectionRows";
 import { RefreshCw } from "lucide-react";
 import {
   Button,
@@ -8,17 +8,9 @@ import {
   TabsList,
   TabsTrigger,
   TabsContent,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
 } from "@/components/ui";
 import {
   credentialGroupForModel,
-  defaultModelSelection,
-  modelProvidersFromCatalog,
-  providerModelsFromCatalog,
   useModelCatalogStore,
 } from "@/lib/model-config";
 import {
@@ -29,7 +21,6 @@ import {
 } from "@/lib/runtime-config";
 import {
   useSetting,
-  type ModelProvider,
   type ModelSelection,
 } from "@/lib/settings";
 import { type FriendlyError } from "@/services";
@@ -42,7 +33,6 @@ import { RuntimeCredentialSection } from "./RuntimeCredentialSection";
 import { CustomConnections } from "./CustomConnections";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageLayout } from "./SettingsPageLayout";
-import { SettingsRow } from "./SettingsRow";
 import {
   NEW_CONVERSATION_DEFAULT_MODEL_COPY,
   persistModelSettingSelection,
@@ -58,73 +48,7 @@ const GROUP_HELP: Record<RuntimeConfigGroup, string> = {
   volcVoice: "本期跳过在线校验，只检查现有必要字段并统一重启语音服务。",
 };
 
-function ModelSelectionRows({
-  selection,
-  purpose,
-  modelLabel,
-  onChange,
-  disabled,
-}: {
-  selection: ModelSelection;
-  purpose: "chat" | "memory";
-  modelLabel: string;
-  onChange: (next: ModelSelection) => Promise<void>;
-  disabled?: boolean;
-}) {
-  const catalog = useModelCatalogStore((state) => state.catalog);
-  const providers = modelProvidersFromCatalog(catalog);
-  const models = providerModelsFromCatalog(catalog, selection.provider);
-  const reasoning = models.find((model) => model.id === selection.model)?.reasoning;
-
-  return (
-    <>
-      <SettingsRow label="调用渠道">
-        <Select
-          value={selection.provider}
-          disabled={disabled}
-          onValueChange={(value) => {
-            const next = defaultModelSelection(value as ModelProvider, purpose);
-            if (next) void onChange(next);
-          }}
-        >
-          <SelectTrigger className="min-w-48">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {providers.map((provider) => (
-              <SelectItem key={provider.id} value={provider.id}>
-                {provider.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </SettingsRow>
-      <SettingsRow label={modelLabel}>
-        <Select
-          value={selection.model}
-          disabled={disabled}
-          onValueChange={(value) =>
-            void onChange({ provider: selection.provider, model: value })
-          }
-        >
-          <SelectTrigger className="min-w-64">
-            <SelectValue>{models.find((model) => model.id === selection.model)?.label ?? selection.model}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {models.map((model) => (
-              <SelectItem key={model.id} value={model.id}>
-                {model.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </SettingsRow>
-      {reasoning && <SettingsRow label="推理强度"><ReasoningSelection definition={reasoning} value={selection.reasoningPreset ?? reasoning.defaultPreset} disabled={disabled} onChange={(reasoningPreset) => void onChange({ ...selection, reasoningPreset })} /></SettingsRow>}
-    </>
-  );
-}
-
-function CredentialEditor({
+export function CredentialEditor({
   group,
   snapshot,
   apply,

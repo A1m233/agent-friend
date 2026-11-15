@@ -5,8 +5,6 @@ import { NotificationSoundSettings } from "./NotificationSoundSettings";
 
 export function NotificationSettings() {
   const [completion, setCompletion] = useSetting("notificationCompletionMode");
-  const [needsAction, setNeedsAction] = useSetting("notificationNeedsActionEnabled");
-  const [failure, setFailure] = useSetting("notificationFailureEnabled");
   const [sound, setSound] = useSetting("notificationSoundEnabled");
 
   return <div className="flex flex-col gap-4">
@@ -19,12 +17,6 @@ export function NotificationSettings() {
           <SelectItem value="never">不提示</SelectItem>
         </SelectContent>
       </Select>
-    </SettingsRow>
-    <SettingsRow label="需要你处理">
-      <Switch checked={needsAction} onCheckedChange={(value) => void setNeedsAction(value)} aria-label="需要你处理时提示" />
-    </SettingsRow>
-    <SettingsRow label="异常结束">
-      <Switch checked={failure} onCheckedChange={(value) => void setFailure(value)} aria-label="异常结束时提示" />
     </SettingsRow>
     <SettingsRow label="气泡提示音">
       <Switch checked={sound} onCheckedChange={(value) => void setSound(value)} aria-label="气泡提示音" />

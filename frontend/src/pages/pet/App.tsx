@@ -1034,6 +1034,7 @@ export function PetApp() {
             onMouseEnter={() => setHoverActionBarDom(true)}
             onMouseLeave={() => setHoverActionBarDom(false)}
             onOpenChat={openChat}
+            onOpenOnboarding={() => { void invoke("open_onboarding"); }}
             onOpenScheduledTasks={openScheduledTasks}
             onOpenTodos={openTodos}
             petAvatarSize={petAvatarSize}

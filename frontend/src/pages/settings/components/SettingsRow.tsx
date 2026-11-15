@@ -21,7 +21,7 @@ export function SettingsRow({
   children,
 }: SettingsRowProps) {
   return (
-    <div className="flex items-center justify-between gap-4">
+    <div className="flex items-start justify-between gap-4">
       <div className="flex min-w-0 items-center gap-2">
         <span className="text-sm">{label}</span>
         {tooltip ? (

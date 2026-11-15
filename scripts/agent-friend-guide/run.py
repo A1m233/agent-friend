@@ -40,7 +40,7 @@ EXPECTED_REFERENCES = {
     "weather-credentials.md",
     "web-search-credentials.md",
 }
-ROUTED_REFERENCES = EXPECTED_REFERENCES - {"getting-started.md"}
+ROUTED_REFERENCES = EXPECTED_REFERENCES
 RELEASE_MANIFEST_ASSET = f"{SKILL_NAME}.manifest.json"
 RELEASE_PACKAGE_ASSET = f"{SKILL_NAME}.zip"
 RELEASE_TAG_RE = re.compile(rf"^{re.escape(SKILL_NAME)}-r([1-9][0-9]*)$")
@@ -371,14 +371,10 @@ def verify_package(root: Path) -> dict[str, Any]:
             f"required reference set is incomplete: missing={sorted(missing_references)}"
         )
     if (references / "getting-started.md").stat().st_size == 0:
-        raise GuideError("getting-started.md must be a non-empty placeholder")
+        raise GuideError("getting-started.md must be non-empty")
 
     skill_text = skill.read_text(encoding="utf-8")
-    routed = {
-        Path(match).name
-        for match in ROUTED_REFERENCE_RE.findall(skill_text)
-        if Path(match).name != "getting-started.md"
-    }
+    routed = {Path(match).name for match in ROUTED_REFERENCE_RE.findall(skill_text)}
     missing_routes = ROUTED_REFERENCES - routed
     if missing_routes:
         raise GuideError(

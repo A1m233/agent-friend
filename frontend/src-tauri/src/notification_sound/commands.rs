@@ -7,10 +7,10 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
 pub(crate) fn check_window(label: &str) -> Result<(), String> {
-    if label == "chat" {
+    if matches!(label, "chat" | "onboarding") {
         Ok(())
     } else {
-        Err("提示音设置仅可在设置窗口操作".into())
+        Err("请在设置页或设置助理中操作提示音".into())
     }
 }
 
@@ -153,6 +153,7 @@ mod tests {
     #[test]
     fn only_settings_surfaces_can_import_or_preview() {
         assert!(check_window("chat").is_ok());
+        assert!(check_window("onboarding").is_ok());
         for window in ["bubble", "pet", "workspace", "voice-call", ""] {
             assert!(check_window(window).is_err());
         }

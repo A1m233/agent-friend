@@ -5,6 +5,7 @@
   "windows": [
     "pet",
     "chat",
+    "onboarding",
     "bubble",
     "voice-call",
     "live2d-debugger"

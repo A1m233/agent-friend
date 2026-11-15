@@ -28,8 +28,8 @@ export function NotificationSoundSettings() {
     setAssetError(null);
     let current = true;
     void invoke<string | null>("notification_sound_status").then((value) => {
-      if (current) setAssetError(value);
-    }).catch(() => { if (current) setAssetError("无法检查提示音状态，请重试"); });
+      if (current) setAssetError(value ? `${value}；通知将使用默认提示音。` : null);
+    }).catch(() => { if (current) setAssetError("暂时无法检查提示音状态。"); });
     return () => {
       current = false;
       mounted.current = false;
@@ -100,6 +100,6 @@ export function NotificationSoundSettings() {
       </div>
     </SettingsRow>
     <p className="text-xs leading-relaxed text-muted">支持 MP3、WAV，最大 10 MiB、最长 30 秒。导入后无需保留原文件；关闭提示音后仍可试听。</p>
-    {(error || assetError) && <p className="text-xs text-danger" role="alert">{error || `${assetError}；通知将使用默认提示音。`}</p>}
+    {(error || assetError) && <p className="text-xs text-danger" role="alert">{error || assetError}</p>}
   </div>;
 }

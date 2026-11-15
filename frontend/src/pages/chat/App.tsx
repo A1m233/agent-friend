@@ -27,7 +27,7 @@ import {
 } from "@/lib/active-chat-session";
 import { HistorySidebar } from "./components/HistorySidebar";
 import { GlobalConversationSearchProvider } from "./components/GlobalConversationSearch";
-import { useModelCatalogStore } from "@/lib/model-config";
+import { defaultModelRuntimeConfig, useModelCatalogStore } from "@/lib/model-config";
 import { startDesktopPresenceReporter } from "@/lib/desktop-presence";
 import { retainSessionUsage } from "@/services/sessionUsage";
 import {
@@ -124,6 +124,15 @@ export function ChatApp() {
     const request = chatNavigation?.chat;
     if (request?.newConversation) {
       startNewConversation();
+      const selected = request.onboardingModel;
+      if (selected) {
+        void useConversationStore.getState().selectRuntimeConfig({
+          model: selected.model,
+          reasoningPreset: selected.reasoningPreset ?? defaultModelRuntimeConfig(selected.model).reasoningPreset,
+        }).then((result) => {
+          if (result.status === "failed") toast.error(result.error.friendly);
+        });
+      }
     } else if (request?.sessionId) {
       blockAutoRestore();
       void openSession(request.sessionId, { failureMode: "previous" }).then((opened) => {

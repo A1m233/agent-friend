@@ -19,6 +19,10 @@ use crate::power_policy::{BackgroundOnlinePolicy, PowerPolicyManager};
 pub struct Settings {
     pub theme: ThemeMode,
     #[serde(default)]
+    pub onboarding_completed: bool,
+    #[serde(default)]
+    pub first_model_defaults: FirstModelDefaults,
+    #[serde(default)]
     pub authorization_mode: AuthorizationMode,
     #[serde(default)]
     pub im_reply_style: ImReplyStyle,
@@ -32,11 +36,11 @@ pub struct Settings {
     pub reminder_notification_mode: ReminderNotificationMode,
     #[serde(default)]
     pub notification_completion_mode: NotificationCompletionMode,
-    #[serde(default = "default_notification_enabled")]
+    #[serde(default = "default_true")]
     pub notification_needs_action_enabled: bool,
-    #[serde(default = "default_notification_enabled")]
+    #[serde(default = "default_true")]
     pub notification_failure_enabled: bool,
-    #[serde(default = "default_notification_enabled")]
+    #[serde(default = "default_true")]
     pub notification_sound_enabled: bool,
     #[serde(default)]
     pub notification_sound: NotificationSoundSource,
@@ -177,6 +181,15 @@ pub struct ModelSelection {
     pub reasoning_preset: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum FirstModelDefaults {
+    #[default]
+    Unchecked,
+    AwaitingModel,
+    Settled,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum PetAvatarSize {
@@ -254,7 +267,7 @@ fn default_immersive_mode() -> bool {
     true
 }
 
-fn default_notification_enabled() -> bool {
+fn default_true() -> bool {
     true
 }
 
@@ -269,6 +282,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             model_connections: default_model_connections(),
+            onboarding_completed: false,
+            first_model_defaults: FirstModelDefaults::Unchecked,
             theme: ThemeMode::Light,
             authorization_mode: AuthorizationMode::AutoReview,
             im_reply_style: ImReplyStyle::Natural,
@@ -353,6 +368,19 @@ pub(crate) fn save_connection_settings(
     next.model_connections = connections;
     next.chat_model = chat;
     next.memory_model = memory;
+    persist_snapshot(app, &current, &next)?;
+    *current = next.clone();
+    for (key, value) in [
+        ("modelConnections", next.model_connections.clone()),
+        ("chatModel", serde_json::json!(next.chat_model)),
+        ("memoryModel", serde_json::json!(next.memory_model)),
+    ] {
+        let _ = app.emit(EVENT_CHANGED, serde_json::json!({"key":key,"value":value}));
+    }
+    Ok(next)
+}
+
+fn persist_snapshot(app: &AppHandle, current: &Settings, next: &Settings) -> Result<(), String> {
     let store = app
         .store(paths::SETTINGS_STORE_PATH)
         .map_err(|_| "settings_store_failed")?;
@@ -367,21 +395,63 @@ pub(crate) fn save_connection_settings(
         );
         return Err("settings_save_failed".into());
     }
-    *current = next.clone();
-    for (key, value) in [
-        ("modelConnections", next.model_connections.clone()),
-        ("chatModel", serde_json::json!(next.chat_model)),
-        ("memoryModel", serde_json::json!(next.memory_model)),
-    ] {
-        let _ = app.emit(
-            "settings://changed",
-            serde_json::json!({"key":key,"value":value}),
-        );
+    Ok(())
+}
+
+pub(crate) fn save_first_model_defaults(
+    app: &AppHandle,
+    expected: &Settings,
+    stage: FirstModelDefaults,
+    model: Option<ModelSelection>,
+) -> Result<(), String> {
+    let state = app.state::<Arc<Mutex<Settings>>>();
+    let mut current = state.lock().map_err(|_| "settings_lock_failed")?;
+    let Some(next) = current.next_first_model_defaults(expected, stage, model.as_ref())? else {
+        return Ok(());
+    };
+    persist_snapshot(app, &current, &next)?;
+    *current = next;
+    if model.is_some() {
+        for (key, value) in [
+            ("chatModel", &current.chat_model),
+            ("memoryModel", &current.memory_model),
+        ] {
+            let _ = app.emit(EVENT_CHANGED, serde_json::json!({"key":key,"value":value}));
+        }
     }
-    Ok(next)
+    Ok(())
 }
 
 impl Settings {
+    fn next_first_model_defaults(
+        &self,
+        expected: &Self,
+        stage: FirstModelDefaults,
+        model: Option<&ModelSelection>,
+    ) -> Result<Option<Self>, String> {
+        if self.first_model_defaults == FirstModelDefaults::Settled {
+            return Ok(None);
+        }
+        if self.first_model_defaults != expected.first_model_defaults
+            || self.model_connections != expected.model_connections
+            || self.chat_model != expected.chat_model
+            || self.memory_model != expected.memory_model
+        {
+            return Err("settings_changed_reload_required".into());
+        }
+        let mut next = self.clone();
+        next.first_model_defaults = stage;
+        if let Some(selection) = model {
+            validate_custom_selection(&self.model_connections, selection)?;
+            for existing in [&mut next.chat_model, &mut next.memory_model] {
+                if existing.provider != selection.provider || existing.model != selection.model {
+                    *existing = selection.clone();
+                }
+            }
+        }
+        Ok(Some(next))
+    }
+
     pub fn theme_attr(&self) -> &'static str {
         match self.theme {
             ThemeMode::Light => "light",
@@ -811,9 +881,10 @@ pub fn set_setting(
     if payload.key == "notificationSound" {
         return Err("请通过提示音导入或恢复默认操作更换音源".into());
     }
-    let mut s = state
+    let mut current = state
         .lock()
         .map_err(|e| format!("settings state poisoned: {e}"))?;
+    let mut s = current.clone();
 
     let mut event_key = payload.key.clone();
     let mut event_value = payload.value.clone();
@@ -858,6 +929,10 @@ pub fn set_setting(
         | "notificationSoundEnabled"
         | "notificationSound") => {
             update_notification_setting(&mut s, key, payload.value.clone())?;
+        }
+        "onboardingCompleted" => {
+            s.onboarding_completed =
+                serde_json::from_value(payload.value.clone()).map_err(|e| e.to_string())?;
         }
         "voiceTunnelConsentAccepted" => {
             let accepted: bool = serde_json::from_value(payload.value.clone())
@@ -949,9 +1024,17 @@ pub fn set_setting(
         .map_err(|e| e.to_string())?;
     store.set(
         "settings",
-        serde_json::to_value(&*s).map_err(|e| e.to_string())?,
+        serde_json::to_value(&s).map_err(|e| e.to_string())?,
     );
-    store.save().map_err(|e| e.to_string())?;
+    if let Err(error) = store.save() {
+        store.set(
+            "settings",
+            serde_json::to_value(&*current).map_err(|e| e.to_string())?,
+        );
+        return Err(error.to_string());
+    }
+    *current = s;
+    let recovery_disabled = !current.display_recovery_protection_enabled;
 
     log::info!(
         "settings: store saved to {:?}",
@@ -971,7 +1054,7 @@ pub fn set_setting(
     )
     .map_err(|e| e.to_string())?;
 
-    if event_key == "displayRecoveryProtectionEnabled" && !s.display_recovery_protection_enabled {
+    if event_key == "displayRecoveryProtectionEnabled" && recovery_disabled {
         if let Err(error) = crate::pet_display_recovery::disable_protection(&app) {
             log::warn!("pet display recovery: failed to apply disabled setting: {error}");
         }
@@ -1120,6 +1203,72 @@ mod tests {
     fn write_raw(path: &Path, raw: &str) {
         fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
         fs::write(path, raw).expect("write raw settings");
+    }
+
+    #[test]
+    fn first_model_fills_both_defaults_and_retains_matching_reasoning_preferences() {
+        use FirstModelDefaults::{AwaitingModel, Settled};
+        let initial = Settings::default();
+        let mut settings = initial
+            .next_first_model_defaults(&initial, AwaitingModel, None)
+            .unwrap()
+            .unwrap();
+        let chat = settings.chat_model.clone();
+        let memory = settings.memory_model.clone();
+        let matching = settings
+            .next_first_model_defaults(&settings, Settled, Some(&chat))
+            .unwrap()
+            .unwrap();
+        assert_eq!(matching.memory_model, memory);
+        let custom = ModelSelection {
+            provider: ModelProvider::Custom,
+            model: "custom/first/a".into(),
+            reasoning_preset: None,
+        };
+        assert!(settings
+            .next_first_model_defaults(&settings, Settled, Some(&custom))
+            .is_err());
+        assert_eq!(settings.chat_model, chat);
+        settings.model_connections =
+            serde_json::json!({"connections":[{"id":"first","models":[{"id":"a"}]}]});
+        assert!(settings
+            .next_first_model_defaults(&initial, Settled, Some(&custom))
+            .is_err());
+        let saved = settings
+            .next_first_model_defaults(&settings, Settled, Some(&custom))
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.chat_model, custom);
+        assert_eq!(saved.memory_model, custom);
+        let mut reopened: Settings =
+            serde_json::from_value(serde_json::to_value(saved).unwrap()).unwrap();
+        reopened.memory_model = memory;
+        assert!(reopened
+            .next_first_model_defaults(&reopened, Settled, Some(&chat))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn onboarding_only_stays_complete_when_explicitly_saved() {
+        let fresh = Settings::default();
+        assert!(!fresh.onboarding_completed);
+        let mut stored = serde_json::to_value(fresh).unwrap();
+        stored
+            .as_object_mut()
+            .unwrap()
+            .remove("onboardingCompleted");
+        assert!(
+            !serde_json::from_value::<Settings>(stored.clone())
+                .unwrap()
+                .onboarding_completed
+        );
+        stored["onboardingCompleted"] = serde_json::json!(true);
+        assert!(
+            serde_json::from_value::<Settings>(stored)
+                .unwrap()
+                .onboarding_completed
+        );
     }
 
     #[test]

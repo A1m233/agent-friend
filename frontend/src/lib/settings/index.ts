@@ -46,6 +46,7 @@ export interface ModelConnections {
 }
 
 export interface Settings {
+  onboardingCompleted: boolean;
   companionshipLimits: {
     interval_minutes: number;
     minimum_interval_minutes: number;
@@ -75,6 +76,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  onboardingCompleted: false,
   companionshipLimits: { interval_minutes: 60, minimum_interval_minutes: 10 },
   imReplyStyle: "natural",
   authorizationMode: "auto_review",

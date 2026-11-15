@@ -50,6 +50,18 @@ it("preserves a valid custom source through bootstrap and cross-window changes",
   expect(isNotificationSound({ kind: "custom" })).toBe(false);
 });
 
+it("reports default fallback only when the sound asset is unavailable", async () => {
+  mocks.invoke.mockResolvedValueOnce("音频资源不可用");
+  await render();
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("通知将使用默认提示音");
+});
+
+it("reports a status query failure without claiming a playback fallback", async () => {
+  mocks.invoke.mockRejectedValueOnce(new Error("状态查询失败"));
+  await render();
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe("暂时无法检查提示音状态。");
+});
+
 it("imports and resets using the authoritative returned source", async () => {
   await render();
   mocks.invoke.mockImplementation(async (command) => command === "import_notification_sound" ? custom : null);

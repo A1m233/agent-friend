@@ -40,6 +40,7 @@ export interface TooltipButtonProps extends Omit<ButtonProps, "children"> {
   tooltipSide?: "top" | "right" | "bottom" | "left";
   /** tooltip 触发延迟（ms），不传则沿 TooltipProvider 全局值 */
   tooltipDelayMs?: number;
+  tooltipRootProps?: Pick<React.ComponentProps<typeof Tooltip>, "open" | "onOpenChange">;
   /** 透传到 TooltipContent，供调用方声明 tooltip 内容自身的 hover / hit-test 语义 */
   tooltipContentProps?: Omit<React.ComponentProps<typeof TooltipContent>, "children" | "side">;
 }
@@ -49,6 +50,7 @@ export function TooltipButton({
   tooltip,
   tooltipSide = "top",
   tooltipDelayMs,
+  tooltipRootProps,
   tooltipContentProps,
   size = "icon-sm",
   variant = "ghost",
@@ -62,7 +64,7 @@ export function TooltipButton({
   );
 
   return (
-    <Tooltip delayDuration={tooltipDelayMs}>
+    <Tooltip delayDuration={tooltipDelayMs} {...tooltipRootProps}>
       <TooltipTrigger asChild>
         {triggerDisabled ? (
           <span className="inline-flex cursor-not-allowed">{button}</span>
