@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { computeAccessoryLayout } from "@/pet/accessoryLayout/geometry";
-import { actionBarMetrics, actionBarMinimumMetrics } from "@/pet/accessoryLayout/actionBarMetrics";
+import { actionBarButtonCount, actionBarMetrics, actionBarMinimumMetrics } from "@/pet/accessoryLayout/actionBarMetrics";
 import { ActionBar } from "./ActionBar";
 
 function props(): ComponentProps<typeof ActionBar> {
@@ -20,7 +20,7 @@ function props(): ComponentProps<typeof ActionBar> {
     viewport: { x: 0, y: 0, w: 1920, h: 1080 },
     petAvatarSize: "normal", voiceCallActive: false, passthroughDisabled: false,
     memoryInspectorEnabled: true,
-    onMouseEnter: noop, onMouseLeave: noop, onOpenChat: noop,
+    onMouseEnter: noop, onMouseLeave: noop, onOpenChat: noop, onOpenOnboarding: noop,
     onOpenScheduledTasks: noop,
     onOpenTodos: noop,
     onCollapseToEdge: noop, onRestoreNormal: noop, onOpenSettings: noop,
@@ -42,14 +42,18 @@ describe("ActionBar notification debug controls", () => {
     expect(markup).toContain('aria-label="调试短通知（不调用模型）"');
     expect(markup).toContain('aria-label="清空调试通知（不影响真实通知）"');
     expect(markup).toContain('aria-label="下一页"');
+    const actions = [...markup.matchAll(/data-pet-action="([^"]+)"/g)].map((match) => match[1]);
+    expect(actions.slice(-2)).toEqual(["Live2D 调试器", "新手引导"]);
   });
 
   it("does not render notification debug actions in production", () => {
     vi.stubEnv("DEV", false);
     const markup = renderToStaticMarkup(createElement(ActionBar, props()));
+    expect([...markup.matchAll(/data-pet-action=/g)]).toHaveLength(actionBarButtonCount(false, true));
     expect(markup).not.toContain("data-notification-debug");
     expect(markup).not.toContain("清空调试通知");
     expect(markup).toContain('aria-label="打开对话"');
+    expect(markup).not.toContain('aria-label="新手引导"');
     expect(markup).toContain('aria-label="待办"');
     expect(markup.indexOf('aria-label="待办"')).toBeLessThan(markup.indexOf('aria-label="定时任务"'));
     expect(markup.indexOf('aria-label="语音通话"')).toBeLessThan(markup.indexOf('aria-label="定时任务"'));
@@ -144,6 +148,47 @@ describe("ActionBar outward tooltips with real Radix DOM", () => {
       expect(expected[1] + tooltip.offsetHeight).toBeLessThan(input.accessoryLayout.bubble.y);
     }
   });
+
+  it("dismisses the hovered icon's tooltip on native strip scroll", async () => {
+    await openTooltip(props());
+    const strip = container.querySelector<HTMLElement>("[data-actionbar-strip]")!;
+    await act(async () => {
+      strip.dispatchEvent(new Event("scroll"));
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(document.querySelector("[data-slot=tooltip-content]")).toBeNull();
+  });
+
+  it.each(["another icon", "same icon", "gap", "left strip", "Escape"] as const)(
+    "checks the stationary pointer after wheel scrolling settles (%s)", async (outcome) => {
+      await openTooltip(props());
+      const strip = container.querySelector<HTMLElement>("[data-actionbar-strip]")!;
+      const label = outcome === "same icon" ? "打开对话" : "内心活动";
+      const button = strip.querySelector<HTMLElement>(`[data-pet-action="${label}"]`)!;
+      const hit = vi.fn(() => outcome === "gap" ? strip : button.querySelector("svg"));
+      Object.defineProperty(document, "elementFromPoint", { configurable: true, value: hit });
+      try {
+        await act(async () => {
+          strip.dispatchEvent(new WheelEvent("wheel", { clientX: 42, clientY: 73, bubbles: true }));
+          strip.dispatchEvent(new Event("scroll"));
+          await vi.advanceTimersByTimeAsync(80);
+          strip.dispatchEvent(new Event("scroll"));
+          if (outcome === "left strip") strip.dispatchEvent(new Event("pointerleave"));
+          if (outcome === "Escape") window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+          await vi.advanceTimersByTimeAsync(80);
+        });
+        expect(hit).not.toHaveBeenCalled();
+        expect(document.querySelector("[role=tooltip]")).toBeNull();
+        await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+        if (outcome === "left strip" || outcome === "Escape") expect(hit).not.toHaveBeenCalled();
+        else expect(hit).toHaveBeenCalledWith(42, 73);
+        const text = document.querySelector("[role=tooltip]")?.textContent;
+        expect(text).toBe(outcome === "another icon" || outcome === "same icon" ? label : undefined);
+      } finally {
+        Reflect.deleteProperty(document, "elementFromPoint");
+      }
+    },
+  );
 
   it("omits tooltip content when there is no readable corridor but keeps controls accessible and clickable", async () => {
     const input = props();

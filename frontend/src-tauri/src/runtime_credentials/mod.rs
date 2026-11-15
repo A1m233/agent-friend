@@ -114,6 +114,24 @@ impl RuntimeCredentialCoordinator {
             .unwrap_or_default()
     }
 
+    pub(crate) async fn usable_for_onboarding(
+        &self,
+        group: RuntimeConfigGroup,
+    ) -> Result<bool, String> {
+        let s = self.group_snapshot(group).await?;
+        let effective = match s.operation.phase {
+            RuntimeCredentialOperationPhase::Idle | RuntimeCredentialOperationPhase::Applied => {
+                true
+            }
+            // A rejected replacement leaves the previously validated key in use.
+            RuntimeCredentialOperationPhase::Failed => {
+                !s.operation.persisted && s.validation == RuntimeCredentialValidationStatus::Valid
+            }
+            _ => false,
+        };
+        Ok(s.configured && s.validation != RuntimeCredentialValidationStatus::Invalid && effective)
+    }
+
     async fn group_snapshot(
         &self,
         group: RuntimeConfigGroup,
@@ -449,6 +467,11 @@ fn normalize_changes(
     Ok(result)
 }
 
+fn speech_input_ready(names: &HashSet<&str>) -> bool {
+    names.contains("VOLC_SPEECH_API_KEY")
+        || (names.contains("VOLC_SPEECH_APP_ID") && names.contains("VOLC_SPEECH_ACCESS_TOKEN"))
+}
+
 fn stage_candidate(
     payload: &ApplyRuntimeCredentialGroupPayload,
     operation_id: &str,
@@ -494,7 +517,12 @@ fn stage_candidate(
     let contains_set = changes
         .iter()
         .any(|change| change.action == RuntimeCredentialFieldAction::Set);
-    if contains_set && !missing.is_empty() {
+    let speech_only = payload.group == RuntimeConfigGroup::VolcVoice
+        && changes
+            .iter()
+            .all(|change| change.name.starts_with("VOLC_SPEECH_"))
+        && speech_input_ready(&candidate_names);
+    if contains_set && !missing.is_empty() && !speech_only {
         let _ = cleanup_staging(payload.group);
         return Err(format!("invalid_candidate: missing {}", missing.join(", ")));
     }
@@ -667,7 +695,14 @@ async fn update_and_emit(
     group: RuntimeConfigGroup,
     operation: RuntimeCredentialOperation,
 ) {
+    let model_available = matches!(
+        group,
+        RuntimeConfigGroup::Deepseek | RuntimeConfigGroup::Kimi
+    ) && matches!(operation.phase, RuntimeCredentialOperationPhase::Applied);
     coordinator.set_operation(group, operation).await;
+    if model_available {
+        crate::onboarding::defaults::after_change(app).await;
+    }
     coordinator.emit_group(app, group).await;
 }
 
@@ -808,6 +843,12 @@ pub async fn apply_runtime_credential_group(
     coordinator: State<'_, Arc<RuntimeCredentialCoordinator>>,
     supervisor: State<'_, Arc<RuntimeServiceSupervisor>>,
 ) -> Result<RuntimeCredentialGroupSnapshot, String> {
+    if matches!(
+        payload.group,
+        RuntimeConfigGroup::Deepseek | RuntimeConfigGroup::Kimi
+    ) {
+        crate::onboarding::defaults::before_change(&app).await?;
+    }
     let group_lock = coordinator.group_lock(payload.group);
     let _group_guard = group_lock.lock().await;
     if coordinator
@@ -1052,6 +1093,12 @@ pub async fn retry_runtime_credential_apply(
     coordinator: State<'_, Arc<RuntimeCredentialCoordinator>>,
     supervisor: State<'_, Arc<RuntimeServiceSupervisor>>,
 ) -> Result<RuntimeCredentialGroupSnapshot, String> {
+    if matches!(
+        payload.group,
+        RuntimeConfigGroup::Deepseek | RuntimeConfigGroup::Kimi
+    ) {
+        crate::onboarding::defaults::before_change(&app).await?;
+    }
     let group_lock = coordinator.group_lock(payload.group);
     let _group_guard = group_lock.lock().await;
     let operation_id = random_id();
@@ -1115,6 +1162,12 @@ pub async fn retry_runtime_credential_validation(
 ) -> Result<RuntimeCredentialGroupSnapshot, String> {
     if !validation_supported(payload.group) {
         return coordinator.group_snapshot(payload.group).await;
+    }
+    if matches!(
+        payload.group,
+        RuntimeConfigGroup::Deepseek | RuntimeConfigGroup::Kimi
+    ) {
+        crate::onboarding::defaults::before_change(&app).await?;
     }
     let group_lock = coordinator.group_lock(payload.group);
     let _group_guard = group_lock.lock().await;
@@ -1255,6 +1308,16 @@ pub async fn report_runtime_credential_auth_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dictation_accepts_a_key_or_a_complete_legacy_pair() {
+        assert!(speech_input_ready(&HashSet::from(["VOLC_SPEECH_API_KEY"])));
+        assert!(speech_input_ready(&HashSet::from([
+            "VOLC_SPEECH_APP_ID",
+            "VOLC_SPEECH_ACCESS_TOKEN"
+        ])));
+        assert!(!speech_input_ready(&HashSet::from(["VOLC_SPEECH_APP_ID"])));
+    }
 
     #[test]
     fn required_fields_keep_voice_optional_api_key_out_of_completeness() {

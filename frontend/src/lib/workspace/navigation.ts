@@ -20,6 +20,7 @@ export interface WorkspaceNavigationEnvelope {
   target: WorkspaceTarget;
   chat?: {
     newConversation: boolean;
+    onboardingModel?: import("@/lib/settings").ModelSelection;
     sessionId?: string;
   };
   settings?: SettingsOpenRequest;

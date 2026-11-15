@@ -65,8 +65,7 @@ def _write_package(repo: Path) -> Path:
         "name: agent-friend-guide\n"
         "description: Test agent-friend user knowledge.\n"
         "---\n\n"
-        f"{route_lines}\n\n"
-        "`references/getting-started.md` is a placeholder.\n",
+        f"{route_lines}\n",
         encoding="utf-8",
     )
     (agents / "openai.yaml").write_text(

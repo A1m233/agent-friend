@@ -4,6 +4,9 @@
 const DESKTOP_SHELL_ROLE_MARKER: &str = "agent-friend-executable-role:desktop-shell-v1";
 
 fn main() {
+    if let Some(code) = app_lib::onboarding::run_cli() {
+        std::process::exit(code);
+    }
     if let Some(code) = app_lib::native_crash::run_internal_mode() {
         std::process::exit(code);
     }

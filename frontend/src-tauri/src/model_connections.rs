@@ -57,6 +57,30 @@ pub struct ModelConnectionCoordinator {
     operation: tokio::sync::Mutex<Option<String>>,
 }
 
+impl ModelConnectionCoordinator {
+    pub(crate) async fn ready_connections(
+        &self,
+        settings: &Settings,
+    ) -> Result<Vec<String>, String> {
+        if self.operation.lock().await.is_some() {
+            return Ok(Vec::new());
+        }
+        let mut ready = Vec::new();
+        for connection in settings.model_connections["connections"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            if runtime_config::keyring_configured(&secret_name(connection)?)? {
+                if let Some(id) = connection["id"].as_str() {
+                    ready.push(id.to_owned());
+                }
+            }
+        }
+        Ok(ready)
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SaveConnections {
@@ -83,6 +107,7 @@ pub async fn save_model_connections(
     supervisor: State<'_, Arc<RuntimeServiceSupervisor>>,
     payload: SaveConnections,
 ) -> Result<Value, String> {
+    crate::onboarding::defaults::before_change(&app).await?;
     let mut operation = coordinator.operation.lock().await;
     if operation.is_some() {
         return Err("connection_apply_pending".into());
@@ -165,6 +190,10 @@ pub async fn save_model_connections(
     }
     persist?;
     let cleanup_complete = cleanup_pending_credentials(&app, &settings).is_ok();
+    drop(operation);
+    if applied.is_ok() {
+        crate::onboarding::defaults::after_change(&app).await;
+    }
     Ok(json!({"persisted": true, "applied": applied.is_ok(), "cleanupComplete": cleanup_complete}))
 }
 
@@ -182,7 +211,10 @@ pub async fn retry_model_connections(
             .await?;
         *operation = None;
     }
-    cleanup_pending_credentials(&app, &settings)
+    let cleanup = cleanup_pending_credentials(&app, &settings);
+    drop(operation);
+    crate::onboarding::defaults::after_change(&app).await;
+    cleanup
 }
 
 /// Draft secrets travel only over the owner-authenticated loopback request.

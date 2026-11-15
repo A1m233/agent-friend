@@ -255,7 +255,7 @@ fn python_service_keyring_entry(name: &str) -> Result<keyring::Entry, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn keyring_configured(name: &str) -> Result<bool, String> {
+pub(crate) fn keyring_configured(name: &str) -> Result<bool, String> {
     use security_framework::item::{CloudSync, ItemClass, ItemSearchOptions};
 
     const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
@@ -280,13 +280,13 @@ fn keyring_configured(name: &str) -> Result<bool, String> {
 }
 
 #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-fn keyring_configured(name: &str) -> Result<bool, String> {
+pub(crate) fn keyring_configured(name: &str) -> Result<bool, String> {
     let entry = keyring_entry(name)?;
     keyring_entry_configured(&entry, name)
 }
 
 #[cfg(target_os = "windows")]
-fn keyring_configured(name: &str) -> Result<bool, String> {
+pub(crate) fn keyring_configured(name: &str) -> Result<bool, String> {
     let canonical = keyring_entry(name)?;
     if keyring_entry_configured_for_user(&canonical, name)? {
         return Ok(true);

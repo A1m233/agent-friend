@@ -18,6 +18,7 @@ export default defineConfig({
         index: resolve(__dirname, "index.html"),
         pet: resolve(__dirname, "pet.html"),
         chat: resolve(__dirname, "chat.html"),
+        onboarding: resolve(__dirname, "onboarding.html"),
         bubble: resolve(__dirname, "bubble.html"),
         "voice-call": resolve(__dirname, "voice-call.html"),
         "live2d-debugger": resolve(__dirname, "live2d-debugger.html"),

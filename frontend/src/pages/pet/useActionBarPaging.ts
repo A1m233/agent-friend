@@ -1,5 +1,5 @@
-import { useLayoutEffect, useRef, useState } from "react";
-import type { CarouselApi } from "@/components/ui";
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { actionBarWheelDistance, createActionBarWheelGesture } from "./actionBarWheel";
 import { getSettingsSnapshot, setSetting } from "@/lib/settings";
 
 // Keep the latest user intent across hover unmounts, including an in-flight save.
@@ -25,42 +25,84 @@ function rememberPage(page: number) {
   });
 }
 
-/** Only user selection changes are saved; initialization and layout clamps are not. */
-export function useActionBarPaging(api: CarouselApi, enabled: boolean, layoutKey: string) {
-  const [startIndex] = useState(() => preferredPage ?? getSettingsSnapshot().petActionBarPage);
-  const preference = useRef(startIndex);
-  const [state, setState] = useState({ currentPage: startIndex, canScrollPrev: false, canScrollNext: false });
+// Keep the exact offset through a hover remount. The durable setting remains a page number.
+let lastPosition: { layout: string; offset: number } | undefined;
+
+export function useActionBarPaging(strip: HTMLDivElement | null, vertical: boolean, pageSize: number, count: number, bar: RefObject<HTMLDivElement | null>) {
+  const [state, setState] = useState({ currentPage: 0, canScrollPrev: false, canScrollNext: false });
+  const initialPage = useRef(preferredPage ?? getSettingsSnapshot().petActionBarPage);
 
   useLayoutEffect(() => {
-    if (!enabled || !api) {
-      setState({ currentPage: 0, canScrollPrev: false, canScrollNext: false });
-      return;
-    }
-    let restoring = false;
-    const update = () => setState({
-      currentPage: api.selectedScrollSnap(),
-      canScrollPrev: api.canScrollPrev(),
-      canScrollNext: api.canScrollNext(),
-    });
-    const restore = () => {
-      const page = Math.max(0, Math.min(preference.current, api.scrollSnapList().length - 1));
-      restoring = true;
-      try { api.scrollTo(page, true); } finally { restoring = false; }
-      update();
-    };
-    const select = () => {
-      update();
-      if (restoring) return;
-      const page = api.selectedScrollSnap();
-      if (page === preference.current) return;
-      preference.current = page;
-      rememberPage(page);
-    };
-    api.on("select", select);
-    api.on("reInit", restore);
-    restore();
-    return () => { api.off("select", select); api.off("reInit", restore); };
-  }, [api, enabled, layoutKey]);
+    const root = bar.current;
+    if (!strip || !root) return;
+    const axis = vertical ? "scrollTop" : "scrollLeft";
+    const size = () => vertical ? strip.clientHeight : strip.clientWidth;
+    const limit = () => Math.max(0, (vertical ? strip.scrollHeight : strip.scrollWidth) - size());
+    const layout = () => `${vertical}:${pageSize}:${count}:${size()}`;
+    let previousOffset = 0;
+    let remainder = 0;
 
-  return { ...state, startIndex };
+    const update = (remember: boolean) => {
+      const offset = strip[axis];
+      const max = limit();
+      const extent = Math.max(1, size());
+      const atEnd = offset >= max - 0.5;
+      const page = atEnd ? Math.ceil(max / extent) : Math.round(offset / extent);
+      setState({ currentPage: page, canScrollPrev: offset > 0.5, canScrollNext: !atEnd });
+      if (remember && offset !== previousOffset) {
+        lastPosition = { layout: layout(), offset };
+        if (page !== initialPage.current) {
+          initialPage.current = page;
+          rememberPage(page);
+        }
+      }
+      previousOffset = offset;
+    };
+    const restore = () => {
+      strip[axis] = lastPosition?.layout === layout() ? lastPosition.offset : Math.min(initialPage.current * size(), limit());
+      update(false);
+    };
+    const gesture = createActionBarWheelGesture();
+    const lineHeight = Number.parseFloat(getComputedStyle(strip).lineHeight) || 16;
+    const wheel = (event: WheelEvent) => {
+      const delta = actionBarWheelDistance(event, lineHeight, size());
+      if (!delta || !size()) return;
+      event.preventDefault();
+      const action = gesture(event, event.timeStamp, window.devicePixelRatio || 1);
+      if (action === "ignore") return;
+      if (action === "page") {
+        remainder = 0;
+        const offset = strip[axis];
+        const extent = size();
+        const page = delta > 0 ? Math.floor((offset + 0.5) / extent) + 1 : Math.ceil((offset - 0.5) / extent) - 1;
+        const target = Math.max(0, Math.min(page * extent, limit()));
+        strip.scrollTo({
+          [vertical ? "top" : "left"]: target,
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+        });
+        return;
+      }
+      const target = Math.max(0, Math.min(strip[axis] + delta + remainder, limit()));
+      strip[axis] = target;
+      remainder = target - strip[axis];
+    };
+    const onScroll = () => update(true);
+    restore();
+    const resize = new ResizeObserver(restore);
+    resize.observe(strip);
+    strip.addEventListener("scroll", onScroll);
+    root.addEventListener("wheel", wheel, { passive: false });
+    return () => {
+      resize.disconnect();
+      strip.removeEventListener("scroll", onScroll);
+      root.removeEventListener("wheel", wheel);
+    };
+  }, [strip, vertical, pageSize, count, bar]);
+
+  function scrollByPage(direction: -1 | 1) {
+    if (!strip) return;
+    strip.scrollBy(vertical ? { top: direction * strip.clientHeight } : { left: direction * strip.clientWidth });
+  }
+
+  return { ...state, scrollByPage };
 }

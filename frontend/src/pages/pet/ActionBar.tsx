@@ -12,6 +12,7 @@ import {
 } from "react";
 import {
   Bell,
+  BookOpen,
   Brain,
   ChevronDown,
   ChevronLeft,
@@ -36,17 +37,13 @@ import {
 import { FeedbackIcon } from "@/components/app/FeedbackIcon";
 import {
   Button,
-  Carousel,
-  CarouselContent,
-  CarouselItem,
   TooltipButton,
   TooltipProvider,
-  type CarouselApi,
 } from "@/components/ui";
 
 import { derivePageState } from "./actionBarPaging";
 import { useActionBarPaging } from "./useActionBarPaging";
-import { createActionBarWheelPager } from "./actionBarWheel";
+import { useActionBarTooltip } from "./useActionBarTooltip";
 import { isFiniteRect, isFiniteViewport } from "./petGeometry";
 import type { AccessoryLayout } from "@/pet/accessoryLayout/geometry";
 import { actionBarPageCapacity, readAccessorySpacing } from "@/pet/accessoryLayout/actionBarMetrics";
@@ -66,8 +63,8 @@ import type { NotificationDebugScenario } from "@/types/notification";
  * 019 重做点：
  * - 容器：垂直 flex → 横向 chip（背景 + 圆角 + 边框 + shadow，颜色全 token）
  * - 按钮：文字 button → icon-only TooltipButton（lucide icon + tooltip）
- * - 分页：按钮总数 > PAGE_SIZE 时启用 shadcn carousel + 自定义圆形箭头；
- *   箭头按钮常驻，首末页只切 disabled，避免翻页时 carousel viewport 跳动。
+ * - 分页：按钮总数 > PAGE_SIZE 时启用可连续滚动的图标带和前后箭头；
+ *   箭头按钮常驻，首末页只切 disabled，避免翻页时滚动视口跳动。
  * - dev 注入按钮：位于 carousel 末尾，仍 `import.meta.env.DEV` gate
  *
  * 分页判定逻辑抽到 [`actionBarPaging.ts`](./actionBarPaging.ts) 纯函数 `derivePageState`（独立单测）。
@@ -80,6 +77,7 @@ interface Props {
   onMouseEnter: MouseEventHandler<HTMLDivElement>;
   onMouseLeave: MouseEventHandler<HTMLDivElement>;
   onOpenChat: () => void;
+  onOpenOnboarding: () => void;
   onOpenScheduledTasks: () => void;
   onOpenTodos: () => void;
   petAvatarSize: PetAvatarSize;
@@ -117,6 +115,7 @@ function OutwardTooltipButton({
   tooltip,
   tooltipSide = "top",
   tooltipDelayMs,
+  tooltipRootProps,
   tooltipContentProps,
   size = "icon-sm",
   variant = "ghost",
@@ -178,6 +177,7 @@ function OutwardTooltipButton({
       icon={icon}
       tooltip={tooltip}
       tooltipDelayMs={tooltipDelayMs}
+      tooltipRootProps={tooltipRootProps}
       size={size}
       variant={variant}
       ref={setTrigger}
@@ -207,6 +207,7 @@ export function ActionBar({
   onMouseEnter,
   onMouseLeave,
   onOpenChat,
+  onOpenOnboarding,
   onOpenScheduledTasks,
   onOpenTodos,
   petAvatarSize,
@@ -262,10 +263,12 @@ export function ActionBar({
       { icon: <Bell />, tooltip: "调试通知队列（不调用模型）", onClick: onInjectReminder, debugAction: "stack" },
       { icon: <Trash2 />, tooltip: "清空调试通知（不影响真实通知）", onClick: onClearDebugNotifications, debugAction: "clear" },
       { icon: <SlidersHorizontal />, tooltip: "Live2D 调试器", onClick: onOpenLive2DDebugger },
+      { icon: <BookOpen />, tooltip: "新手引导", onClick: onOpenOnboarding },
     );
   }
 
-  const [api, setApi] = useState<CarouselApi>();
+  const [strip, setStrip] = useState<HTMLDivElement | null>(null);
+  const tooltipFor = useActionBarTooltip(strip);
   const layout = accessoryLayout?.actionBar ?? null;
   const isVertical = layout?.orientation === "vertical";
   const pageSize = actionBarPageCapacity(
@@ -274,8 +277,8 @@ export function ActionBar({
     isVertical,
     readAccessorySpacing(),
   );
-  const { currentPage, canScrollPrev, canScrollNext, startIndex } = useActionBarPaging(
-    api, buttons.length > pageSize, `${isVertical}:${pageSize}:${buttons.length}`,
+  const { currentPage, canScrollPrev, canScrollNext, scrollByPage } = useActionBarPaging(
+    strip, isVertical, pageSize, buttons.length, rootRef,
   );
   const pageState = derivePageState({
     buttonCount: buttons.length,
@@ -286,23 +289,6 @@ export function ActionBar({
 
   const hasValidGeometry =
     isFiniteRect(actionBarAnchor) && isFiniteViewport(viewport);
-  const hasBar = hasValidGeometry && layout !== null;
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root || !api || !needsCarousel || !hasBar) return;
-    const pageWheel = createActionBarWheelPager();
-    const wheel = (event: WheelEvent) => {
-      if (event.ctrlKey || (!event.deltaX && !event.deltaY)) return;
-      event.preventDefault();
-      const direction = pageWheel(event, performance.now(), api.canScrollPrev(), api.canScrollNext());
-      if (direction < 0) api.scrollPrev();
-      if (direction > 0) api.scrollNext();
-    };
-    // React delegates wheel passively; this local listener prevents scrolling
-    // through the transparent pet window while paging its toolbar.
-    root.addEventListener("wheel", wheel, { passive: false });
-    return () => root.removeEventListener("wheel", wheel);
-  }, [api, hasBar, needsCarousel]);
   const left = layout?.left ?? 0;
   const top = layout?.top ?? 0;
   const layoutWidth = layout?.width ?? 0;
@@ -351,6 +337,7 @@ export function ActionBar({
   const renderActionButton = (button: BtnDef, key: string | number) => (
     <OutwardTooltipButton
       key={key}
+      tooltipRootProps={tooltipFor(button.tooltip)}
       icon={button.icon}
       tooltip={button.tooltip}
       tooltipSide={tooltipSide}
@@ -358,6 +345,7 @@ export function ActionBar({
       tooltipContentProps={tooltipContentProps}
       onClick={button.onClick}
       aria-label={button.tooltip}
+      data-pet-action={button.tooltip}
       data-notification-debug={button.debugAction}
       data-hit
     />
@@ -400,65 +388,7 @@ export function ActionBar({
     );
   };
 
-  const renderHorizontalButtons = () => {
-    if (!needsCarousel) {
-      return (
-        <div className="flex items-center gap-1">
-          {buttons.map((button, index) => renderActionButton(button, index))}
-        </div>
-      );
-    }
-
-    return (
-      <>
-        {renderPageArrow("prev", () => api?.scrollPrev(), !showPrev)}
-        <Carousel
-          opts={{ slidesToScroll: pageSize, align: "start", loop: false, startIndex }}
-          setApi={setApi}
-          className="min-w-0 flex-1 overflow-hidden"
-        >
-          <CarouselContent className="-ml-1">
-            {buttons.map((button, index) => (
-              <CarouselItem key={index} className="pl-1" style={{ flexBasis: `${100 / pageSize}%` }}>
-                {renderActionButton(button, index)}
-              </CarouselItem>
-            ))}
-          </CarouselContent>
-        </Carousel>
-        {renderPageArrow("next", () => api?.scrollNext(), !showNext)}
-      </>
-    );
-  };
-
-  const renderVerticalButtons = () => {
-    if (!needsCarousel) {
-      return buttons.map((button, index) => renderActionButton(button, index));
-    }
-
-    return (
-      <>
-        {renderPageArrow("prev", () => api?.scrollPrev(), !showPrev)}
-        <Carousel
-          orientation="vertical"
-          opts={{ slidesToScroll: pageSize, align: "start", loop: false, startIndex }}
-          setApi={setApi}
-          className="min-h-0 flex-1 overflow-hidden [&>[data-slot=carousel-content]]:h-full"
-        >
-          <CarouselContent className="-mt-1 h-full">
-            {buttons.map((button, index) => (
-              <CarouselItem key={index} className="pt-1" style={{ flexBasis: `${100 / pageSize}%` }}>
-                {renderActionButton(button, index)}
-              </CarouselItem>
-            ))}
-          </CarouselContent>
-        </Carousel>
-        {renderPageArrow("next", () => api?.scrollNext(), !showNext)}
-      </>
-    );
-  };
-
-  const renderActionBarContent = () =>
-    isVertical ? renderVerticalButtons() : renderHorizontalButtons();
+  const actions = buttons.map((button) => renderActionButton(button, button.tooltip));
 
   if (!hasValidGeometry || !layout) return null;
 
@@ -487,7 +417,21 @@ export function ActionBar({
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
       >
-        {renderActionBarContent()}
+        {needsCarousel ? (
+          <>
+            {renderPageArrow("prev", () => scrollByPage(-1), !showPrev)}
+            <div
+              ref={setStrip}
+              data-actionbar-strip
+              className={`flex flex-1 items-center gap-1 overscroll-contain [scrollbar-width:none] [&>*]:shrink-0 ${isVertical
+                ? "min-h-0 flex-col overflow-y-auto overflow-x-hidden"
+                : "min-w-0 overflow-x-auto overflow-y-hidden"}`}
+            >
+              {actions}
+            </div>
+            {renderPageArrow("next", () => scrollByPage(1), !showNext)}
+          </>
+        ) : actions}
       </div>
     </TooltipProvider>
   );

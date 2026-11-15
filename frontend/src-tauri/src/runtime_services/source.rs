@@ -3,10 +3,7 @@ use super::model::RuntimeServiceKind;
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::Duration,
 };
-
-pub(super) const READINESS_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub(super) fn command(root: &Path, service: RuntimeServiceKind) -> Result<Command, String> {
     let uv_executable = resolve_path_executable("uv").ok_or_else(|| {

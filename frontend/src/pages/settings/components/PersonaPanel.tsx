@@ -40,6 +40,7 @@ const PERSONA_REFRESH_MS = 3_000;
 
 interface PersonaPanelProps {
   active: boolean;
+  embedded?: boolean;
 }
 
 type VersionView = "current" | "candidate" | "diff";
@@ -88,7 +89,7 @@ function DiffLine({ line }: { line: PersonaDiffLine }) {
   );
 }
 
-export function PersonaPanel({ active }: PersonaPanelProps) {
+export function PersonaPanel({ active, embedded = false }: PersonaPanelProps) {
   const [persona, setPersona] = useState<PersonaState | null>(null);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [editorMessages, setEditorMessages] = useState<ChatMessage[]>([]);
@@ -287,6 +288,7 @@ export function PersonaPanel({ active }: PersonaPanelProps) {
   return (
     <div className={active ? "contents" : "hidden"} aria-hidden={!active}>
       <SettingsPageLayout
+        embedded={embedded}
         title="人格"
         actions={(
           <DropdownMenu>

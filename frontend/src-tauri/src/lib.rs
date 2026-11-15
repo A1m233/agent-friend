@@ -21,6 +21,7 @@ mod link_navigation;
 mod model_connections;
 pub mod native_crash;
 mod notification_sound;
+pub mod onboarding;
 mod owner_capabilities;
 mod paths;
 mod permissions;
@@ -114,6 +115,8 @@ struct WorkspaceNavigationEnvelope {
 #[serde(rename_all = "camelCase")]
 struct ChatOpenRequest {
     new_conversation: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    onboarding_model: Option<settings::ModelSelection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     session_id: Option<String>,
 }
@@ -702,6 +705,7 @@ fn open_chat_session(app: tauri::AppHandle, session_id: String) -> Result<(), St
         WorkspaceTarget::Chat,
         Some(ChatOpenRequest {
             new_conversation: false,
+            onboarding_model: None,
             session_id: Some(session_id),
         }),
         None,
@@ -727,6 +731,7 @@ fn navigate_new_conversation(app: &tauri::AppHandle) -> Result<(), String> {
         WorkspaceTarget::Chat,
         Some(ChatOpenRequest {
             new_conversation: true,
+            onboarding_model: None,
             session_id: None,
         }),
         None,
@@ -1345,6 +1350,7 @@ pub fn run() {
         runtime_services::endpoints::init_script(),
         settings::build_init_script(&bootstrap_settings)
     );
+    let offer_onboarding = !bootstrap_settings.onboarding_completed;
     let settings_state = Arc::new(Mutex::new(bootstrap_settings));
     settings_phase.finish(true);
     let pet_evidence_identity = pet_input_evidence::integration::runtime_identity(
@@ -1406,6 +1412,9 @@ pub fn run() {
                     "autostart": args.iter().any(|arg| arg == "--autostart"),
                 }),
             );
+            if onboarding::activate(app, &args) {
+                return;
+            }
             if should_focus_existing_instance(&args) {
                 log::info!("second instance launch received; focusing chat window");
                 if let Err(error) = navigate_workspace(app, WorkspaceTarget::Chat, None) {
@@ -1444,6 +1453,8 @@ pub fn run() {
         .manage(PetWebviewState::default())
         .manage(pet_evidence)
         .manage(render_evidence)
+        .manage(onboarding::window::WindowState::default())
+        .manage(onboarding::defaults::DefaultsState::default())
         .manage(VoiceLaunchState::default())
         .manage(WorkspaceNavigationState::default())
         .manage(shell_diagnostics_manager)
@@ -1519,6 +1530,11 @@ pub fn run() {
         open_im_connect,
         open_scheduled_tasks,
         open_todos,
+        onboarding::window::open_onboarding,
+        onboarding::window::take_onboarding_step,
+        onboarding::window::finish_onboarding,
+        onboarding::get_onboarding_status,
+        onboarding::select_onboarding_model,
         open_voice_call,
         open_voice_call_with_start,
         consume_pending_voice_start,
@@ -1623,6 +1639,11 @@ pub fn run() {
         open_im_connect,
         open_scheduled_tasks,
         open_todos,
+        onboarding::window::open_onboarding,
+        onboarding::window::take_onboarding_step,
+        onboarding::window::finish_onboarding,
+        onboarding::get_onboarding_status,
+        onboarding::select_onboarding_model,
         open_voice_call,
         open_voice_call_with_start,
         consume_pending_voice_start,
@@ -1700,6 +1721,18 @@ pub fn run() {
                     window.app_handle(),
                     permissions::manager::PermissionRefreshReason::Focused,
                 );
+            }
+            if window.label() == "onboarding"
+                && matches!(
+                    event,
+                    tauri::WindowEvent::Moved(_)
+                        | tauri::WindowEvent::Resized(_)
+                        | tauri::WindowEvent::ScaleFactorChanged { .. }
+                )
+            {
+                if let Err(error) = onboarding::window::fit_to_monitor(window) {
+                    log::warn!("could not fit setup assistant to monitor: {error}");
+                }
             }
             if window.label() == "pet" {
                 match event {
@@ -1997,6 +2030,17 @@ pub fn run() {
                 app.handle(),
                 &setup_webview_diagnostics_manager,
             );
+            tauri::async_runtime::spawn(onboarding::defaults::recover(app.handle().clone()));
+            let setup_command =
+                onboarding::activate(app.handle(), &std::env::args().collect::<Vec<_>>());
+            if offer_onboarding && !setup_command {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = onboarding::window::show(&handle, None).await {
+                        log::warn!("could not open setup assistant: {error}");
+                    }
+                });
+            }
             setup_phase.finish(true);
             Ok(())
         })
@@ -2133,6 +2177,7 @@ mod tests {
                 WorkspaceTarget::Chat,
                 Some(ChatOpenRequest {
                     new_conversation: true,
+                    onboarding_model: None,
                     session_id: None,
                 }),
                 None,

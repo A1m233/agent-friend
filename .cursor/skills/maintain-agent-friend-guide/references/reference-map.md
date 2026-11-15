@@ -4,6 +4,7 @@
 
 | 产品事实变化 | 公开 reference |
 | --- | --- |
+| 设置助理、首次模型配置、请外部 Agent 协助 | `getting-started.md` |
 | 产品定位、能力列表、整体限制 | `product-overview.md` |
 | 对话、会话、搜索、附件、人格、桌宠、Skill、后台在线 | `using-agent-friend.md` |
 | 从 Ark-Models 选择、下载和安装明日方舟 Spine 桌宠模型 | `arknights-avatar-models.md` |
@@ -15,8 +16,6 @@
 | 语音输入、语音通话、火山凭据组合 | `voice-credentials.md` |
 | 数据位置、迁移、凭据存储、诊断包和隐私 | `data-and-privacy.md` |
 | 用户可观察错误、降级和排查顺序 | `troubleshooting.md` |
-
-`getting-started.md` 在首期是非空占位，不承担普通问题路由。完整安装、首次启动和 onboarding 由后续独立需求接管。
 
 ## 优先核对入口
 
