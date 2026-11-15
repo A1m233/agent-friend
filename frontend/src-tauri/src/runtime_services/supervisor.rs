@@ -20,7 +20,8 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 
 const EVENT_CHANGED: &str = "runtime-service://changed";
-const PACKAGED_READINESS_TIMEOUT: Duration = Duration::from_secs(10);
+const READINESS_TIMEOUT: Duration = Duration::from_secs(60);
+const PACKAGED_VOICE_READINESS_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_DELAY: Duration = Duration::from_millis(200);
 const DEFAULT_RUNTIME_START_REASON: &str = "desktop_start";
 const CONTROLLED_RUNTIME_RESTART_REASON: &str = "controlled_restart";
@@ -559,10 +560,7 @@ impl RuntimeServiceSupervisor {
             .observer
             .as_ref()
             .map(|observer| observer.phase("service-readiness", context));
-        let timeout = match self.launch_context {
-            RuntimeLaunchContext::Source(_) => super::source::READINESS_TIMEOUT,
-            _ => PACKAGED_READINESS_TIMEOUT,
-        };
+        let timeout = self.launch_context.readiness_timeout(service);
         let deadline = tokio::time::Instant::now() + timeout;
         while tokio::time::Instant::now() < deadline {
             let mut slot = slot_ref.lock().await;
@@ -1073,6 +1071,13 @@ fn discover_packaged_runtime(
 }
 
 impl RuntimeLaunchContext {
+    fn readiness_timeout(&self, service: RuntimeServiceKind) -> Duration {
+        match (self, service) {
+            (Self::Packaged { .. }, RuntimeServiceKind::Voice) => PACKAGED_VOICE_READINESS_TIMEOUT,
+            _ => READINESS_TIMEOUT,
+        }
+    }
+
     fn port(&self, service: RuntimeServiceKind) -> u16 {
         match self {
             Self::Packaged { profile, .. } => match service {
@@ -1512,9 +1517,8 @@ mod tests {
         std::fs::remove_dir_all(resource_dir).unwrap();
     }
 
-    #[test]
-    fn packaged_readiness_requires_exact_service_build_profile_and_hash() {
-        let context = RuntimeLaunchContext::Packaged {
+    fn packaged_test_context() -> RuntimeLaunchContext {
+        RuntimeLaunchContext::Packaged {
             launcher: PathBuf::from("runtime.exe"),
             memory_model_dir: PathBuf::from("model"),
             identity: install_contract::BuildIdentity {
@@ -1530,7 +1534,12 @@ mod tests {
             },
             identity_sha256: "c".repeat(64),
             profile: install_contract::embedded_profile().unwrap(),
-        };
+        }
+    }
+
+    #[test]
+    fn packaged_readiness_requires_exact_service_build_profile_and_hash() {
+        let context = packaged_test_context();
         let matching = serde_json::json!({
             "status": "ready",
             "service": "bridge",
@@ -1547,6 +1556,26 @@ mod tests {
             validate_readiness_identity(&stale, RuntimeServiceKind::Bridge, &context)
                 .expect_err("stale runtime must be rejected")
                 .starts_with("runtime_identity_mismatch")
+        );
+    }
+
+    #[test]
+    fn readiness_deadlines_cover_bridge_cold_start_and_preserve_voice_policy() {
+        let packaged = packaged_test_context();
+        let source = RuntimeLaunchContext::Source(PathBuf::from("repo"));
+        for context in [&source, &packaged] {
+            assert_eq!(
+                context.readiness_timeout(RuntimeServiceKind::Bridge),
+                Duration::from_secs(60)
+            );
+        }
+        assert_eq!(
+            source.readiness_timeout(RuntimeServiceKind::Voice),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            packaged.readiness_timeout(RuntimeServiceKind::Voice),
+            Duration::from_secs(10)
         );
     }
 
