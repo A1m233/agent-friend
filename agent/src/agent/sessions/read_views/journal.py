@@ -44,6 +44,7 @@ def _record_starts(skip: frozenset[str]) -> re.Pattern[bytes]:
 
 _HISTORY_STARTS = _record_starts(ROLLOUT_EVENT_TYPES)
 _CONFIG_STARTS = _record_starts(ALLOWED_EVENT_TYPES - _CONFIG - {"turn_rewrite"})
+_ASSISTANT_STARTS = _record_starts(ALLOWED_EVENT_TYPES - {"assistant_message", "turn_rewrite"})
 
 
 def valid_configuration(event: Event) -> bool:
@@ -135,6 +136,29 @@ def _event(data: mmap.mmap, start: int, stop: int) -> Event:
 def _head(data: mmap.mmap) -> Session:
     end = data.find(b"\n")
     return Session.from_events([_event(data, 0, end if end >= 0 else len(data))])
+
+
+def read_assistant_messages_by_id(
+    path: Path, version: SourceVersion, message_ids: frozenset[str]
+) -> Iterator[Event]:
+    pending = set(message_ids)
+    with (
+        path.open("rb") as source,
+        mmap.mmap(source.fileno(), version[2], access=mmap.ACCESS_READ) as data,
+    ):
+        for start, stop, kind in records_reverse(data, version[2], None, _ASSISTANT_STARTS):
+            if kind not in (None, "assistant_message", "turn_rewrite"):
+                continue
+            event = _event(data, start, stop)
+            if event.type == "turn_rewrite":
+                inactive = event.payload.get("inactive_event_uuids")
+                if isinstance(inactive, list):
+                    pending.difference_update(uid for uid in inactive if isinstance(uid, str))
+            elif event.type == "assistant_message" and event.uuid in pending:
+                pending.remove(event.uuid)
+                yield event
+            if not pending:
+                break
 
 
 def read_window(

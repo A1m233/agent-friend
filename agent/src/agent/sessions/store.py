@@ -18,6 +18,7 @@ from collections.abc import Callable, Iterable, Iterator
 from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass, replace
 from datetime import datetime
+from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
 from threading import Lock
@@ -33,6 +34,7 @@ from llm_providers import (
     validate_model_runtime_config,
 )
 
+from ..message_exposure import content_version
 from .business_index import BusinessIndex
 from .business_index.builds import BusinessBuilds
 from .business_index.cancellation import sticky_cancellation
@@ -69,6 +71,7 @@ from .query_observation import (
 from .read_views import HistoryWindow, read_configuration, read_window
 from .read_views.activity import ActivityTimes, latest_timestamp
 from .read_views.configuration import ConfigurationCache
+from .read_views.journal import read_assistant_messages_by_id
 from .recall import RecallBuilder, SessionRecallSnapshot, query_session_recall
 from .recall.index import RecallIndex
 from .rollout_encoding import RolloutDecoder
@@ -237,6 +240,22 @@ class SessionStore(Protocol):
 
     def latest(self) -> SessionSummary | None:
         """最近活跃会话的摘要；无会话则 ``None``。"""
+
+
+def _assistant_versions(events: Iterable[Event]) -> dict[str, str]:
+    return {
+        event.uuid: content_version(str(event.payload.get("content", "")))
+        for event in events
+        if not event.payload.get("partial")
+    }
+
+
+@lru_cache(maxsize=32)
+def _legacy_assistant_versions(
+    path: Path, version: SourceVersion, message_ids: frozenset[str]
+) -> dict[str, str]:
+    # Repeated observations of the same viewport retain only IDs and hashes.
+    return _assistant_versions(read_assistant_messages_by_id(path, version, message_ids))
 
 
 class JsonlSessionStore:
@@ -703,6 +722,28 @@ class JsonlSessionStore:
         except OSError as exc:
             observe_query_maintenance_failure(session_id, exc)
         return session
+
+    def assistant_message_versions(self, session_id: str, message_ids: set[str]) -> dict[str, str]:
+        path = self._existing_path(session_id)
+        if not message_ids or path is None:
+            return {}
+        for _ in range(2):
+            version = self._source_version(path)
+            try:
+                indexed = self._business_index.assistant_messages_by_id(
+                    session_id, version, message_ids
+                )
+            except (OSError, sqlite3.Error, SessionCorruptError):
+                indexed = None
+            versions = (
+                _assistant_versions(indexed.values())
+                if indexed is not None
+                else _legacy_assistant_versions(path, version, frozenset(message_ids))
+            )
+            if self._source_version(path) == version:
+                return dict(versions)
+        # A subsequent heartbeat can validate against the new journal.
+        return {}
 
     def history_window(
         self,

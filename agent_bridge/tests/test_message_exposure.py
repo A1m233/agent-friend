@@ -34,7 +34,7 @@ def setup(tmp_path: Path) -> tuple[TestClient, MessageExposureService, JsonlSess
             presence_registry=PresenceRegistry(),
         ),
     )
-    service = MessageExposureService(runtime)
+    service = MessageExposureService(runtime, store.assistant_message_versions)
     cast(Any, runtime).message_exposure = service
     app = FastAPI()
     register_routes(app, runtime)
@@ -99,4 +99,21 @@ def test_version_checked_display_is_separate_from_chat_and_read_receipt(
     assert len(service.changes(0)["items"]) == 1
     store.delete("s")
     assert service.changes(0)["items"] == []
+    assert service.store.changes(0)["items"] == []
+
+
+def test_presence_heartbeat_without_observations_skips_session_access(
+    setup: tuple[TestClient, MessageExposureService, JsonlSessionStore],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, service, _ = setup
+
+    def forbidden(*args: object) -> None:
+        pytest.fail("empty heartbeat accessed the session")
+
+    monkeypatch.setattr(service.runtime.persistent_session_manager, "exists", forbidden)
+    monkeypatch.setattr(service, "_message_versions", forbidden)
+    payload = _payload()
+    payload["messageObservations"] = []
+    assert client.post("/v1/runtime/presence/desktop", json=payload).status_code == 200
     assert service.store.changes(0)["items"] == []
