@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import Event as Signal
 
 import pytest
+from agent.message_exposure import content_version
 from agent.sessions import store as store_module
 from agent.sessions.events import EventType
 from agent.sessions.preparation import ExecutionPreparation
@@ -38,6 +39,28 @@ def history(root: Path, turns: int = 65) -> JsonlSessionStore:
 
 def forbidden(*args: object, **kwargs: object) -> None:
     raise AssertionError("interactive reads must not hydrate or rebuild full history")
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_display_observations_read_only_active_final_answers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: bool
+) -> None:
+    store = history(tmp_path)
+    store.append_event("one", event("assistant_message", "draft", content="draft", partial=True))
+    if legacy:
+        store.discard_business_index("one")
+    else:
+        store.query("one")
+        monkeypatch.setattr(store_module, "read_assistant_messages_by_id", forbidden)
+    monkeypatch.setattr(store, "query", forbidden)
+    ids = {"u60", "a60", "a64", "draft", "absent"}
+    expected = {f"a{i}": content_version(f"answer {i}") for i in (60, 64)}
+    assert store.assistant_message_versions("one", ids) == expected
+    with monkeypatch.context() as patch:
+        patch.setattr(store_module, "read_assistant_messages_by_id", forbidden)
+        assert store.assistant_message_versions("one", ids) == expected
+    store.append_event("one", event("turn_rewrite", "edit", inactive_event_uuids=["a60"]))
+    assert store.assistant_message_versions("one", ids) == {"a64": expected["a64"]}
 
 
 @pytest.mark.parametrize("legacy", [False, True])

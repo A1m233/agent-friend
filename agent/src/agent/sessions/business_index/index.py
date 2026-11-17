@@ -219,6 +219,27 @@ class BusinessIndex:
             session.loaded_source_version = version
             return session
 
+    def assistant_messages_by_id(
+        self, session_id: str, version: SourceVersion, message_ids: set[str]
+    ) -> dict[str, Event] | None:
+        """A matching index is authoritative even when none of the IDs are active."""
+        path = self.path(session_id)
+        if not path.exists():
+            return None
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0)) as db:
+            db.execute("BEGIN")
+            if db.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA:
+                return None
+            if not db.execute("SELECT 1 FROM state WHERE version=?", (dump(version),)).fetchone():
+                return None
+            placeholders = ",".join("?" for _ in message_ids)
+            rows = db.execute(
+                "SELECT uuid, CASE WHEN active=1 AND kind='assistant_message' THEN body END "
+                f"FROM events WHERE uuid IN ({placeholders})",
+                tuple(message_ids),
+            )
+            return {uid: Event.from_jsonl(body) for uid, body in rows if body is not None}
+
     @staticmethod
     def _metadata(snapshot: SessionQuerySnapshot) -> dict[str, Any]:
         return {
