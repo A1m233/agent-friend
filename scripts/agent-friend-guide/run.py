@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import stat
 import subprocess
 import sys
@@ -18,6 +17,9 @@ from uuid import uuid4
 
 import yaml
 from agent.skills import SkillLoader, SkillRoot
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _lib.builtin_skill_snapshot import replace_builtin_snapshot
 
 SCHEMA_VERSION = 1
 SKILL_NAME = "agent-friend-guide"
@@ -506,40 +508,9 @@ def updated_manifest(
 
 
 def replace_snapshot(product_repo: Path, source: Path, manifest_value: dict[str, Any]) -> None:
-    root = builtin_root(product_repo)
-    target = root / SKILL_NAME
-    staging = root / f".{SKILL_NAME}.staging-{os.getpid()}-{uuid4().hex}"
-    backup = root / f".{SKILL_NAME}.backup-{os.getpid()}-{uuid4().hex}"
-    manifest = root / "manifest.json"
-    manifest_staging = root / f".manifest.staging-{os.getpid()}-{uuid4().hex}.json"
-    moved_old = False
-    installed_new = False
-    try:
-        shutil.copytree(source, staging, symlinks=False)
-        manifest_staging.write_text(
-            json.dumps(manifest_value, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-            newline="\n",
-        )
-        if target.exists():
-            os.replace(target, backup)
-            moved_old = True
-        os.replace(staging, target)
-        installed_new = True
-        os.replace(manifest_staging, manifest)
-    except Exception:
-        if installed_new and target.exists():
-            shutil.rmtree(target)
-        if moved_old and backup.exists():
-            os.replace(backup, target)
-        raise
-    finally:
-        if staging.exists():
-            shutil.rmtree(staging)
-        if manifest_staging.exists():
-            manifest_staging.unlink()
-        if backup.exists():
-            shutil.rmtree(backup)
+    replace_builtin_snapshot(
+        builtin_root(product_repo), SKILL_NAME, source, manifest_value["skills"][SKILL_NAME]
+    )
 
 
 def verify_builtin(product_repo: Path, guide_commit: str, expected_digest: str) -> None:

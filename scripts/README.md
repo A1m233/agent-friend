@@ -265,6 +265,7 @@ Python通知代码调整后可显式执行 `restart-bridge`，复用前端的 `r
 | `frontend/lint` | 前端 lint（ESLint，含 `forbid-elements` 原生交互件门禁）+ 颜色门禁（`color-guard`：禁硬编码色板类/#hex/rgb()）+ 类型检查（tsc）；已并入 `check/` | `./scripts/frontend/lint.sh` | `.\scripts\frontend\lint.ps1` |
 | `frontend/test` | 前端单测（vitest，跑核心逻辑：AG-UI 事件投影 / 历史投影）；已并入 `check/` | `./scripts/frontend/test.sh` | `.\scripts\frontend\test.ps1` |
 | `codex-adapters/` | 校验 / 同步项目级 Codex adapter：`.Codex/skills/*` 软链与 `AGENTS.md` rules/skills lookup 表，防止 `.cursor/rules` / `.cursor/skills` 漂移 | `./scripts/codex-adapters/run.sh [doctor\|sync]` | `.\scripts\codex-adapters\run.ps1 [doctor\|sync]` |
+| `codex-adapters/` | 从项目 skill 同步安装版 AF 的记忆维护包并校验 manifest 摘要 | `./scripts/codex-adapters/run.sh sync-builtin\|verify-builtin` | `.\scripts\codex-adapters\run.ps1 sync-builtin\|verify-builtin` |
 
 ## ⚠️ Windows PowerShell 第一次运行
 

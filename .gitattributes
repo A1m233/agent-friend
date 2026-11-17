@@ -18,6 +18,7 @@ scripts/screenshot-smoke/run.sh text eol=lf
 scripts/_lib/xiaohongshu_connector/windows-disable-leakless.patch text eol=lf
 
 # Builtin Skill manifests and snapshots use byte-exact SHA-256 digests.
+.cursor/skills/maintain-af-memory/** text eol=lf
 agent/src/agent/skills/builtin_assets/** text eol=lf
 # Preserve upstream PNG bytes instead of applying the text rule above.
 agent/src/agent/skills/builtin_assets/pdf/assets/*.png -text

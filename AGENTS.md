@@ -32,7 +32,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: 496221f2a7142b93bc71e5dca51ea2015a8daea149842edb2554157f057f3ea4 -->
+<!-- codex-adapter-source-sha256: 1ab27416ef952392cab8bb4e8762dcf2b675e0bd8939d6e04868d503763823fe -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -563,7 +563,7 @@ Before starting work that matches a trigger below, read the rule file and apply 
 | `diagnostic-bundle-contract.mdc` | ["frontend/src-tauri/src/diagnostics/**", "frontend/src-tauri/src/shell_diagnostics/**", ".cursor/skills/inspect-agent-friend-diagnostics/**"] | agent-friend 诊断包生产协议、机器契约与 inspect-agent-friend-diagnostics 消费者的同步约束 | `.cursor/rules/diagnostic-bundle-contract.mdc` |
 | `frontend-ui-conventions.mdc` | frontend/** | agent-friend 前端 UI 编写规范：语义化组件选型、组件复用与设计 token CSS 变量化 | `.cursor/rules/frontend-ui-conventions.mdc` |
 | `frontend-visual-verification.mdc` | frontend/** | agent-friend 桌面前端视觉验收授权规范：改 Tauri 窗口 UI 时先询问是否做真实桌面端视觉验收；确认后才启动桌面端、截图、DOM 或 Playwright/CDP。 | `.cursor/rules/frontend-visual-verification.mdc` |
-| `frozen-runtime-packaging.mdc` | ["agent/src/**", "agent/pyproject.toml", "agent_bridge/src/**", "agent_bridge/pyproject.toml", "llm_providers/src/**", "llm_providers/pyproject.toml", "memory/src/**", "memory/pyproject.toml", "runtime_config/src/**", "runtime_config/pyproject.toml", "voice_bridge/src/**", "voice_bridge/pyproject.toml", "uv.lock", "scripts/package/**"] | agent-friend 冻结 Python runtime 的打包影响分类与验证纪律：约束运行时依赖、资源读取、动态导入、PyInstaller spec/hooks 和 package… | `.cursor/rules/frozen-runtime-packaging.mdc` |
+| `frozen-runtime-packaging.mdc` | [".cursor/skills/maintain-af-memory/**", "agent/src/**", "agent/pyproject.toml", "agent_bridge/src/**", "agent_bridge/pyproject.toml", "llm_providers/src/**", "llm_providers/pyproject.toml", "memory/src/**", "memory/pyproject.toml", "runtime_config/src/**", "runtime_config/pyproject.toml", "voice_bridge/src/**", "voice_bridge/pyproject.toml", "uv.lock", "scripts/package/**"] | agent-friend 冻结 Python runtime 的打包影响分类与验证纪律：约束运行时依赖、资源读取、动态导入、PyInstaller spec/hooks 和 package… | `.cursor/rules/frozen-runtime-packaging.mdc` |
 | `windows-installer-integrity.mdc` | ["scripts/package/**", "frontend/src-tauri/src/install_contract.rs", "frontend/src-tauri/src/bin/agent-friend-installer-helper.rs", "frontend/src-tauri/src/runtime_services/**", "frontend/src-tauri/src/diagnostics/**", "agent_bridge/src/agent_bridge/lifecycle.py", "voice_bridge/src/voice_bridge/lifecycle.py", "runtime_config/src/runtime_config/build_identity.py"] | agent-friend Windows 安装器完整性、版本化 payload、运行时身份、进程生命周期、本地化和真实覆盖升级的 Coding Agent 门禁 | `.cursor/rules/windows-installer-integrity.mdc` |
 
 <!-- codex-rule-loading:end -->
@@ -586,6 +586,7 @@ Before starting work that matches a trigger below, read the rule file and apply 
 | `desktop-visual-inspection` | 在 agent-friend 真实桌面端观察和验证视觉、DOM、交互与产品内 E2E 状态的标准流程。Use only when 用户明确要求真实桌面端视觉验收、截图、DOM、Playwri… |
 | `fix-issue` | 把用户明确点名的 docs/issues/NNN-slug/ 已登记 issue 闭环——读 issue、核对现状、落地修复、验证、标记 resolved 并提交。仅当用户给出 issue… |
 | `inspect-agent-friend-diagnostics` | Safely inspect and interpret agent-friend local diagnostic ZIP bundles. Use in the agent-friend… |
+| `maintain-af-memory` | 在用户要求检查、整理或纠正 agent-friend（AF）的长期记忆时，核对来源，判断记忆质量，给出调整方案并核验实际写入。日常问答中只想找回某段聊天时，使用会话检索。 |
 | `maintain-agent-friend-guide` | 检查 agent-friend 产品变更是否需要更新公开用户知识，维护并发布 agent-friend-guide immutable release，或为新桌面安装包刷新离线 builti… |
 | `package-release` | 在 agent-friend 项目中查询或设置桌面产品版本、构建受治理的 Windows 安装包，并盘点或清理打包工作区。Use when 用户说“打安装包”“构建安装包”“本地测试包”“查… |
 | `showcase-update` | 按用户意图检查、生成或同步、预览、提交或发布 agent-friend 的公开 showcase。当用户要求验证现有 showcase、更新 sanitized snapshot、运行或发布… |

@@ -104,6 +104,11 @@
       "snapshot_sha256": "e0ca7bd755ce4770a981237c8378d7cba2d85668c7e02cfbcd6bce2e63934458",
       "retrieved_at": "2026-10-18",
       "compatibility_patches": []
+    },
+    "maintain-af-memory": {
+      "source_repository": "https://github.com/A1m233/agent-friend",
+      "source_path": ".cursor/skills/maintain-af-memory",
+      "snapshot_sha256": "76da74ec5a476ec958ec2aaf924f55fcdecc22ea0588140f140dfe58b9ded79c"
     }
   }
 }

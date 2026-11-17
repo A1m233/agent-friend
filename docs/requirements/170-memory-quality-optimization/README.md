@@ -28,9 +28,14 @@
 原始聊天、记忆全文及其他敏感运行材料仅在本机私有位置保留；本目录存放脱敏摘要和证据关系。
 
 - [现状、问题与候选方案](investigation.md)
+- [11 月 17 日用维护 skill 复查本机有效库存](artifacts/20261117-memory-library-audit.md)
+- [AF 在真实副本上自主检查和修改的一轮实测](artifacts/20261117-af-memory-single-turn.md)
+- [AF 全量续查、实际修改与残留问题](artifacts/20261118-af-memory-full-audit.md)
+- [11 月 18 日确认并实施的维护 Skill 差异](artifacts/20261118-memory-maintenance-skill.diff)
+- [11 月 18 日应用已审阅修改及重启核验](artifacts/20261118-memory-application.md)
 - [证据索引与结论边界](evidence-index.md)
 - [全库聚合统计](artifacts/20261105-summary.json)
 - [只读统计查询](artifacts/snapshot-queries.sql)
 
 本机另有被 Git 忽略的 `private-evidence.local.md`，用于定位私有快照、原始样本和日志证据。
-当前工作树采用 v2 基础抽取和 v1 Semantic 纠错。三例对照及单独追加的 Case 2 验证均已归档。历史记忆处置留待后议。
+当前工作树采用 v2 基础抽取和 v1 Semantic 纠错。三例对照及单独追加的 Case 2 验证均已归档。11 月 18 日，已审阅的 AF 修改完成本机应用、备份和重启核验；未覆盖的存量问题见应用记录。

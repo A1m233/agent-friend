@@ -1,6 +1,6 @@
 ---
 description: agent-friend 冻结 Python runtime 的打包影响分类与验证纪律：约束运行时依赖、资源读取、动态导入、PyInstaller spec/hooks 和 package runtime 变更
-globs: ["agent/src/**", "agent/pyproject.toml", "agent_bridge/src/**", "agent_bridge/pyproject.toml", "llm_providers/src/**", "llm_providers/pyproject.toml", "memory/src/**", "memory/pyproject.toml", "runtime_config/src/**", "runtime_config/pyproject.toml", "voice_bridge/src/**", "voice_bridge/pyproject.toml", "uv.lock", "scripts/package/**"]
+globs: [".cursor/skills/maintain-af-memory/**", "agent/src/**", "agent/pyproject.toml", "agent_bridge/src/**", "agent_bridge/pyproject.toml", "llm_providers/src/**", "llm_providers/pyproject.toml", "memory/src/**", "memory/pyproject.toml", "runtime_config/src/**", "runtime_config/pyproject.toml", "voice_bridge/src/**", "voice_bridge/pyproject.toml", "uv.lock", "scripts/package/**"]
 alwaysApply: false
 codexLoad: preflight
 ---
@@ -12,6 +12,14 @@ codexLoad: preflight
 可执行事实以 `scripts/package/run.*`、`scripts/package/dependency_policy.py`、`scripts/package/windows/agent_friend_runtime.spec`、`scripts/package/windows/hooks/` 和 `scripts/package/runtime_entry.py` 为准。Rule 不复制这些文件中的依赖名单或收集算法。
 
 ## 先做影响分类
+
+### 项目记忆维护 Skill 的安装版副本
+
+`.cursor/skills/maintain-af-memory/` 是项目 Codex 与 AF 安装版共用的源包，查看与修改步骤、记忆质量判据及配套资源都在这里维护。每次改动源包后，从仓库根运行 `scripts/codex-adapters/run.ps1 sync-builtin`（macOS/Linux 用 `run.sh`），再运行同一入口的 `verify-builtin`。将生成的 `agent/src/agent/skills/builtin_assets/maintain-af-memory/` 和 manifest 摘要与源包一起提交。安装版通过正常打包收集这份实体副本。
+
+项目 Codex 的 Skill 发现沿用 adapter 的 `sync` 和 `doctor`。
+
+### 冻结运行时影响范围
 
 命中 glob 只表示必须检查，不表示每次都要构建冻结 runtime。先检查本次 diff；只有出现以下任一事实才算二级 `package-sensitive`：
 
