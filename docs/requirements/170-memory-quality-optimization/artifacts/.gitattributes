@@ -1,0 +1,2 @@
+# Keep the reviewed patch hashes and unified-diff context markers intact.
+20261117-memory-prompt-*.diff text eol=lf whitespace=-blank-at-eol,-blank-at-eof

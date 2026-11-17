@@ -1,0 +1,169 @@
+{
+  "date_local": "2026-11-05",
+  "timezone": "UTC+08:00",
+  "source_sha": "688f51116a37480e8b43aa6b08931b3cb96fc768",
+  "snapshot_captured_at": "2026-11-05T01:01:49.555113+08:00",
+  "snapshot_sha256": "0c966999a06e686435ce6cdd7d273bfa229e909bb106269473dbecc89b2574c2",
+  "data": {
+    "semantic_status": [
+      {
+        "status": "active",
+        "n": 912
+      },
+      {
+        "status": "deleted",
+        "n": 13
+      },
+      {
+        "status": "superseded",
+        "n": 227
+      }
+    ],
+    "episodic_status": [
+      {
+        "status": "active",
+        "n": 2663
+      },
+      {
+        "status": "deleted",
+        "n": 39
+      }
+    ],
+    "exact_semantic_duplicates": [
+      {
+        "groups": 33,
+        "rows": 69,
+        "extra_rows": 36,
+        "largest_group": 4
+      }
+    ],
+    "exact_episode_duplicates": [
+      {
+        "groups": 5,
+        "rows": 10,
+        "extra_rows": 5,
+        "largest_group": 2
+      }
+    ],
+    "episodic_length": [
+      {
+        "total": 2663,
+        "over_80": 490,
+        "maximum": 192,
+        "mean": 57.5
+      }
+    ],
+    "speaker_origin": [
+      {
+        "speaker_origin": "agent",
+        "n": 442
+      },
+      {
+        "speaker_origin": "user",
+        "n": 470
+      }
+    ],
+    "provenance_empty": [
+      {
+        "status": "active",
+        "n": 48
+      },
+      {
+        "status": "superseded",
+        "n": 7
+      }
+    ],
+    "extraction_contract_versions": [
+      {
+        "output_contract_version": 1,
+        "n": 11,
+        "first_at": "2026-08-15T17:14:34.018615Z",
+        "last_at": "2026-08-19T14:22:13.345778Z"
+      },
+      {
+        "output_contract_version": 2,
+        "n": 661,
+        "first_at": "2026-08-16T19:45:30.588894Z",
+        "last_at": "2026-11-04T16:53:23.468553Z"
+      }
+    ],
+    "pending_state": [
+      {
+        "state": "blocked",
+        "error_code": "observation_time_conflict",
+        "blocked_at": "2026-10-01T16:45:31.160121Z",
+        "n": 1
+      }
+    ]
+  },
+  "context_cost_estimate": {
+    "active_semantic_count": 912,
+    "statement_chars": 61963,
+    "estimated_semantic_context_tokens": 34388,
+    "budget": 50000,
+    "estimate_method": "sum ceil(len([Mxxx] statement) * 0.5), same as current code; not actual model tokenizer/usage",
+    "active_semantic_by_month": {
+      "2026-06": 4,
+      "2026-07": 103,
+      "2026-08": 333,
+      "2026-09": 100,
+      "2026-10": 284,
+      "2026-11": 88
+    },
+    "semantic_times": {
+      "created_min": "2026-06-19T20:05:43.143081Z",
+      "created_max": "2026-11-04T12:11:32.910370Z"
+    },
+    "episodic_times": {
+      "created_min": "2026-06-10T17:18:45.012321Z",
+      "created_max": "2026-11-04T14:13:40.930899Z",
+      "observed_min": "2026-06-10T17:18:43.455554Z",
+      "observed_max": "2026-11-04T14:13:40.887060Z"
+    },
+    "active_nonempty_fact_key": 0,
+    "active_with_temporal_phrase": 114
+  },
+  "quality_review_coverage": {
+    "active_semantic_read": 912,
+    "episodic_stratified_samples": 82,
+    "additional_linked_episodes": 4,
+    "original_messages_for_conflicts_and_attribution": 8
+  },
+  "other_observed_counts": {
+    "core_profile": 0,
+    "commits": 672,
+    "embedding_manifest": 3575,
+    "host_notification_episodes": 437,
+    "all_active_episode_importance_is_0_5": true,
+    "semantic_with_game_day_literal": 163,
+    "semantic_with_relative_time_literals": 64,
+    "relative_time_rows_created_before_october": 58,
+    "active_semantic_created_since_october": 372,
+    "since_october_game_execution_keyword_matches": 309
+  },
+  "runtime_window": {
+    "start": "2026-11-04T12:53:34.010+08:00",
+    "end": "2026-11-05T00:53:23.468+08:00",
+    "model": "openai/gpt-6-sol",
+    "base_calls": 20,
+    "base_input_tokens": 962657,
+    "base_cache_read_tokens": 16896,
+    "base_input_min": 47788,
+    "base_input_max": 49249,
+    "base_duration_median_ms": 6738.5,
+    "base_single_http_attempts": 20,
+    "empty_commits": 10,
+    "empty_commits_base_input_tokens": 480899,
+    "reconciliation_calls": 4,
+    "reconciliation_successes": 3,
+    "reconciliation_failure_usage": null,
+    "reconciliation_known_input_tokens": 148386,
+    "reconciliation_known_cache_read_tokens": 0
+  },
+  "limits": [
+    "Not a semantic error rate or total recall evaluation",
+    "Current code is not the identity of every historical runtime",
+    "Manifest consistency does not validate physical vector search quality",
+    "No new LLM calls or real user-data changes"
+  ]
+}

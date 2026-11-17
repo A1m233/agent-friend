@@ -4,8 +4,12 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($f
 Set-Location (Join-Path $PSScriptRoot "..\..")
 
 $Mode = if ($args.Count -gt 0) { $args[0] } else { "doctor" }
+if ($Mode -in @("sync-builtin", "verify-builtin")) {
+    & uv run python scripts/codex-adapters/builtin_skill.py @args
+    exit $LASTEXITCODE
+}
 if ($Mode -ne "sync" -and $Mode -ne "doctor") {
-    throw "Usage: .\scripts\codex-adapters\run.ps1 [sync|doctor]"
+    throw "Usage: .\scripts\codex-adapters\run.ps1 [sync|doctor|sync-builtin|verify-builtin]"
 }
 
 $Remaining = @()

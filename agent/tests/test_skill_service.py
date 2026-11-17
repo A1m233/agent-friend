@@ -76,19 +76,6 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
 
     snapshot = service.initialize()
 
-    assert [(item.source, item.name) for item in snapshot.entries] == [
-        ("builtin", "agent-friend-guide"),
-        ("builtin", "diagnose-bug"),
-        ("builtin", "doc"),
-        ("builtin", "pdf"),
-        ("builtin", "prepare-bug-handoff"),
-        ("builtin", "screenshot"),
-        ("builtin", "skill-creator"),
-        ("builtin", "skill-installer"),
-        ("builtin", "spreadsheet"),
-        ("personal", "personal-skill"),
-        ("shared", "shared-skill"),
-    ]
     by_name = {item.name: item for item in snapshot.entries}
     guide = by_name["agent-friend-guide"]
     creator = by_name["skill-creator"]
@@ -98,6 +85,30 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
     assert installer.id == "builtin/skill-installer"
     manifest = json.loads((creator.package_root.parent / "manifest.json").read_text("utf-8"))
     assert manifest["schema_version"] == 2
+    project_root = Path(__file__).resolve().parents[2]
+    project_builtin_names = []
+    for name, entry in manifest["skills"].items():
+        if entry["source_path"] == f".cursor/skills/{name}":
+            assert entry["snapshot_sha256"] == _package_digest(project_root / entry["source_path"])
+            assert entry["snapshot_sha256"] == _package_digest(by_name[name].package_root)
+            project_builtin_names.append(name)
+    expected_builtins = sorted(
+        [
+            "agent-friend-guide",
+            "diagnose-bug",
+            "doc",
+            "pdf",
+            "prepare-bug-handoff",
+            "screenshot",
+            "skill-creator",
+            "skill-installer",
+            "spreadsheet",
+            *project_builtin_names,
+        ]
+    )
+    expected_entries = [("builtin", name) for name in expected_builtins]
+    expected_entries.extend([("personal", "personal-skill"), ("shared", "shared-skill")])
+    assert [(item.source, item.name) for item in snapshot.entries] == expected_entries
     for name in ("pdf", "screenshot", "doc", "spreadsheet"):
         record = by_name[name]
         source = manifest["skills"][name]
@@ -146,19 +157,7 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
         tuple(SkillSelection(item.id, item.version) for item in snapshot.entries),
         model_window=100_000,
     )
-    assert [item.record.name for item in turn.activations] == [
-        "agent-friend-guide",
-        "diagnose-bug",
-        "doc",
-        "pdf",
-        "prepare-bug-handoff",
-        "screenshot",
-        "skill-creator",
-        "skill-installer",
-        "spreadsheet",
-        "personal-skill",
-        "shared-skill",
-    ]
+    assert [item.record.name for item in turn.activations] == [name for _, name in expected_entries]
     assert not turn.activation_issues
 
 

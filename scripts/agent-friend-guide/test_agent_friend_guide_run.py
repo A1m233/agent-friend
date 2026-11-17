@@ -591,7 +591,7 @@ def test_snapshot_replace_restores_previous_copy_when_manifest_swap_fails(
     replacement_manifest = guide.updated_manifest(
         guide.load_manifest(product_repo),
         guide_commit="4" * 40,
-        snapshot_sha256="5" * 64,
+        snapshot_sha256=guide.package_digest(source, exclude_source_metadata=False),
     )
     real_replace = os.replace
 

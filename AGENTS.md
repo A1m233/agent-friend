@@ -16,7 +16,7 @@
 |---|---|
 | `agent-eval-governance.mdc` | agent-friend 的 agent_eval 治理规则：约束 case 维护、确定性验证、真实模型运行、续跑和报告复核 |
 | `agent-failure-attribution.mdc` | agent-friend 的 Agent 用户可见异常、真实 bad case、评测失败与运行时问题的根因归因门禁：区分模型、上下文、记忆、工具、编排、provider、环境、投影和评测侧故障 |
-| `agent-prompt-composition.mdc` | agent-friend 提示词与 Agent 入口维护：新增或修改模型调用、提示词、人格、记忆及摘要消费者时，分类职责、复用公共契约并验证来源与装配边界 |
+| `agent-prompt-composition.mdc` | agent-friend 提示词变更须用实际入口渲染、与用户逐版对齐并核验实施结果；模型调用入口沿用公共契约 |
 | `agent-tool-contract-design.mdc` | agent-friend 面向 LLM/Agent 公开工具的设计与变更规则：约束工具边界、description、JSON Schema、标识符、错误恢复、权限和验证 |
 | `coding-design.mdc` | agent-friend 项目编码设计原则：边界、可扩展性与不过度设计 |
 | `cross-platform-dev.mdc` | agent-friend 项目跨平台开发支持与 scripts/ 规范 |
@@ -32,7 +32,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: 58fb39c59d2288c928a460b903fc1aaaccd7e0b1a57724bdec5f949781b50c77 -->
+<!-- codex-adapter-source-sha256: 1ab27416ef952392cab8bb4e8762dcf2b675e0bd8939d6e04868d503763823fe -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -44,6 +44,47 @@ This section is generated from Cursor rule frontmatter. Cursor loads some rules 
 ### Inline Rules
 
 The following `<codex-rule>` blocks are active instructions, not reference material.
+
+<codex-rule source=".cursor/rules/agent-prompt-composition.mdc" load="inline">
+# 提示词与 Agent 入口维护
+
+本规则适用于本仓库各目录。新增或修改 Agent／模型调用入口时先核对职责。凡会改变模型所见提示词的改动，无论来自模板、共享片段、代码装配、人格、记忆、摘要、工具说明或输出格式指令，都须执行下列渲染与对齐流程。
+
+## 渲染、对齐与实施
+
+1. **先看现行输入。** 用固定样例走受影响入口实际使用的渲染方法，完整阅读交给模型的消息、角色、顺序、动态材料及随请求传入的工具和输出约束。优先使用该入口的专用离线渲染工具。缺少专用工具时，用记录请求的假模型驱动真实 builder 或 worker。记忆抽取可参照 `memory/tests/test_extraction.py` 中记录 `ModelRequest` 的 `ScriptedFakeLLM`。多阶段调用按场景固定前序响应，注明哪些响应来自夹具，逐段捕获受影响的输入。记录源码版本、样例和捕获边界。已有入口新增片段仍取原入口作基线，全新入口注明无旧版。
+2. **提交具体版本供用户对齐。** 在独立候选中准备拟用的原文，用相同样例、配置和前序响应渲染并通读候选。将现行与候选的完整输入及逐字差异交给用户，说明哪些行为会变化。全新入口提交完整候选。必须取得用户对具体版本的明确确认，才可修改正式提示词。讨论目标或同意大方向只作为拟稿依据。同一基线和候选已经确认时，沿用该确认。
+3. **照确认的版本实施。** 保留可复查的已确认文本或差异。实施后在正式入口用同一样例再渲染，逐项核对模型可见内容与确认稿一致。纠正本次实施引入的偏差。如需调整措辞、示例、顺序、适用范围或输出约束，先展示新的渲染差异并重新与用户对齐。如并发修改影响已确认内容，保留协作者改动，在新基线上对齐受影响的差异。测试、评审、合并及后续维护中的调整同样遵守此约定，禁止自行润色或追加指令。
+
+## 先确认职责和责任源
+
+- 对外代表朋友发言：从 `agent/src/agent/prompt_sections/README.md` 查找当前消费者及公共 owner，
+  复用公共身份契约；渠道、会话或模型变化不构成新身份。
+- 内部处理（摘要、抽取、分类、连接探测）：保留其专用任务边界，不能因“也是 LLM 调用”
+  而加载整套人格。输出若进入后续对话，必须保留发言人、引用、来源和状态。
+- 第三方 Agent 或外部内容：说明其实际来源，不自动认领为朋友的言行。
+
+产品身份规则唯一正文为 `agent/src/agent/prompt_sections/identity_continuity.md`。
+其他公共规则继续由各自资源负责；本 Rule 不复制这些行为细则。
+
+## 编辑和新增入口
+
+1. 先列出模型最终可见的输入、公共契约、人格及任务规则的来源，检查已有消费者和上下游。
+2. 通用行为在公共 owner 修改；入口只维护任务差异，不复制同义段落，不用新增例外掩盖冲突。
+3. 沿用现有 section 与共享资源加载；确有新的职责边界才新增抽象，不为单个入口建立通用框架。
+4. 区分正式人格与未应用候选、过去指令与当前任务、第三方引用与自身行为。统一身份不改变数据访问、权限或运行状态。
+5. 新增、迁移或删除入口时同步更新消费者清单，标明公共契约的接入或不适用原因。
+6. 检查最终装配是否重复或遗漏，以及局部规则是否与公共契约冲突。禁止靠全局代词替换修复归属。
+
+## 验证与相邻规则
+
+- 按上面的渲染流程复查实际装配，并在相应测试中覆盖来源、候选隔离和内部组件边界。
+- fake 输出只能证明机制，不证明模型遵守规则；涉及行为变化时准备正反场景，记录真实验证缺口。
+- 工具定义归 `agent-tool-contract-design`，失败归因归 `agent-failure-attribution`，eval 归
+  `agent-eval-governance`；本 Rule 不新增真实 LLM 调用授权或自动扩大评测范围。
+- 资源新增按 `frozen-runtime-packaging` 分类；Rule 修改后用项目 `scripts/codex-adapters/run.*`
+  的 sync 与 doctor 更新生成索引，不手改 adapter。
+</codex-rule>
 
 <codex-rule source=".cursor/rules/coding-design.mdc" load="inline">
 # 编码设计原则
@@ -518,12 +559,11 @@ Before starting work that matches a trigger below, read the rule file and apply 
 |---|---|---|---|
 | `agent-eval-governance.mdc` | agent-friend 的 agent_eval 治理规则：约束 case 维护、确定性验证、真实模型运行、续跑和报告复核 | agent-friend 的 agent_eval 治理规则：约束 case 维护、确定性验证、真实模型运行、续跑和报告复核 | `.cursor/rules/agent-eval-governance.mdc` |
 | `agent-failure-attribution.mdc` | agent-friend 的 Agent 用户可见异常、真实 bad case、评测失败与运行时问题的根因归因门禁：区分模型、上下文、记忆、工具、编排、provider、环境、投影和评测侧故障 | agent-friend 的 Agent 用户可见异常、真实 bad case、评测失败与运行时问题的根因归因门禁：区分模型、上下文、记忆、工具、编排、provider、环境、投影和评测侧故障 | `.cursor/rules/agent-failure-attribution.mdc` |
-| `agent-prompt-composition.mdc` | ["agent/src/**", "agent_bridge/src/**", "voice_bridge/src/**", "memory/src/**", "llm_providers/src/**"] | agent-friend 提示词与 Agent 入口维护：新增或修改模型调用、提示词、人格、记忆及摘要消费者时，分类职责、复用公共契约并验证来源与装配边界 | `.cursor/rules/agent-prompt-composition.mdc` |
 | `agent-tool-contract-design.mdc` | ["agent/src/agent/tools/**", "agent/src/agent/command_runtime/**", "agent/src/agent/filesystem/**", "agent/src/agent/tool_runtime/**", "agent/src/agent/prompt_sections/tool_usage_contract.md", "agent_bridge/**", "llm_providers/**", "agent_eval/**"] | agent-friend 面向 LLM/Agent 公开工具的设计与变更规则：约束工具边界、description、JSON Schema、标识符、错误恢复、权限和验证 | `.cursor/rules/agent-tool-contract-design.mdc` |
 | `diagnostic-bundle-contract.mdc` | ["frontend/src-tauri/src/diagnostics/**", "frontend/src-tauri/src/shell_diagnostics/**", ".cursor/skills/inspect-agent-friend-diagnostics/**"] | agent-friend 诊断包生产协议、机器契约与 inspect-agent-friend-diagnostics 消费者的同步约束 | `.cursor/rules/diagnostic-bundle-contract.mdc` |
 | `frontend-ui-conventions.mdc` | frontend/** | agent-friend 前端 UI 编写规范：语义化组件选型、组件复用与设计 token CSS 变量化 | `.cursor/rules/frontend-ui-conventions.mdc` |
 | `frontend-visual-verification.mdc` | frontend/** | agent-friend 桌面前端视觉验收授权规范：改 Tauri 窗口 UI 时先询问是否做真实桌面端视觉验收；确认后才启动桌面端、截图、DOM 或 Playwright/CDP。 | `.cursor/rules/frontend-visual-verification.mdc` |
-| `frozen-runtime-packaging.mdc` | ["agent/src/**", "agent/pyproject.toml", "agent_bridge/src/**", "agent_bridge/pyproject.toml", "llm_providers/src/**", "llm_providers/pyproject.toml", "memory/src/**", "memory/pyproject.toml", "runtime_config/src/**", "runtime_config/pyproject.toml", "voice_bridge/src/**", "voice_bridge/pyproject.toml", "uv.lock", "scripts/package/**"] | agent-friend 冻结 Python runtime 的打包影响分类与验证纪律：约束运行时依赖、资源读取、动态导入、PyInstaller spec/hooks 和 package… | `.cursor/rules/frozen-runtime-packaging.mdc` |
+| `frozen-runtime-packaging.mdc` | [".cursor/skills/maintain-af-memory/**", "agent/src/**", "agent/pyproject.toml", "agent_bridge/src/**", "agent_bridge/pyproject.toml", "llm_providers/src/**", "llm_providers/pyproject.toml", "memory/src/**", "memory/pyproject.toml", "runtime_config/src/**", "runtime_config/pyproject.toml", "voice_bridge/src/**", "voice_bridge/pyproject.toml", "uv.lock", "scripts/package/**"] | agent-friend 冻结 Python runtime 的打包影响分类与验证纪律：约束运行时依赖、资源读取、动态导入、PyInstaller spec/hooks 和 package… | `.cursor/rules/frozen-runtime-packaging.mdc` |
 | `windows-installer-integrity.mdc` | ["scripts/package/**", "frontend/src-tauri/src/install_contract.rs", "frontend/src-tauri/src/bin/agent-friend-installer-helper.rs", "frontend/src-tauri/src/runtime_services/**", "frontend/src-tauri/src/diagnostics/**", "agent_bridge/src/agent_bridge/lifecycle.py", "voice_bridge/src/voice_bridge/lifecycle.py", "runtime_config/src/runtime_config/build_identity.py"] | agent-friend Windows 安装器完整性、版本化 payload、运行时身份、进程生命周期、本地化和真实覆盖升级的 Coding Agent 门禁 | `.cursor/rules/windows-installer-integrity.mdc` |
 
 <!-- codex-rule-loading:end -->
@@ -546,6 +586,7 @@ Before starting work that matches a trigger below, read the rule file and apply 
 | `desktop-visual-inspection` | 在 agent-friend 真实桌面端观察和验证视觉、DOM、交互与产品内 E2E 状态的标准流程。Use only when 用户明确要求真实桌面端视觉验收、截图、DOM、Playwri… |
 | `fix-issue` | 把用户明确点名的 docs/issues/NNN-slug/ 已登记 issue 闭环——读 issue、核对现状、落地修复、验证、标记 resolved 并提交。仅当用户给出 issue… |
 | `inspect-agent-friend-diagnostics` | Safely inspect and interpret agent-friend local diagnostic ZIP bundles. Use in the agent-friend… |
+| `maintain-af-memory` | 在用户要求检查、整理或纠正 agent-friend（AF）的长期记忆时，核对来源，判断记忆质量，给出调整方案并核验实际写入。日常问答中只想找回某段聊天时，使用会话检索。 |
 | `maintain-agent-friend-guide` | 检查 agent-friend 产品变更是否需要更新公开用户知识，维护并发布 agent-friend-guide immutable release，或为新桌面安装包刷新离线 builti… |
 | `package-release` | 在 agent-friend 项目中查询或设置桌面产品版本、构建受治理的 Windows 安装包，并盘点或清理打包工作区。Use when 用户说“打安装包”“构建安装包”“本地测试包”“查… |
 | `showcase-update` | 按用户意图检查、生成或同步、预览、提交或发布 agent-friend 的公开 showcase。当用户要求验证现有 showcase、更新 sanitized snapshot、运行或发布… |
