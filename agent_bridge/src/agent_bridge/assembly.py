@@ -1065,7 +1065,9 @@ def build_runtime(
     if isinstance(directory_tool, ListConversationsTool):
         from .message_exposure import MessageExposureService
 
-        exposure = MessageExposureService(final_runtime)
+        exposure = MessageExposureService(
+            final_runtime, base_persistent_store.assistant_message_versions
+        )
         directory_tool.service.message_evidence = exposure.evidence
         directory_tool.service.evidence_changes = exposure.changes
         final_runtime = dataclasses.replace(final_runtime, message_exposure=exposure)

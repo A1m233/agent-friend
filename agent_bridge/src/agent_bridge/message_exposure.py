@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -14,28 +15,25 @@ if TYPE_CHECKING:
 
 
 class MessageExposureService:
-    def __init__(self, runtime: BridgeRuntime) -> None:
+    def __init__(
+        self, runtime: BridgeRuntime, message_versions: Callable[[str, set[str]], dict[str, str]]
+    ) -> None:
         self.runtime = runtime
+        self._message_versions = message_versions
         self.store = MessageExposureStore(
             message_exposure_db_path(runtime.settings.sessions_dir.parent)
         )
 
     def record(self, session_id: str, observations: list[Any], *, now: datetime) -> None:
         manager = self.runtime.persistent_session_manager
-        if not manager.exists(session_id):
+        if not observations or not manager.exists(session_id):
             return
-        events = {e.uuid: e for e in manager.query(session_id).active_events}
+        versions = self._message_versions(session_id, {item.message_id for item in observations})
         for item in observations:
-            event = events.get(item.message_id)
-            if (
-                event is None
-                or event.type != "assistant_message"
-                or event.payload.get("partial")
-                or content_version(str(event.payload.get("content", ""))) != item.content_version
-            ):
+            if versions.get(item.message_id) != item.content_version:
                 continue
             self.store.record(
-                session_id, event.uuid, item.content_version, item.extent, observed_at=now
+                session_id, item.message_id, item.content_version, item.extent, observed_at=now
             )
 
     def evidence(self, session_id: str, event: Event) -> dict[str, Any]:
