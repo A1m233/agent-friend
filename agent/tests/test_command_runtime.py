@@ -1279,6 +1279,8 @@ def test_windows_setup_command_elevates_for_the_original_product_user(tmp_path: 
     assert f"--codex-home '{codex_home}'" in child
     assert "--current-user" not in child
     assert "exec-server" not in child
+    assert child.index("Set-Acl -LiteralPath") < child.index("sandbox setup --elevated")
+    assert "ContainerInherit,ObjectInherit" in child
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows sandbox setup is Windows-specific")

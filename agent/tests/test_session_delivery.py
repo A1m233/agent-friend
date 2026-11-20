@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -121,3 +122,36 @@ def test_source_association_preserves_delivery_status_without_guessing_old_messa
     assert entries[0]["im_state"] == "delivered"
     assert store.for_message("target", "forwarded") == entries
     assert old["delivery_id"] != linked["delivery_id"]
+
+
+def test_legacy_outbox_migration_preserves_terminal_rows_without_replaying_feedback(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "legacy.db"
+    with sqlite3.connect(path) as db:
+        db.execute("""CREATE TABLE deliveries (
+            delivery_id TEXT PRIMARY KEY, operation_key TEXT UNIQUE NOT NULL,
+            fingerprint TEXT UNIQUE NOT NULL, request_json TEXT NOT NULL,
+            conversation_state TEXT NOT NULL DEFAULT 'queued',
+            im_state TEXT NOT NULL, message_id TEXT, provider_receipt TEXT,
+            error TEXT, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)""")
+        db.execute(
+            "INSERT INTO deliveries (delivery_id,operation_key,fingerprint,request_json,conversation_state,im_state,error,created_at,expires_at) VALUES ('old','old','old','{}','failed','cancelled','old failure','2026-11-16','2026-11-16')"
+        )
+    for _ in range(2):
+        store = SessionDeliveryStore(path)
+        row = store.get("old")
+        assert row["conversation_state"] == "failed"
+        assert row["error"] == "old failure"
+        assert store.pending() == []
+        assert store.pending_feedback() == []
+
+
+def test_busy_target_claim_is_atomic_across_connections(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = SessionDeliveryStore(tmp_path / "delivery.db")
+    row = store.submit("claim", {"content": "hello", "destination_id": "qq"})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claimed = list(pool.map(lambda _: store.claim_im(row["delivery_id"]), range(2)))
+    assert sorted(claimed) == [False, True]

@@ -39,6 +39,7 @@ from .network import network_decision, valid_network_request
 from .recovery import RecoveryUnavailable, SandboxRecovery
 from .sandbox_evidence import SandboxEvidence, error_facts
 from .vendor import probe_setup_helper
+from .windows_home import elevated_command, home_directories, prepare_home, repair_home_script
 from .windows_state import compatible_state, read_state
 
 OUTPUT_TAIL_BYTES = 256 * 1024
@@ -208,8 +209,9 @@ def windows_sandbox_setup_command(
         f"$diagnosticPath={_powershell_literal(str(diagnostic_path))};"
         "$utf8=New-Object System.Text.UTF8Encoding($false);"
         '[System.IO.File]::WriteAllText($diagnosticPath,"child_started`n",$utf8);'
-        "try{"
-        "$ErrorActionPreference='Continue';"
+        "try{" + repair_home_script((codex_home,), real_user) + "$ErrorActionPreference='Continue';"
+        # Provisioning creates host-consumed files (including config.toml) as
+        # administrator. OWNER RIGHTS alone would leave those files unreadable.
         f"$setupOutput=(& {_powershell_literal(str(executable))}{setup_args} "
         "sandbox setup --elevated "
         f"--user {_powershell_literal(real_user)} "
@@ -441,6 +443,7 @@ class CommandRuntime:
         *,
         codex_home: Path,
         execution_root: Path,
+        managed_home_root: Path | None = None,
         base_env: Mapping[str, str] | None = None,
         output_tail_bytes: int = OUTPUT_TAIL_BYTES,
         exec_server_command: list[str] | None = None,
@@ -451,6 +454,7 @@ class CommandRuntime:
     ) -> None:
         self._codex_executable = codex_executable.resolve() if codex_executable else None
         self._codex_home = codex_home.resolve()
+        self._host_home_directories = home_directories(codex_home, managed_home_root)
         self._execution_root = execution_root.resolve()
         if (
             self._codex_home == self._execution_root
@@ -532,15 +536,15 @@ class CommandRuntime:
             return "ready", None
         marker_path = self._codex_home / ".sandbox" / "setup_marker.json"
         users_path = self._codex_home / ".sandbox-secrets" / "sandbox_users.json"
-        if not marker_path.exists() and not users_path.exists():
-            return "setup_required", None
-        if not marker_path.is_file() or not users_path.is_file():
-            return "repair_required", {
-                "error": "windows_sandbox_state_incomplete",
-                "message": "Windows 命令沙箱的初始化文件不完整，需要修复。",
-            }
         required_proxy_port = safe_loopback_proxy_port(self._base_env)
         try:
+            if not marker_path.exists() and not users_path.exists():
+                return "setup_required", None
+            if not marker_path.is_file() or not users_path.is_file():
+                return "repair_required", {
+                    "error": "windows_sandbox_state_incomplete",
+                    "message": "Windows 命令沙箱的初始化文件不完整，需要修复。",
+                }
             marker = read_state(marker_path)
             users = read_state(users_path)
             if not compatible_state(marker, users):
@@ -673,12 +677,26 @@ class CommandRuntime:
             # A retained failure blocks business commands, but does not prove that
             # the on-disk identity needs to be recreated. Explicit repair first
             # exercises intact state; only a failed probe warrants provisioning.
-            was_ready = self._read_windows_sandbox_state()[0] == "ready"
             with self._lock:
                 self._setup_active = True
                 self._setup_error = None
             self.refresh_sandbox_capability()
             try:
+                try:
+                    self._prepare_host_home()
+                except CommandRuntimeError as exc:
+                    if exc.code != "windows_sandbox_home_access_denied":
+                        raise
+                    check_cancelled()
+                    evidence["hostDirectoryRepair"] = "requested"
+                    self._sandbox_evidence.repair_checkpoint(evidence)
+                    self._repair_host_home_access(
+                        timeout_seconds=self._recovery.setup_timeout_seconds(timeout_seconds)
+                    )
+                    check_cancelled()
+                    self._prepare_host_home()
+                    evidence["hostDirectoryRepair"] = "ok"
+                was_ready = self._read_windows_sandbox_state()[0] == "ready"
                 helper = probe_setup_helper(executable)
                 evidence["helperProbe"] = helper
                 native = helper.get("nativeCode", helper.get("exitCode"))
@@ -754,6 +772,51 @@ class CommandRuntime:
             self._sandbox_evidence.finish(evidence, str(exc))
             raise
         self._sandbox_evidence.finish(evidence, persist_success=True)
+
+    def _prepare_host_home(self) -> None:
+        try:
+            prepare_home(self._host_home_directories)
+        except PermissionError as exc:
+            raise CommandRuntimeError(
+                "windows_sandbox_home_access_denied",
+                f"Windows sandbox host directory access failed: {exc}",
+                safe_to_retry=True,
+            ) from exc
+        except (OSError, ValueError) as exc:
+            raise CommandRuntimeError(
+                "windows_sandbox_home_unavailable",
+                f"Windows sandbox host directory is unavailable: {exc}",
+            ) from exc
+
+    def _repair_host_home_access(self, *, timeout_seconds: float) -> None:
+        system_root = _env_value(self._base_env, "SystemRoot", "WINDIR")
+        username = _env_value(self._base_env, "USERNAME", "USER")
+        domain = _env_value(self._base_env, "USERDOMAIN")
+        if not system_root or not username:
+            raise CommandRuntimeError(
+                "windows_sandbox_home_access_denied", "Windows host identity is unavailable"
+            )
+        user = f"{domain}\\{username}" if domain else username
+        try:
+            completed = subprocess.run(
+                elevated_command(
+                    repair_home_script(self._host_home_directories, user), system_root
+                ),
+                env=self._windows_setup_env(),
+                capture_output=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise CommandRuntimeError(
+                "windows_sandbox_home_access_denied", "Windows host directory repair timed out"
+            ) from exc
+        if completed.returncode != 0:
+            detail = _windows_setup_process_detail(completed.stdout, completed.stderr)
+            raise CommandRuntimeError(
+                "windows_sandbox_home_access_denied",
+                f"Windows host directory repair exited with code {completed.returncode}: {detail}",
+            )
 
     def _run_windows_sandbox_setup(self, executable: Path, *, timeout_seconds: float) -> None:
         self._execution_root.mkdir(parents=True, exist_ok=True)
@@ -1375,7 +1438,10 @@ class CommandRuntime:
                     "command_runtime_unavailable", "product Codex executable is unavailable"
                 )
             assert executable is not None or self._exec_server_command is not None
-            self._codex_home.mkdir(parents=True, exist_ok=True)
+            if os.name == "nt" and self._exec_server_command is None:
+                self._prepare_host_home()
+            else:
+                self._codex_home.mkdir(parents=True, exist_ok=True)
             env = self._exec_server_env()
             command = self._exec_server_command or [
                 str(executable),

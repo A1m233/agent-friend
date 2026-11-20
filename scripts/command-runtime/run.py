@@ -165,6 +165,7 @@ def smoke(executable: Path) -> dict[str, object]:
         runtime = CommandRuntime(
             executable,
             codex_home=_product_codex_home(),
+            managed_home_root=_product_codex_home().parent,
             execution_root=_product_execution_root(),
         )
         writable = sandbox_context(
@@ -412,6 +413,7 @@ print(json.dumps(result))
         runtime = CommandRuntime(
             executable,
             codex_home=_product_codex_home(),
+            managed_home_root=_product_codex_home().parent,
             execution_root=_product_execution_root(),
         )
         base_executable = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
@@ -525,6 +527,7 @@ def skill_install_smoke(executable: Path) -> dict[str, object]:
         runtime = CommandRuntime(
             executable,
             codex_home=_product_codex_home(),
+            managed_home_root=_product_codex_home().parent,
             execution_root=_product_execution_root(),
         )
         broker = ApprovalBroker()
@@ -879,12 +882,12 @@ def setup_windows(executable: Path) -> None:
     if os.name != "nt":
         raise RuntimeError("Windows sandbox setup is only available on Windows")
     home = _product_codex_home()
-    home.mkdir(parents=True, exist_ok=True)
     from agent.command_runtime import CommandRuntime
 
     runtime = CommandRuntime(
         executable,
         codex_home=home,
+        managed_home_root=home.parent,
         execution_root=_product_execution_root(),
     )
     runtime.setup_windows_sandbox()
@@ -904,9 +907,16 @@ def main(argv: list[str] | None = None) -> int:
             "smoke",
             "network-smoke",
             "skill-install-smoke",
+            "home-smoke",
         ),
     )
+    parser.add_argument("--home", type=Path, help="Existing sandbox home for home-smoke only")
+    parser.add_argument("--report", type=Path, help="JSON evidence file for home-smoke only")
     args = parser.parse_args(argv)
+    if args.action == "home-smoke" and (args.home is None or args.report is None):
+        parser.error("home-smoke requires --home and --report")
+    if args.action != "home-smoke" and (args.home is not None or args.report is not None):
+        parser.error("--home and --report are only accepted by home-smoke")
     if args.action in {"ensure", "prepare", "setup"}:
         try:
             executable = ensure_source_runtime(ROOT)
@@ -919,6 +929,11 @@ def main(argv: list[str] | None = None) -> int:
         executable = _verify_source_runtime(ROOT)
     if args.action == "path":
         print(executable)
+        return 0
+    if args.action == "home-smoke":
+        from home_smoke import run
+
+        print(json.dumps(run(executable, args.home, args.report), ensure_ascii=False))
         return 0
     if args.action == "status":
         print(

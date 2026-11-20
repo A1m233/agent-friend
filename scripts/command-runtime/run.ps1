@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"
+# home-smoke --home PATH --report FILE verifies Windows host ACL recovery without provisioning.
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Set-Location (Join-Path $PSScriptRoot "..\..")
 

@@ -109,7 +109,7 @@ class SessionDeliveryService:
             raise ConversationAccessError("source_missing", "来源会话已不存在，不能继续投递。")
         destination = args.get("destination_id") if args.get("notify_im") else None
         if destination:
-            self._validate_destination(target, str(destination))
+            self._validate_destination(target, str(destination), require_online=False)
         attachments = []
         asset_ids = args.get("attachment_asset_ids", [])
         if asset_ids:
@@ -195,7 +195,9 @@ class SessionDeliveryService:
     def receipt(row: dict[str, Any]) -> dict[str, Any]:
         return {k: row[k] for k in ("delivery_id", "conversation_state", "im_state", "error")}
 
-    def _validate_destination(self, target: str, destination: str) -> None:
+    def _validate_destination(
+        self, target: str, destination: str, *, require_online: bool = True
+    ) -> bool:
         found = next(
             (
                 p
@@ -208,10 +210,11 @@ class SessionDeliveryService:
             raise ConversationAccessError(
                 "binding_changed", "通知去向不再属于此用户会话，请重新发现绑定；不要猜测接收者。"
             )
-        if not found["online"] or not found["proactive_supported"]:
+        if not found["proactive_supported"] or (require_online and not found["online"]):
             raise ConversationAccessError(
                 "destination_unavailable", "所选IM暂不能主动发送，可只投递会话或稍后再决定。"
             )
+        return bool(found["online"])
 
     def start(self) -> None:
         if self._thread is None:
@@ -241,6 +244,10 @@ class SessionDeliveryService:
                 if self._stop.is_set():
                     return
                 self._deliver(row)
+            for row in self.store.pending_feedback():
+                if self._stop.is_set():
+                    return
+                self._report_failure(row)
         finally:
             self._delivery_lock.release()
 
@@ -307,7 +314,11 @@ class SessionDeliveryService:
         if not self.runtime.persistent_session_manager.exists(request["source_session_id"]):
             close("source_missing", "cancelled")
             return
-        if datetime.now(UTC) >= datetime.fromisoformat(row["expires_at"]):
+        # A possibly delivered IM still needs its eventual conversation copy.
+        # Expiry bounds new external sends, not persistence of an existing send.
+        if datetime.now(UTC) >= datetime.fromisoformat(row["expires_at"]) and row[
+            "im_state"
+        ] not in {"delivered", "unknown", "sending"}:
             close("delivery_expired", "expired")
             return
         runtime = self.runtime
@@ -320,91 +331,178 @@ class SessionDeliveryService:
             row = self.store.get(did)
             request = row["request"]
         target = request["target_session_id"]
-        message_id = row["message_id"]
         try:
-            if request["destination_id"] and not request.get("auto_qq"):
-                self._validate_destination(target, request["destination_id"])
+            manager = runtime.persistent_session_manager
+            if (
+                not manager.exists(target)
+                or manager.is_archived(target)
+                or manager.is_inner(target)
+            ):
+                raise ConversationAccessError("target_missing", "目标会话已不可用。")
+            if (
+                request["destination_id"]
+                and not request.get("auto_qq")
+                and runtime.im_runtime
+                and row["im_state"] == "pending"
+            ):
+                self._validate_destination(target, request["destination_id"], require_online=False)
             if row["conversation_state"] == "queued":
-                if runtime.agent_runtime is None:
-                    return
-                with runtime.agent_runtime.try_reserve_session_mutation(target), self.contact_lock:
-                    if (
-                        not self.contact_allowed(request["source_session_id"])
-                        or self.store.get(did)["conversation_state"] != "queued"
-                    ):
-                        close("contact_paused", "cancelled")
-                        return
-                    for ref in request.get("attachments", []):
-                        if runtime.attachment_store is None:
-                            raise ConversationAccessError(
-                                "attachment_unavailable", "附件原件不可用。"
-                            )
-                        runtime.attachment_store.verify(ref["asset_id"])
-                    message_id = runtime.persistent_session_manager.append_delivered_message(
-                        target,
-                        delivery_id=did,
-                        content=request["content"],
-                        source_session_id=request["source_session_id"],
-                        source_run_id=request["source_run_id"],
-                        attachments=request.get("attachments", []),
-                    )
-                    if runtime.notification_service is not None:
-                        runtime.notification_service.on_prepared_message(
-                            target,
-                            did,
-                            request["content"],
-                            datetime.fromisoformat(row["created_at"]),
-                        )
-                    self.store.update(did, conversation_state="committed", message_id=message_id)
-            im = runtime.im_runtime
-            if request["destination_id"] and request.get("auto_qq"):
-                try:
-                    self._validate_destination(target, request["destination_id"])
-                except ConversationAccessError as exc:
-                    self.store.update(did, im_state="failed", error=exc.code)
-                    return
-            if request["destination_id"] and im:
-                from ..protocols.im.content import OutboundImage
-
-                refs = request.get("attachments", [])
-                image = None
-                if refs:
-                    if runtime.attachment_store is None:
-                        raise ConversationAccessError("attachment_unavailable", "附件原件不可用。")
-                    image = OutboundImage(
-                        runtime.attachment_store.verify(refs[0]["asset_id"]),
-                        refs[0]["display_name"],
-                    )
-                if not self.contact_allowed(request["source_session_id"]):
-                    self.store.update(did, im_state="cancelled", error="contact_paused")
-                    return
-
-                def settle(result: OutboundSendResult) -> None:
-                    self.store.update(
-                        did,
-                        im_state=result.outcome,
-                        provider_receipt=result.provider_message_id,
-                        error=result.error_kind,
-                    )
-
-                def claim() -> bool:
-                    with self.contact_lock:
-                        return self.contact_allowed(
-                            request["source_session_id"]
-                        ) and self.store.claim_im(did)
-
-                deliver_once(
-                    [DeliveryAttempt(claim, settle)],
-                    lambda: im.send_proactive(
-                        request["destination_id"],
-                        request["content"],
-                        text_format="markdown",
-                        can_send=lambda: self.contact_allowed(request["source_session_id"]),
-                        image=image,
-                        prepared_event_uuid=message_id,
-                    ),
-                )
-        except (SessionBusyError, SessionWriterConflictError):
-            return
+                self._commit_conversation(row)
+            self._deliver_im(self.store.get(did))
         except (ConversationAccessError, SessionNotFoundError, AgentError, AttachmentError) as exc:
             close(str(exc), "failed")
+
+    def _commit_conversation(self, row: dict[str, Any]) -> None:
+        runtime = self.runtime
+        if runtime.agent_runtime is None:
+            return
+        request = row["request"]
+        did, target = row["delivery_id"], request["target_session_id"]
+        try:
+            with runtime.agent_runtime.try_reserve_session_mutation(target), self.contact_lock:
+                if not self.contact_allowed(request["source_session_id"]):
+                    return
+                if self.store.get(did)["conversation_state"] != "queued":
+                    return
+                for ref in request.get("attachments", []):
+                    if runtime.attachment_store is None:
+                        raise AttachmentError("attachment_unavailable", "附件原件不可用。")
+                    runtime.attachment_store.verify(ref["asset_id"])
+                message_id = runtime.persistent_session_manager.append_delivered_message(
+                    target,
+                    delivery_id=did,
+                    content=request["content"],
+                    source_session_id=request["source_session_id"],
+                    source_run_id=request["source_run_id"],
+                    attachments=request.get("attachments", []),
+                )
+                if runtime.notification_service is not None:
+                    runtime.notification_service.on_prepared_message(
+                        target,
+                        did,
+                        request["content"],
+                        datetime.fromisoformat(row["created_at"]),
+                    )
+                self.store.update(did, conversation_state="committed", message_id=message_id)
+        except (SessionBusyError, SessionWriterConflictError):
+            # IM delivery has its own durable claim and can proceed while this waits.
+            return
+
+    def _deliver_im(self, row: dict[str, Any]) -> None:
+        from ..protocols.im.content import OutboundImage
+
+        im = self.runtime.im_runtime
+        if im is None or row["im_state"] != "pending":
+            return
+        request, did = row["request"], row["delivery_id"]
+        try:
+            online = self._validate_destination(
+                request["target_session_id"],
+                request["destination_id"],
+                require_online=False,
+            )
+        except ConversationAccessError as exc:
+            self.store.update(did, im_state="failed", error=exc.code)
+            return
+        if not online:
+            self.store.update(did, error="provider_unavailable")
+            return
+        refs = request.get("attachments", [])
+        image = None
+        if refs:
+            if self.runtime.attachment_store is None:
+                raise AttachmentError("attachment_unavailable", "附件原件不可用。")
+            image = OutboundImage(
+                self.runtime.attachment_store.verify(refs[0]["asset_id"]),
+                refs[0]["display_name"],
+            )
+
+        def settle(result: OutboundSendResult) -> None:
+            # These runtime preflight failures occur before the first provider send.
+            # Partial sends and uncertain results remain terminal to avoid duplicates.
+            retry = (
+                result.outcome == "failed"
+                and result.provider_message_id is None
+                and result.error_kind in {"provider_unavailable", "runtime_stopped"}
+            )
+            self.store.update(
+                did,
+                im_state="pending" if retry else result.outcome,
+                provider_receipt=result.provider_message_id,
+                error=result.error_kind,
+            )
+
+        def claim() -> bool:
+            with self.contact_lock:
+                current = self.store.get(did)
+                return (
+                    self.contact_allowed(request["source_session_id"])
+                    and datetime.now(UTC) < datetime.fromisoformat(current["expires_at"])
+                    and self.store.claim_im(did)
+                )
+
+        deliver_once(
+            [DeliveryAttempt(claim, settle)],
+            lambda: im.send_proactive(
+                request["destination_id"],
+                request["content"],
+                text_format="markdown",
+                can_send=lambda: self.contact_allowed(request["source_session_id"]),
+                image=image,
+                prepared_event_uuid=row["message_id"],
+            ),
+        )
+
+    def _report_failure(self, row: dict[str, Any]) -> None:
+        if row["feedback_state"] != "pending" or self.runtime.agent_runtime is None:
+            return
+        request, did = row["request"], row["delivery_id"]
+        source = request["source_session_id"]
+        manager = self.runtime.persistent_session_manager
+        if not manager.exists(source) or manager.is_archived(source) or manager.is_inner(source):
+            # Inner activity already receives its receipts in the next wake snapshot.
+            self.store.update(did, feedback_state="unavailable")
+            return
+        conversation = (
+            "已写入目标会话" if row["conversation_state"] == "committed" else "未写入目标会话"
+        )
+        im_status = {
+            "delivered": "IM 已发送",
+            "unknown": "IM 发送结果未知，请先核实是否收到再决定重发",
+            "not_requested": "未请求 IM 通知",
+        }.get(row["im_state"], "IM 未发送")
+        reason = {
+            "delivery_expired": "等待投递已超过有效期",
+            "binding_changed": "原来的通知绑定已变化",
+            "interrupted_send": "发送过程中运行时中断，未取得确认",
+            "send_timeout": "发送确认超时",
+            "partial_delivery": "部分内容已发送，剩余内容未确认",
+            "contact_paused": "主动联系已暂停",
+        }.get(row["error"], row["error"] or "投递失败")
+        content = (
+            f"系统投递状态更新（{row['created_at']} 提交）\n\n"
+            f"{conversation}；{im_status}。原因：{reason}。\n\n"
+            f"原消息：{request['content'][:200]}"
+        )
+        feedback_id = f"{did}-feedback"
+        try:
+            with self.runtime.agent_runtime.try_reserve_session_mutation(source):
+                manager.append_delivered_message(
+                    source,
+                    delivery_id=feedback_id,
+                    content=content,
+                    source_session_id=source,
+                    source_run_id=request["source_run_id"],
+                )
+                if self.runtime.notification_service is not None:
+                    self.runtime.notification_service.on_prepared_message(
+                        source,
+                        feedback_id,
+                        content,
+                        datetime.fromisoformat(row["created_at"]),
+                    )
+                self.store.update(did, feedback_state="delivered")
+        except (SessionBusyError, SessionWriterConflictError):
+            return
+        except (SessionNotFoundError, AgentError):
+            self.store.update(did, feedback_state="unavailable")
