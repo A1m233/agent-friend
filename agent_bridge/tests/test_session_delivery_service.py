@@ -1,4 +1,5 @@
 from contextlib import nullcontext
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -6,12 +7,13 @@ from unittest.mock import Mock
 
 import pytest
 from agent.runtime import SessionBusyError
+from agent.session_delivery import SessionDeliveryStore
 from agent.sessions.access.service import ConversationAccessError, ConversationAccessService
 from agent.sessions.manager import SessionManager
 from agent_bridge.protocols.im.provider import OutboundSendResult
 from agent_bridge.session_delivery.service import SessionDeliveryService
 
-from agent import JsonlSessionStore, Session
+from agent import JsonlSessionStore, Session, SessionMetadataStore
 
 
 @pytest.fixture
@@ -31,7 +33,9 @@ def service(tmp_path: Path) -> SessionDeliveryService:
     )
     runtime = SimpleNamespace(
         settings=SimpleNamespace(sessions_dir=tmp_path / "sessions"),
-        persistent_session_manager=SessionManager(store),
+        persistent_session_manager=SessionManager(
+            store, metadata_store=SessionMetadataStore(tmp_path / "metadata.json")
+        ),
         im_runtime=SimpleNamespace(
             presence_snapshots=lambda: [presence],
             send_proactive=Mock(return_value=OutboundSendResult("delivered", "provider-id")),
@@ -186,14 +190,34 @@ def test_binding_change_does_not_redirect_or_append(service: SessionDeliveryServ
     service.runtime.im_runtime.send_proactive.assert_not_called()  # type: ignore[union-attr]
 
 
-def test_target_busy_defers_without_starting_another_model(service: SessionDeliveryService) -> None:
+def test_target_busy_sends_im_then_commits_once_after_expiry(
+    service: SessionDeliveryService,
+) -> None:
     row = submit(service)
     service.runtime.agent_runtime.try_reserve_session_mutation = Mock(  # type: ignore[union-attr,method-assign]
         side_effect=SessionBusyError("target")
     )
     service.deliver_pending()
     assert service.store.get(row["delivery_id"])["conversation_state"] == "queued"
-    service.runtime.im_runtime.send_proactive.assert_not_called()  # type: ignore[union-attr]
+    assert service.store.get(row["delivery_id"])["im_state"] == "delivered"
+    service.runtime.im_runtime.send_proactive.assert_called_once()  # type: ignore[union-attr]
+    with service.store.connection() as db:
+        db.execute(
+            "UPDATE deliveries SET expires_at=?",
+            ((datetime.now(UTC) - timedelta(hours=2)).isoformat(),),
+        )
+    service.store = SessionDeliveryStore(service.store.path)
+    service.runtime.agent_runtime.try_reserve_session_mutation = lambda _: nullcontext()  # type: ignore[union-attr,method-assign]
+    service.deliver_pending()
+    service.deliver_pending()
+    assert service.store.get(row["delivery_id"])["conversation_state"] == "committed"
+    service.runtime.im_runtime.send_proactive.assert_called_once()  # type: ignore[union-attr]
+    messages = [
+        e
+        for e in service.runtime.persistent_session_manager.open("target").events
+        if e.type == "assistant_message"
+    ]
+    assert len(messages) == 1
 
 
 def test_deleted_source_purges_retained_prepared_body(service: SessionDeliveryService) -> None:
@@ -202,3 +226,180 @@ def test_deleted_source_purges_retained_prepared_body(service: SessionDeliverySe
     assert service.store.pending() == []
     with pytest.raises(ValueError, match="delivery_not_found"):
         service.store.get(row["delivery_id"])
+
+
+@pytest.mark.parametrize("busy", [False, True])
+def test_offline_submit_recovers_without_duplicate_send(
+    service: SessionDeliveryService, busy: bool
+) -> None:
+    im = service.runtime.im_runtime
+    assert im is not None
+    presence = im.presence_snapshots()[0]
+    presence.online = False  # type: ignore[misc]
+    if busy:
+        service.runtime.agent_runtime.try_reserve_session_mutation = Mock(  # type: ignore[union-attr,method-assign]
+            side_effect=SessionBusyError("target")
+        )
+    row = submit(service)
+    service.deliver_pending()
+    assert service.store.get(row["delivery_id"])["im_state"] == "pending"
+    im.send_proactive.assert_not_called()  # type: ignore[attr-defined]
+    presence.online = True  # type: ignore[misc]
+    service.deliver_pending()
+    service.deliver_pending()
+    assert service.store.get(row["delivery_id"])["im_state"] == "delivered"
+    assert service.store.get(row["delivery_id"])["error"] is None
+    im.send_proactive.assert_called_once()  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("error", ["provider_unavailable", "runtime_stopped"])
+def test_disconnect_between_presence_check_and_send_is_retried(
+    service: SessionDeliveryService, error: str
+) -> None:
+    im = service.runtime.im_runtime
+    assert im is not None
+    im.send_proactive.side_effect = [  # type: ignore[attr-defined]
+        OutboundSendResult("failed", error_kind=error),
+        OutboundSendResult("delivered", "receipt"),
+    ]
+    row = submit(service)
+    service.deliver_pending()
+    assert service.store.get(row["delivery_id"])["im_state"] == "pending"
+    service.deliver_pending()
+    service.deliver_pending()
+    assert service.store.get(row["delivery_id"])["im_state"] == "delivered"
+    assert im.send_proactive.call_count == 2  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("busy", [False, True])
+def test_expiry_reports_failure_to_source_and_does_not_send_after_reconnect(
+    service: SessionDeliveryService, busy: bool
+) -> None:
+    im = service.runtime.im_runtime
+    assert im is not None
+    im.presence_snapshots()[0].online = False  # type: ignore[misc]
+    row = submit(service)
+
+    def reserve(sid: str) -> Any:
+        if busy and sid == "target":
+            raise SessionBusyError("target")
+        return nullcontext()
+
+    service.runtime.agent_runtime.try_reserve_session_mutation = reserve  # type: ignore[union-attr,method-assign]
+    service.deliver_pending()
+    with service.store.connection() as db:
+        db.execute(
+            "UPDATE deliveries SET expires_at=?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(),),
+        )
+    service.deliver_pending()
+    im.presence_snapshots()[0].online = True  # type: ignore[misc]
+    service.deliver_pending()
+    saved = service.store.get(row["delivery_id"])
+    assert saved["conversation_state"] == ("expired" if busy else "committed")
+    assert saved["feedback_state"] == "delivered"
+    assert saved["updated_at"]
+    im.send_proactive.assert_not_called()  # type: ignore[attr-defined]
+    messages = [
+        e
+        for e in service.runtime.persistent_session_manager.open("source").events
+        if e.type == "assistant_message"
+    ]
+    assert len(messages) == 1
+    assert "IM 未发送" in messages[0].payload["content"]
+    assert "超过有效期" in messages[0].payload["content"]
+
+
+def test_uncertain_send_survives_restart_and_reports_once_when_source_idle(
+    service: SessionDeliveryService,
+) -> None:
+    row = submit(service)
+    # Crash after claiming an external send while the target is still busy.
+    assert service.store.claim_im(row["delivery_id"])
+    service.store = SessionDeliveryStore(service.store.path)
+
+    def reserve(sid: str) -> Any:
+        if sid == "source":
+            raise SessionBusyError("source")
+        return nullcontext()
+
+    service.runtime.agent_runtime.try_reserve_session_mutation = reserve  # type: ignore[union-attr,method-assign]
+    service.deliver_pending()
+    assert service.store.get(row["delivery_id"])["feedback_state"] == "pending"
+    service.store = SessionDeliveryStore(service.store.path)
+    service.runtime.agent_runtime.try_reserve_session_mutation = lambda _: nullcontext()  # type: ignore[union-attr,method-assign]
+    service.deliver_pending()
+    service.deliver_pending()
+    service.runtime.im_runtime.send_proactive.assert_not_called()  # type: ignore[union-attr]
+    saved = service.store.get(row["delivery_id"])
+    assert saved["im_state"] == "unknown"
+    assert saved["feedback_state"] == "delivered"
+    messages = [
+        e
+        for e in service.runtime.persistent_session_manager.open("source").events
+        if e.type == "assistant_message"
+    ]
+    assert len(messages) == 1
+    assert "发送结果未知" in messages[0].payload["content"]
+
+
+def test_conversation_only_waits_for_idle_without_sending_im(
+    service: SessionDeliveryService,
+) -> None:
+    row = service.submit(
+        {
+            "__agent_friend_current_session_id": "source",
+            "__agent_friend_run_id": "wake",
+            "__agent_friend_tool_call_id": "only-chat",
+            "target_session_id": "target",
+            "content": "hello",
+            "notify_im": False,
+        }
+    )
+    service.runtime.agent_runtime.try_reserve_session_mutation = Mock(  # type: ignore[union-attr,method-assign]
+        side_effect=SessionBusyError("target")
+    )
+    service.deliver_pending()
+    assert service.store.get(row["delivery_id"])["conversation_state"] == "queued"
+    service.runtime.im_runtime.send_proactive.assert_not_called()  # type: ignore[union-attr]
+
+
+def test_feedback_crash_after_append_is_idempotent(
+    service: SessionDeliveryService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    im = service.runtime.im_runtime
+    assert im is not None
+    im.send_proactive.return_value = OutboundSendResult("unknown", error_kind="send_timeout")  # type: ignore[attr-defined]
+    row = submit(service)
+    update = service.store.update
+
+    def crash_before_receipt(delivery_id: str, **values: Any) -> None:
+        if values.get("feedback_state") == "delivered":
+            raise RuntimeError("crash after feedback append")
+        update(delivery_id, **values)
+
+    monkeypatch.setattr(service.store, "update", crash_before_receipt)
+    with pytest.raises(RuntimeError, match="crash after feedback"):
+        service.deliver_pending()
+    service.store = SessionDeliveryStore(service.store.path)
+    service.deliver_pending()
+    assert service.store.get(row["delivery_id"])["feedback_state"] == "delivered"
+    messages = [
+        e
+        for e in service.runtime.persistent_session_manager.open("source").events
+        if e.type == "assistant_message"
+    ]
+    assert len(messages) == 1
+    im.send_proactive.assert_called_once()  # type: ignore[attr-defined]
+
+
+def test_archived_target_is_not_notified(service: SessionDeliveryService) -> None:
+    row = submit(service)
+    service.runtime.persistent_session_manager.archive("target")
+    assert service.runtime.persistent_session_manager.is_archived("target")
+    service.deliver_pending()
+    saved = service.store.get(row["delivery_id"])
+    assert saved["conversation_state"] == "failed"
+    assert saved["feedback_state"] == "delivered"
+    service.runtime.im_runtime.send_proactive.assert_not_called()  # type: ignore[union-attr]

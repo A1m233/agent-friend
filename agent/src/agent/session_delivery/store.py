@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -12,20 +13,33 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+logger = logging.getLogger(__name__)
+
 
 class SessionDeliveryStore:
     def __init__(self, path: Path) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""CREATE TABLE IF NOT EXISTS deliveries (
                 delivery_id TEXT PRIMARY KEY, operation_key TEXT UNIQUE NOT NULL,
                 fingerprint TEXT UNIQUE NOT NULL, request_json TEXT NOT NULL,
                 conversation_state TEXT NOT NULL DEFAULT 'queued',
                 im_state TEXT NOT NULL, message_id TEXT, provider_receipt TEXT,
                 error TEXT, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)""")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(deliveries)")}
+            if "feedback_state" not in columns:
+                db.execute(
+                    "ALTER TABLE deliveries ADD COLUMN feedback_state TEXT NOT NULL DEFAULT 'none'"
+                )
+            if "updated_at" not in columns:
+                db.execute("ALTER TABLE deliveries ADD COLUMN updated_at TEXT")
             db.execute(
-                "UPDATE deliveries SET im_state='unknown',error='interrupted_send' WHERE im_state='sending'"
+                "UPDATE deliveries SET im_state='unknown',error='interrupted_send', "
+                "feedback_state=CASE WHEN conversation_state='queued' THEN 'none' ELSE 'pending' END, "
+                "updated_at=? WHERE im_state='sending'",
+                (datetime.now(UTC).isoformat(),),
             )
 
     @contextmanager
@@ -122,6 +136,15 @@ class SessionDeliveryStore:
                 )
             ]
 
+    def pending_feedback(self) -> list[dict[str, Any]]:
+        with self.connection() as db:
+            return [
+                self._decode(row)
+                for row in db.execute(
+                    "SELECT * FROM deliveries WHERE feedback_state='pending' ORDER BY created_at LIMIT 100"
+                )
+            ]
+
     def for_source_run(self, session_id: str, run_id: str) -> list[dict[str, Any]]:
         with self.connection() as db:
             return [
@@ -167,15 +190,47 @@ class SessionDeliveryStore:
             )
 
     def update(self, delivery_id: str, **values: Any) -> None:
-        allowed = {"conversation_state", "im_state", "message_id", "provider_receipt", "error"}
+        allowed = {
+            "conversation_state",
+            "im_state",
+            "message_id",
+            "provider_receipt",
+            "error",
+            "feedback_state",
+        }
         if not values or not set(values) <= allowed:
             raise ValueError("invalid delivery update")
-        assignments = ",".join(f"{k}=?" for k in values)
         with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM deliveries WHERE delivery_id=?", (delivery_id,)
+            ).fetchone()
+            if row is None or all(row[key] == value for key, value in values.items()):
+                return
+            current = dict(row) | values
+            if (
+                current["feedback_state"] == "none"
+                and current["conversation_state"] != "queued"
+                and current["im_state"] not in {"pending", "sending"}
+                and (
+                    current["conversation_state"] != "committed"
+                    or current["im_state"] in {"failed", "unknown", "cancelled"}
+                )
+            ):
+                values["feedback_state"] = "pending"
+            values["updated_at"] = datetime.now(UTC).isoformat()
+            assignments = ",".join(f"{k}=?" for k in values)
             db.execute(
                 f"UPDATE deliveries SET {assignments} WHERE delivery_id=?",
                 (*values.values(), delivery_id),
             )
+        logger.info(
+            "delivery_state delivery_id=%s conversation_state=%s im_state=%s feedback_state=%s",
+            delivery_id,
+            current["conversation_state"],
+            current["im_state"],
+            values.get("feedback_state", current["feedback_state"]),
+        )
 
     def forget_session(self, session_id: str) -> None:
         """Drop retained prepared content when either owning conversation is deleted."""
@@ -190,8 +245,8 @@ class SessionDeliveryStore:
         with self.connection() as db:
             return (
                 db.execute(
-                    "UPDATE deliveries SET im_state='sending' WHERE delivery_id=? AND conversation_state='committed' AND im_state='pending'",
-                    (delivery_id,),
+                    "UPDATE deliveries SET im_state='sending',updated_at=? WHERE delivery_id=? AND conversation_state IN ('queued','committed') AND im_state='pending'",
+                    (datetime.now(UTC).isoformat(), delivery_id),
                 ).rowcount
                 == 1
             )
