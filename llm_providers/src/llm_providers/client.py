@@ -48,6 +48,7 @@ from .litellm_transport import (
     complete_cancellable_litellm,
     open_cancellable_litellm_stream,
 )
+from .multimodal.tool_images import ToolImageSupport
 from .prompt_cache_observation import (
     build_prompt_cache_observation,
     emit_prompt_cache_observation,
@@ -270,7 +271,7 @@ class LLMClient:
         if stream_timeout_seconds is not None and stream_timeout_seconds <= 0:
             raise ValueError("stream_timeout_seconds 必须大于 0")
         self.spec = spec
-        self.tool_images_rejected = False
+        self.tool_image_support = ToolImageSupport()
         self._network_retries = network_retries
         self._network_retry_backoff_seconds = network_retry_backoff_seconds
         self._engine_overload_retries = engine_overload_retries
@@ -278,6 +279,14 @@ class LLMClient:
         self._engine_overload_retry_jitter_ratio = engine_overload_retry_jitter_ratio
         self._engine_overload_max_retry_delay_seconds = engine_overload_max_retry_delay_seconds
         self._stream_timeout_seconds = stream_timeout_seconds
+
+    @property
+    def tool_images_rejected(self) -> bool:
+        return self.tool_image_support.rejected
+
+    @tool_images_rejected.setter
+    def tool_images_rejected(self, rejected: bool) -> None:
+        self.tool_image_support.rejected = rejected
 
     @property
     def capabilities(self) -> LanguageModelCapabilities:

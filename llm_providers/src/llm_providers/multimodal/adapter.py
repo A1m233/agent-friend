@@ -7,12 +7,10 @@ import hashlib
 from collections.abc import Callable
 from typing import Any, BinaryIO, cast
 
-from ..catalog import DEEPSEEK_VISION_LITELLM_MODEL, model_capabilities
-from ..client import LLMClient
 from ..errors import ErrorEvidence, LLMBadRequestError
 from ..protocol import LanguageModel
 from .limits import TOOL_RESULT_MAX_IMAGE_BYTES, TOOL_RESULT_MAX_IMAGES
-from .tool_images import supports_tool_images
+from .tool_images import supports_tool_images, tool_image_capabilities, tool_image_spec
 
 
 class MultimodalInputAdapter:
@@ -57,10 +55,10 @@ class MultimodalInputAdapter:
                 "content": text
                 + "\n[工具图像当前未提供：当前模型路由不支持图像工具结果，不能推断原图内容]",
             }
-        concrete = self._concrete_client(client)
-        caps = concrete.spec.attachment_capabilities or model_capabilities(
-            self._canonical_model_id(concrete)
-        )
+        spec = tool_image_spec(client)
+        if spec is None:
+            raise LLMBadRequestError("attachment_model_unsupported: 当前模型路由没有附件适配器。")
+        caps = tool_image_capabilities(spec)
         images = message.images
         if len(images) > min(TOOL_RESULT_MAX_IMAGES, caps.max_attachments_per_turn):
             raise LLMBadRequestError("image_count_exceeded: too many tool images")
@@ -100,18 +98,3 @@ class MultimodalInputAdapter:
                 }
             )
         return {**result, "content": content}
-
-    @staticmethod
-    def _canonical_model_id(client: LLMClient) -> str:
-        model = client.spec.model
-        if model == DEEPSEEK_VISION_LITELLM_MODEL:
-            return "deepseek/deepseek-flash"
-        if model.startswith("openai/kimi-"):
-            return "kimi/" + model.removeprefix("openai/")
-        return model
-
-    @staticmethod
-    def _concrete_client(client: LanguageModel) -> LLMClient:
-        if not isinstance(client, LLMClient):
-            raise LLMBadRequestError("attachment_model_unsupported: 当前模型路由没有附件适配器。")
-        return client
