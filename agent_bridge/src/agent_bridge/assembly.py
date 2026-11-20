@@ -541,6 +541,7 @@ def build_runtime(
     command_runtime = CommandRuntime(
         codex_executable,
         codex_home=command_runtime_root / "codex-home",
+        managed_home_root=command_runtime_root,
         execution_root=Path(tempfile.gettempdir()) / "agent-friend-command-execution",
         runtime_instance_id=runtime_identity.bridge_instance_id,
         diagnostics_path=log_dir() / "command-runtime-diagnostics.json",
