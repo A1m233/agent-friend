@@ -141,8 +141,9 @@ def test_uploaded_image_reference_is_scoped_and_does_not_grant_directory_access(
     assert not service.root.exists()
 
 
+@pytest.mark.parametrize("guarded", [False, True])
 def test_image_rejection_rebuilds_without_images_and_preserves_tool_source(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, guarded: bool
 ) -> None:
     from collections.abc import Iterator
     from typing import Any
@@ -170,8 +171,12 @@ def test_image_rejection_rebuilds_without_images_and_preserves_tool_source(
         yield LLMTurnDone(stop_reason="end_turn")
 
     monkeypatch.setattr(client, "stream", stream)
+    from .test_companionship_images import guard
+
     conv, _, _ = _make_conversation(
-        tmp_path, fake_llm=client, context_manager=SummarizingContextManager()
+        tmp_path,
+        fake_llm=guard(client, []) if guarded else client,
+        context_manager=SummarizingContextManager(),
     )
     messages = [
         {"role": "assistant", "tool_calls": [{"id": "a"}], "content": ""},
