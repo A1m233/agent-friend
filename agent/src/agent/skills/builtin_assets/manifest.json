@@ -108,7 +108,7 @@
     "maintain-af-memory": {
       "source_repository": "https://github.com/A1m233/agent-friend",
       "source_path": ".cursor/skills/maintain-af-memory",
-      "snapshot_sha256": "76da74ec5a476ec958ec2aaf924f55fcdecc22ea0588140f140dfe58b9ded79c"
+      "snapshot_sha256": "7890496ed70d78c9118899248562e722798ce5f79bba9a5b3afb4d83f275e5c7"
     }
   }
 }

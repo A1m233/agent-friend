@@ -25,6 +25,7 @@ from memory import (
 
 from .context import resolve_prior_summary
 from .message_references import parse_quoted_text_references, render_memory_user_text
+from .request_context.source import render_request_source
 from .sessions import Event, Session
 
 __all__ = ["project_post_turn_observation", "project_turn"]
@@ -210,7 +211,10 @@ def _project_utterance(event: Event, *, session_id: str) -> Utterance | None:
         if isinstance(content, str) and (content.strip() or references):
             return Utterance(
                 speaker="user",
-                text=render_memory_user_text(content, references),
+                text=render_request_source(
+                    render_memory_user_text(content, references),
+                    event.payload.get("request_source"),
+                ),
                 ts=event.ts,
                 source_ref=f"{session_id}#{event.uuid}",
             )
