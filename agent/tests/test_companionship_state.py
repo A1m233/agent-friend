@@ -15,6 +15,55 @@ from agent import Event, JsonlSessionStore, Session
 NOW = datetime(2026, 11, 3, tzinfo=UTC)
 
 
+@pytest.mark.parametrize(
+    "change,expected",
+    [
+        ("initial", None),
+        ("none", None),
+        ("user", "new content"),
+        ("assistant", "new content"),
+        ("proactive", None),
+        ("display", None),
+        ("title", None),
+    ],
+)
+def test_wake_recall_uses_new_business_content_only(
+    tmp_path: Path, change: str, expected: str | None
+) -> None:
+    from agent.companionship.snapshot import prepare_wake_overview
+
+    sessions = JsonlSessionStore(tmp_path / "sessions")
+    sessions.create(Session.new("Daily", "default", "test/model", session_id="daily"))
+    sessions.append_event(
+        "daily", Event(type="user_message", uuid="old", ts=NOW, payload={"content": "old content"})
+    )
+    access = ConversationAccessService(sessions)
+    store = CompanionshipStore(tmp_path / "state.db")
+    first = capture_changes(access, store.read(), "first")
+    state = {**store.read(), "last_overview_at": NOW.isoformat(), "baselines": first["baselines"]}
+    if change in {"user", "assistant", "proactive"}:
+        sessions.append_event(
+            "daily",
+            Event(
+                type="user_message" if change == "user" else "assistant_message",
+                uuid="new",
+                ts=NOW + timedelta(minutes=1),
+                payload={"content": "new content"},
+                meta={"message_source": {"kind": "agent_initiated"}}
+                if change == "proactive"
+                else {},
+            ),
+        )
+    if change == "title":
+        state["baselines"]["daily"]["title"] = "old title"
+    snapshot = first if change == "initial" else capture_changes(access, state, "next")
+    if change == "display":
+        snapshot["evidence_changes"] = {"items": [{"status": "presented"}]}
+    overview, query = prepare_wake_overview(access, snapshot)
+    assert query == expected
+    assert overview == render_overview(access, snapshot)
+
+
 def test_random_delay_samples_configured_range_each_time(monkeypatch: pytest.MonkeyPatch) -> None:
     delays = iter([1200, 1777, 2400])
 

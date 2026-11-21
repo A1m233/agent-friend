@@ -784,6 +784,7 @@ class AgentRuntime:
                         else None
                     ),
                     event_metadata=request.event.event_metadata,
+                    recall_query=request.event.recall_query,
                     run_id=request.run_id,
                     cancel_check=handle.token.raise_if_cancelled,
                 )
@@ -896,6 +897,7 @@ class AgentRuntime:
                 presentation=ev.presentation,
                 tool_mode=ev.tool_mode,
                 event_metadata=ev.event_metadata,
+                recall_query=ev.recall_query,
             )
 
         for cev in events_iter:

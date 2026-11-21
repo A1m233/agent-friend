@@ -47,6 +47,8 @@ class SystemTriggerEvent:
             复用普通对话的完整工具循环与全局权限策略。
         event_metadata: 旁路元数据（如 idle 触发时的累计 idle 分钟），供
             observability / 调试，**不参与 dispatch 行为决策**。
+        recall_query: 宿主从实质内容变化提取的可选检索线索；沿用记忆数据边界，
+            不赋予工具授权。为空时由内心历史承接活动。
     """
 
     session_id: str
@@ -57,6 +59,7 @@ class SystemTriggerEvent:
     tool_mode: Literal["disabled", "normal"] = "disabled"
     event_metadata: dict[str, Any] = field(default_factory=dict)
     type: Literal["system_trigger"] = "system_trigger"
+    recall_query: str | None = None
 
 
 AgentEvent = UserEvent | SystemTriggerEvent

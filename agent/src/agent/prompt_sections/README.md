@@ -47,7 +47,7 @@
 | 模型连接探测 | agent_bridge.model_connections.inspection | 能力探测，不代表朋友发言 |
 | 自动安全审批 | approvals.reviewer.SecurityReviewer | 独立内部判断；只加载安全策略、规范化动作及有来源的可见证据，不加载人格、长期记忆或隐藏推理 |
 | IM 自然聊天 | IMReplyStyle → 一次无工具调用 | 复用身份与当前人格，只转述已准备好的正文，失败回退原答；改写不参与长期记忆 |
-| 自主内心活动 | companionship.activity → SystemTriggerEvent → Conversation | 复用默认身份、正式人格与长期记忆；额外活动建议开放而非任务清单，宿主简报为数据；最终只通过成果投递触达用户 |
+| 自主内心活动 | companionship.activity → SystemTriggerEvent → Conversation._stream_session_turn | 与普通聊天共用回合准备、Skill 目录和记忆装配；复用默认身份、正式人格，宿主简报保留系统来源；最终通过成果投递触达用户 |
 
 维护流程由 `.cursor/rules/agent-prompt-composition.mdc` 负责。身份正文、人格表达、
 专用任务规则各自维护；清单仅记录消费者，不成为另一份产品行为契约。

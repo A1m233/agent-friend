@@ -344,7 +344,10 @@ class _SkillCallingLLM:
         yield LLMTurnDone(stop_reason="end_turn")
 
 
-def test_model_can_implicitly_select_and_read_skill_in_tool_loop(tmp_path: Path) -> None:
+@pytest.mark.parametrize("autonomous", [False, True])
+def test_model_can_implicitly_select_and_read_skill_in_tool_loop(
+    tmp_path: Path, autonomous: bool
+) -> None:
     personal = tmp_path / "skills"
     _write_skill(personal, "test-skill", "FIRST VERSION")
     skill_service = SkillCatalogService(
@@ -380,7 +383,16 @@ def test_model_can_implicitly_select_and_read_skill_in_tool_loop(tmp_path: Path)
         tool_registry=ToolRegistry([SkillReadTool(skill_service)]),
     )
 
-    events = list(conversation.stream("帮我完成这个 Test workflow"))
+    events = list(
+        conversation.dispatch_system_turn(
+            source_kind="companionship",
+            system_prompt_addendum="继续自己的 Test workflow",
+            presentation="none",
+            tool_mode="normal",
+        )
+        if autonomous
+        else conversation.stream("帮我完成这个 Test workflow")
+    )
 
     assert len(llm.received) == 2
     assert llm.received_tools[0] is not None
@@ -392,6 +404,11 @@ def test_model_can_implicitly_select_and_read_skill_in_tool_loop(tmp_path: Path)
     assert "No governed filesystem search/read tools" in result_event.payload["content"]
     assert result_event.meta["extra"]["skill_activation"]["status"] == "activated"
     assert any(getattr(event, "type", "") == "tool_call_result" for event in events)
+    assert conversation._active_skill_turn_snapshot is None
+    assert conversation._active_tool_run_context is None
+    assert any(event.type == "user_message" for event in conversation.session.events) is (
+        not autonomous
+    )
 
 
 def test_semantic_skill_activation_is_available_to_later_command_binding(

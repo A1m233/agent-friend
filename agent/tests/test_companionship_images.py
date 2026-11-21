@@ -145,8 +145,9 @@ def test_image_capability_does_not_bypass_guard_stop(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.parametrize("chat", [False, True])
+@pytest.mark.parametrize("autonomous", [False, True])
 def test_guarded_generate_then_view_sends_image_and_keeps_governance(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chat: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chat: bool, autonomous: bool
 ) -> None:
     model = client(chat=chat)
     conv = _make_conversation(tmp_path, fake_llm=model)  # type: ignore[arg-type]
@@ -170,7 +171,8 @@ def test_guarded_generate_then_view_sends_image_and_keeps_governance(
 
     def stream(request: ModelRequest) -> Iterator[LLMStreamEvent]:
         requests.append(request)
-        assert not request.control.allow_retries and request.control.retry_limit == 0
+        assert request.control.allow_retries
+        assert request.control.retry_limit is not None and request.control.retry_limit > 0
         assert request.control.cancel_check is not None
         before = events.count("check")
         request.control.cancel_check()
@@ -219,7 +221,17 @@ def test_guarded_generate_then_view_sends_image_and_keeps_governance(
         )
 
     monkeypatch.setattr(model, "stream", stream)
-    result = list(conv.stream("generate and inspect", run_id="guarded-images"))
+    result = list(
+        conv.dispatch_system_turn(
+            source_kind="companionship",
+            system_prompt_addendum="generate and inspect",
+            presentation="none",
+            tool_mode="normal",
+            run_id="guarded-images",
+        )
+        if autonomous
+        else conv.stream("generate and inspect", run_id="guarded-images")
+    )
     assert len(requests) == 3
     assert events.count("call") == events.count("usage") == events.count("submitted") == 3
     assert sum(isinstance(e, AssistantImage) for e in result) == 1
