@@ -1,6 +1,6 @@
 ---
 name: agent-friend-guide
-description: 查询和解答 agent-friend 的产品功能、使用方法、设置、模型与在线工具凭据、语音凭据、数据隐私和常见故障。Use when 用户询问 agent-friend 能做什么、某项功能怎么用、DeepSeek、Kimi、OpenRouter 或其它服务凭据如何申请和配置、数据存在哪里或如何迁移、以及功能不可用时如何排查。
+description: 协助完成 agent-friend 首次配置，查询和解答 agent-friend 的产品功能、使用方法、设置、模型与在线工具凭据、语音凭据、数据隐私和常见故障。Use when 用户询问 agent-friend 能做什么、某项功能怎么用、DeepSeek、Kimi、OpenRouter 或其它服务凭据如何申请和配置、数据存在哪里或如何迁移、以及功能不可用时如何排查。
 ---
 
 # agent-friend 使用指南
@@ -19,6 +19,7 @@ description: 查询和解答 agent-friend 的产品功能、使用方法、设�
 
 | 用户问题 | 读取 |
 | --- | --- |
+| 第一次安装、配置模型、让本机 Agent 查看缺项或调整默认模型 | `references/getting-started.md` |
 | 产品是什么、能做什么、能力边界 | `references/product-overview.md` |
 | 对话、会话、搜索、附件、人格、主动联系、自主陪伴、待办、定时任务、桌宠、Skill 等怎么用 | `references/using-agent-friend.md` |
 | 添加或安装明日方舟 / Ark-Models Spine 桌宠模型 | `references/arknights-avatar-models.md` |
@@ -31,7 +32,7 @@ description: 查询和解答 agent-friend 的产品功能、使用方法、设�
 | 本地数据、迁移、诊断包、隐私 | `references/data-and-privacy.md` |
 | 功能不可用、凭据不生效、常见排查 | `references/troubleshooting.md` |
 
-`references/getting-started.md` 是后续完整新手引导的占位文件。首版不要把普通问题路由到它。
+首次配置先读上手章节。具备本机命令能力时，按该章节查询状态，只按用户选定的用途和模型修改默认值。
 
 ## 回答边界
 
