@@ -1,13 +1,13 @@
 import {
   type ComponentProps,
   type ReactNode,
+  createElement,
   forwardRef,
   useEffect,
   useImperativeHandle,
   useRef,
 } from "react";
 import { ChatSender } from "@tdesign-react/chat";
-import { Navigation2 } from "lucide-react";
 import { TooltipButton, TooltipProvider } from "@/components/ui";
 import { cn } from "@/utils/cn";
 import { readStringEventValue } from "@/utils/webComponentEvents";
@@ -174,7 +174,11 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
                   tooltip={blockedSendReason}
                   size="icon-sm"
                   className="cursor-not-allowed rounded-full bg-muted/35 text-bg hover:bg-muted/35"
-                  icon={<Navigation2 className="fill-current" />}
+                  // ChatSender registers this icon; reuse its glyph and size in the tooltip action.
+                  icon={createElement("t-icon-send-filled", {
+                    "aria-hidden": "true",
+                    size: "var(--td-font-size-body-large)",
+                  })}
                 />
               </TooltipProvider>
             </span>
