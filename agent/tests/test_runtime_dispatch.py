@@ -1266,8 +1266,9 @@ def test_postprocess_interruption_closes_remaining_tool_results(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("preexisting_result", [False, True])
+@pytest.mark.parametrize("autonomous", [False, True])
 def test_provider_preflight_repairs_terminal_orphan_before_request(
-    tmp_path: Path, *, preexisting_result: bool
+    tmp_path: Path, *, preexisting_result: bool, autonomous: bool
 ) -> None:
     fake = _ScriptedLLMClient(
         script=[[LLMTextDelta(text="continued"), LLMTurnDone(stop_reason="end_turn")]]
@@ -1341,7 +1342,17 @@ def test_provider_preflight_repairs_terminal_orphan_before_request(
     conv._session_model_history.append([assistant])
     conv._session_model_history.note_active_events(conv.session)
 
-    list(conv.stream("follow up", run_id="follow-up"))
+    list(
+        conv.dispatch_system_turn(
+            source_kind="companionship",
+            system_prompt_addendum="continue",
+            presentation="none",
+            tool_mode="normal",
+            run_id="follow-up",
+        )
+        if autonomous
+        else conv.stream("follow up", run_id="follow-up")
+    )
 
     results = [event for event in conv.session.events if event.type == "tool_call_result"]
     assert len(results) == 1

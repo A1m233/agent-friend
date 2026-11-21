@@ -234,6 +234,7 @@ from .tools.builtin.skills import (
 from .tools.protocol import IMAGE_INPUT_SUPPORTED_ARG
 
 if TYPE_CHECKING:
+    from .runtime.inbox import SystemTriggerEvent
     from .session_files.service import SessionFileService
 
     PromptBuilderFactory = Callable[[str], PromptBuilder]
@@ -881,7 +882,7 @@ class Conversation:
             ``KeyboardInterrupt`` 等 :class:`BaseException` 会被 ``finally``
             通过 :func:`sys.exc_info` 识别为中断，按"部分回复"语义落盘。
         """
-        yield from self._stream_user_turn(
+        yield from self._stream_session_turn(
             user_input,
             attachments=attachments,
             references=references,
@@ -899,7 +900,7 @@ class Conversation:
             approval_mode_override=approval_mode_override,
         )
 
-    def _stream_user_turn(
+    def _stream_session_turn(
         self,
         user_input: str,
         *,
@@ -917,10 +918,14 @@ class Conversation:
         model_override: ModelRuntimeConfig | None = None,
         request_source: dict[str, Any] | None = None,
         approval_mode_override: SessionApprovalModeState | None = None,
+        trigger: SystemTriggerEvent | None = None,
         rewrite_plan: _RewritePlan | None = None,
         resume_task: bool = False,
         recovery_mode: Literal["automatic", "compact_then_resume"] = "automatic",
     ) -> Iterator[ConversationEvent]:
+        """Execute a tool-enabled turn, preserving the source of its initiating event."""
+        autonomous = trigger is not None and trigger.source_kind == "companionship"
+        skill_enabled = trigger is None or autonomous
         with observe_run_phase(logger, self._run_latency_context, "history_reconcile"):
             self._session_model_history.reconcile(self._session)
         with observe_run_phase(logger, self._run_latency_context, "tool_transaction_repair"):
@@ -945,6 +950,9 @@ class Conversation:
         self._turn_context_override = _compose_turn_context(turn_context, turn_attachments)
         previous_approval_override = getattr(self, "_request_approval_override", None)
         self._request_approval_override = approval_mode_override
+        previous_tool_run_context = self._active_tool_run_context
+        tool_run_context: ToolRunContext | None = None
+        turn_start_idx: int | None = None
         try:
             with observe_run_phase(logger, self._run_latency_context, "model_snapshot"):
                 self._turn_prompt_builder = self._snapshot_prompt_builder()
@@ -953,15 +961,17 @@ class Conversation:
             persona_id = self._session.current_persona_id
             model_snapshot = self._active_model_id()
 
-            existing_user_event = next(
-                (
-                    event
-                    for event in self._session.events
-                    if user_event_id
-                    and event.type == "user_message"
-                    and event.uuid == user_event_id
-                ),
-                None,
+            existing_user_event = (
+                None
+                if user_event_id is None
+                else next(
+                    (
+                        event
+                        for event in self._session.events
+                        if event.type == "user_message" and event.uuid == user_event_id
+                    ),
+                    None,
+                )
             )
             selection_history = (
                 self._session.events[: self._session.events.index(existing_user_event)]
@@ -1010,6 +1020,8 @@ class Conversation:
                         raise ValueError(
                             "skill_turn_snapshot_conflict: frozen Skill snapshot 与选择不一致。"
                         )
+                elif trigger is not None:
+                    effective_skill_selections = ()
                 elif resume_task:
                     # Continuation reuses durable caller intent; catalog changes must
                     # not infer additional explicit selections from the old text.
@@ -1073,14 +1085,22 @@ class Conversation:
                         model_window=self._active_llm_client().context_window,
                         semantic_activation_available=self._skill_read_available(),
                     )
-                    if completed_replay_text is None and self._skill_service is not None
+                    if skill_enabled
+                    and completed_replay_text is None
+                    and self._skill_service is not None
                     else None
                 )
                 first_turn_catalog_message = self._skill_catalog_message()
             loop_frame = _ToolLoopFrame(current_text_buf=[])
             with observe_run_phase(logger, self._run_latency_context, "tool_evidence"):
-                tool_run_context = self._make_tool_run_context(user_input, events=selection_history)
-            previous_tool_run_context = self._active_tool_run_context
+                evidence_input = (
+                    trigger.system_prompt_addendum
+                    if trigger is not None and not autonomous
+                    else user_input
+                )
+                tool_run_context = self._make_tool_run_context(
+                    evidence_input, events=selection_history
+                )
             self._active_tool_run_context = tool_run_context
             tool_run_state = ToolRunState(self._tool_run_policy)
             self._active_tool_run_state = tool_run_state
@@ -1088,6 +1108,13 @@ class Conversation:
             turn_start_idx = len(self._session.events)
 
             def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
+                if trigger is not None and not autonomous:
+                    return (
+                        yield from self._assemble_stream(
+                            trailing_user=trigger.system_prompt_addendum,
+                            cancel_check=cancel_check,
+                        )
+                    )
                 if existing_user_event is not None:
                     return (
                         yield from self._assemble_stream(
@@ -1109,20 +1136,25 @@ class Conversation:
                         prior_summary_override=prefix_prior_summary,
                         recall_boundary_override=prefix_recall_boundary,
                         catalog_message_override=first_turn_catalog_message,
+                        trigger=trigger,
                         cancel_check=cancel_check,
                     )
                 )
 
-        except BaseException:
-            self._request_approval_override = previous_approval_override
-            self._restore_run_model_snapshot(previous_run_model_snapshot)
-            self._compaction_control = previous_compaction_control
-            raise
-        try:
             # Once execution accepts the turn, the query is durable before cancellation,
             # memory/context assembly, or provider-specific attachment rendering can fail.
             with observe_run_phase(logger, self._run_latency_context, "input_persistence"):
-                if not user_event_appended:
+                if trigger is not None:
+                    self._check_cancel(cancel_check)
+                    self._append_skill_catalog_state_event()
+                    self._append_system_trigger_event(
+                        source_kind=trigger.source_kind,
+                        system_prompt_addendum=trigger.system_prompt_addendum,
+                        output_visibility=trigger.output_visibility,
+                        presentation=trigger.presentation,
+                        event_metadata=trigger.event_metadata,
+                    )
+                elif not user_event_appended:
                     if self._input_accepted_callback is not None:
                         self._check_cancel(cancel_check)
                     if rewrite_plan is not None:
@@ -1188,7 +1220,7 @@ class Conversation:
                         yield AssistantMessageEnd(replay.uuid)
                 yield TurnDone(stop_reason="idempotent_replay", total_tool_calls=0)
                 return
-            if self._session_file_inputs is not None:
+            if self._session_file_inputs is not None and trigger is None:
                 accepted_event_id = (
                     existing_user_event.uuid if existing_user_event else appended_user_id
                 )
@@ -1206,46 +1238,50 @@ class Conversation:
                 progress=no_progress,
                 frame=loop_frame,
                 current_turn_start_idx=turn_start_idx,
-                user_turn=True,
+                user_turn=trigger is None,
                 cancel_check=cancel_check,
             )
         finally:
-            exc_info = sys.exc_info()
-            if self._run_usage_callback is not None:
-                self._run_usage_callback(self._turn_done(tool_run_state))
-            interrupted = exc_info[0] is not None
-            if interrupted:
-                self._on_interrupt(
-                    user_input=user_input,
-                    user_event_appended=user_event_appended,
-                    current_text_buf=loop_frame.current_text_buf,
-                    current_text_persisted=loop_frame.current_text_persisted,
-                    persona_name=persona_name,
-                    persona_id=persona_id,
-                    model_snapshot=model_snapshot,
-                    persist_empty_partial=_is_explicit_run_cancellation(exc_info[1]),
-                    interruption_reason=_interruption_reason_code(exc_info[1]),
-                )
-            if not self._post_turn_external:
-                # Runtime owns observation when installed. Direct/CLI callers
-                # also retain failed-turn facts without triggering extraction.
-                self._observe_turn(turn_start_idx, defer_extraction=interrupted)
-                if not interrupted:
-                    self.publish_execution_snapshot()
-            self._prompt_channel_override = previous_prompt_channel
-            self._prompt_surface_override = previous_prompt_surface
-            self._interaction_destination_id_override = previous_interaction_destination_id
-            self._run_id_override = previous_run_id
-            self._turn_context_override = previous_turn_context
-            self._turn_prompt_builder = previous_turn_prompt_builder
-            self._request_approval_override = previous_approval_override
-            self._restore_run_model_snapshot(previous_run_model_snapshot)
-            self._active_skill_turn_snapshot = previous_skill_turn_snapshot
-            self._active_skill_selections = previous_skill_selections
-            self._compaction_control = previous_compaction_control
-            self._active_tool_run_state = None
-            tool_run_context.close_commands("run_finished")
-            self._active_tool_run_context = previous_tool_run_context
+            try:
+                if turn_start_idx is not None:
+                    exc_info = sys.exc_info()
+                    if self._run_usage_callback is not None:
+                        self._run_usage_callback(self._turn_done(tool_run_state))
+                    interrupted = exc_info[0] is not None
+                    if interrupted:
+                        self._on_interrupt(
+                            user_input=user_input,
+                            user_event_appended=user_event_appended,
+                            current_text_buf=loop_frame.current_text_buf,
+                            current_text_persisted=loop_frame.current_text_persisted,
+                            persona_name=persona_name,
+                            persona_id=persona_id,
+                            model_snapshot=model_snapshot,
+                            persist_empty_partial=_is_explicit_run_cancellation(exc_info[1]),
+                            interruption_reason=_interruption_reason_code(exc_info[1]),
+                        )
+                    if not self._post_turn_external:
+                        # Runtime owns observation when installed. Direct/CLI callers
+                        # also retain failed-turn facts without triggering extraction.
+                        self._observe_turn(turn_start_idx, defer_extraction=interrupted)
+                        if not interrupted:
+                            self.publish_execution_snapshot()
+            finally:
+                self._prompt_channel_override = previous_prompt_channel
+                self._prompt_surface_override = previous_prompt_surface
+                self._interaction_destination_id_override = previous_interaction_destination_id
+                self._run_id_override = previous_run_id
+                self._turn_context_override = previous_turn_context
+                self._turn_prompt_builder = previous_turn_prompt_builder
+                self._request_approval_override = previous_approval_override
+                self._restore_run_model_snapshot(previous_run_model_snapshot)
+                self._active_skill_turn_snapshot = previous_skill_turn_snapshot
+                self._active_skill_selections = previous_skill_selections
+                self._compaction_control = previous_compaction_control
+                self._active_tool_run_state = None
+                if tool_run_context is not None:
+                    tool_run_context.close_commands("run_finished")
+                self._active_tool_run_context = previous_tool_run_context
 
     def edit_resend_latest(
         self,
@@ -1289,7 +1325,7 @@ class Conversation:
         if not user_input.strip() and not replacement_attachments and not replacement_references:
             raise AgentError("编辑后的文字、附件和引用不能同时为空")
 
-        yield from self._stream_user_turn(
+        yield from self._stream_session_turn(
             user_input,
             attachments=replacement_attachments,
             references=replacement_references,
@@ -1318,7 +1354,7 @@ class Conversation:
             current_run_id=run_id,
         )
         user = target.user_event
-        yield from self._stream_user_turn(
+        yield from self._stream_session_turn(
             str(user.payload.get("content", "")),
             user_event_id=user.uuid,
             attachments=[
@@ -1372,112 +1408,30 @@ class Conversation:
         surface: InteractionSurfaceId | None = None,
         interaction_destination_id: str | None = None,
         event_metadata: dict[str, Any] | None = None,
+        recall_query: str | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
-        """Run a user-visible system turn through the normal Agent tool loop."""
+        from .runtime.inbox import SystemTriggerEvent
 
-        previous_prompt_channel = self._prompt_channel_override
-        previous_prompt_surface = self._prompt_surface_override
-        previous_interaction_destination_id = self._interaction_destination_id_override
-        previous_run_id = self._run_id_override
-        previous_turn_prompt_builder = self._turn_prompt_builder
-        previous_run_model_snapshot = self._run_model_snapshot
-        previous_tool_run_context = self._active_tool_run_context
-        self._prompt_channel_override = channel
-        self._prompt_surface_override = surface
-        self._interaction_destination_id_override = interaction_destination_id
-        self._run_id_override = run_id
-        self._turn_prompt_builder = self._snapshot_prompt_builder()
-        self._run_model_snapshot = self._capture_run_model_snapshot()
-        try:
-            persona_name = self._session.current_persona_name
-            persona_id = self._session.current_persona_id
-            model_snapshot = self._active_model_id()
-            loop_frame = _ToolLoopFrame(current_text_buf=[])
-            tool_run_context = self._make_tool_run_context(
-                "" if source_kind == "companionship" else system_prompt_addendum
-            )
-            self._active_tool_run_context = tool_run_context
-            tool_run_state = ToolRunState(self._tool_run_policy)
-            self._active_tool_run_state = tool_run_state
-            no_progress = ToolProgressTracker(self._tool_run_policy.no_progress_advisory_threshold)
-            turn_start_idx = len(self._session.events)
-            trigger_appended = False
-
-            def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
-                nonlocal trigger_appended
-                self._check_cancel(cancel_check)
-                # The accepted trigger belongs to the source being compacted.
-                # Appending it afterwards invalidates our own checkpoint before
-                # the provider can accept the prepared request.
-                if not trigger_appended:
-                    self._append_system_trigger_event(
-                        source_kind=source_kind,
-                        system_prompt_addendum=system_prompt_addendum,
-                        output_visibility="user",
-                        presentation=presentation,
-                        event_metadata=event_metadata,
-                    )
-                    trigger_appended = True
-                return (
-                    yield from self._assemble_stream(
-                        trailing_user=system_prompt_addendum,
-                        tool_specs=self._current_tool_specs(),
-                        cancel_check=cancel_check,
-                    )
-                )
-
-        except BaseException:
-            self._restore_run_model_snapshot(previous_run_model_snapshot)
-            raise
-        try:
-            self._check_cancel(cancel_check)
-            yield from self._run_tool_loop(
-                prepare_first_turn=prepare_first_turn,
-                persona_name=persona_name,
-                persona_id=persona_id,
-                model_snapshot=model_snapshot,
-                runtime=tool_run_state,
-                context=tool_run_context,
-                progress=no_progress,
-                frame=loop_frame,
-                current_turn_start_idx=turn_start_idx,
-                user_turn=False,
-                cancel_check=cancel_check,
-            )
-        finally:
-            interrupted = sys.exc_info()[0] is not None
-            if self._run_usage_callback is not None:
-                self._run_usage_callback(self._turn_done(tool_run_state))
-            if interrupted:
-                exc = sys.exc_info()[1]
-                self._on_interrupt(
-                    user_input="",
-                    user_event_appended=False,
-                    current_text_buf=loop_frame.current_text_buf,
-                    current_text_persisted=loop_frame.current_text_persisted,
-                    persona_name=persona_name,
-                    persona_id=persona_id,
-                    model_snapshot=model_snapshot,
-                    persist_empty_partial=_is_explicit_run_cancellation(exc),
-                    interruption_reason=_interruption_reason_code(exc),
-                )
-            if not self._post_turn_external:
-                self._observe_turn(turn_start_idx, defer_extraction=interrupted)
-                if not interrupted:
-                    self.publish_execution_snapshot()
-            self._prompt_channel_override = previous_prompt_channel
-            self._prompt_surface_override = previous_prompt_surface
-            self._interaction_destination_id_override = previous_interaction_destination_id
-            self._run_id_override = previous_run_id
-            self._turn_prompt_builder = previous_turn_prompt_builder
-            self._restore_run_model_snapshot(previous_run_model_snapshot)
-            self._active_tool_run_state = None
-            tool_run_context.close_commands("run_finished")
-            self._active_tool_run_context = previous_tool_run_context
-
-    # ----- 系统级触发轮（014：main loop 入口） -----
+        trigger = SystemTriggerEvent(
+            self._session.session_id,
+            source_kind,
+            system_prompt_addendum,
+            presentation=presentation,
+            tool_mode="normal",
+            event_metadata=event_metadata or {},
+            recall_query=recall_query,
+        )
+        yield from self._stream_session_turn(
+            "",
+            trigger=trigger,
+            channel=channel,
+            surface=surface,
+            interaction_destination_id=interaction_destination_id,
+            run_id=run_id,
+            cancel_check=cancel_check,
+        )
 
     def dispatch_system_turn(
         self,
@@ -1491,6 +1445,7 @@ class Conversation:
         surface: InteractionSurfaceId | None = None,
         interaction_destination_id: str | None = None,
         event_metadata: dict[str, Any] | None = None,
+        recall_query: str | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
@@ -1509,6 +1464,7 @@ class Conversation:
                 surface=surface,
                 interaction_destination_id=interaction_destination_id,
                 event_metadata=event_metadata,
+                recall_query=recall_query,
                 run_id=run_id,
                 cancel_check=cancel_check,
             )
@@ -2865,6 +2821,7 @@ class Conversation:
         user_input: str,
         *,
         attachments: list[AttachmentRef] | None = None,
+        trigger: SystemTriggerEvent | None = None,
         references: list[QuotedTextReference] | None = None,
         extra_context: list[Message] | None = None,
         history_override: list[Message] | None = None,
@@ -2899,7 +2856,12 @@ class Conversation:
             )
         if extra_context:
             turn_context.extend(extra_context)
-        if self._memory is not None:
+        query = (
+            trigger.recall_query
+            if trigger is not None
+            else render_retrieval_query(user_input, references or [])
+        )
+        if self._memory is not None and (trigger is None or query):
             recall_boundary = (
                 self._derive_business_recall_boundary(self._session.active_events)
                 if recall_boundary_override is _UNSET
@@ -2917,7 +2879,7 @@ class Conversation:
                 cancellation_arguments["cancel_check"] = cancel_check
             with observe_run_phase(logger, self._run_latency_context, "memory_retrieve"):
                 ctx = self._memory.retrieve(
-                    render_retrieval_query(user_input, references or []),
+                    query or "",
                     persona_id=self._session.current_persona_id or "",
                     session_id=self._session.session_id,
                     automatic_recall_scope=CurrentSessionRecallScope(
@@ -2980,7 +2942,10 @@ class Conversation:
             f"[附件 {item.display_name}]" for item in attachments or []
         )
         result = yield from self._assemble_stream(
-            new_user_input=render_user_content_for_model(
+            trailing_user=trigger.system_prompt_addendum if trigger is not None else None,
+            new_user_input=None
+            if trigger is not None
+            else render_user_content_for_model(
                 current_user_content,
                 references or [],
                 escape=escape_internal_prompt_markers,

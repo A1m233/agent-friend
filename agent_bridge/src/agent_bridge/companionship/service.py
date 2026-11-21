@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from agent.companionship.config import CompanionshipConfig
 from agent.companionship.model import GovernedModel
-from agent.companionship.snapshot import capture_changes, render_overview
+from agent.companionship.snapshot import capture_changes, prepare_wake_overview
 from agent.companionship.store import CompanionshipStore
 from agent.paths import companionship_db_path
 from agent.runtime import SystemTriggerEvent
@@ -277,7 +277,7 @@ class CompanionshipService:
         snapshot = capture_changes(self.access, state, run_id)
         contact_paused = self.store.paused(state, "contact", now)
         snapshot["introduce"] = snapshot["first_overview"] and not contact_paused
-        overview = render_overview(self.access, snapshot)
+        overview, recall_query = prepare_wake_overview(self.access, snapshot)
         presence = self.runtime.presence_registry
         last_input = presence.last_desktop_interaction(now=now) if presence else None
         addendum = (
@@ -350,6 +350,7 @@ class CompanionshipService:
                     output_visibility="user",
                     presentation="none",
                     tool_mode="normal",
+                    recall_query=recall_query,
                 ),
                 run_id=run_id,
                 conversation_preparer=prepare,

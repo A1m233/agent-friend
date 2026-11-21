@@ -44,12 +44,7 @@ class GovernedModel:
             if original is not None:
                 original()
 
-        return replace(
-            request,
-            control=replace(
-                request.control, cancel_check=check, allow_retries=False, retry_limit=0
-            ),
-        )
+        return replace(request, control=replace(request.control, cancel_check=check))
 
     def generate(self, request: ModelRequest) -> ModelResponse:
         result = self.model.generate(self._prepare(request))
