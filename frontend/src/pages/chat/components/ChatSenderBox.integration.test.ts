@@ -40,6 +40,14 @@ describe("ChatSenderBox real component integration", () => {
     });
     try {
       await act(async () => root.render(createElement(ChatSenderBox, {
+        placement: "bottom", value: "草稿", onSend,
+      })));
+      const nativeSendIcon = findInShadowRoots(container, "svg")!;
+      expect(nativeSendIcon).not.toBeNull();
+      const sendIconMarkup = nativeSendIcon.innerHTML;
+      const sendIconViewBox = nativeSendIcon.getAttribute("viewBox");
+
+      await act(async () => root.render(createElement(ChatSenderBox, {
         placement: "bottom", value: "草稿", sendBlocked: true, sendBtnDisabled: true,
         blockedSendReason: reason, onBlockedSend, onSend,
       })));
@@ -57,6 +65,10 @@ describe("ChatSenderBox real component integration", () => {
 
       const button = container.querySelector<HTMLButtonElement>('[slot="actions"] button')!;
       expect(button.getAttribute("aria-disabled")).toBe("true");
+      const blockedSendIcon = findInShadowRoots(button, "svg")!;
+      expect(blockedSendIcon).not.toBeNull();
+      expect(blockedSendIcon.innerHTML).toBe(sendIconMarkup);
+      expect(blockedSendIcon.getAttribute("viewBox")).toBe(sendIconViewBox);
       expect(document.querySelector('[role="tooltip"]')).toBeNull();
       await act(async () => button.focus());
       expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(reason);
@@ -68,6 +80,17 @@ describe("ChatSenderBox real component integration", () => {
       expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(reason);
       await act(async () => button.click());
       expect(onSend).not.toHaveBeenCalled();
+
+      await act(async () => root.render(createElement(ChatSenderBox, {
+        placement: "bottom", value: "草稿", onSend,
+      })));
+      expect(container.querySelector('[slot="actions"]')).toBeNull();
+      const readyButton = findInShadowRoots(container, "button") as HTMLButtonElement;
+      expect(readyButton.disabled).toBe(false);
+      expect(findInShadowRoots(container, "svg")?.innerHTML).toBe(sendIconMarkup);
+      expect(findInShadowRoots(container, "textarea")).toHaveProperty("value", "草稿");
+      await act(async () => readyButton.click());
+      expect(onSend).toHaveBeenCalledOnce();
     } finally {
       await act(async () => root.unmount());
       container.remove();
@@ -85,9 +108,11 @@ describe("ChatSenderBox real component integration", () => {
     const observe = vi.fn(() => { order.push("click"); throw new Error("diagnostic failure"); });
     const render = (loading: boolean) => act(async () => root.render(createElement(ChatSenderBox, {
       placement: "bottom", loading, value: "hello", onSend, onStop, onNativeStopClick: observe,
+      blockedSendReason: loading ? "会话正在准备，暂时无法发送" : undefined,
     })));
     try {
       await render(true);
+      expect(container.querySelector('[slot="actions"]')).toBeNull();
       await act(async () => (findInShadowRoots(container, "button") as HTMLButtonElement).click());
       expect(order).toEqual(["click", "stop"]);
       expect(onStop).toHaveBeenCalledOnce();
