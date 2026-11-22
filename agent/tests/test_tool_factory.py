@@ -40,6 +40,11 @@ from agent.tools.builtin.web_search.providers.tavily import TavilyProvider
 from memory.search import MemorySearchService
 
 BASE_TOOL_NAMES = {
+    "semantic_memory_query",
+    "semantic_memory_detail",
+    "semantic_memory_sources",
+    "semantic_memory_audit",
+    "semantic_memory_changes",
     "calculate",
     "datetime_calculate",
     "nearby_place_search",

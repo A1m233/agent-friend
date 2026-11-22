@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
+from agent.approvals import ApprovalBroker
 from agent.command_runtime.tools import (
     ExecCommandTool,
     HostProcessStartTool,
@@ -35,6 +36,7 @@ from agent.tools.builtin.todo_manage import TodoManageTool
 from agent.tools.builtin.weather_query import WeatherQueryTool
 from agent.tools.builtin.web_fetch import WebFetchTool
 from agent.tools.builtin.web_search import WebSearchTool
+from memory.maintenance.service import SemanticMaintenance
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -62,6 +64,7 @@ from agent import (
 )
 from llm_providers import (
     LanguageModel,
+    LanguageModelCapabilities,
     LLMClient,
     LLMStreamEvent,
     ModelRequest,
@@ -69,6 +72,7 @@ from llm_providers import (
     ModelRuntimeConfig,
     MultimodalInputAdapter,
     ProviderSpec,
+    get_model_capabilities,
 )
 
 from .schema import (
@@ -290,6 +294,10 @@ class _CatalogGuardedLanguageModel:
     def context_window(self) -> int:
         return self._delegate.context_window
 
+    @property
+    def capabilities(self) -> LanguageModelCapabilities:
+        return get_model_capabilities(self._delegate)
+
     def generate(self, request: ModelRequest) -> ModelResponse:
         self._guard.observe(request.messages)
         return self._delegate.generate(request)
@@ -447,6 +455,8 @@ def _build_manager(
     attachment_store: AttachmentStore | None = None,
     skill_catalog_request_guard: _SkillCatalogRequestGuard | None = None,
     self_presentation_mode: str = "immersive",
+    memory_maintenance: SemanticMaintenance | None = None,
+    approval_broker: ApprovalBroker | None = None,
 ) -> SessionManager:
     """装配一个挂指定 store 的 SessionManager。"""
 
@@ -470,7 +480,28 @@ def _build_manager(
         session_catalog=session_catalog,
         stderr_warn=False,
         skill_service=skill_service,
+        memory_maintenance=memory_maintenance,
+        approval_broker=approval_broker,
     )
+    if memory_maintenance is not None:
+        from .maintenance_fixture import LOCAL_TOOL_NAMES
+
+        # Preserve the production catalog while keeping this fixture offline.
+        # Maintenance, Skill reading and conversation search use real services.
+        registry = ToolRegistry(
+            [
+                tool
+                if tool.name in LOCAL_TOOL_NAMES
+                else cast(
+                    Any,
+                    _FixtureTool(
+                        FakeTool(tool.name, '{"error":"outside_isolated_fixture"}', is_error=True),
+                        tool,
+                    ),
+                )
+                for tool in registry.all_tools()
+            ]
+        )
     if fake_tools:
         fixture_names = {fixture.name for fixture in fake_tools}
         templates = {tool.name: tool for tool in registry.all_tools()}
@@ -779,6 +810,10 @@ def _import_fixture_attachment(
 def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = None) -> Trace:
     """跑一个 case，返回完整 Trace；异常以 ``Trace.error`` 形式返回。"""
     catalog_guard: _SkillCatalogRequestGuard | None = None
+    tool_requests: dict[str, ToolCallRequest] = {}
+    tool_calls: list[ToolCallTrace] = []
+    skill_activations: list[SkillActivationTrace] = []
+    assistant_text = _AssistantTextTrace()
     try:
         with tempfile.TemporaryDirectory(prefix="agent-eval-") as tmp, ExitStack() as cleanup:
             temp_root = Path(tmp)
@@ -788,6 +823,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
             runtime_config = _session_runtime_config(spec)
             needs_skill_catalog = bool(
                 case.fixture_skills
+                or case.fixture_semantic_memory is not None
                 or case.prior_fixture_skills
                 or case.expected_skill_catalog_coverage
                 or case.expected_skill_catalog_entries
@@ -836,6 +872,15 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                     resolve_attachments=resolve_attachments,
                 )
 
+            maintenance = None
+            maintenance_broker = None
+            if case.fixture_semantic_memory is not None:
+                from .maintenance_fixture import build_fixture
+
+                memory_store, maintenance, maintenance_broker = build_fixture(
+                    temp_root, store, case.fixture_semantic_memory
+                )
+                cleanup.callback(memory_store.close)
             manager = _build_manager(
                 store,
                 spec,
@@ -845,6 +890,8 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 attachment_store=attachment_store,
                 skill_catalog_request_guard=catalog_guard,
                 self_presentation_mode=case.self_presentation_mode,
+                memory_maintenance=maintenance,
+                approval_broker=maintenance_broker,
             )
             cleanup.callback(manager.close)
             session = manager.create(
@@ -904,14 +951,11 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 tool_run_context_factory=tool_run_context_factory,
             )
 
-            tool_requests: dict[str, ToolCallRequest] = {}
-            tool_calls: list[ToolCallTrace] = []
-            skill_activations: list[SkillActivationTrace] = []
-            assistant_text = _AssistantTextTrace()
             stop_reason = "unknown"
 
             for event in conversation.stream(
                 case.query,
+                run_id=f"eval-{case.id}",
                 request_source=case.request_source,
                 attachments=resolve_attachments(case.query_attachments),
                 surface=InteractionSurfaceId(case.surface) if case.surface is not None else None,
@@ -953,18 +997,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
 
             assistant_text.boundary()
 
-            for request in tool_requests.values():
-                tool_calls.append(
-                    ToolCallTrace(
-                        name=request.tool_name,
-                        args=dict(request.args),
-                        result_text="",
-                        is_error=False,
-                        duration_seconds=None,
-                        executed=None,
-                        authorization_requested=None,
-                    )
-                )
+            _append_pending_tool_calls(tool_requests, tool_calls)
 
             return Trace(
                 case_id=case.id,
@@ -977,14 +1010,38 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 skill_catalog_observation=(catalog_guard.observation if catalog_guard else None),
             )
     except Exception as exc:
+        assistant_text.boundary()
+        _append_pending_tool_calls(tool_requests, tool_calls)
+        reason = getattr(exc, "reason", None)
+        error = f"{type(exc).__name__}: {exc}"
+        if isinstance(reason, str) and reason:
+            error += f" [reason={reason}]"
         return Trace(
             case_id=case.id,
-            tool_calls=[],
-            final_text="",
+            tool_calls=tool_calls,
+            final_text=assistant_text.final_text,
             stop_reason="error",
-            assistant_segments=[],
-            skill_activations=[],
-            prior_tool_calls=[],
-            error=f"{type(exc).__name__}: {exc}",
+            assistant_segments=assistant_text.segments,
+            skill_activations=skill_activations,
+            prior_tool_calls=_prior_tool_call_traces(case.current_session_events),
+            error=error,
             skill_catalog_observation=(catalog_guard.observation if catalog_guard else None),
         )
+
+
+def _append_pending_tool_calls(
+    requests: dict[str, ToolCallRequest], calls: list[ToolCallTrace]
+) -> None:
+    for request in requests.values():
+        calls.append(
+            ToolCallTrace(
+                name=request.tool_name,
+                args=dict(request.args),
+                result_text="",
+                is_error=False,
+                duration_seconds=None,
+                executed=None,
+                authorization_requested=None,
+            )
+        )
+    requests.clear()

@@ -1,0 +1,108 @@
+# Derived from the ordinary-inventory capability gap; no private memory or original wording.
+# Three target/control cases and one adjacent conversation-retrieval holdout.
+contract:
+  id: C29
+  name: semantic-memory-maintenance
+  expected_behavior: response
+
+cases:
+  - id: C29-01
+    query: 用记忆维护 Skill 检查全部普通长期记忆，逐条留下判断和理由。这轮只给建议，不准备或执行修改批次。
+    facet: target · complete inventory and durable per-ID review without mutation
+    source: derived-ordinary-inventory-gap-182
+    surface: desktop_chat
+    fixture_semantic_memory:
+      - id: preference
+        statement: 用户喜欢在安静的地方读书。
+        source_text: 我一直更喜欢在安静的地方读书。
+      - id: receipt
+        statement: AI 已在周三把整理书单的完成通知发给用户。
+        source_text: 书单整理好了，我已发出完成通知。
+        speaker: assistant
+      - id: core-sentinel
+        statement: 不属于普通层的固定记录
+        pinned: true
+    tool_run_policy: {max_model_continuations: 16, max_total_tool_calls: 32, max_elapsed_seconds: 600}
+    judge:
+      require_non_empty_response: true
+      must_not_call_any: [semantic_memory_changes, recall_past_chats, read_inner_activity]
+      required_successful_tool_calls:
+        - name: skill_read
+          result_contains: <name>maintain-af-memory</name>
+        - name: semantic_memory_audit
+          args: {action: start}
+        - name: semantic_memory_audit
+          args: {action: record}
+          result_contains: '"coverage_complete": true'
+      must_mention_any_groups: [[保留, 长期], [通知, 回执, 流水]]
+
+  - id: C29-02
+    query: 用记忆维护 Skill 查清并纠正那条“我从不喝咖啡”的错记。原话只针对体检当天，并不是长期偏好。明确授权撤销这条错误派生事实，不要新增长期偏好；完成后读回状态告诉我结果。
+    facet: target · explicit bounded revoke and readback
+    source: synthetic-authorized-correction-control-182
+    surface: desktop_chat
+    fixture_semantic_memory:
+      - id: mistaken
+        statement: 用户从不喝咖啡。
+        source_text: 明早体检，那一天先不喝咖啡，之后和平常一样。
+      - id: separate
+        statement: 用户喜欢手冲咖啡的香气。
+        source_text: 我一直喜欢手冲咖啡的香气。
+    tool_run_policy: {max_model_continuations: 16, max_total_tool_calls: 32, max_elapsed_seconds: 600}
+    judge:
+      require_non_empty_response: true
+      must_not_call_any: [read_inner_activity]
+      required_successful_tool_calls:
+        - name: skill_read
+          result_contains: <name>maintain-af-memory</name>
+        - name: semantic_memory_changes
+          args: {action: apply}
+          result_contains: '"old_ids": ["mistaken"]'
+        - name: semantic_memory_detail
+          args: {semantic_id: mistaken}
+          result_contains: '"state": "revoked"'
+      must_mention_any: [撤销, 撤回, 已删除, 不再]
+
+  - id: C29-03
+    query: 用记忆维护 Skill 检查全部普通长期记忆，只给建议。找不到原话的单条标成待核后继续，把检查清单里的每条都记录下来，不展开其他记忆层。
+    facet: control · missing direct provenance does not stop inventory coverage
+    source: synthetic-missing-source-control-182
+    surface: desktop_chat
+    fixture_semantic_memory:
+      - id: unresolved
+        statement: 用户以后每周都要出差。
+      - id: valid
+        statement: 用户更喜欢用列表看旅行准备事项。
+        source_text: 以后帮我列旅行准备事项时，用列表我更容易看清。
+    tool_run_policy: {max_model_continuations: 16, max_total_tool_calls: 32, max_elapsed_seconds: 600}
+    judge:
+      require_non_empty_response: true
+      must_not_call_any: [semantic_memory_changes, recall_past_chats, read_inner_activity]
+      required_successful_tool_calls:
+        - name: skill_read
+          result_contains: <name>maintain-af-memory</name>
+        - name: semantic_memory_audit
+          args: {action: record}
+          result_contains: '"coverage_complete": true'
+      must_mention_any: [待核, 待查, 无法核实, 缺少原话]
+
+  - id: C29-04
+    query: 找到我上次聊旅行准备时说的原话，只查询聊天记录，不要检查或整理长期记忆。
+    facet: holdout · ordinary chat retrieval must not become a memory audit
+    source: synthetic-adjacent-conversation-retrieval-holdout-182
+    surface: desktop_chat
+    fixture_semantic_memory: []
+    fixture_session:
+      title: 旅行准备
+      messages:
+        - role: user
+          text: 我这次旅行准备带一个轻便的小背包。
+        - role: assistant
+          text: 好，我们按小背包的容量准备。
+    tool_run_policy: {max_model_continuations: 16, max_total_tool_calls: 32, max_elapsed_seconds: 600}
+    judge:
+      require_non_empty_response: true
+      must_call: recall_past_chats
+      must_not_call_any: [semantic_memory_audit, semantic_memory_changes]
+      must_not_activate_skills: [maintain-af-memory]
+      must_mention_any: [小背包, 轻便]

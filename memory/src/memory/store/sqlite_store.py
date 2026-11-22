@@ -41,6 +41,7 @@ from ..core_profile import (
     validate_core_value,
 )
 from ..host_episodes import HostEpisodeConflict, HostEpisodeWriteResult
+from .maintenance import MaintenanceRepository
 from .schema import (
     DDL_STATEMENTS,
     SCHEMA_VERSION,
@@ -87,6 +88,13 @@ class ExtractionTransaction:
             ).fetchone()
             is not None
         )
+
+    def maintenance_epoch(self, owner_user_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT value FROM schema_meta WHERE key=?",
+            ("semantic_maintenance_epoch:" + owner_user_id,),
+        ).fetchone()
+        return int(row[0]) if row else 0
 
     def add_core(self, row: CoreProfileEntry) -> None:
         validate_core_value(row.field_key, row.value)
@@ -187,7 +195,7 @@ class ExtractionTransaction:
         self,
         *,
         change_id: str,
-        observation_id: str,
+        observation_id: str | None,
         owner_user_id: str,
         persona_id: str,
         origin: str,
@@ -258,6 +266,10 @@ class SqliteMemoryStore:
                 )
                 for ddl in DDL_STATEMENTS:
                     self._conn.execute(ddl)
+                from .maintenance_schema import DDL as maintenance_ddl
+
+                for ddl in maintenance_ddl:
+                    self._conn.execute(ddl)
                 if need_backfill:
                     _backfill_tokens_and_rebuild_fts(self._conn)
                     logger.info("schema backfill completed")
@@ -283,6 +295,20 @@ class SqliteMemoryStore:
         _tokenize("语音通话 warmup")
         with self._lock:
             self._conn.execute("SELECT 1").fetchone()
+
+    def maintenance_repository(self) -> MaintenanceRepository:
+        """Internal same-database repository; never opens a parallel writer."""
+        from .maintenance import MaintenanceRepository
+
+        return MaintenanceRepository(self._conn, self._lock)
+
+    def maintenance_epoch(self, owner_user_id: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM schema_meta WHERE key=?",
+                ("semantic_maintenance_epoch:" + owner_user_id,),
+            ).fetchone()
+            return int(row[0]) if row else 0
 
     def enqueue_extraction(
         self,

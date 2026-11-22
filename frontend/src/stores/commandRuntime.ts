@@ -3,6 +3,7 @@ import { create } from "zustand";
 import {
   commandRuntimeApi,
   type ExecutionApprovalRequest,
+  type MemoryApprovalRequest,
   type CommandProcessSnapshot,
   type CommandRuntimeStatus,
   type SandboxCapabilitySnapshot,
@@ -42,15 +43,32 @@ interface CommandRuntimeState {
   clear: () => void;
 }
 
+function validMemoryDetails(details: MemoryApprovalRequest["details"] | undefined): boolean {
+  return typeof details?.batch_id === "string" && typeof details.digest === "string"
+    && typeof details.audit_id === "string" && Array.isArray(details.operations)
+    && details.operations.length > 0
+    && details.operations.every((operation) => operation
+      && ["retire", "revoke", "rewrite", "merge"].includes(operation.action)
+      && ["retire", "revoke"].includes(operation.old_disposition)
+      && typeof operation.reason === "string" && Array.isArray(operation.targets)
+      && operation.targets.length > 0
+      && operation.targets.every((target) => target && typeof target.semantic_id === "string"
+        && typeof target.statement === "string" && typeof target.revision === "string")
+      && (operation.replacement === null || (operation.replacement
+        && typeof operation.replacement.statement === "string"
+        && ["user", "agent"].includes(operation.replacement.speaker_origin))));
+}
+
 function validApproval(value: unknown): value is ExecutionApprovalRequest {
   const item = value as Partial<ExecutionApprovalRequest> | undefined;
-  return (item?.kind === "command" || item?.kind === "desktop_application" || item?.kind === "social_comment")
+  return (item?.kind === "command" || item?.kind === "desktop_application" || item?.kind === "social_comment" || item?.kind === "memory_maintenance")
     && typeof item.request_id === "string"
     && typeof item.session_id === "string"
     && typeof item.run_id === "string"
     && typeof item.tool_call_id === "string"
     && typeof item.version === "number"
     && ((item.kind === "command" && typeof item.details?.cmd === "string")
+      || (item.kind === "memory_maintenance" && validMemoryDetails(item.details))
       || (item.kind === "social_comment" && typeof item.details?.text === "string" && typeof item.details.account_uid === "string" && typeof item.details.bvid === "string" && Array.isArray(item.details.mentions))
       || (item.kind === "desktop_application" && typeof item.details?.executable_path === "string"
         && Array.isArray(item.details.arguments)

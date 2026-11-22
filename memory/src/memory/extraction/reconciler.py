@@ -106,6 +106,13 @@ class Reconciler:
                     output_contract_version=output.output_contract_version,
                 )
 
+            if output.semantic_changes and (
+                tx.maintenance_epoch(fragment.owner_user_id) != extraction_context.maintenance_epoch
+            ):
+                raise ExtractionApplyError(
+                    "stale_maintenance_context", "Semantic maintenance changed the input context"
+                )
+
             # Recheck every referenced Semantic before performing any mutation.
             # The surrounding transaction still guarantees rollback if a target
             # becomes stale between context construction and this point.

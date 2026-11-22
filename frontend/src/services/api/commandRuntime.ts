@@ -109,7 +109,23 @@ export interface SocialApprovalRequest extends Omit<CommandApprovalRequest, "kin
   kind: "social_comment";
   details: { account_uid: string; bvid: string; text: string; parent_id: string | null; mentions: { uid: string; name: string }[] };
 }
-export type ExecutionApprovalRequest = CommandApprovalRequest | ApplicationApprovalRequest | SocialApprovalRequest;
+export interface MemoryApprovalRequest extends Omit<CommandApprovalRequest, "kind" | "details"> {
+  kind: "memory_maintenance";
+  details: {
+    batch_id: string;
+    digest: string;
+    audit_id: string;
+    operations: {
+      action: "retire" | "revoke" | "rewrite" | "merge";
+      old_disposition: "retire" | "revoke";
+      reason: string;
+      targets: { semantic_id: string; revision: string; statement: string }[];
+      replacement: { statement: string; speaker_origin: "user" | "agent" } | null;
+      source_refs: string[];
+    }[];
+  };
+}
+export type ExecutionApprovalRequest = CommandApprovalRequest | ApplicationApprovalRequest | SocialApprovalRequest | MemoryApprovalRequest;
 
 export interface CommandRuntimeStatus {
   available: boolean;
@@ -137,12 +153,13 @@ export interface SandboxCapabilitySnapshot {
 
 export const commandRuntimeApi = {
   async pending(): Promise<ExecutionApprovalRequest[]> {
-    const [commands, applications, social] = await Promise.all([
+    const [commands, applications, social, memory] = await Promise.all([
       http.get("/v1/approvals?kind=command"),
       http.get("/v1/approvals?kind=desktop_application"),
       http.get("/v1/approvals?kind=social_comment"),
-    ]) as unknown as [{ requests: CommandApprovalRequest[] }, { requests: ApplicationApprovalRequest[] }, { requests: SocialApprovalRequest[] }];
-    return [...commands.requests, ...applications.requests, ...social.requests];
+      http.get("/v1/approvals?kind=memory_maintenance"),
+    ]) as unknown as [{ requests: CommandApprovalRequest[] }, { requests: ApplicationApprovalRequest[] }, { requests: SocialApprovalRequest[] }, { requests: MemoryApprovalRequest[] }];
+    return [...commands.requests, ...applications.requests, ...social.requests, ...memory.requests];
   },
 
   async processes(): Promise<CommandProcessSnapshot[]> {
@@ -166,7 +183,7 @@ export const commandRuntimeApi = {
 
   async decide(request: ExecutionApprovalRequest, allow: boolean): Promise<ExecutionApprovalRequest> {
     const payload = await http.post(
-      `/v1/approvals/${encodeURIComponent(request.request_id)}/${request.kind === "social_comment" ? "social" : request.kind === "desktop_application" ? "application" : "command"}-decision`,
+      `/v1/approvals/${encodeURIComponent(request.request_id)}/${request.kind === "memory_maintenance" ? "memory" : request.kind === "social_comment" ? "social" : request.kind === "desktop_application" ? "application" : "command"}-decision`,
       {
         session_id: request.session_id,
         run_id: request.run_id,

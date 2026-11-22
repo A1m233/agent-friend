@@ -4,6 +4,8 @@ Windows 本地测试包和安装矩阵由 `package/run.*` 在独立源码工作�
 
 `package/run.* runtime-verify` 的自主陪伴 capability smoke 还验证消息展示独立存储、B 站凭据恢复/退出、二维码图像生成，以及固定评论端点与 UID 提及表单；使用假凭据与本地 HTTP transport，不访问平台或调用模型。
 
+普通记忆维护 capability smoke 通过正式工具工厂，在临时数据库验证普通层库存、直接会话来源、整批审批、事务改写、重复请求回执、FTS 读回和内置维护 Skill；不访问真实用户记忆或调用模型。
+
 `companionship-smoke/run.* --allow-llm --section exposure --output NEW_JSON` 使用当前 chatModel 对照完整展示、无展示记录、已分享、明确等待四种隔离自主唤醒，最多 20 次请求，无网络探索或真实 IM；仅观察行为，不将展示视为已读。
 
 `companionship-smoke/run.* --allow-llm --section social-identity --output NEW_JSON` 使用当前设置的 memoryModel，在独立临时库观察 B 站 UID 的提供、外部评论转述、纠正与撤回，最多四个片段，每片段包含基础抽取及至多一次契约修复。不读取或写入用户记忆库、不发布平台内容，须获本轮真实调用授权；结果记录原始中文和实际核心身份变化。

@@ -697,6 +697,7 @@ def build_runtime(
     tool_registry = make_default_registry(
         persistent_store,
         memory_search=memory_search,
+        memory_maintenance=memory.maintenance if memory is not None else None,
         todo_service=todo_service,
         scheduled_task_service=scheduled_task_service,
         scheduled_task_persona_id=default_persona_info.id,

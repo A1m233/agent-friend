@@ -64,6 +64,8 @@ from .protocol import Tool
 from .registry import ToolRegistry
 
 if TYPE_CHECKING:
+    from memory.maintenance.service import SemanticMaintenance
+
     from ..attachments import AttachmentStore
     from ..command_runtime import CommandRuntime
     from ..desktop_applications import NativeApplicationLauncher
@@ -81,6 +83,7 @@ def make_default_registry(
     session_store: SessionStore | None = None,
     *,
     memory_search: MemorySearchService | None = None,
+    memory_maintenance: SemanticMaintenance | None = None,
     todo_service: TodoService | None = None,
     scheduled_task_service: ScheduledTaskService | None = None,
     scheduled_task_persona_id: str | None = None,
@@ -137,6 +140,9 @@ def make_default_registry(
     from ..filesystem.tools import make_filesystem_tools
 
     tools: list[Tool] = [CalculateTool(), DateTimeCalculateTool()]
+    from ..memory_maintenance.dispatch import MaintenanceDispatch
+    from .builtin.semantic_memory import make_semantic_memory_tools
+
     tools.extend(
         make_filesystem_tools(
             broker=approval_broker,
@@ -351,6 +357,13 @@ def make_default_registry(
         tools.append(ToolResultRecoveryTool(session_store, tool_execution_evidence_store))
         tools.append(InspectToolCallsTool(session_store))
 
+    tools.extend(
+        make_semantic_memory_tools(
+            MaintenanceDispatch(memory_maintenance, session_store, approval_broker)
+            if memory_maintenance is not None
+            else None
+        )
+    )
     return ToolRegistry(tools)
 
 

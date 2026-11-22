@@ -24,12 +24,15 @@ function PendingApprovalPanel({
   sessionAutoSubmitting: boolean;
 }) {
   const actionDisabled = current.submitting || sessionAutoSubmitting;
+  const detailLines = current.detailLines.map((line, index) => (
+    <p key={`${index}:${line}`} className="break-all whitespace-pre-wrap">{line}</p>
+  ));
   return (
     <div className="w-full space-y-2 rounded-lg border border-warning/40 bg-bg px-3 py-3 shadow-md">
       <div className="flex items-center gap-2">
         <StatusDot tone="warning" pulse={!current.submitting} />
         <span className="text-xs text-muted">
-          {current.kind === "social_comment" ? "发布 B 站评论" : current.kind === "desktop_application" ? "打开桌面应用" : current.kind === "command" ? "本地命令授权" : "本地文件授权"}
+          {current.kind === "memory_maintenance" ? "修改普通长期记忆" : current.kind === "social_comment" ? "发布 B 站评论" : current.kind === "desktop_application" ? "打开桌面应用" : current.kind === "command" ? "本地命令授权" : "本地文件授权"}
         </span>
         {queuedCount > 0 ? <span className="text-xs text-muted">还有 {queuedCount} 项排队</span> : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -92,9 +95,11 @@ function PendingApprovalPanel({
         {current.riskMessage ? (
           <p className="text-warning">{current.riskMessage}</p>
         ) : null}
-        {current.detailLines.map((line) => (
-          <p key={line} className="break-all">{line}</p>
-        ))}
+        {current.kind === "memory_maintenance" ? (
+          <ScrollArea viewportClassName="vertical-page-viewport max-h-60">
+            <div className="space-y-1">{detailLines}</div>
+          </ScrollArea>
+        ) : detailLines}
       </div>
     </div>
   );

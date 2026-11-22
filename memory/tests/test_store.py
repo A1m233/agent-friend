@@ -379,7 +379,12 @@ def test_v1_to_v5_lazy_migration() -> None:
             meta = store._conn.execute(
                 "SELECT value FROM schema_meta WHERE key='schema_version'"
             ).fetchone()
-            assert meta["value"] == "9"
+            assert meta["value"] == "10"
+            assert store._conn.execute("SELECT COUNT(*) FROM semantic_audit").fetchone()[0] == 0
+            assert (
+                store._conn.execute("SELECT COUNT(*) FROM semantic_maintenance_batch").fetchone()[0]
+                == 0
+            )
 
             # 验证新列加好
             cols = {

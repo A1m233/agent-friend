@@ -79,7 +79,9 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     def pending_approvals(
         session_id: str | None = Query(default=None, min_length=1),
         run_id: str | None = Query(default=None, min_length=1),
-        kind: Literal["filesystem", "command", "desktop_application", "social_comment"]
+        kind: Literal[
+            "filesystem", "command", "desktop_application", "social_comment", "memory_maintenance"
+        ]
         | None = Query(default=None),
     ) -> dict[str, object]:
         broker = runtime.approval_broker
@@ -249,6 +251,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
 
     @router.post("/approvals/{request_id}/application-decision")
     @router.post("/approvals/{request_id}/social-decision")
+    @router.post("/approvals/{request_id}/memory-decision")
     def decide_application_approval(
         request_id: str, body: CommandApprovalDecisionBody
     ) -> dict[str, object]:
@@ -262,7 +265,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 item
                 for item in broker.pending(session_id=body.session_id, run_id=body.run_id)
                 if item.request_id == request_id
-                and item.kind in {"desktop_application", "social_comment"}
+                and item.kind in {"desktop_application", "social_comment", "memory_maintenance"}
             ),
             None,
         )
