@@ -32,7 +32,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: 0af97df2c1de9f210bb87bc5bb55005420ad97ec6c3f1300aa379029fbb2e6e8 -->
+<!-- codex-adapter-source-sha256: 24a1a60167ab578f5e34025580cc1f8be8ac9537f2b7bbcaa0583e2f0ecfcefd -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -304,9 +304,21 @@ worktree、branch 和端口匹配只证明运行实例的归属，不能证明�
 
 在持有本地 `main` 的干净工作树中核对 `git rev-list --left-right --count main...origin/main`。单纯落后可用 `git merge --ff-only origin/main` 对齐；本地有独有提交时先核实归属。已经确认的历史替换先留本地备份，再使日常主干跟踪公开历史，旧历史备份不推送。其它工作树未提交的修改不属于主干；交付时分别确认分支提交、远端主干包含关系和实际运行版本。
 
+## 按影响范围验证（需求与修复）
+
+日常交付默认把已刷新、受治理的 `origin/main` 当作已验证基线，只验证本次变化及受影响的依赖和契约。没有反证时，不要求每个小改动重新证明整个主干。验证证据绑定具体源码内容、平台和配置；Windows 通过不等于 macOS 已验收。已知基线检查失败、验证配置失效或来源无法确认时，不沿用“main 已通过”的假设，先恢复可信基线或显式执行全量检查。
+
+用当前主机的 `scripts/check/run.sh` 或 `run.ps1 --plan --base origin/main` 查看计划。脚本包含分支提交、暂存/未暂存修改、未跟踪文件和删除/重命名前后路径，输出精确 base/head、`localStages` 和逐路径依据；不联网获取 CI 状态，也不把计划当成通过证据。基线不存在、无共同历史或尚未集成最新基线时先处理来源/集成问题，不用旧分支检查替代合入结果验证。
+
+- 普通前端组件、图标和样式只选 `frontend`；Python 内部逻辑选 `backend`；原生 Rust 逻辑选 `rust`。代码变更的每个被选阶段仍执行该层现有完整门禁。经 diff 确认属于既有内置 Skill 纯内容同步时，按 `frozen-runtime-packaging` 的内容专项替代通用后端阶段；不能仅凭文件位于 builtin 目录就缩小检查。
+- 跨层协议按生产者和消费者扩大范围；共享构建/验证基础设施及未知路径保守选全量。具体路径分类由 `scripts/check/impact.py` 维护，本 Rule 不复制第二张路径表。
+- 路径计划是最低检查范围，不能替代语义判断。即使只改前端文件，若改变请求字段、事件协议、持久化数据或原生命令契约，也必须补受影响层的检查；用 `--stage <阶段>` 执行并说明扩大原因。全局依赖、环境或平台行为改变时同理。
+- 普通入口默认执行受影响阶段；Codex 选中多个阶段时分别运行 `--stage backend|frontend|rust` 中计划要求的项。`--stage all` 保留为显式全量入口；Codex 单命令串联多阶段仍需 `--allow-long-running`。缺少可信基线时可显式跑全量，不得把无法生成计划当作没有改动。
+- 纯文档/指引可能没有产品检查阶段，但仍执行适用的文档、Skill validator、adapter sync/doctor 等专项。已通过且输入、环境和配置未变的检查可以复用；commit、push 或内容等价的 merge 本身不要求重跑。主干前进或解决冲突后重新计算影响，复验受影响部分。
+
 ## 验证平台（需求与修复）
 
-用当前主机的 `scripts/check/run.sh` 或 `run.ps1` 加 `--plan --base origin/main` 查看待执行项。按实际影响为每个原生平台传一次 `--affected-platform macos|windows`；纯共享逻辑无原生行为变化时可省略。计划复用 installer-contract 分类，不代表验证通过。
+计划按实际原生影响重复传 `--affected-platform macos|windows`；纯共享逻辑无原生行为变化时可省略。平台与安装包要求继续复用 installer-contract 分类，不被本地阶段分流取消。
 
 在当前开发机运行本地检查。合入前需要哪些额外证据取决于变更影响的行为：
 
@@ -315,7 +327,7 @@ worktree、branch 和端口匹配只证明运行实例的归属，不能证明�
 - Windows 截图、桌面应用启动等需要交互桌面的专项，在已登录的用户桌面会话中运行。通用测试应显式提供依赖的工具环境。
 - 涉及安装或冻结运行时的改动，以 installer-contract 的影响分类和 windows-installer-integrity 的验证要求为准。源码开发的本机测试不能替代 Windows 安装矩阵。
 
-交付记录写明平台、提交和实跑结果；区分本机通过、另一受影响平台待验、所需平台均已验证。原有全量检查及 AC 要求仍适用。
+交付记录写明平台、基线、改动范围、所选检查及实跑/复用结果；区分通过、未执行和待验，不把未选阶段写成通过。需求 AC、专项验证和原生平台要求仍适用。
 
 ## 需求开发流程
 
@@ -334,7 +346,7 @@ worktree、branch 和端口匹配只证明运行实例的归属，不能证明�
 需求验收完成才能合入 main，必须满足：
 
 - 全部 AC 跑通；
-- `./scripts/check` 全绿（lint + typecheck + test）——任一未过不得合入；
+- 按“按影响范围验证”确定的阶段、AC 和专项全部通过——任一必需项未过不得合入；
 - 用户明确确认验收完成；
 - 已 rebase / merge 最新 main，无遗留冲突。
 
@@ -401,7 +413,7 @@ issue 修复以 `docs/issues/<NNN>-slug/README.md` 为入口。登记 issue 只�
 - 已核对 issue 现象仍成立，或确认现状已自然消失并得到用户同意关闭。
 - 已实施选定修复方向；如果只是调查 / 证明当前代码没问题，不能默认关闭原 issue，除非用户确认"本 issue 只需调查结论"。
 - 可断言行为已有自动化测试覆盖；无法稳定断言的体验 / LLM 行为，需跑对应 smoke / replay / 人工验证，并在 issue README 记录结果。
-- 若改动代码或测试，`./scripts/check` 必须全绿；纯 issue 文档补充可不跑全量，但应做必要的局部检查。
+- 若改动代码或测试，按“按影响范围验证”确定的检查必须通过；纯 issue 文档补充做必要的文档/局部检查。
 - 用户可见行为或产品体验类 issue，需要用户明确确认验收完成后再标 `resolved`。
 - issue README 状态改为 `resolved`，并在文末写明修复指向（commit / PR / 需求 / 验证记录）。
 
@@ -433,7 +445,8 @@ issue 修复以 `docs/issues/<NNN>-slug/README.md` 为入口。登记 issue 只�
 - 需求 AC 未跑通就合入 main，留待"以后再补"。
 - issue 未跑对应测试 / smoke / 人工验收就标 `resolved`。
 - 核心逻辑改动不配任何单测，只靠手动点一遍就合入。
-- `./scripts/check` 没跑 / 没全绿就合入，留待"以后再补测试 / 修 lint"。
+- 跳过受影响阶段或专项检查就合入，留待"以后再补测试 / 修 lint"。
+- 仅因要合入 main 就重跑没有受影响的后端或原生测试；或反过来只按目录名漏掉跨层契约验证。
 </codex-rule>
 
 <codex-rule source=".cursor/rules/docs-structure.mdc" load="inline">

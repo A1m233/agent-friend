@@ -1,4 +1,4 @@
-"""Cross-platform full-gate orchestrator with bounded stages for coding agents."""
+"""Cross-platform affected checks with explicit full and bounded stage entrypoints."""
 
 from __future__ import annotations
 
@@ -11,8 +11,9 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 
+from impact import STAGES
+
 ROOT = Path(__file__).resolve().parents[2]
-STAGES = ("backend", "frontend", "rust")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -21,13 +22,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--stage",
-        choices=(*STAGES, "all"),
-        help="Run one bounded stage; ordinary terminals default to all.",
+        choices=(*STAGES, "affected", "all"),
+        help="Run one stage, all stages, or affected stages (default).",
     )
     parser.add_argument(
         "--allow-long-running",
         action="store_true",
-        help="Allow --stage all under Codex despite the command timeout risk.",
+        help="Allow multiple stages in one Codex command despite the timeout risk.",
     )
     parser.add_argument(
         "--plan", action="store_true", help="Print the verification plan without running checks."
@@ -38,7 +39,9 @@ def _parser() -> argparse.ArgumentParser:
         choices=("macos", "windows"),
         help="Platform whose native behavior changes; repeat for both.",
     )
-    parser.add_argument("--base", help="Git comparison ref for --plan (default: main).")
+    parser.add_argument(
+        "--base", help="Trusted Git baseline for affected checks (default: origin/main)."
+    )
     return parser
 
 
@@ -47,11 +50,15 @@ def resolve_stages(
     *,
     is_codex: bool,
     allow_long_running: bool,
+    affected_stages: Sequence[str] = (),
 ) -> tuple[str, ...]:
-    stage = requested or "all"
-    if is_codex and stage == "all" and not allow_long_running:
+    stage = requested or "affected"
+    stages = (
+        tuple(affected_stages) if stage == "affected" else STAGES if stage == "all" else (stage,)
+    )
+    if is_codex and len(stages) > 1 and not allow_long_running:
         raise ValueError("codex_requires_bounded_stages")
-    return STAGES if stage == "all" else (stage,)
+    return stages
 
 
 def _script(path_without_suffix: str) -> list[str]:
@@ -106,44 +113,51 @@ def _run_rust() -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args, pytest_args = parser.parse_known_args(argv)
+    plan = None
+    if args.plan or args.stage in {None, "affected"}:
+        from platform_plan import plan_for_checkout
+
+        try:
+            plan = plan_for_checkout(ROOT, args.base or "origin/main", args.affected_platform or [])
+        except ValueError as error:
+            parser.error(str(error))
     if args.plan:
         if args.stage or pytest_args or args.allow_long_running:
             parser.error("--plan cannot run a stage or accept test options")
-        from platform_plan import plan_for_checkout
-
-        print(
-            json.dumps(
-                {
-                    "localStages": STAGES,
-                    **plan_for_checkout(ROOT, args.base or "main", args.affected_platform or []),
-                },
-                indent=2,
-                ensure_ascii=False,
-            )
-        )
+        print(json.dumps(plan, indent=2, ensure_ascii=False))
         return 0
-    if args.affected_platform or args.base:
-        parser.error("--affected-platform and --base require --plan")
-    if args.stage in {"frontend", "rust"} and pytest_args:
-        parser.error("pytest arguments are only accepted by --stage backend or all")
+    if args.stage not in {None, "affected"} and (args.affected_platform or args.base):
+        parser.error("--affected-platform and --base require affected checks or --plan")
+
+    selected = tuple(plan["localStages"]) if plan is not None else STAGES
+    if plan is not None:
+        print(
+            f"===> affected checks against {plan['base']} ({plan['baseCommit']}): "
+            f"{', '.join(selected) or 'none'}",
+            flush=True,
+        )
 
     try:
         stages = resolve_stages(
             args.stage,
             is_codex=bool(os.getenv("CODEX_THREAD_ID")),
             allow_long_running=args.allow_long_running,
+            affected_stages=selected,
         )
     except ValueError:
         print(
-            "[error] Codex commands have a bounded runtime; the full sequential gate can "
-            "exceed it and orphan build children. Run these as separate commands:\n"
-            "  ./scripts/check/run.sh --stage backend\n"
-            "  ./scripts/check/run.sh --stage frontend\n"
-            "  ./scripts/check/run.sh --stage rust\n"
-            "Windows: replace run.sh with run.ps1. Each stage must pass.",
+            "[error] Run the selected stages as separate commands under Codex:\n"
+            + "\n".join(f"  ./scripts/check/run.sh --stage {stage}" for stage in selected)
+            + "\nWindows: replace run.sh with run.ps1. All selected stages must pass.",
             file=sys.stderr,
         )
         return 2
+
+    if pytest_args and "backend" not in stages:
+        parser.error("pytest arguments require a selected backend stage")
+    if not stages:
+        print("===> no affected local stages; no tests executed (content/adapter checks may apply)")
+        return 0
 
     started = time.monotonic()
     for stage in stages:

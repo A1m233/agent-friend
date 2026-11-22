@@ -239,7 +239,7 @@ Python通知代码调整后可显式执行 `restart-bridge`，复用前端的 `r
 | `lint/` | lint 检查（`ruff check` + `ruff format --check`；任一子检查失败即返回非零退出码） | `./scripts/lint/run.sh` | `.\scripts\lint\run.ps1` |
 | `fix/` | 自动修复（`ruff check --fix` + `ruff format`） | `./scripts/fix/run.sh` | `.\scripts\fix\run.ps1` |
 | `typecheck/` | mypy 类型检查 | `./scripts/typecheck/run.sh` | `.\scripts\typecheck\run.ps1` |
-| `check/` | `--plan --base origin/main` 只读输出验证计划，按实际影响重复传 `--affected-platform macos\|windows`，仅共享逻辑可省略；合入前刷新基线。全量检查：串联 backend → frontend → rust，失败即停并打印阶段耗时（合入 main 前三阶段都必须通过；frontend 依赖未安装时 fail-closed 并提示先运行 `frontend/install`；pytest 参数透传给 backend）。普通终端默认全跑；Codex 为避免命令超时和孤儿构建，必须分别执行 `--stage backend\|frontend\|rust` | `./scripts/check/run.sh [--stage backend\|frontend\|rust] [pytest 参数]` | `.\scripts\check\run.ps1 [--stage backend\|frontend\|rust] [pytest 参数]` |
+| `check/` | 默认基于已刷新且可信的 `origin/main` 执行受影响阶段。`--plan [--base REF]` 只读输出 base/head、改动路径、逐路径依据及 `localStages`；覆盖提交、暂存/未暂存、未跟踪及删除/重命名。纯前端只选 frontend，协议扩大到相关层，共享基础设施和未知路径选全量；基线不可解析或不在 HEAD 历史中时拒绝自动分流。路径计划是最低范围，语义影响与平台/安装专项按 dev-workflow 补齐。Codex 多阶段须按计划分别执行；`--stage all` 显式全量，单命令串联多阶段另加 `--allow-long-running`。`--affected-platform macos\|windows` 可重复；pytest 参数仅在选中 backend 时透传。入口只查找本机 Python 3.12，不同步 Python 依赖；frontend 阶段要求已安装前端依赖。 | `./scripts/check/run.sh [--plan] [--base REF]` 或 `--stage affected\|backend\|frontend\|rust\|all` | `.\scripts\check\run.ps1 [--plan] [--base REF]` 或 `--stage affected\|backend\|frontend\|rust\|all` |
 | `frontend/install` | 安装前端依赖（检查 node 22+ / pnpm → `pnpm install` @ frontend/） | `./scripts/frontend/install.sh` | `.\scripts\frontend\install.ps1` |
 | `frontend/dev` | 启动桌面端开发（`pnpm tauri dev`，含桌宠 / 对话双窗口） | `./scripts/frontend/dev.sh` | `.\scripts\frontend\dev.ps1` |
 | `frontend/web` | 仅启动前端 web dev server（浏览器调试，不编译 Rust；访问 /pet.html、/chat.html） | `./scripts/frontend/web.sh` | `.\scripts\frontend\web.ps1` |
@@ -266,6 +266,8 @@ Python通知代码调整后可显式执行 `restart-bridge`，复用前端的 `r
 | `frontend/test` | 前端单测（vitest，跑核心逻辑：AG-UI 事件投影 / 历史投影）；已并入 `check/` | `./scripts/frontend/test.sh` | `.\scripts\frontend\test.ps1` |
 | `codex-adapters/` | 校验 / 同步项目级 Codex adapter：`.Codex/skills/*` 软链与 `AGENTS.md` rules/skills lookup 表，防止 `.cursor/rules` / `.cursor/skills` 漂移 | `./scripts/codex-adapters/run.sh [doctor\|sync]` | `.\scripts\codex-adapters\run.ps1 [doctor\|sync]` |
 | `codex-adapters/` | 从项目 skill 同步安装版 AF 的记忆维护包并校验 manifest 摘要 | `./scripts/codex-adapters/run.sh sync-builtin\|verify-builtin` | `.\scripts\codex-adapters\run.ps1 sync-builtin\|verify-builtin` |
+
+打包沿用 `dev-workflow` 的可信主干基线和源码验证结果，只补新增变化的检查，不因构建安装包重跑三层全量测试。经 diff 确认的既有内置 Skill / Guide 纯内容同步按 `frozen-runtime-packaging` 执行 validator、摘要与来源一致性、catalog / loader / builtin 专项；该专项替代通用后端阶段，不能仅凭 builtin 路径判断。新制品的完整性与冻结启动检查照常执行；完整安装矩阵可复用已由 package 门禁确认匹配的报告，缺少匹配报告时仍须执行。
 
 ## ⚠️ Windows PowerShell 第一次运行
 

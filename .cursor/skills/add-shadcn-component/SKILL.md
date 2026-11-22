@@ -44,7 +44,7 @@ description: 在 agent-friend 前端（frontend/src/components/ui/）通过 shad
 
 ## Step 4 · 验证
 
-跑 `./scripts/check`（lint + typecheck + color-guard + test）**全绿**才算完成。
+按 `.cursor/rules/dev-workflow.mdc` 的“按影响范围验证”先查看 `scripts/check/run.* --plan --base origin/main`。普通组件接入运行前端阶段 `--stage frontend`（包含 lint、类型、颜色/设计 token/来源门禁、测试及构建）；若还影响跨层契约，补计划和语义分析要求的检查。所需检查通过才算完成。
 
 ## 回报
 

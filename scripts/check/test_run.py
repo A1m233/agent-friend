@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 MODULE_PATH = Path(__file__).with_name("run.py")
+sys.path.insert(0, str(MODULE_PATH.parent))
 SPEC = importlib.util.spec_from_file_location("agent_friend_check_runner", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -17,13 +18,26 @@ STAGES = MODULE.STAGES
 resolve_stages = MODULE.resolve_stages
 
 
-def test_ordinary_terminal_defaults_to_full_gate() -> None:
-    assert resolve_stages(None, is_codex=False, allow_long_running=False) == STAGES
+def test_default_uses_affected_stages_in_both_environments() -> None:
+    for is_codex in (False, True):
+        assert resolve_stages(
+            None, is_codex=is_codex, allow_long_running=False, affected_stages=("frontend",)
+        ) == ("frontend",)
+        assert resolve_stages(None, is_codex=is_codex, allow_long_running=False) == ()
 
 
 def test_codex_requires_bounded_stage_by_default() -> None:
     with pytest.raises(ValueError, match="codex_requires_bounded_stages"):
-        resolve_stages(None, is_codex=True, allow_long_running=False)
+        resolve_stages(
+            None, is_codex=True, allow_long_running=False, affected_stages=("backend", "frontend")
+        )
+
+
+def test_ordinary_terminal_can_run_affected_or_explicit_full_gate() -> None:
+    assert resolve_stages(
+        None, is_codex=False, allow_long_running=False, affected_stages=("backend", "frontend")
+    ) == ("backend", "frontend")
+    assert resolve_stages("all", is_codex=False, allow_long_running=False) == STAGES
 
 
 def test_codex_can_run_each_bounded_stage() -> None:

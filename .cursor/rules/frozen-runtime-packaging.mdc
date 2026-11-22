@@ -29,7 +29,7 @@ codexLoad: preflight
 - 修改 PyInstaller spec、hook、runtime supplement、staging 或 frozen doctor；
 - 新增或改变一项必须在安装包内工作的用户可见能力，且现有 frozen capability smoke 未覆盖其高风险路径。
 
-纯业务逻辑、测试、注释或文档改动，如果不具备上述事实，保持一级 `standard`，不要求运行 PyInstaller，也不要求构建 local-test runtime。已由现有收集机制完整覆盖的内置 Skill，若只修改既有文本资源、metadata、内容摘要或 manifest source pin，同样属于 `standard`；此类变更应验证 Skill validator、同步摘要、catalog / loader 测试和后端检查，而不是运行与内容变化无关的整套 frozen capability smoke。
+纯业务逻辑、测试、注释或文档改动，如果不具备上述事实，保持一级 `standard`，不要求运行 PyInstaller，也不要求构建 local-test runtime。已由现有收集机制完整覆盖的内置 Skill，若只修改既有文本资源、metadata、内容摘要或 manifest source pin，同样属于 `standard`；此类变更执行下方内容专项，不重跑无关的源码全量检查或整套 frozen capability smoke。
 
 不要因为本 Rule 被加载就扩大验证范围。若语义上命中上述事实但机器路径分类仍为一级，使用标准 runner 的 `--verification-level package-sensitive` 主动升档。机器分类器若把上述“既有内置 Skill 纯内容同步”升为二级，应先按本 Rule 的语义边界修正分类器和对应测试，不得用一次次手工降级绕过。
 
@@ -43,11 +43,19 @@ codexLoad: preflight
 
 ## 验证门禁
 
-既有内置 Skill 的纯内容同步运行公开 Skill validator、项目 guide `verify`、builtin / manifest 一致性检查、相关 catalog / loader 测试和 `scripts/check/run.* --stage backend`；不要求构建冻结 runtime。
+源码检查沿用 `dev-workflow` 的可信主干基线与结果复用规则；开始打包本身不使已有源码验证失效。
+
+既有内置 Skill 的纯内容同步须先核对 diff，确认没有实现代码、可执行脚本、依赖、资源类型 / 路径 / 收集方式或加载契约变化。满足条件时执行以下内容专项，替代通用后端阶段：
+
+- 对实际同步的 Skill 运行 validator，并核对 builtin / manifest 内容摘要和来源；Guide 同步另按 `maintain-agent-friend-guide` 运行绑定精确 commit 的 `verify`。
+- 运行 `scripts/test/run.* agent/tests/test_skill_catalog.py agent/tests/test_skill_loader.py agent/tests/test_skill_service.py`，覆盖 catalog、loader、实际 builtin 安装与 manifest 摘要。相关内容断言需要随快照更新时在这组测试中验证。
+- 不另跑后端全量 pytest、未受影响的源码 lint / typecheck、前端或 Rust 检查，也不单独构建冻结 runtime。同步工具实现没有变化时，不因每次使用工具重跑整套 Guide 脚本测试。
+
+无法确认纯内容边界、同时存在其它改动或已知基线失败时，回到 `dev-workflow` 按影响选择源码检查。新安装包仍执行标准构建内置的完整性、doctor / capability smoke 与所需矩阵；内容专项不能替代制品验证。
 
 打包敏感的代码或配置发生实质变化时：
 
-1. 运行 `scripts/check/run.* --stage backend`。
+1. 按 `dev-workflow` 完成受影响源码检查；输入、平台、环境和配置未变的已通过结果可以复用，不因进入 runtime 构建阶段再跑一次。
 2. 在 Windows x64 环境显式调用 `package-release` Skill 的 `runtime-only` 路径，由它准备共同的 Guide baseline 并运行 local-test frozen runtime 验证；命令与必需参数只在该 Skill 维护。以 staging 后 doctor 和 frozen capability smoke 的结果为准。本入口只验证 runtime，不自动构建 installer、安装到本机或发布。
 3. 只有用户明确要求安装包、发布、版本操作或 trusted-beta 时，才进入 `package-release` Skill 的完整 installer 工作流。
 
