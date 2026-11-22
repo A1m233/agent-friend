@@ -6,6 +6,8 @@ IN_PROGRESS
 
 需求与技术方案已确认，用户于 2026-11-22 授权实现，随后明确采用 v1 并授权正式接线。五个工具、两份 Skill reference、Conversation 宿主上下文、Bridge、持久检查与整批审批已接入。用户已授权 C29 四场景真实验证，并在首项运行异常归因后授权修复评测接线及重跑；未执行桌面视觉验证。
 
+实现提交为 `d666563aa91a2d84d389d00482649203ccc2bba2`。Windows 源码三阶段检查、四项真实模型场景的协议对齐与人工复核、冻结 runtime 验证均已完成；当前只待用户验收，未合入或推送本次实现。后续记录提交仅更新文档，不改变已验证的产品代码。
+
 ## 任务列表
 
 - [x] 建立 feature/182-semantic-memory-maintenance 并远端占号。
@@ -18,20 +20,20 @@ IN_PROGRESS
 - [x] 工具及 Skill 独立候选的完整渲染、逐字差异与用户确认。
 - [x] 正式 registry/Bridge 接线及已确认文本重渲染。
 - [x] 确定性测试、C29 行为 case 和 frozen capability smoke 实现；源码 doctor 已通过。
-- [ ] 冻结产物实际构建与 capability smoke。
-- [ ] 项目全量检查、受影响平台验证。
+- [x] 冻结产物实际构建与 capability smoke。
+- [x] Windows 项目 backend/frontend/rust 全阶段检查及 package-sensitive 验证。
 - [x] 获授权的四项真实模型行为验证及逐份轨迹人工复核。
 - [ ] 用户验收。
 
 ## AC 验证
 
-AC-01 至 AC-13 尚未完成产品级验收，具体定义见 requirement.md。独立分发包的测试结果不计入正式实现验收。
+AC-01 至 AC-12 已有本候选的技术验证证据，AC-13 的自动门禁通过，用户验收尚未确认，故总体保持 IN_PROGRESS。独立分发包的测试结果不计入正式实现验收。
 
-- AC-01/02/03/07/08/09：正式 factory/Conversation/Bridge、固定清单两页遍历、重开续查、并发冲突和幂等回执均有确定性测试。AC-05 的质量判断仍需真实模型证据。
+- AC-01/02/03/07/08/09：正式 factory/Conversation/Bridge、固定清单两页遍历、重开续查、并发冲突和幂等回执均有确定性测试。AC-05 的来源、长期价值、临时约束与流水账判断由 C29 真实模型轨迹及现有质量 reference 支撑，观察边界见下文。
 - AC-04：真实 SessionStore 的直接原话、定时来源、缺失与重写状态、分页和取消已测试；未展开 Episodic。
 - AC-06：真实 broker 的整批允许/拒绝、取消、full_access 的宿主用户来源限制、auto_review 允许/拒绝及手动接续、Bridge 路由已测试。正式 Conversation 的 check-only 不改变事实，重复 apply 只审批和提交一次。
 - AC-10：FTS、有效状态过滤、替代正文与来源、旧抽取上下文拒绝已测试；即使向量索引仍返回旧 ID，实际状态回查也阻止旧事实参与当前召回。退役可作为历史，撤销不作为曾经正确的事实返回。索引刷新请求结果持久化，requested 不代表索引完成。
-- AC-11：四项合成场景已完成真实模型与人工复核；首项 raw 假阴按现行协议修正并用同一 trace 复核，其余三项自动通过。AC-12/13 的冻结 smoke、后端完整复验及用户验收仍待收口。
+- AC-11：四项合成场景已完成真实模型与人工复核；首项 raw 假阴按现行协议修正并用同一 trace 复核，其余三项自动通过。AC-12 的 frozen doctor/Bridge/Voice 与新增维护 capability 均通过；AC-13 仍待用户验收。
 
 ## 首轮验证记录（Windows，d377ee2 基线加当时工作区 overlay）
 
@@ -69,7 +71,7 @@ AC-01 至 AC-13 尚未完成产品级验收，具体定义见 requirement.md。�
 | `scripts/check/run.ps1 --plan --base origin/main` | backend/frontend/rust 三阶段；package-sensitive，fullMatrixPaths 为空。 |
 | 完整 frontend 阶段 | 通过：lint/typecheck、200 文件 / 1649 测试、production build；现有 CSS highlight 和 chunk-size 警告不阻断构建。 |
 | 完整 rust 阶段 | 通过：Tauri Core tests 与 release check；现有 dead-code 警告。 |
-| 完整 backend 阶段 | 首次 5024 passed、6 skipped、1 failed：既有 execution_environment 测试的 Windows staging 目录重命名遭遇 WinError 5。该项单独复验通过（1 passed），完整 backend 复跑中；尚不把首次阶段记为全绿。 |
+| 完整 backend 阶段 | 最终 lint/typecheck/pytest 全阶段通过，5029 passed、6 skipped。首次 5024 passed、6 skipped、1 failed：既有 execution_environment 测试的 Windows staging 目录重命名遭遇 WinError 5；该项单独复验和完整复跑通过，未修改该模块。第三方 Bilibili 退出回调仍有非致命 event-loop warning。 |
 | 失效目标 ID 回传及维护/审批最终复验 | 33 passed；过期目标在 prepare/apply 阶段都返回明确冲突与目标 ID。 |
 | 评测隔离与后续 harness 修复 | 隔离工具限制后 agent_eval 178 passed；能力透传和异常轨迹保留修复后 180 passed；最终 lint、971 文件 typecheck 通过。 |
 
@@ -104,6 +106,15 @@ C29-01 复跑实际完成 2/2 检查，但原 judge 把隐式 `skill_read` 错�
 
 LF 规范化后 catalog/loader/service 专项 21 passed、2 skipped，正式重渲染确认仅有 inspect 的 17 处及 correct 的 10 处 CRLF → LF。真实模型报告对应规范化前的等价正文，未据换行格式重复付费运行。
 
+### 冻结实际结果
+
+- `runtime-verify --local-test --verification-level package-sensitive` 成功退出（0），版本 `0.4.1`，实现提交 `d666563aa91a2d84d389d00482649203ccc2bba2`，clean source。
+- Build ID：`20261122T150711Z-d666563aa91a-234e582d`；source tree SHA256：`76534617447411259e058bea9e6934430bb370fbf8046435e04d7536f5d293de`。
+- doctor、frozen Bridge 与 Voice smoke 通过。`capability:memory_maintenance` 的 ordinary_inventory、direct_source、approved_atomic_rewrite、durable_receipt、fts_readback、builtin_skill 六项均为 true。
+- runtime inventory SHA256：`aac95ee6439ed3fe551b6e2f0968a7ab78adf5e76215600a1d93d4422bce6641`。
+- 标准 build-storage 持久报告 `0923da7741222cc054ee6cfa-31bbf4eb057247c7882ba9796c16837e.json` 已归档；其 SHA256 为 `dff970d7cf8edbb5d87c6ea97a8e6e2601dbd99a13a560b06292650dfa949d1a`。项目外证据另存 `runtime-archive.json`、`runtime-verification.json` 和 `validation-summary.json`。
+- 中间 runtime/build 目录和隔离源码工作树已回收，调用者 Git 状态恢复为 clean；未构建安装器、未覆盖安装、未改版本或发布制品。此次没有桌面视觉验收，也没有 macOS/Linux 原生运行记录。
+
 ## 实现日志
 
 | 日期 | 完成内容 | 验证或备注 |
@@ -111,3 +122,4 @@ LF 规范化后 catalog/loader/service 专项 21 passed、2 skipped，正式重�
 | 2026-11-22 | 用户确认方案并授权实现，方案与实施清单落盘。 | 基线 d377ee2278854abcf40a6ff24aafb7299c0e9a70；无真实模型调用。 |
 | 2026-11-22 | 完成普通层维护存储、宿主来源适配、批次审批、桌面/IM 展示与对应测试；准备具体模型输入候选。 | 检查状态与修改事务分离，整批乐观锁与回执幂等，旧抽取 epoch 保护。正式 registry/Bridge 接线等待具体文本确认。 |
 | 2026-11-22 | 用户确认 v1；完成正式工具、Bridge、宿主可信上下文、builtin Skill 接线，新增隔离 C29 与冻结 capability。 | 生产 wrapper 的来源读取接线补齐；确定性集成与正式渲染通过，进入完整门禁及冻结验证。 |
+| 2026-11-22 | 完成真实模型场景、评测接线修复、全部源码检查及冻结 runtime 验证，保存本地实现提交 d666563a。 | 全部技术证据已归档；等待用户验收，未合入/推送。 |

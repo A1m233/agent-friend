@@ -7,7 +7,7 @@
 - 基线 d377ee2278854abcf40a6ff24aafb7299c0e9a70 已有普通事实数据、变更组、部分事务和检索过滤能力，但默认工具目录没有全量检查及定向维护工具。
 - maintain-af-memory 的正式资源存在；只有资源不能补足宿主能力。
 - 历史隔离实验及 2026-11-22 独立检查包使用临时注入工具；这些结果仅证明对应独立环境，不构成正式产品验收。
-- 本需求已确认范围、方案与 v1 文本；正式 factory/Conversation/Bridge 已接入，正在完成项目门禁和冻结验证，真实模型质量与用户验收尚未完成。
+- 本需求已确认范围、方案与 v1 文本；正式 factory/Conversation/Bridge 已接入，实现提交 d666563a 的源码门禁、真实模型固定场景和冻结验证已完成，尚待用户验收与后续交付。
 - 用户本次转述的 AF 回复没有取得对应原始运行 trace，不能据此单独确认该次模型选择或实际构建身份。正式能力缺口由基线源码和历史实验入口共同支撑。
 
 ## 证据账本
@@ -58,7 +58,9 @@
 | --- | --- | --- |
 | E-009 | 正式 registry/Conversation、NotifyingSessionStore 与 Bridge assembly 的定向集成测试；工厂无临时工具注入。 | 固定假模型，只证明接线、分页、授权和事务，不证明质量判断。 |
 | E-010 | 项目外 `prompt-v1/` 保存已确认完整候选与 diff；`applied-v1/verification.json` 验证正式工具定义及顺序完全一致，两份打包 reference 仅按仓库要求规范化 CRLF → LF，无字句或顺序差异。 | 动态 scope ID、包装摘要及明确的换行差异按实际运行保留，完整输入摘要见 progress.md。 |
-| E-011 | C29 四个派生/相邻场景及真实 SQLite fixture，loader/runner/judge 的确定性验证已通过。 | 合成数据，不是原事故 trace；真实运行待单次授权。 |
-| E-012 | 新增 frozen doctor capability 的源码执行通过，检查隔离数据库中的审批、改写、幂等、来源和资源读取。 | 冻结产物执行及完整三阶段检查结果由 progress.md 记录，不把源码 smoke 等同于 frozen。 |
+| E-011 | C29 四个派生/相邻场景及真实 SQLite fixture，确定性验证和获授权真实运行均已完成；逐份轨迹人工复核通过。 | 合成数据，不是原事故 trace；首项 raw 假阴按既有隐式 skill_read 协议对齐，未通过再跑模型清空失败。首次运行异常亦保留，不合并成泛化通过率。 |
+| E-012 | 新增 frozen doctor capability 在真实冻结产物中通过，覆盖隔离库审批、原子改写、回执、FTS、来源和内置 Skill；frozen Bridge/Voice 同时通过。 | Windows runtime-only，绑定 d666563a 和精确 build ID，详见 progress.md；不代表安装器矩阵或桌面视觉验收。 |
+| E-013 | Windows backend 5029 passed/6 skipped，frontend 1649 项及构建、Rust Core/release 全阶段通过。 | 首轮 Windows 临时目录访问拒绝保留记录，单项和完整复跑均通过；没有修改不相关模块。 |
+| E-014 | Skill 检查包装器能力遗漏由零模型调用探针确认；用户授权后补齐能力透传和异常轨迹保留，180 项 agent_eval 回归通过。 | 旧异常报告清空轨迹，无法从空列表推断未执行工具；不把旧错误唯一归因为模型或维护工具。 |
 
 项目外本轮证据还包括 `check-plan.json`、`check-backend.log`、`check-frontend.log`、`check-rust.log`、`check-maintenance-final.log` 和经 Release asset digest 验证的 `guide-release-manifest.json`。原始日志和模型输入不复制到公开文档。
