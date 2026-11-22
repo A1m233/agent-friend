@@ -35,6 +35,7 @@ from .host_episodes import (
     notification_episode_id,
     notification_source_ref,
 )
+from .maintenance.service import SemanticMaintenance
 from .retrieval import Renderer, ScoreWeights, rank
 from .search import CurrentSessionRecallScope, MemorySearchService, SearchRequest
 from .search.execution import CancelCheck, check_cancel
@@ -102,6 +103,11 @@ class Memory:
         self._on_retrieved = on_retrieved
         self._search_service = search_service
         self._index_manager = index_manager
+        self.maintenance = SemanticMaintenance(
+            store,
+            owner_user_id=owner_user_id,
+            request_backfill=index_manager.request_backfill if index_manager is not None else None,
+        )
 
         def _extracted(result: ExtractionResult) -> None:
             if self._index_manager is not None and result.committed and not result.is_empty():

@@ -3,7 +3,7 @@ import executionApprovalKinds from "./fixtures/execution-approval-kinds.json";
 
 const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 vi.mock("../http", () => ({ http: { get, post } }));
-import { commandRuntimeApi, type CommandApprovalRequest, type ApplicationApprovalRequest } from "./commandRuntime";
+import { commandRuntimeApi, type CommandApprovalRequest, type ApplicationApprovalRequest, type MemoryApprovalRequest } from "./commandRuntime";
 
 it("queries the execution approval kinds exercised by the Bridge route contract", async () => {
   get.mockResolvedValue({ requests: [] });
@@ -46,6 +46,16 @@ describe("command approval decision API", () => {
     post.mockResolvedValue({ accepted: true, approval: { ...application, status: "approved" } });
     await commandRuntimeApi.decide(application, true);
     expect(post).toHaveBeenCalledExactlyOnceWith("/v1/approvals/approval%2Fa/application-decision", {
+      session_id: "session-a", run_id: "run-a", allow: true, lifetime: "once",
+    });
+  });
+
+  it("routes a frozen memory batch through its once-only decision endpoint", async () => {
+    const memory: MemoryApprovalRequest = { ...request, kind: "memory_maintenance",
+      details: { batch_id: "batch", audit_id: "audit", digest: "digest", operations: [] } };
+    post.mockResolvedValue({ accepted: true, approval: { ...memory, status: "approved" } });
+    await commandRuntimeApi.decide(memory, true);
+    expect(post).toHaveBeenCalledExactlyOnceWith("/v1/approvals/approval%2Fa/memory-decision", {
       session_id: "session-a", run_id: "run-a", allow: true, lifetime: "once",
     });
   });

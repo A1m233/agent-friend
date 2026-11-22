@@ -5514,6 +5514,41 @@ class Conversation:
     ) -> dict[str, Any]:
         """给内置工具补运行时隐藏上下文；不改变 LLM 原始 tool args。"""
         invocation_args = dict(args)
+        from .memory_maintenance.dispatch import INVOCATION_ARG, TOOL_NAMES
+
+        if name in TOOL_NAMES:
+            from .approvals.reviewer import ReviewContext, visible_review_transcript
+            from .memory_maintenance.service import MaintenanceInvocation
+
+            current_events = (
+                self._session.events[current_turn_start_idx:]
+                if current_turn_start_idx is not None
+                else []
+            )
+            user_event = next(
+                (
+                    event
+                    for event in reversed(current_events)
+                    if event.type == "user_message" and not event.payload.get("request_source")
+                ),
+                None,
+            )
+            user_ref = (
+                f"{self._session.session_id}#{user_event.uuid}"
+                if user_event is not None and self._session.origin_kind != "inner_world"
+                else None
+            )
+            invocation_args[INVOCATION_ARG] = MaintenanceInvocation(
+                session_id=self._session.session_id,
+                run_id=self._run_id_override or "",
+                tool_call_id=tool_call_id,
+                surface=str(self._prompt_surface_override or ""),
+                user_source_ref=user_ref,
+                review_context=ReviewContext(
+                    model=self._active_llm_client(),
+                    transcript=visible_review_transcript(self._session.active_events),
+                ),
+            )
         if name == "bilibili_reply":
             from .memory_feed import CORE_MEMORY_BARRIER_ARG, project_core_action_input
 

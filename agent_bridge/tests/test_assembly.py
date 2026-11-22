@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, cast
 
 import agent_bridge.runtime_config as bridge_runtime_config_module
@@ -81,6 +82,9 @@ def test_persistent_runtime_registers_recall_past_chats(
         assert runtime.todo_store is not None
         assert runtime.todo_store.path == tmp_path / "todos" / "todos.db"
         assert manager_registry is runtime.tool_registry
+        unavailable = runtime.tool_registry.invoke("semantic_memory_query", {})
+        assert unavailable.is_error
+        assert json.loads(unavailable.text)["error"] == "memory_unavailable"
         assert (settings.personas_dir / "default" / "persona.md").is_file()
     finally:
         runtime.close()
@@ -152,6 +156,46 @@ def test_memory_enabled_registers_history_and_structured_sources(
             "structured_memory",
         )
         assert history_tool._search_service.has_source_order_provider is True
+        assert runtime.memory is not None
+        from datetime import UTC, datetime
+
+        from agent import Event
+        from memory import SemanticRow
+
+        source_session = runtime.persistent_session_manager.create(
+            persona="default", model="deepseek/deepseek-chat"
+        )
+        runtime.persistent_store.append_event(
+            source_session.session_id,
+            Event(
+                type="user_message",
+                uuid="source-memory",
+                ts=datetime.now(UTC),
+                payload={"content": "只有这次需要这样做"},
+            ),
+        )
+        source_ref = f"{source_session.session_id}#source-memory"
+        runtime.memory.store.add_semantic(
+            SemanticRow(
+                id="maintenance-fact",
+                statement="临时要求",
+                persona_id="default",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+                provenance=[source_ref],
+            )
+        )
+        query = runtime.tool_registry.invoke("semantic_memory_query", {})
+        assert not query.is_error
+        assert json.loads(query.text)["items"][0]["semantic_id"] == "maintenance-fact"
+        source = runtime.tool_registry.invoke(
+            "semantic_memory_sources",
+            {
+                "semantic_id": "maintenance-fact",
+                "source_ref": source_ref,
+            },
+        )
+        assert json.loads(source.text)["messages"][0]["content"] == "只有这次需要这样做"
     finally:
         runtime.close()
 

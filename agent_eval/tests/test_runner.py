@@ -41,6 +41,32 @@ from agent_eval.schema import (
 from agent import AttachmentStore, JsonlSessionStore, Session
 from llm_providers import LLMStreamEvent, ModelRequest, ModelResponse, ProviderSpec
 
+
+def test_catalog_guard_preserves_model_capabilities() -> None:
+    from llm_providers import LanguageModelCapabilities, get_model_capabilities
+
+    class Model:
+        context_window = 800000
+        capabilities = LanguageModelCapabilities(
+            assistant_message_phase="native",
+            input_usage_scope="request",
+            context_checkpoint_mode="replace_complete_groups",
+            max_output_tokens=32000,
+        )
+
+        def generate(self, request: ModelRequest) -> ModelResponse:
+            raise AssertionError("not called")
+
+        def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+            raise AssertionError("not called")
+
+    model = Model()
+    case = Case(id="capabilities", query="q", facet="guard", source="synthetic")
+    wrapped = _CatalogGuardedLanguageModel(model, _SkillCatalogRequestGuard(case))
+    assert wrapped.context_window == model.context_window
+    assert get_model_capabilities(wrapped) == get_model_capabilities(model)
+
+
 FIXTURE_IMAGE = (
     Path(__file__).resolve().parents[1]
     / "fixtures"

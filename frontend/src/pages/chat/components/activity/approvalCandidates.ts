@@ -7,7 +7,7 @@ import type {
 import type { FilesystemApprovalEntry } from "@/stores/filesystemApprovals";
 
 export type PendingApproval = {
-  kind: "command" | "filesystem" | "desktop_application" | "social_comment";
+  kind: "command" | "filesystem" | "desktop_application" | "social_comment" | "memory_maintenance";
   requestId: string;
   requestVersion: number;
   modeSource?: "session" | "request" | "global";
@@ -62,6 +62,15 @@ function commandNetworkLabel(request: CommandApprovalRequest): string {
 }
 
 function commandDetailLines(request: ExecutionApprovalRequest): string[] {
+  if (request.kind === "memory_maintenance") {
+    const labels = { retire: "结束有效期", revoke: "撤销错误记录", rewrite: "改写", merge: "合并" };
+    return request.details.operations.flatMap((operation) => [
+      `${labels[operation.action]}：${operation.reason}`,
+      ...operation.targets.map((target) => `原记录 ${target.semantic_id}：${target.statement}`),
+      `旧记录：${labels[operation.old_disposition]}`,
+      ...(operation.replacement ? [`替代正文：${operation.replacement.statement}`, `事实来源：${operation.replacement.speaker_origin === "user" ? "用户" : "助手"}`] : []),
+    ]);
+  }
   if (request.kind === "social_comment") {
     return [`发布账号 UID：${request.details.account_uid}`, `视频：${request.details.bvid}`,
       request.details.parent_id ? `回复评论：${request.details.parent_id}` : "在视频评论区分享",
@@ -167,7 +176,7 @@ export function buildPendingApprovalQueue(input: {
       sessionId: request.session_id,
       runId: request.run_id,
       reason: request.reason,
-      command: request.kind === "social_comment" ? request.details.text : request.kind === "desktop_application"
+      command: request.kind === "memory_maintenance" ? null : request.kind === "social_comment" ? request.details.text : request.kind === "desktop_application"
         ? [request.details.executable_path, ...request.details.arguments].map((v) => JSON.stringify(v)).join(" ")
         : request.details.cmd,
       detailLines: commandDetailLines(request),

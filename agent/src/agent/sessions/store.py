@@ -1816,6 +1816,21 @@ class NotifyingSessionStore:
     def load(self, session_id: str) -> Session:
         return self._inner.load(session_id)
 
+    def iter_events(
+        self,
+        session_id: str,
+        state: SessionReadState,
+        *,
+        cancel_check: CancelCheck = None,
+        materialize_rollout: bool = True,
+    ) -> Iterator[Event]:
+        reader = getattr(self._inner, "iter_events", None)
+        if not callable(reader):
+            raise NotImplementedError("store does not support direct event evidence")
+        yield from reader(
+            session_id, state, cancel_check=cancel_check, materialize_rollout=materialize_rollout
+        )
+
     def session_head(self, session_id: str) -> Session:
         method = getattr(self._inner, "session_head", None)
         if callable(method):

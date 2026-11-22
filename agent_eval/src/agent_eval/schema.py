@@ -218,6 +218,18 @@ class Case:
     fake_tools: list[FakeTool] = field(default_factory=list)
     tool_run_policy: FixtureToolRunPolicy | None = None
     judge: CaseJudge | None = None
+    fixture_semantic_memory: list[FixtureSemanticMemory] | None = None
+
+
+@dataclass(frozen=True)
+class FixtureSemanticMemory:
+    """Isolated ordinary memory and optional direct user/assistant source."""
+
+    id: str
+    statement: str
+    source_text: str | None = None
+    speaker: str = "user"
+    pinned: bool = False
 
 
 @dataclass(frozen=True)

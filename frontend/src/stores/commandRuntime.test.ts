@@ -3,6 +3,7 @@ import {
   commandRuntimeApi,
   type CommandApprovalRequest,
   type ApplicationApprovalRequest,
+  type MemoryApprovalRequest,
   type CommandProcessSnapshot,
   type SandboxCapabilitySnapshot,
 } from "@/services/api/commandRuntime";
@@ -187,6 +188,24 @@ describe("command runtime global sandbox capability", () => {
     useCommandRuntimeStore.getState().finishRun("run-a");
     expect(useCommandRuntimeStore.getState().processes).toEqual({});
     expect(commandRuntimeApi.cancel).not.toHaveBeenCalled();
+  });
+
+  it("retains a memory batch push and rejects an incomplete action payload", () => {
+    const request: MemoryApprovalRequest = { ...approval(), kind: "memory_maintenance",
+      details: { batch_id: "batch", digest: "digest", audit_id: "audit", operations: [{
+        action: "retire", old_disposition: "retire", reason: "one-off report",
+        targets: [{ semantic_id: "fact", revision: "revision", statement: "old" }],
+        replacement: null, source_refs: [],
+      }] } };
+    const store = useCommandRuntimeStore.getState();
+    store.handlePush({ kind: "approval_changed", session_id: "session-a", seq: 1,
+      source_kind: null, events: [], approval: request });
+    expect(useCommandRuntimeStore.getState().approvals[request.request_id]).toEqual(request);
+    store.handlePush({ kind: "approval_changed", session_id: "session-a", seq: 2,
+      source_kind: null, events: [], approval: { ...request, request_id: "bad", details: {
+        ...request.details, operations: [],
+      } } });
+    expect(useCommandRuntimeStore.getState().approvals.bad).toBeUndefined();
   });
 
   it("does not let an older capability event overwrite a newer state", () => {

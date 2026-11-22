@@ -24,7 +24,7 @@ __all__ = [
     "serialize_ts",
 ]
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 """记忆库 schema 版本。
 
 - v1：semantic/episodic 表，FTS5 `tokenize='trigram'` 直接索引原文列

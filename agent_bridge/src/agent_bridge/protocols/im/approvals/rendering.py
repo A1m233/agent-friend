@@ -63,6 +63,21 @@ _LABELS = {
     "entry": "技能入口",
     "fingerprint": "内容指纹",
     "execution_environment": "执行环境",
+    "batch_id": "修改批次",
+    "audit_id": "检查清单",
+    "digest": "批次摘要",
+    "operations": "记忆修改",
+    "targets": "原记录",
+    "semantic_id": "记忆 ID",
+    "revision": "记录版本",
+    "statement": "正文",
+    "replacement": "替代事实",
+    "speaker_origin": "事实来源",
+    "source_refs": "来源引用",
+    "old_disposition": "旧记录处置",
+    "reason": "理由",
+    "persona_id": "人格",
+    "importance": "重要度",
 }
 _ENUMS = {
     "root_kind": {"file": "文件", "directory": "目录"},
@@ -73,7 +88,17 @@ _ENUMS = {
         "read_image": "读取图片",
         "search_metadata": "查找名称与路径",
     },
-    "action": {"overwrite": "覆盖", "move": "移动", "delete": "删除"},
+    "action": {
+        "overwrite": "覆盖",
+        "move": "移动",
+        "delete": "删除",
+        "retire": "结束有效期",
+        "revoke": "撤销错误记录",
+        "rewrite": "改写",
+        "merge": "合并",
+    },
+    "old_disposition": {"retire": "结束有效期", "revoke": "撤销错误记录"},
+    "speaker_origin": {"user": "用户", "agent": "助手"},
     "execution": {"sandboxed": "沙箱", "host_user": "宿主用户（非沙箱）"},
     "cwd_source": {
         "explicit": "本次指定",
@@ -139,7 +164,7 @@ def approval_text(snapshot: dict[str, object], title: str) -> str:
     details: object
     if kind == "filesystem":
         details = {key: snapshot[key] for key in ("items", "actions")}
-    elif kind in {"command", "social_comment"}:
+    elif kind in {"command", "social_comment", "memory_maintenance"}:
         details = snapshot["details"]
     else:
         raise ValueError("unsupported approval kind")
@@ -157,7 +182,13 @@ def approval_text(snapshot: dict[str, object], title: str) -> str:
     if fallback and isinstance(review, dict) and isinstance(review.get("rationale"), str):
         fallback += "：" + plain_literal(review["rationale"])
     text = (
-        ("B 站公开评论等待授权\n" if kind == "social_comment" else "本地操作等待授权\n")
+        (
+            "普通记忆修改等待授权\n"
+            if kind == "memory_maintenance"
+            else "B 站公开评论等待授权\n"
+            if kind == "social_comment"
+            else "本地操作等待授权\n"
+        )
         + plain_literal(f"会话：{title}\n")
         + (fallback or mode_label(str(snapshot.get("approval_mode"))))
         + "\n"

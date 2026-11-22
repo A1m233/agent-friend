@@ -41,6 +41,7 @@ def test_loads_builtin_cases() -> None:
         ("C26", "agent-run-recovery", 12),
         ("C27", "command-lifecycle-handoff", 6),
         ("C28", "current-time-grounding", 3),
+        ("C29", "semantic-memory-maintenance", 4),
     ]
 
 
@@ -457,8 +458,8 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 28
-    assert meta.total_cases == 266
+    assert meta.total_contracts == 29
+    assert meta.total_cases == 270
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -488,6 +489,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C26": 12,
         "C27": 6,
         "C28": 3,
+        "C29": 4,
     }
     assert len(meta.digest) == 64
 

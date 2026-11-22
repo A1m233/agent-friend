@@ -838,6 +838,8 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
 
 
 def _load_contract_file(path: Path) -> Contract:
+    from .maintenance_fixture import parse_fixture
+
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -905,6 +907,10 @@ def _load_contract_file(path: Path) -> Contract:
                     case_data.get("fixture_session"),
                     label=f"{label}.fixture_session",
                     asset_root=asset_root,
+                ),
+                fixture_semantic_memory=parse_fixture(
+                    case_data.get("fixture_semantic_memory"),
+                    label=f"{label}.fixture_semantic_memory",
                 ),
                 fixture_compaction=_parse_fixture_compaction(
                     case_data.get("fixture_compaction"),

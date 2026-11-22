@@ -23,6 +23,7 @@ class ExtractionContext:
     semantic_total: int = 0
     semantic_omitted: int = 0
     semantic_estimated_tokens: int = 0
+    maintenance_epoch: int = 0
 
     @property
     def core_ref_map(self) -> dict[str, CoreProfileEntry]:
@@ -58,6 +59,7 @@ class ExtractionContextBuilder:
         self._budget = semantic_token_budget
 
     def build(self, fragment: ConversationFragment) -> ExtractionContext:
+        maintenance_epoch = self._store.maintenance_epoch(fragment.owner_user_id)
         core = list(
             self._store.core_profile(
                 owner_user_id=fragment.owner_user_id,
@@ -102,6 +104,7 @@ class ExtractionContextBuilder:
             semantic_total=len(ordered),
             semantic_omitted=len(ordered) - len(selected),
             semantic_estimated_tokens=estimated_tokens,
+            maintenance_epoch=maintenance_epoch,
         )
 
 

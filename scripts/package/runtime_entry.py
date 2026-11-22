@@ -1570,6 +1570,15 @@ def _doctor() -> int:
         checks["capability:autonomous_companionship"] = {"ok": True, **companionship_details}
 
     try:
+        from capability_smoke.memory_maintenance import run_memory_maintenance_smoke
+
+        memory_maintenance_details = run_memory_maintenance_smoke()
+    except Exception as exc:
+        checks["capability:memory_maintenance"] = {"ok": False, "error_type": type(exc).__name__}
+    else:
+        checks["capability:memory_maintenance"] = {"ok": True, **memory_maintenance_details}
+
+    try:
         recovery_details = _smoke_sandbox_recovery()
     except Exception as exc:
         checks["capability:sandbox_recovery"] = {"ok": False, "error": str(exc)}

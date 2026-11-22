@@ -1047,6 +1047,15 @@ def test_doctor_without_configured_model_checks_static_html_extraction(monkeypat
         "run_cleanup": True,
     }
     assert payload["checks"]["capability:autonomous_companionship"]["ok"] is True
+    assert payload["checks"]["capability:memory_maintenance"] == {
+        "ok": True,
+        "ordinary_inventory": True,
+        "direct_source": True,
+        "approved_atomic_rewrite": True,
+        "durable_receipt": True,
+        "fts_readback": True,
+        "builtin_skill": True,
+    }
     assert payload["checks"]["capability:managed_execution_python"] == {
         "ok": True,
         "status": "not-configured",
