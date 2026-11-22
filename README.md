@@ -74,7 +74,7 @@ macOS / Linux：
 
 开发入口默认启动 Tauri 桌面端。若安装版已经打开，请先退出再启动开发版。浏览器调试可加 `--web`。使用 `scripts/dev/run.* status` 查看当前实例，使用 `scripts/dev/run.* stop` 停止开发实例。
 
-自动化检查可分别运行 `scripts/check/run.* --stage backend`、`--stage frontend` 和 `--stage rust`；Windows 使用 `.ps1`，macOS / Linux 使用 `.sh`。真实模型评测需自行配置并另行执行，不属于仅凭静态检查即可证明的能力。
+自动化检查先用 `scripts/check/run.* --plan --base origin/main` 查看受影响阶段，再运行默认入口或按计划分别执行 `--stage backend`、`--stage frontend`、`--stage rust`；需要全量时显式使用 `--stage all`。Windows 使用 `.ps1`，macOS / Linux 使用 `.sh`，详细边界见 [scripts 说明](scripts/README.md)。真实模型评测需自行配置并另行执行，不属于仅凭静态检查即可证明的能力。
 
 脚本清单见 [`scripts/README.md`](scripts/README.md)。用户数据（会话 / 人格 / 记忆）落在系统标准用户数据目录（见 [`0002 §3.19`](docs/decisions/0002-incubation-tech-stack/README.md)）。
 

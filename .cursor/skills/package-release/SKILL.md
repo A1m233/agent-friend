@@ -40,6 +40,8 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
 
 本节由 `runtime-only` 与安装包工作流共同使用；在第一次执行任何实际构建（包括 `installer-smoke-build`）前完成。`version-status`、`version-set`、`trusted-beta-configure`、`installer-contract`、`workspace-status` 和 `workspace-gc` 等只读/配置动作不触发。
 
+源码验证由 `dev-workflow` 负责：核对精确构建提交及其相对已刷新、可信 `origin/main` 的变化，复用主干和本次任务已通过且输入、平台、环境与配置未变的结果。仅因开始打包、切换到隔离构建工作树或进入正式包阶段，不重跑前端、后端、Rust 全量检查。新增变化只补受影响验证；Guide baseline 纯内容同步执行 `frozen-runtime-packaging` 的内容专项。基线失败、来源不明或验证条件变化时不沿用旧结果。此复用不替代新制品的内置检查与安装矩阵证据。
+
 自动显式调用 `maintain-agent-friend-guide` 的 `package-baseline` 模式，完成只读知识检查并解析最新兼容、已发布且 immutable 的 Guide checkout、commit 与 snapshot；不要再询问用户是否进入该流程。把返回的 checkout 和 commit 作为 `--guide-repo`、`--guide-commit` 传给每次 `runtime-verify`、`runtime`、`installer`、`all`、`installer-smoke-build`、`installer-smoke` 和 `installer-smoke-verify`；内部 candidate 子构建通过受校验 receipt 继承，不自行重新选择版本。自动入口不授权修改公开知识、创建 release 或提交产品仓库；发现公开内容需要更新时只报告。
 
 - `local-test` 与 installer smoke 的 baseline 是临时打包输入。标准 package 入口从调用者的源码（含未提交内容）创建独立工作树和 Python 环境，临时 Guide 仅在该工作树内应用；无关 dirty 必须原样保留，Guide 管理路径预先 dirty 时 fail closed。Agent 不直接运行持久化 `sync`，也不在收尾时留下 baseline overlay。
@@ -51,7 +53,7 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
 
 由 `frozen-runtime-packaging` Rule 明确要求验证打包敏感变更时，使用本路径；用户只要求构建 runtime 时也保持这一范围。它不进入下方安装包工作流，不修改版本、不构建 installer、不安装或发布。
 
-1. 确认 Windows x64 环境和 Rule 要求的后端检查；运行 `version-status`、`installer-contract` 核对源码状态、打包目录与验证等级，不降低脚本给出的 floor。
+1. 确认 Windows x64 环境和 Rule 要求的受影响源码检查结果；运行 `version-status`、`installer-contract` 核对源码状态、打包目录与验证等级，不降低脚本给出的 floor。
 2. 完成“首次实际构建的共同前置”，取得本次验证的精确 Guide 输入，再执行：
 
    ```powershell
@@ -71,7 +73,7 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
 4. 先完成“首次实际构建的共同前置”，再按最低验证等级执行：
    - `standard`：如果决定产包，执行一次标准完整构建及其内置确定性检查；普通需求未要求包时不打包。
    - `package-sensitive`：合入前至少构建真实 frozen candidate，并以 doctor/capability smoke 为证据；用户需要完整包时再继续 installer。语义上需要但脚本未自动识别时用 `--verification-level package-sensitive` 升档。
-   - `full-matrix`：先确定是否已有当前工作流明确记录且指纹匹配的 smoke report；不得搜索或猜测“最近报告”。无匹配报告时运行 `installer-smoke-build` → `installer-smoke` → `installer-smoke-verify`，三个步骤都传入本次 package-baseline 的同一组 `--guide-repo` / `--guide-commit`，确保构建和验证重算的是同一 package input。默认只构建一次 candidate 并由它提供受校验 fixture；只有显式给出已验证 baseline build ID 时才复用历史 baseline。矩阵覆盖升级/修复、降级拒绝、目录漂移/迁移/回滚、进程占用、失败恢复和身份错配。stable release 自动升到该级，不能跳过矩阵。
+   - `full-matrix`：先确定是否已有当前工作流明确记录且指纹匹配的 smoke report；不得搜索或猜测“最近报告”。已有报告时交给 production `installer|all --smoke-report <PATH>` 的门禁校验并复用，不重复构建 smoke candidate 或重跑矩阵。无匹配报告时运行 `installer-smoke-build` → `installer-smoke` → `installer-smoke-verify`，三个步骤都传入本次 package-baseline 的同一组 `--guide-repo` / `--guide-commit`，确保构建和验证重算的是同一 package input。默认只构建一次 candidate 并由它提供受校验 fixture；只有显式给出已验证 baseline build ID 时才复用历史 baseline。矩阵覆盖升级/修复、降级拒绝、目录漂移/迁移/回滚、进程占用、失败恢复和身份错配。stable release 自动升到该级，必须具有匹配的完整矩阵证据，不要求重复执行已被门禁确认可复用的验证。
    - 安装器语言发生变化时，`installer-contract` 必须报告交互式 selector 为 `always`。可见 UI 验收同时覆盖无历史语言与已保存 English 的身份；仅在全新隔离身份看到一次 selector，不能证明真实产品升级仍允许选语言。
 5. 调用脚本完成目标构建。准备安装到当前机器时，production `installer|all` 必须附带 `--for-current-install`，让脚本在创建 build workspace 和冻结 runtime 前重新执行同一安装计划并 fail closed；`--trusted-beta --local-test` 使用受治理的下一 beta 版本，`--local-test` 只改变可发布性，不得把候选版本降回项目稳定版本。脚本计算 `effective_verification_level=max(代码 floor, release floor, 用户升档)`；用户传入较低等级不会降档。`full-matrix` production `installer|all` 必须传入已验证的 `--smoke-report <PATH>`。打包 smoke 使用 fake/missing credential，不调用真实 LLM 或 provider API；凭据值或 hash 不进入验证指纹。若另行执行真实对话/语音验收，遵守 `llm-api-confirm`。
 6. 构建开始时核对脚本输出的 `package_version`、`release_channel` 和可选 `target_release_version`；回报绝对安装包路径、build ID、精确版本、模式、敏感标识和 SHA/manifest 核验结果。不得把同版本包描述为升级包，不得用 build ID 判断版本先后。失败时原样保留脚本的 fail-closed 原因，不绕过门禁。

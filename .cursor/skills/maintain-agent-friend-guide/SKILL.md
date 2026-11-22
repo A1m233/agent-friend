@@ -27,7 +27,7 @@ description: 检查 agent-friend 产品变更是否需要更新公开用户知�
 2. 用 GitHub Releases API 确认 checkout `HEAD` 对应已发布、非 draft、非 prerelease、`immutable=true` 的最高兼容 release；不得从尚未发布的 main 内容生成 builtin。
 3. 运行 `verify --guide-commit <已确认的 release commit>`，核对 `target` 与上一步解析的 checkout/commit 一致，向 package-release 返回 checkout、精确 HEAD、snapshot digest 和兼容 release 证据；非默认 checkout 另传 `--guide-repo`。package 命令必须通过 `--guide-repo`、`--guide-commit` 绑定该输入。客户端自动更新仍以 immutable release 为线上来源。
 4. `local-test` / installer smoke 不在本 Skill 中运行 `sync`；package runner 临时应用并负责恢复。stable / 可分发 trusted-beta 若 baseline 不匹配，由 package runner 在写入前返回 `baseline-update-required`。
-5. 只有用户直接要求持久刷新，或 formal package 已获得覆盖产品提交的当前 Git 授权时，才运行 `sync --guide-commit <HEAD>` materialize changeset；随后运行 Guide 脚本测试和项目规定检查。本 Skill 不自动 commit/push。
+5. 只有用户直接要求持久刷新，或 formal package 已获得覆盖产品提交的当前 Git 授权时，才运行 `sync --guide-commit <HEAD>` materialize changeset；随后按 `frozen-runtime-packaging` 核对 diff 并执行内置 Skill 内容专项。只有同步工具实现或契约变化时才补对应 Guide 脚本测试；其它代码变化按 `dev-workflow` 补受影响检查。本 Skill 不自动 commit/push。
 
 ## 只读检查边界
 
