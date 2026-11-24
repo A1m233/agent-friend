@@ -1,15 +1,20 @@
+import base64
+import json
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
+from agent.attachments import AttachmentStore
 from agent.runtime import SessionBusyError
 from agent.session_delivery import SessionDeliveryStore
 from agent.sessions.access.service import ConversationAccessError, ConversationAccessService
 from agent.sessions.manager import SessionManager
+from agent.tools.builtin.conversation_access.delivery import SendConversationMessageTool
+from agent.tools.registry import ToolRegistry
 from agent_bridge.protocols.im.provider import OutboundSendResult
 from agent_bridge.session_delivery.service import SessionDeliveryService
 
@@ -403,3 +408,97 @@ def test_archived_target_is_not_notified(service: SessionDeliveryService) -> Non
     assert saved["conversation_state"] == "failed"
     assert saved["feedback_state"] == "delivered"
     service.runtime.im_runtime.send_proactive.assert_not_called()  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "前文\n![图片](https://example.invalid/picture.png)\n后文",
+        "语法示例：\n```markdown\n![图片](C:/private/image.png)\n```\n\\![转义](file_ref)",
+    ],
+)
+def test_public_markdown_delivery_keeps_body_and_assistant_role_after_reload(
+    service: SessionDeliveryService,
+    content: str,
+) -> None:
+    tool = SendConversationMessageTool()
+    tool.submit = service.submit
+    result = ToolRegistry([tool]).invoke(
+        tool.name,
+        {
+            "__agent_friend_current_session_id": "source",
+            "__agent_friend_run_id": "wake",
+            "__agent_friend_tool_call_id": "markdown",
+            "target_session_id": "target",
+            "content": content,
+            "notify_im": True,
+            "destination_id": "qq-owner",
+        },
+    )
+    assert not result.is_error
+    delivery_id = json.loads(result.text)["delivery_id"]
+    service.deliver_pending()
+    service.deliver_pending()
+    receipt = service.store.get(delivery_id)
+    assert (receipt["conversation_state"], receipt["im_state"]) == ("committed", "delivered")
+    im = service.runtime.im_runtime
+    assert im is not None
+    send = cast(Mock, im.send_proactive)
+    send.assert_called_once()
+    assert send.call_args.args == ("qq-owner", content)
+    assert send.call_args.kwargs["text_format"] == "markdown"
+    assert send.call_args.kwargs["image"] is None
+
+    restored = JsonlSessionStore(service.runtime.settings.sessions_dir).load("target")
+    assert not any(e.type == "user_message" for e in restored.events)
+    messages = [e for e in restored.events if e.type == "assistant_message"]
+    assert len(messages) == 1
+    assert messages[0].payload["content"] == content
+    assert messages[0].payload["attachments"] == []
+    assert messages[0].meta["message_source"]["kind"] == "agent_initiated"
+    assert [m.content for m in restored.messages if m.role == "assistant"] == [content]
+
+
+def test_legacy_queued_image_survives_service_restart_and_delivers_once(
+    service: SessionDeliveryService,
+    tmp_path: Path,
+) -> None:
+    assets = AttachmentStore(tmp_path / "assets")
+    _, ref = assets.import_image_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+        ),
+        display_name="legacy.png",
+    )
+    # Seed the durable request already accepted by an older public tool contract.
+    row = service.store.submit(
+        "legacy-accepted",
+        {
+            "source_session_id": "source",
+            "source_run_id": "old-run",
+            "target_session_id": "target",
+            "content": "旧版已接受的图片",
+            "destination_id": "qq-owner",
+            "attachments": [ref.to_dict()],
+        },
+    )
+    cast(SimpleNamespace, service.runtime).attachment_store = AttachmentStore(tmp_path / "assets")
+    restarted = SessionDeliveryService(service.runtime)
+    restarted.deliver_pending()
+    restarted.deliver_pending()
+    receipt = restarted.store.get(row["delivery_id"])
+    assert (receipt["conversation_state"], receipt["im_state"]) == ("committed", "delivered")
+    im = service.runtime.im_runtime
+    assert im is not None
+    send = cast(Mock, im.send_proactive)
+    send.assert_called_once()
+    image = send.call_args.kwargs["image"]
+    assert image.path == assets.verify(ref.asset_id)
+    assert image.display_name == "legacy.png"
+    restored = JsonlSessionStore(service.runtime.settings.sessions_dir).load("target")
+    messages = [e for e in restored.events if e.type == "assistant_message"]
+    assert len(messages) == 1
+    assert messages[0].payload["attachments"] == [ref.to_dict()]
+    assistant = [m for m in restored.messages if m.role == "assistant"]
+    assert len(assistant) == 1
+    assert assistant[0].attachments == [ref]

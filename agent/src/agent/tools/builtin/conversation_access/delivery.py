@@ -20,8 +20,7 @@ class SendConversationMessageTool:
         "明确只投递会话用false；显式通知用true并指定该会话已发现的destination_id。"
         "返回queued只代表已接受，不代表用户已收到；不要为等待结果反复发送。"
         "联系暂停或去向失效时停止或重新发现，不绕过暂停换通道。"
-        "attachment_asset_ids 可引用当前会话中实际已有的附件或工具图片 asset_id，不能填路径或猜 ID。"
-        "IM 附件当前仅支持一张已有图片；其它附件可只发到会话。"
+        "仅发送正文，不支持附带图片或文件。"
         "转述已读取的会话消息时，可用source_messages关联原消息；引用来自read_conversation，独立见闻可省略。"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
@@ -51,13 +50,6 @@ class SendConversationMessageTool:
                     },
                 },
             },
-            "attachment_asset_ids": {
-                "type": "array",
-                "maxItems": 8,
-                "uniqueItems": True,
-                "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-                "description": "当前会话附件或工具图片结果提供的已有 asset_id；省略不带附件。不是本地路径、draft_id 或 message_id。",
-            },
             "target_session_id": {
                 "type": "string",
                 "minLength": 1,
@@ -67,7 +59,12 @@ class SendConversationMessageTool:
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 20000,
-                "description": "已经完成的最终消息正文；不能填要求目标Agent继续执行的指令。",
+                "description": (
+                    "已经完成的最终消息正文；不能填要求目标Agent继续执行的指令。"
+                    "需要展示图片时，在正文中使用 Markdown 图片语法 ![图片说明](图片地址)。"
+                    "图片地址须可被接收端直接访问；本地路径、asset_id 和 file_ref 不会自动转换为可见图片。"
+                    "QQ 等 IM 端不保证显示 Markdown 图片，不要把消息发送成功当作图片已展示。"
+                ),
             },
             "notify_im": {
                 "type": "boolean",
@@ -81,7 +78,6 @@ class SendConversationMessageTool:
         },
         "dependencies": {
             "source_messages": ["target_session_id"],
-            "attachment_asset_ids": ["target_session_id"],
             "destination_id": ["target_session_id"],
         },
         "oneOf": [
