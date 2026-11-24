@@ -554,7 +554,7 @@ def test_incomplete_model_response_recovers_with_same_run(
     assert [event.payload["content"] for event in assistants] == ["recovered"]
 
 
-@pytest.mark.parametrize("empty_at", [1, 5, 6])
+@pytest.mark.parametrize("empty_at", [1, 6, 7])
 def test_transport_and_empty_response_repair_share_one_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, empty_at: int
 ) -> None:
@@ -578,12 +578,12 @@ def test_transport_and_empty_response_repair_share_one_budget(
     with pytest.raises((LLMNetworkError, LLMEmptyResponseError)):
         for item in conv.stream("finish"):
             events.append(item)
-    assert calls == 6
+    assert calls == 7
     assert [
         (item.attempt, item.max_attempts)
         for item in events
         if isinstance(item, ModelResponseStatus) and item.phase == "retrying"
-    ] == [(i, 6) for i in range(2, 7)]
+    ] == [(i, 7) for i in range(2, 8)]
 
 
 def test_incomplete_model_response_fails_after_explicit_recovery_budget(

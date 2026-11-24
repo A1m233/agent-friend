@@ -24,7 +24,7 @@ from .timeouts import ModelTimeoutPolicy
 if TYPE_CHECKING:
     from .catalog import ModelRuntimeConfig
 
-DEFAULT_MODEL_RETRIES = 5
+DEFAULT_MODEL_RETRIES = 6
 
 
 @dataclass(frozen=True)
