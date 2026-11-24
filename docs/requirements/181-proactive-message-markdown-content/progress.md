@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-IN_PROGRESS
+COMPLETED
 
 ## 任务列表
 
@@ -14,7 +14,7 @@ IN_PROGRESS
 - [x] 正式入口重新渲染并逐字核对已确认候选。
 - [x] 项目完整检查。
 - [x] 用户验收（2026-11-24 用户明确要求合入主干并推送）。
-- [ ] 最新主干集成复验及合入发布。
+- [x] 最新主干集成复验及公开 Guide 发布，完成合入准备。
 
 ## AC 验证
 
@@ -40,6 +40,9 @@ IN_PROGRESS
 | 2026-11-22 | 实现交付，等待用户验收 | `git diff --check` 通过；工作区只含本需求的工具定义、两处测试、issue 075 及需求文档。尚未提交实现、合入 main 或推送实现提交；远端仅有先前占号分支 |
 | 2026-11-24 | 用户验收并授权合入推送 | 从 `28728e8d` 无冲突 fast-forward 到最新 `origin/main` 的 `753b08781a4a5fd6977a7c7880d22338d8880396`；本需求生产变更保持相同。最新影响计划仅选 backend，复跑其完整门禁；前端和 Rust 无本次影响，不重复运行 |
 | 2026-11-24 | 公开知识复核预览 | Guide 基线 `22f97963fea42f0544d073662f7c77901fb2d4b1` 可达且为当前祖先；到最新主干无产品树差异。当前变更影响 using-agent-friend 的主动单图承诺，按 merge-main-and-push 自动模式更新并发布；不改产品 builtin |
+| 2026-11-24 | 提交实现并复核合入基线 | 实现提交 `9c9e1f09d2a5d772af75fcff70bba8b247e9a3c4`；从最新主干重新渲染的完整普通/自主输入及 Responses wire 与已确认 v1 候选完全一致；未改正式提示词措辞 |
+| 2026-11-24 | 发布公开 Guide r126 | 提交 `66ae61dc119bcf5947a6e905c8f0242e5f81a1f2` 已推送并发布 [agent-friend-guide-r126](https://github.com/A1m233/agent-friend-guide/releases/tag/agent-friend-guide-r126)；已核验 immutable 与两个 asset digest。兼容范围沿用 `>=0.4.1,<0.5.0`，正文区分新旧版本。UTF-8 模式 Skill validator、项目 verify 及 Guide 自身 32 passed / 1 skipped 均通过；产品 builtin 不变 |
+| 2026-11-24 | 最新主干集成复验通过，完成验收 | Windows 上完整 backend lint/typecheck/test 通过：5037 passed / 6 skipped / 23 warnings，退出 0；pytest 901.56s，门禁共 926.0s。复验源码绑定实现提交 `9c9e1f09`；第三方退出清理告警与此前相同，不影响退出码。最后一次刷新 origin/main 仍为 `753b0878`，主干工作区 clean |
 
 ## 最终门禁
 
@@ -51,7 +54,13 @@ IN_PROGRESS
 | `scripts/check/run.ps1 --stage frontend` | 类型检查、1646 passed、production build；退出 0 |
 | `scripts/check/run.ps1 --stage rust` | 355 passed / 1 ignored、release check；退出 0 |
 
-全部确定性 AC 已有证据，用户已于 2026-11-24 验收。总体状态暂保持 `IN_PROGRESS`，等待最新主干集成复验和合入发布。无原生平台行为变化，不要求另一平台专项或安装包验证。
+全部确定性 AC 已有证据，用户已于 2026-11-24 验收。最新主干复验和公开 Guide 发布完成，总体状态为 `COMPLETED`；最终主干合入与远端包含关系以 Git 历史和交付回报为准。无原生平台行为变化，不要求另一平台专项或安装包验证。
+
+### 2026-11-24 合入复验
+
+最新计划基线为 `753b08781a4a5fd6977a7c7880d22338d8880396`，仅选择 backend。执行 `scripts/check/run.ps1 --stage backend --basetemp C:/Users/chens/AppData/Local/Temp/af181-merge-20261124 -x`，lint、typecheck 及 5037 passed / 6 skipped 全部通过。前端和原生层没有本次变更，按最新项目规则沿用受治理主干及已有验证，不因提交或等价合并重复检查。
+
+本次检查日志在同一任务产物目录的 `checks-20261124/backend.log`，集成后输入复核在 `implementation-integrated-20261124/`。后续仅补本文交付记录，不改变经过复验的生产代码或测试。
 
 ## 输入版本绑定
 
