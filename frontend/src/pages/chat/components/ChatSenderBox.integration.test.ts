@@ -26,7 +26,7 @@ function findInShadowRoots(root: ParentNode, selector: string): HTMLElement | nu
 }
 
 describe("ChatSenderBox real component integration", () => {
-  it("explains a blocked send on Enter or focus without consuming IME or Shift+Enter", async () => {
+  it("disables the original send button in place and explains why without consuming IME or Shift+Enter", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -42,10 +42,14 @@ describe("ChatSenderBox real component integration", () => {
       await act(async () => root.render(createElement(ChatSenderBox, {
         placement: "bottom", value: "草稿", onSend,
       })));
+      const nativeSendAction = findInShadowRoots(container, ".t-chat__input__button")!;
+      const nativeSendButton = findInShadowRoots(nativeSendAction.shadowRoot!, "button") as HTMLButtonElement;
       const nativeSendIcon = findInShadowRoots(container, "svg")!;
+      const nativeActionParent = nativeSendAction.parentElement;
+      const nativeIconParent = nativeSendIcon.parentElement;
       expect(nativeSendIcon).not.toBeNull();
-      const sendIconMarkup = nativeSendIcon.innerHTML;
-      const sendIconViewBox = nativeSendIcon.getAttribute("viewBox");
+      expect(nativeSendButton.disabled).toBe(false);
+      const sendIconMarkup = nativeSendIcon.outerHTML;
 
       await act(async () => root.render(createElement(ChatSenderBox, {
         placement: "bottom", value: "草稿", sendBlocked: true, sendBtnDisabled: true,
@@ -63,38 +67,75 @@ describe("ChatSenderBox real component integration", () => {
       expect(onBlockedSend).toHaveBeenCalledOnce();
       expect(textarea.value).toBe("草稿");
 
-      const button = container.querySelector<HTMLButtonElement>('[slot="actions"] button')!;
-      expect(button.getAttribute("aria-disabled")).toBe("true");
-      const blockedSendIcon = findInShadowRoots(button, "svg")!;
-      expect(blockedSendIcon).not.toBeNull();
-      expect(blockedSendIcon.innerHTML).toBe(sendIconMarkup);
-      expect(blockedSendIcon.getAttribute("viewBox")).toBe(sendIconViewBox);
-      expect(document.querySelector('[role="tooltip"]')).toBeNull();
-      await act(async () => button.focus());
-      expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(reason);
-      await act(async () => button.blur());
-      await act(async () => {
-        button.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" }));
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      });
-      expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(reason);
-      await act(async () => button.click());
+      expect(container.querySelector('[slot="actions"]')).toBeNull();
+      expect(findInShadowRoots(container, ".t-chat__input__button")).toBe(nativeSendAction);
+      expect(findInShadowRoots(nativeSendAction.shadowRoot!, "button")).toBe(nativeSendButton);
+      expect(findInShadowRoots(container, "svg")).toBe(nativeSendIcon);
+      expect(nativeSendAction.parentElement).toBe(nativeActionParent);
+      expect(nativeSendIcon.parentElement).toBe(nativeIconParent);
+      expect(nativeSendIcon.outerHTML).toBe(sendIconMarkup);
+      expect(nativeSendAction.title).toBe(reason);
+      expect(nativeSendButton.disabled).toBe(true);
+      await act(async () => nativeSendButton.click());
       expect(onSend).not.toHaveBeenCalled();
 
       await act(async () => root.render(createElement(ChatSenderBox, {
         placement: "bottom", value: "草稿", onSend,
       })));
       expect(container.querySelector('[slot="actions"]')).toBeNull();
-      const readyButton = findInShadowRoots(container, "button") as HTMLButtonElement;
-      expect(readyButton.disabled).toBe(false);
-      expect(findInShadowRoots(container, "svg")?.innerHTML).toBe(sendIconMarkup);
+      expect(findInShadowRoots(container, ".t-chat__input__button")).toBe(nativeSendAction);
+      expect(findInShadowRoots(nativeSendAction.shadowRoot!, "button")).toBe(nativeSendButton);
+      expect(findInShadowRoots(container, "svg")).toBe(nativeSendIcon);
+      expect(nativeSendButton.disabled).toBe(false);
+      expect(nativeSendAction.hasAttribute("title")).toBe(false);
+      expect(nativeSendIcon.outerHTML).toBe(sendIconMarkup);
       expect(findInShadowRoots(container, "textarea")).toHaveProperty("value", "草稿");
-      await act(async () => readyButton.click());
+      await act(async () => nativeSendButton.click());
       expect(onSend).toHaveBeenCalledOnce();
     } finally {
       await act(async () => root.unmount());
       container.remove();
       vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps the native hint current across initial preparation, draft edits, failure and stop", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const onStop = vi.fn();
+    const reason = "会话正在准备，暂时无法发送";
+    const render = (value: string, blockedSendReason = reason, loading = false) => act(async () => {
+      root.render(createElement(ChatSenderBox, {
+        placement: "bottom", value, blockedSendReason, loading, onStop,
+        sendBlocked: true, sendBtnDisabled: true,
+      }));
+    });
+    try {
+      await render("草稿");
+      const action = findInShadowRoots(container, ".t-chat__input__button")!;
+      const button = findInShadowRoots(action.shadowRoot!, "button") as HTMLButtonElement;
+      expect(action.title).toBe(reason);
+      expect(button.disabled).toBe(true);
+      expect(container.querySelector('[slot="actions"]')).toBeNull();
+
+      await render("继续编辑草稿");
+      expect(findInShadowRoots(container, ".t-chat__input__button")).toBe(action);
+      expect(action.title).toBe(reason);
+      expect(findInShadowRoots(container, "textarea")).toHaveProperty("value", "继续编辑草稿");
+
+      await render("继续编辑草稿", "会话准备失败");
+      expect(action.title).toBe("会话准备失败");
+      expect(button.disabled).toBe(true);
+
+      await render("继续编辑草稿", "会话准备失败", true);
+      expect(action.hasAttribute("title")).toBe(false);
+      expect(button.disabled).toBe(false);
+      await act(async () => button.click());
+      expect(onStop).toHaveBeenCalledOnce();
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
     }
   });
 

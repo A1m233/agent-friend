@@ -1,14 +1,12 @@
 import {
   type ComponentProps,
   type ReactNode,
-  createElement,
   forwardRef,
   useEffect,
   useImperativeHandle,
   useRef,
 } from "react";
 import { ChatSender } from "@tdesign-react/chat";
-import { TooltipButton, TooltipProvider } from "@/components/ui";
 import { cn } from "@/utils/cn";
 import { readStringEventValue } from "@/utils/webComponentEvents";
 import { extractClipboardFiles } from "./attachmentInput";
@@ -56,6 +54,15 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
 
     // TDesign's React wrapper binds events through ref.current, so ChatSender must receive an object ref.
     useImperativeHandle(forwardedRef, () => senderRef.current!, []);
+
+    useEffect(() => {
+      // Keep the sender's own button, icon and disabled styles. A native title
+      // explains the disabled action without replacing it through the actions slot.
+      const button = senderRef.current?.shadowRoot?.querySelector<HTMLElement>(".t-chat__input__button");
+      if (!button || !blockedSendReason || props.loading) return;
+      button.title = blockedSendReason;
+      return () => { button.removeAttribute("title"); };
+    }, [blockedSendReason, props.loading]);
 
     useEffect(() => {
       if (!voiceSelection || !senderRef.current) return;
@@ -164,25 +171,6 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
       >
         <ChatSender ref={senderRef} {...props}>
           {children}
-          {blockedSendReason && !props.loading && (
-            <span slot="actions" className="inline-flex">
-              <TooltipProvider>
-                <TooltipButton
-                  type="button"
-                  aria-label="发送"
-                  aria-disabled="true"
-                  tooltip={blockedSendReason}
-                  size="icon-sm"
-                  className="cursor-not-allowed rounded-full bg-muted/35 text-bg hover:bg-muted/35"
-                  // ChatSender registers this icon; reuse its glyph and size in the tooltip action.
-                  icon={createElement("t-icon-send-filled", {
-                    "aria-hidden": "true",
-                    size: "var(--td-font-size-body-large)",
-                  })}
-                />
-              </TooltipProvider>
-            </span>
-          )}
         </ChatSender>
       </div>
     );
