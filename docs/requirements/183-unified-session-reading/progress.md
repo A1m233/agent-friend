@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-COMPLETED（实现、工程验证与用户验收完成；合入交付进行中）。2026-11-27 用户已确认方案并授权开始实现。基线 `f91f3c91ab21a858793b4d4e9036f8704946f0fa`，Windows。
+COMPLETED（实现、工程验证与用户验收完成）。2026-11-27 用户已确认方案并授权开始实现。基线 `f91f3c91ab21a858793b4d4e9036f8704946f0fa`，Windows。
 
 ## 任务列表
 
@@ -82,3 +82,9 @@ AC-01 至 AC-10 的工程验证与用户验收均已完成，证据如下。
 2026-11-27 用户验收后要求合入 main 并推送。刷新 origin/main 后仍为 f91f3c91，feature 与本地 main 均未落后；74 个已验源码/测试摘要完全一致，工作区无来源不明改动。沿用已通过检查，不重复构建安装包。
 
 公开 Guide 的基线 d4e83cf 与 f91f3c91 产品树相同。复核本次实现后，仅链接错误重试与恢复提示需要用户知识更新；其余为读取实现治理。按 merge-main-and-push 工作流先发布必要 Guide，再保留 merge commit 合入主干。
+
+- 实现提交：`ed294c6e44715807cfedfe15b8443a715bcd5030`。提交前固定证据 JSON 的 LF 换行，MANIFEST 同时校验工作区与 Git index 的确切字节；未改变已验产品代码。
+- Guide 提交：`7bfd59a312b5efc1c5965b92482a4ad5f2eb5eaf`，已推送并核对 origin/main。只补充临时解析失败重试、文件恢复后重新检查和旧版本区别。
+- Guide 发布：[agent-friend-guide-r129](https://github.com/A1m233/agent-friend-guide/releases/tag/agent-friend-guide-r129)，`immutable=true`，ZIP SHA-256 为 `127defb5989bbe0bf2696e8edbbb6a799e5abc84edb0ed5fa13539f4d15e4113`。沿用 `0.4.1 <= version < 0.5.0` 的既有兼容范围，新增说明按实际菜单能力分版本，不让旧客户端误以为指南升级会升级程序。
+- 系统 Skill validator 在显式 UTF-8 模式通过，项目 Guide verify 通过，发布 runner 核对 manifest/ZIP digest。首次 validator 使用 Windows 默认 GBK 读取失败，改为 `-X utf8` 后复验，没有改变指南编码或跳过验证。
+- 本收尾提交只有交付记录，已重新核对无需追加公开知识更新；产品源码与 ed294c6e 相同，保持已验证内容。主干合入与远端发布由随后 Git merge commit 和远端引用记录，不在证据 artifact 中制造自引用提交号。
