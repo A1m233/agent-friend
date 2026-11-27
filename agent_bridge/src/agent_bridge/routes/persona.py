@@ -100,7 +100,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
 
     def open_editor_session() -> Session:
         try:
-            session = editor().open(PERSONA_EDITOR_THREAD_ID)
+            session = editor().open_for_execution(PERSONA_EDITOR_THREAD_ID)
         except SessionNotFoundError:
             workspace().start()
             try:
@@ -151,7 +151,9 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
 
     def editor_snapshot_payload() -> dict[str, object]:
         try:
-            session = editor().open(PERSONA_EDITOR_THREAD_ID)
+            session = editor().maintenance(
+                PERSONA_EDITOR_THREAD_ID, purpose="persona_editor_snapshot"
+            )
         except (SessionNotFoundError, RuntimeError):
             return {"threadId": PERSONA_EDITOR_THREAD_ID, "events": [], "candidate": None}
         if not workspace().exists():

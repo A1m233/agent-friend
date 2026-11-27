@@ -167,9 +167,11 @@ def test_capacity_and_source_race_explain_why_a_build_was_not_published(
     monkeypatch.setattr(SessionQuerySnapshot, "build", append_during_projection)
     assert store.query(sid).raw_event_count == 1
     records = _records(caplog)
-    assert [record.__dict__["cache_published"] for record in records] == [False, False]
+    assert [record.__dict__["cache_published"] for record in records] == [False, False, False]
+    assert records[1].__dict__["cache_miss_reason"] == "index_busy"
     assert [record.__dict__["cache_publish_reason"] for record in records] == [
         "capacity",
+        None,
         "source_changed",
     ]
 

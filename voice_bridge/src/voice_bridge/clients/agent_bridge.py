@@ -9,7 +9,6 @@ voice_bridge **不**直接 import agent / agent_bridge 内部对象，所有跟 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import httpx
 
@@ -81,13 +80,13 @@ class AgentBridgeClient:
             {"channel": channel},
         )
 
-    async def get_session_events(self, session_id: str) -> list[dict[str, Any]]:
-        """读取 agent_bridge session 事件流，用于判断 voice 临时会话是否为空。"""
-        data = await self._request_json("GET", f"/v1/sessions/{session_id}")
-        events = data.get("events")
-        if isinstance(events, list):
-            return [event for event in events if isinstance(event, dict)]
-        return []
+    async def has_dialog(self, session_id: str) -> bool:
+        """Read the raw-history existence predicate, never fetch the event log."""
+        data = await self._request_json("GET", f"/v1/sessions/{session_id}/dialog-status")
+        value = data.get("has_dialog")
+        if not isinstance(value, bool):
+            raise SessionBindFailedError(detail="invalid dialog-status response")
+        return value
 
     async def delete_session(self, session_id: str) -> None:
         """删除 agent_bridge session；仅用于清理 voice_bridge 自建的空会话。"""

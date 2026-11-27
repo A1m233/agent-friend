@@ -59,6 +59,29 @@ def test_exact_file_names_and_uri_decoding(tmp_path: Path) -> None:
         assert inspect_path(exact)["value"] == str(exact)
 
 
+def test_absolute_link_never_reads_session_history(
+    environment: tuple[TestClient, JsonlSessionStore, AttachmentStore, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, sessions, _, _ = environment
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("file path resolution loaded session history")
+
+    monkeypatch.setattr(sessions, "load", forbidden)
+    monkeypatch.setattr(sessions, "query", forbidden)
+    monkeypatch.setattr(sessions.reader, "snapshot", forbidden)
+    path = tmp_path / "demo.html"
+    path.write_text("hello", encoding="utf-8")
+    result = client.post(
+        "/v1/link-targets/resolve",
+        json={"target": str(path), "context": "session", "sessionId": "missing-session"},
+    )
+    assert result.status_code == 200
+    assert result.json()["kind"] == "file"
+
+
 def test_encoded_markdown_paths_do_not_double_decode_uris(tmp_path: Path) -> None:
     spaced = tmp_path / "report one.pdf"
     spaced.write_text("one", encoding="utf-8")
@@ -145,7 +168,7 @@ def test_missing_and_wrong_context_have_visible_errors(environment, tmp_path: Pa
         "/v1/link-targets/resolve",
         json={"context": "session", "sessionId": "missing", "target": str(tmp_path)},
     ).json()
-    assert result["kind"] == "unavailable" and "会话" in result["reason"]
+    assert result["kind"] == "directory"  # Absolute paths are independent of session history.
     result = client.post(
         "/v1/link-targets/resolve", json={"context": "persona", "target": "missing.txt"}
     ).json()

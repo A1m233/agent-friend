@@ -18,7 +18,7 @@ from memory.search.execution import CancelCheck, PreparedSearch, check_cancel
 
 from ..sessions import list_session_activity
 from ..sessions.events import Event
-from ..sessions.recall import query_session_recall
+from ..sessions.reading import session_reader
 from ..sessions.store import SessionStore
 
 _EXCERPT_CHARS = 240
@@ -119,8 +119,12 @@ class SessionHistorySource:
         ranked: list[_RankedCandidate] = []
         for summary in summaries:
             check_cancel(cancel_check)
-            session = query_session_recall(
-                self._store, summary.session_id, cancel_check=cancel_check
+            session = session_reader(self._store).recall_text(
+                summary.session_id,
+                cancel_check=cancel_check,
+                boundary_id=request.current_turn_start_event_uuid
+                if request.session_id == summary.session_id
+                else None,
             )
             excluded_uuids = _current_turn_uuids(
                 session.events, summary.session_id, request, session.raw_event_indices

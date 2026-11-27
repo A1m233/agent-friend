@@ -16,12 +16,15 @@ from memory.search import (
     SearchRequest,
 )
 
+from .recall_reader_fixture import RecallReaderFixture
+
 _NOW = datetime(2026, 7, 14, 12, tzinfo=UTC)
 
 
 class _Store:
     def __init__(self, session: Session) -> None:
         self._session = session
+        self.reader = RecallReaderFixture(self.load)
 
     def list(self) -> list[SessionSummary]:
         return [

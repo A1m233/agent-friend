@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from agent.conversation_events import TextDelta
 from agent.runtime import AgentRuntime, RunOutcome, SystemTriggerEvent
+from agent.sessions.reading import EventFilter, session_reader
 from agent.sessions.store import SessionStore
 from agent.system_prompt import DESKTOP_CHAT_SURFACE, InteractionSurfaceId
 from agent.todos import (
@@ -27,7 +28,7 @@ from agent.todos import (
     TodoStore,
 )
 
-from agent import Event, SessionNotFoundError
+from agent import Event
 
 from .presence import DestinationPolicy, IMPresenceSnapshot, PresenceRegistry, PresenceState
 
@@ -165,7 +166,7 @@ class ReminderDeliveryOrchestrator:
     ) -> tuple[_PersistenceTarget, ReminderOccurrence]:
         if occurrence.persistence_session_id is not None:
             target = _target_from_frozen(occurrence)
-            self._sessions.load(target.session_id)
+            session_reader(self._sessions).identity(target.session_id)
             return target, occurrence
 
         valid_im = tuple(
@@ -257,11 +258,8 @@ class ReminderDeliveryOrchestrator:
         )
 
     def _latest_user_interaction_at(self, session_id: str) -> datetime | None:
-        session = self._sessions.load(session_id)
-        for event in reversed(session.active_events):
-            if event.type == "user_message":
-                return event.ts.astimezone(UTC)
-        return None
+        event = session_reader(self._sessions).latest(session_id, "user_message")
+        return event.ts.astimezone(UTC) if event else None
 
     def _deliver_fixed_projections(
         self,
@@ -361,12 +359,11 @@ class ReminderDeliveryOrchestrator:
         *,
         now: datetime,
     ) -> None:
-        session = self._sessions.load(target.session_id)
-        if any(
-            event.type == "todo_reminder" and event.uuid == occurrence.id
-            for event in session.events
-        ):
-            return
+        with session_reader(self._sessions).snapshot(target.session_id) as read:
+            if read.contains(
+                EventFilter(ids=(occurrence.id,), kinds=("todo_reminder",), active=False)
+            ):
+                return
         facts = occurrence.facts
         self._sessions.append_event(
             target.session_id,
@@ -623,11 +620,7 @@ class ReminderDeliveryOrchestrator:
         )
 
     def _session_exists(self, session_id: str) -> bool:
-        try:
-            self._sessions.load(session_id)
-        except SessionNotFoundError:
-            return False
-        return True
+        return session_reader(self._sessions).exists(session_id)
 
     def _now(self) -> datetime:
         value = self._clock()

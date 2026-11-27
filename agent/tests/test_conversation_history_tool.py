@@ -23,6 +23,8 @@ from agent.sessions.session import Session
 from agent.sessions.store import SessionSummary
 from agent.tools.builtin.conversation_history.tool import ConversationHistoryTool
 
+from .recall_reader_fixture import RecallReaderFixture
+
 _TZ = timezone(timedelta(hours=8))
 _NOW = datetime(2026, 6, 17, 14, 30, tzinfo=_TZ)  # 周三
 
@@ -65,6 +67,7 @@ class _StubStore:
     ) -> None:
         self._sessions = {s.session_id: s for s in sessions}
         self._raise_on_list = raise_on_list
+        self.reader = RecallReaderFixture(self.load)
 
     def list(self) -> list[SessionSummary]:
         if self._raise_on_list is not None:

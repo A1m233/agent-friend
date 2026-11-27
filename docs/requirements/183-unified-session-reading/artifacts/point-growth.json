@@ -1,0 +1,87 @@
+{
+  "kind": "isolated_point_growth",
+  "rows": [
+    {
+      "unrelated_events": 10,
+      "journal_bytes": 83474,
+      "mode": "warm",
+      "elapsed_ms": 4.728,
+      "query_sql_steps": 25,
+      "materialized_rows": 1,
+      "body_chars": 131,
+      "first_bootstrap_ms": 60.762,
+      "first_streamed_records": 12
+    },
+    {
+      "unrelated_events": 10,
+      "journal_bytes": 83474,
+      "mode": "reopened",
+      "elapsed_ms": 3.931,
+      "query_sql_steps": 25,
+      "materialized_rows": 1,
+      "body_chars": 131,
+      "first_bootstrap_ms": 60.762,
+      "first_streamed_records": 12
+    },
+    {
+      "unrelated_events": 100,
+      "journal_bytes": 831644,
+      "mode": "warm",
+      "elapsed_ms": 4.419,
+      "query_sql_steps": 25,
+      "materialized_rows": 1,
+      "body_chars": 131,
+      "first_bootstrap_ms": 79.457,
+      "first_streamed_records": 102
+    },
+    {
+      "unrelated_events": 100,
+      "journal_bytes": 831644,
+      "mode": "reopened",
+      "elapsed_ms": 2.408,
+      "query_sql_steps": 25,
+      "materialized_rows": 1,
+      "body_chars": 131,
+      "first_bootstrap_ms": 79.457,
+      "first_streamed_records": 102
+    },
+    {
+      "unrelated_events": 1500,
+      "journal_bytes": 12471744,
+      "mode": "warm",
+      "elapsed_ms": 3.585,
+      "query_sql_steps": 25,
+      "materialized_rows": 1,
+      "body_chars": 131,
+      "first_bootstrap_ms": 632.817,
+      "first_streamed_records": 1502
+    },
+    {
+      "unrelated_events": 1500,
+      "journal_bytes": 12471744,
+      "mode": "reopened",
+      "elapsed_ms": 1.805,
+      "query_sql_steps": 25,
+      "materialized_rows": 1,
+      "body_chars": 131,
+      "first_bootstrap_ms": 632.817,
+      "first_streamed_records": 1502
+    }
+  ],
+  "python": "3.12.6",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "base": "f91f3c91ab21a858793b4d4e9036f8704946f0fa",
+  "source_sha256": {
+    "agent/src/agent/sessions/reading/reader.py": "c6dd547ca50d99e13c0feeb23aa4350f6a9c63d258f88129c577cefe9cd8cfbd",
+    "agent/src/agent/sessions/reading/snapshot.py": "102a10c6a5e210f599913b86f4417906b0a6d772ca05cf2778dfc7406821e1ee",
+    "agent/src/agent/sessions/store.py": "81dd8f145eaaa1b88aec26e0f9b60a38143aff8ebb36585921bf1a628aa1d3fb",
+    "agent/src/agent/sessions/business_index/index.py": "9128ecd3404a7e9918b4cbf114222a3b26b7189bba95b195d85f836a97d21e5a",
+    "agent/src/agent/sessions/business_index/build.py": "4486cdb980c69fdc40ee4c6aa1d436a3b69677ab46701bd4d5d3e7d57cb15a47"
+  },
+  "limits": [
+    "single samples; wall time is descriptive, not a latency guarantee",
+    "source streaming records include session metadata; SQL steps cover target query and final source-version validation only",
+    "cold bootstrap is intentionally linear in one legacy session; no model calls or user data"
+  ],
+  "real_llm_calls": 0
+}

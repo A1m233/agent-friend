@@ -191,19 +191,9 @@ def test_process_status_is_reported_without_inventing_business_success(
 def test_damaged_history_never_returns_complete_no_matches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dataclasses import replace
-
-    from agent.sessions.query import query_session
-    from agent.sessions.store_types import SessionLoadDiagnostics
-
     store, tool = setup_history(tmp_path)
-    snapshot = replace(
-        query_session(store, "current"),
-        load_diagnostics=SessionLoadDiagnostics(parse_error_count=1),
-    )
-    monkeypatch.setattr(
-        "agent.tools.builtin.tool_call_history.tool.query_session", lambda *args, **kwargs: snapshot
-    )
+    with store._business_index.database("current") as db:
+        db.execute("UPDATE state SET diagnostics=json_set(diagnostics,'$.parse_error_count',1)")
     result = tool.invoke({SESSION_ARG: "current", "mode": "search"})
     assert result.is_error and json.loads(result.text)["error"] == "history_incomplete"
 

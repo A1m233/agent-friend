@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 from agent.memory_search import SessionHistorySource
 from agent.sessions.events import SCHEMA_VERSION, Event
+from agent.sessions.query import CancelCheck, check_cancel
+from agent.sessions.recall import RecallBuilder, SessionRecallSnapshot
 from agent.sessions.session import Session
 from agent.sessions.store import SessionSummary
 
@@ -27,6 +29,23 @@ class _EvalCaseSessionStore:
 
     def __init__(self, sessions: list[_CaseSession]) -> None:
         self._sessions = {item.session.session_id: item for item in sessions}
+        # This adapter owns an already materialized, immutable benchmark fixture.
+        # It provides the textual read capability explicitly, without relying on
+        # production's removed full-session fallback or writing a temporary store.
+        self.reader = self
+
+    def recall_text(
+        self, session_id: str, *, cancel_check: CancelCheck = None, boundary_id: str | None = None
+    ) -> SessionRecallSnapshot:
+        check_cancel(cancel_check)
+        session = self._sessions[session_id].session
+        builder = RecallBuilder()
+        for position, event in enumerate(session.events):
+            check_cancel(cancel_check)
+            builder.add(position, event)
+        return builder.snapshot(
+            count=len(session.events), version=None, diagnostics=session.load_diagnostics
+        )
 
     def list(self) -> list[SessionSummary]:
         return sorted(

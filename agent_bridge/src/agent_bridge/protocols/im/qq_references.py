@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Callable
 from contextlib import suppress
-from typing import Any, Literal
+from typing import Literal
 from uuid import uuid4
 
 from agent.message_references import (
@@ -16,7 +16,7 @@ from agent.message_references import (
 )
 from qqbot_agent_sdk.dto import MSG_TYPE_QUOTE
 
-from agent import Session
+from agent import Event
 
 from .event import InboundEvent
 from .inbound_resolver import InboundResolveResult
@@ -40,10 +40,10 @@ class QQReferenceResolver:
     def __init__(
         self,
         aliases: IMReferenceAliasIndex,
-        session_loader: Callable[[str], Session],
+        event_reader: Callable[[str, tuple[str, ...]], dict[str, Event]],
     ) -> None:
         self._aliases = aliases
-        self._session_loader = session_loader
+        self._event_reader = event_reader
 
     async def resolve(
         self,
@@ -115,19 +115,19 @@ class QQReferenceResolver:
         )
         return InboundResolveResult.route(event, references=(reference,))
 
-    def _events_for_alias(self, entry: IMReferenceAlias | None) -> list[Any]:
+    def _events_for_alias(self, entry: IMReferenceAlias | None) -> list[Event]:
         if entry is None:
             return []
+        identities = entry.event_uuids or (entry.event_uuid,)
         try:
-            session = self._session_loader(entry.session_id)
+            events = self._event_reader(entry.session_id, identities)
         except Exception:
             return []
         active = {
             event.uuid: event
-            for event in session.active_events
+            for event in events.values()
             if event.type in {"user_message", "assistant_message"}
         }
-        identities = entry.event_uuids or (entry.event_uuid,)
         if any(identity not in active for identity in identities):
             return []
         return [active[identity] for identity in identities]

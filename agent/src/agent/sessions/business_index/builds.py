@@ -9,7 +9,7 @@ from threading import RLock
 
 from ..events import ROLLOUT_EVENT_TYPES, Event
 from ..query import SessionQuerySnapshot
-from ..store_types import SourceVersion
+from ..store_types import SessionReadState, SourceVersion
 
 
 @dataclass
@@ -25,6 +25,21 @@ class BusinessBuilds:
     def __init__(self) -> None:
         self.lock = RLock()
         self._active: dict[str, BuildTail] = {}
+
+    def stream_catch_up(self, tail: BuildTail, state: SessionReadState) -> Iterator[Event]:
+        with self.lock:
+            batches = tuple(tail.batches) if tail.valid else ()
+        for before, after, records in batches:
+            if state.source_version != before:
+                continue
+            for record in records:
+                yield (
+                    Event.from_jsonl(record.decode("utf-8"))
+                    if isinstance(record, bytes)
+                    else record
+                )
+            state.event_count += len(records)
+            state.source_version = after
 
     def catch_up(self, tail: BuildTail, snapshot: SessionQuerySnapshot) -> SessionQuerySnapshot:
         with self.lock:

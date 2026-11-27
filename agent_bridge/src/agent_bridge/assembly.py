@@ -63,6 +63,7 @@ from agent.scheduled_tasks import (
 )
 from agent.scheduling import ScheduleCoordinator
 from agent.sessions import ToolExecutionEvidenceStore, ToolTransactionReconciler
+from agent.sessions.reading import session_reader
 from agent.sessions.residency import SessionResidency
 from agent.time_provider import SystemTimeProvider, TimeProvider
 from agent.todos import ReminderDriver, TodoService, TodoStore
@@ -950,7 +951,7 @@ def build_runtime(
             approval_broker,
             im_state_store,
             session_title=lambda session_id: (
-                persistent_session_manager.query(session_id).initial_title
+                session_reader(persistent_store).identity(session_id).initial_title
             ),
             session_exists=session_bridge.session_exists,
         )
@@ -962,7 +963,7 @@ def build_runtime(
                 == "natural"
             ),
             model=lambda sid: llm_client_factory(
-                persistent_session_manager.query(sid).current_model_config
+                session_reader(persistent_store).state(sid).current_model_config
             ),
             persona=lambda: persona_store.load().content,
         )
@@ -999,7 +1000,7 @@ def build_runtime(
         im_inbound_resolver = CompositeInboundResolver(
             QQReferenceResolver(
                 im_reference_aliases,
-                persistent_session_manager.open,
+                persistent_session_manager.reader.events_by_id,
             ),
             QQFaceResolver(),
             QQVoiceMessageResolver(

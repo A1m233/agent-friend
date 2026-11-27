@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from agent.sessions.reading import SessionRead, SessionReader, session_reader
 from agent.sessions.store import SessionStore
 
 from agent import (
@@ -20,10 +23,26 @@ from agent import (
 )
 
 
+class _CountingReader:
+    def __init__(self, inner: SessionReader, owner: _CountingStore) -> None:
+        self.inner, self.owner = inner, owner
+
+    def version(self, session_id: str):  # type: ignore[no-untyped-def]
+        return self.inner.version(session_id)
+
+    @contextmanager
+    def snapshot(self, session_id: str) -> Iterator[SessionRead]:
+        self.owner.read_count += 1
+        with self.inner.snapshot(session_id) as read:
+            yield read
+
+
 class _CountingStore:
     def __init__(self, inner: SessionStore) -> None:
         self.inner = inner
         self.load_count = 0
+        self.read_count = 0
+        self.reader = _CountingReader(session_reader(inner), self)
 
     def create(self, session: Session) -> None:
         self.inner.create(session)
@@ -183,7 +202,8 @@ def test_search_projects_only_user_visible_history_and_attachment_names(tmp_path
         "u-latest",
         "a-partial",
     ]
-    assert store.load_count == 1
+    assert store.read_count == 1
+    assert store.load_count == 0
     response = service.search("needle")
 
     assert response.message_total == 3
@@ -241,20 +261,24 @@ def test_search_cache_reuses_unchanged_documents_and_invalidates_one_revision(
     )
 
     assert service.search("alpha").message_total == 1
-    assert store.load_count == 2
+    assert store.read_count == 2
+    assert store.load_count == 0
     assert service.search("alpha").message_total == 1
-    assert store.load_count == 2
+    assert store.read_count == 2
+    assert store.load_count == 0
 
     store.append_event(
         first.session_id,
         _event("assistant_message", "a-first", 3, {"content": "beta"}),
     )
     assert service.search("beta").message_total == 1
-    assert store.load_count == 3
+    assert store.read_count == 3
+    assert store.load_count == 0
 
     metadata.set_display_title(first.session_id, "Renamed alpha")
     assert service.search("renamed").title_results[0].session_title == "Renamed alpha"
-    assert store.load_count == 3
+    assert store.read_count == 3
+    assert store.load_count == 0
 
     store.delete(first.session_id)
     assert service.search("alpha").message_total == 0

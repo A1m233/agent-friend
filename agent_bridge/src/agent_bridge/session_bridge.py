@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent.approvals import SessionApprovalMode
+from agent.sessions.reading import session_reader
 
 from agent import Conversation, Event, Message, Session, SessionNotFoundError
 from llm_providers import ModelRuntimeConfig, default_model_runtime_config
@@ -148,7 +149,7 @@ class SessionBridge:
         """Return the frozen model for an existing session, or its creation default."""
 
         try:
-            return self._runtime.persistent_session_manager.query(session_id).current_model
+            return session_reader(self._runtime.persistent_store).state(session_id).current_model
         except SessionNotFoundError:
             return default
 
@@ -156,10 +157,9 @@ class SessionBridge:
         """Read one active durable event for IM alias registration."""
 
         try:
-            session = self._runtime.persistent_session_manager.query(session_id)
+            return session_reader(self._runtime.persistent_store).event(session_id, event_uuid)
         except SessionNotFoundError:
             return None
-        return next((event for event in session.active_events if event.uuid == event_uuid), None)
 
     def assistant_event_after(self, session_id: str, user_event_uuid: str) -> Event | None:
         """Return the last complete assistant event in the accepted user turn."""
@@ -171,28 +171,11 @@ class SessionBridge:
         """All complete text sources of one outbound answer, in product order."""
 
         try:
-            session = self._runtime.persistent_session_manager.query(session_id)
+            return session_reader(self._runtime.persistent_store).assistant_turn(
+                session_id, user_event_uuid
+            )
         except SessionNotFoundError:
             return ()
-        started = False
-        candidates: list[Event] = []
-        run_id: object = None
-        for event in session.active_events:
-            if event.uuid == user_event_uuid and event.type == "user_message":
-                started = True
-                run_id = event.meta.get("run_id")
-                continue
-            if not started:
-                continue
-            if event.type in {"user_message", "system_trigger"}:
-                break
-            if (
-                event.type == "assistant_message"
-                and event.payload.get("partial") is not True
-                and (run_id is None or event.meta.get("run_id") == run_id)
-            ):
-                candidates.append(event)
-        return tuple(candidates)
 
     @contextmanager
     def session_turn(self, session_id: str) -> Iterator[None]:

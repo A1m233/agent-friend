@@ -37,7 +37,6 @@ from ..rtc.token import RoomTokenSigner
 from ..runtime_config import credentials_from_settings
 
 logger = logging.getLogger(__name__)
-_DIALOG_EVENT_TYPES = {"user_message", "assistant_message"}
 
 
 class StartCallBody(BaseModel):
@@ -152,7 +151,7 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
             return
 
         try:
-            events = await runtime.agent_bridge.get_session_events(binding.session_id)
+            has_dialog = await runtime.agent_bridge.has_dialog(binding.session_id)
         except VoiceBridgeError as e:
             logger.warning(
                 "读取语音临时 session 失败，跳过空会话清理: call_id=%s session_id=%s error=%s",
@@ -162,7 +161,6 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
             )
             return
 
-        has_dialog = any(event.get("type") in _DIALOG_EVENT_TYPES for event in events)
         if has_dialog:
             return
 

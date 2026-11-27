@@ -74,12 +74,12 @@ class SessionFilesTool:
             return self._error("session_context_missing")
         try:
             if args["action"] == "list":
-                files = self.service.files(session_id)
                 offset, limit = args.get("offset", 0), args.get("limit", 20)
+                files, total = self.service.page(session_id, offset=offset, limit=limit)
                 payload = {
-                    "files": [item.metadata() for item in files[offset : offset + limit]],
-                    "total": len(files),
-                    "next_offset": offset + limit if offset + limit < len(files) else None,
+                    "files": [item.metadata() for item in files],
+                    "total": total,
+                    "next_offset": offset + limit if offset + limit < total else None,
                     "integrity": "not_checked_until_prepare",
                 }
             else:

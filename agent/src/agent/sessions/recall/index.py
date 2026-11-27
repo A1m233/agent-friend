@@ -135,6 +135,8 @@ class RecallIndex:
         session_id: str,
         version: SourceVersion,
         cancel_check: CancelCheck = None,
+        *,
+        position_ids: set[str] | None = None,
     ) -> SessionRecallSnapshot | None:
         path = self.path(session_id)
         if not path.exists():
@@ -146,12 +148,19 @@ class RecallIndex:
                     if row is None or row["version"] != json.dumps(version):
                         return None
                     positions = {}
-                    for item in db.execute("SELECT * FROM positions"):
+                    query = "SELECT * FROM positions"
+                    params: tuple[str, ...] = ()
+                    if position_ids is not None:
+                        query += " WHERE uuid IN (" + ",".join("?" for _ in position_ids) + ")"
+                        params = tuple(position_ids)
+                    for item in db.execute(query, params):
                         check_cancel(cancel_check)
                         positions[item["uuid"]] = item["position"]
                     events = []
                     for item in db.execute("SELECT * FROM utterances ORDER BY position"):
                         check_cancel(cancel_check)
+                        if position_ids is not None:
+                            positions[item["uuid"]] = item["position"]
                         try:
                             if item["kind"] not in {"user_message", "assistant_message"}:
                                 raise ValueError("invalid recall event kind")

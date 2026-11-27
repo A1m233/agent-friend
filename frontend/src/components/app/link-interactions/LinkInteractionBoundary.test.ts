@@ -56,6 +56,28 @@ describe("shared link interactions", () => {
     await act(async () => (action as HTMLElement).click());
     expect(activateLink).toHaveBeenCalledTimes(1);
   });
+  it("keeps transient failures clickable and offers menu retry", async () => {
+    vi.mocked(resolveLink).mockRejectedValueOnce(new Error("连接超时"));
+    await render("one");
+    const link = host.querySelector("a")!;
+    await act(async () => link.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 })));
+    expect(link.hasAttribute("aria-disabled")).toBe(false);
+    expect(document.querySelector('[role="menu"]')?.textContent).toContain("连接超时");
+    const retry = Array.from(document.querySelectorAll('[role="menuitem"]')).find(node => node.textContent === "重新解析链接")!;
+    await act(async () => (retry as HTMLElement).click());
+    expect(document.querySelector('[role="menu"]')?.textContent).toContain("打开所在文件夹");
+    expect(link.hasAttribute("aria-disabled")).toBe(false);
+  });
+  it("clears unavailable styling when a later resolution succeeds", async () => {
+    vi.mocked(resolveLink).mockResolvedValueOnce({ kind: "unavailable", value: "C:/target.txt", reason: "文件已移动" });
+    await render("one");
+    const link = host.querySelector("a")!;
+    await act(async () => link.click());
+    expect(link.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => link.click());
+    expect(link.hasAttribute("aria-disabled")).toBe(false);
+    expect(link.style.color).toBe("");
+  });
   it("leaves image preview and attachment removal to their existing handlers", async () => {
     await render("one", createElement("div", { id: "cards" }));
     const card = document.createElement("t-filecard") as HTMLElement & { props: unknown };

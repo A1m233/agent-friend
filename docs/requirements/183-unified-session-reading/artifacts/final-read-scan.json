@@ -1,0 +1,64 @@
+{
+  "files": 588,
+  "candidates": [
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "scope": "open",
+      "line": 460
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "scope": "query",
+      "line": 481
+    },
+    {
+      "path": "agent/src/agent/sessions/query.py",
+      "scope": "load_session",
+      "line": 366
+    },
+    {
+      "path": "agent/src/agent/sessions/query.py",
+      "scope": "load_session",
+      "line": 370
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "scope": "cancellable_load",
+      "line": 1894
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "scope": "load_business",
+      "line": 1897
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "scope": "load_execution",
+      "line": 1903
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "scope": "query",
+      "line": 1936
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "scope": "query_recall",
+      "line": 1944
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/routes/meta.py",
+      "scope": "current",
+      "line": 432
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/routes/meta.py",
+      "scope": "current",
+      "line": 434
+    }
+  ],
+  "limits": [
+    "Known full-read helpers and session method references, including callbacks; not proof against arbitrary dynamic dispatch."
+  ],
+  "gate_sha256": "f798e3323532e3627748ebd8b007811da7e22413947845eff01ae70335148169"
+}

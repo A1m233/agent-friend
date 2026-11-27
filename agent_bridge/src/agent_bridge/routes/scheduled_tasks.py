@@ -19,6 +19,7 @@ from agent.scheduled_tasks.codec import occurrence_to_dict, schedule_from_input,
 from agent.scheduling import ScheduleError, first_fire_at, next_fire_after
 from agent.session_requests import RequestOptions
 from agent.sessions import SessionNotFoundError
+from agent.sessions.reading import session_reader
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
@@ -256,7 +257,7 @@ def _task_inputs(
 def _target_model(runtime: BridgeRuntime, session_id: str | None) -> str:
     if session_id:
         try:
-            return runtime.persistent_session_manager.query(session_id).current_model
+            return session_reader(runtime.persistent_store).state(session_id).current_model
         except SessionNotFoundError as exc:
             raise ScheduledTaskError(
                 "target_session_missing", "目标会话已不存在，请选择其它会话。"

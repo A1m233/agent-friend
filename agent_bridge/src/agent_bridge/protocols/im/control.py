@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from agent.sessions.query import SessionQuerySnapshot
+from agent.sessions.reading import SessionState
 from llm_providers.model_identity import is_custom_model_reference
 
 from agent import SessionManager, SessionNotFoundError, SessionSummary
@@ -409,7 +409,7 @@ class IMControlService:
         catalog = self._catalog()
         try:
             async with self._coordinator.try_mutation(key):
-                session = self._sessions.query(session_id)
+                session = self._sessions.reader.state(session_id)
                 self._state.set_binding(key, session_id)
         except IMBindingBusyError:
             await self._send_text(provider, key, "请等待当前回复完成后再切换会话。")
@@ -423,7 +423,8 @@ class IMControlService:
         updated_at = (
             summary.updated_at.astimezone().strftime("%Y-%m-%d %H:%M") if summary else "暂无"
         )
-        preview = _last_assistant_preview(session)
+        answer = self._sessions.reader.latest(session_id, "assistant_message")
+        preview = _truncate(str(answer.payload.get("content", "")), 80) if answer else "暂无"
         await self._send_text(
             provider,
             key,
@@ -557,23 +558,20 @@ class IMControlService:
             ),
         )
 
-    def _bound_session(self, key: IMBindingKey) -> SessionQuerySnapshot | None:
+    def _bound_session(self, key: IMBindingKey) -> SessionState | None:
         binding = self._state.get_binding(key)
         if binding is None:
             return None
         try:
-            return self._sessions.query(binding.session_id)
+            return self._sessions.reader.state(binding.session_id)
         except SessionNotFoundError:
             return None
 
     def _summary(self, session_id: str) -> SessionSummary | None:
-        for summary in self._sessions.list(archived=False):
-            if summary.session_id == session_id:
-                return summary
-        for summary in self._sessions.list(archived=True):
-            if summary.session_id == session_id:
-                return summary
-        return None
+        try:
+            return self._sessions.summary(session_id)
+        except SessionNotFoundError:
+            return None
 
     def _display_title(self, session_id: str, fallback: str) -> str:
         summary = self._summary(session_id)
@@ -658,15 +656,6 @@ def _session_button_id(session_id: str) -> str:
     """Build a QQ-safe stable ID without leaking or truncating the session ID."""
     digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
     return f"session-{digest}"
-
-
-def _last_assistant_preview(session: object) -> str:
-    messages = getattr(session, "messages", [])
-    for message in reversed(messages):
-        if getattr(message, "role", "") == "assistant":
-            text = " ".join(str(getattr(message, "content", "")).split())
-            return _truncate(text, 80) if text else "暂无"
-    return "暂无"
 
 
 def _truncate(value: str, limit: int) -> str:

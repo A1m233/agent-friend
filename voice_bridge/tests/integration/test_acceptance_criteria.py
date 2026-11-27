@@ -128,10 +128,14 @@ def _mock_agent_bridge_get_session(
     event_types: list[str] | None = None,
 ) -> Any:
     events = [{"type": event_type} for event_type in (event_types or [])]
-    return respx_mock.get(f"http://test-agent-bridge/v1/sessions/{session_id}").mock(
+    return respx_mock.get(f"http://test-agent-bridge/v1/sessions/{session_id}/dialog-status").mock(
         return_value=httpx.Response(
             200,
-            json={"session_id": session_id, "events": events},
+            json={
+                "has_dialog": any(
+                    e["type"] in {"user_message", "assistant_message"} for e in events
+                )
+            },
         )
     )
 

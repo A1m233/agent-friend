@@ -1,0 +1,78 @@
+{
+  "surface": "Windows Tauri WebView2 via CDP",
+  "url": "http://localhost:1420/chat.html",
+  "branch": "feature/183-unified-session-reading",
+  "runtime_pid": 1876,
+  "bridge_pid": 4296,
+  "bridge_started": "2026-11-27T22:24:31+08:00",
+  "tested_at": "2026-11-27T22:33:07+08:00",
+  "native_reveal": {
+    "folder": "<fixture>/link-targets",
+    "selected_file": "demo.html",
+    "observation": "Shell.Application Windows COM"
+  },
+  "checks": [
+    {
+      "name": "transient-error",
+      "method": "route abort; UI only",
+      "aria_disabled": null,
+      "color": "",
+      "menu": [
+        "解析失败，请重试",
+        "重新解析链接",
+        "复制链接"
+      ],
+      "retry_hit": true,
+      "retry_rect": {
+        "x": 755.2,
+        "y": 429.6,
+        "width": 128,
+        "height": 32
+      },
+      "pointer_events": "auto",
+      "body_pointer_events": "none"
+    },
+    {
+      "name": "retry",
+      "method": "real click and real bridge",
+      "status": 200,
+      "result": "file",
+      "response_ms": 4,
+      "aria_disabled": null
+    },
+    {
+      "name": "missing-file",
+      "method": "real fixture disk and bridge",
+      "status": 200,
+      "result": "unavailable",
+      "response_ms": 4.01,
+      "aria_disabled": "true",
+      "color": "var(--muted)"
+    },
+    {
+      "name": "restored-file",
+      "method": "real fixture disk and bridge",
+      "status": 200,
+      "result": "file",
+      "response_ms": 3.618,
+      "aria_disabled": null,
+      "color": ""
+    }
+  ],
+  "cleanup": {
+    "runtime_stopped": true,
+    "dev_ports_free": true,
+    "original_settings_json_verified": 7,
+    "restored": [
+      ".window-state.json",
+      "permission-state.json",
+      "ui-state.json"
+    ],
+    "new_json_files": 0
+  },
+  "limits": [
+    "No real user chat or LLM call; Windows only",
+    "CDP screenshots show real desktop WebView, without native titlebar",
+    "Injected transport failure proves UI error handling; recovery used real backend"
+  ]
+}

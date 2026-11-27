@@ -42,7 +42,6 @@ vi.mock("@/services", () => ({
   },
   sessionsApi: {
     get: vi.fn(),
-    getFull: vi.fn(),
     getOlder: vi.fn(),
     getApprovalMode: vi.fn(),
     switchModel: vi.fn(),
@@ -284,7 +283,6 @@ describe("paged reference history", () => {
     expect(await useConversationStore.getState().loadReferenceHistory()).toBe(true);
     expect(await useConversationStore.getState().loadReferenceHistory()).toBe(false);
     expect(sessionsApi.getOlder).toHaveBeenCalledTimes(2);
-    expect(sessionsApi.getFull).not.toHaveBeenCalled();
   });
 
   it.each(["same cursor", "duplicate page", "changed epoch"])("rejects %s without replacing visible turns", async (failure) => {
@@ -299,7 +297,6 @@ describe("paged reference history", () => {
     expect(await useConversationStore.getState().loadReferenceHistory()).toBe(false);
     expect(sessionsApi.getOlder).toHaveBeenCalledOnce();
     expect(useConversationStore.getState().messages).toBe(before);
-    expect(sessionsApi.getFull).not.toHaveBeenCalled();
   });
 });
 
@@ -439,7 +436,6 @@ describe("shared message navigation", () => {
     };
     expect(await useConversationStore.getState().openSearchResult(result, "old")).toBe(true);
     expect(sessionsApi.getOlder).toHaveBeenCalledOnce();
-    expect(sessionsApi.getFull).not.toHaveBeenCalled();
     expect(useConversationStore.getState().searchTarget).toMatchObject({
       anchorEventUuid: "old:user", query: "old", loading: false,
     });
@@ -452,7 +448,6 @@ describe("shared message navigation", () => {
     mockGet.mockClear();
     await useConversationStore.getState().openMessage("paged", "new:user");
     expect(mockGet).not.toHaveBeenCalled();
-    expect(sessionsApi.getFull).not.toHaveBeenCalled();
     expect(sessionsApi.getOlder).not.toHaveBeenCalled();
     expect(useConversationStore.getState().messages).toBe(messages);
     expect(useConversationStore.getState().searchTarget).toMatchObject({
@@ -483,7 +478,6 @@ describe("shared message navigation", () => {
     older.resolve(historyPage(["old"], "old:user"));
     expect(await opening).toBe(true);
     expect(sessionsApi.getOlder).toHaveBeenCalledExactlyOnceWith("paged", "new:user", "initial");
-    expect(sessionsApi.getFull).not.toHaveBeenCalled();
     expect(useConversationStore.getState().hasOlderHistory()).toBe(true);
     expect(useConversationStore.getState().messages.map((m) => m.id)).toEqual([
       "old:user", "old:assistant", "new:user", "new:assistant",
@@ -528,7 +522,6 @@ describe("shared message navigation", () => {
       .mockResolvedValueOnce(historyPage(["old"], null));
     await useConversationStore.getState().openMessage("paged", "deleted");
     expect(sessionsApi.getOlder).toHaveBeenCalledTimes(2);
-    expect(sessionsApi.getFull).not.toHaveBeenCalled();
     expect(useConversationStore.getState().searchTarget).toMatchObject({ anchorEventUuid: "deleted", loading: false });
   });
 
@@ -585,7 +578,6 @@ beforeEach(() => {
   resetConversationCoordinatorsForTests();
   isTauriMock.mockReturnValue(false);
   mockGet.mockReset();
-  vi.mocked(sessionsApi.getFull).mockReset();
   vi.mocked(sessionsApi.getOlder).mockReset();
   mockGetApprovalMode.mockReset();
   mockUpdateApprovalMode.mockReset();

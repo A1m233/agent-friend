@@ -1,0 +1,283 @@
+{
+  "schema": 1,
+  "kind": "offline_first_page_growth",
+  "rows": [
+    {
+      "prefix_turns": 100,
+      "internal_tail_mib": 0,
+      "mode": "legacy_first",
+      "journal_bytes": 61528,
+      "response_bytes": 5560,
+      "returned_events": 20,
+      "repeats": 3,
+      "samples_ms": [
+        68.30469999840716,
+        66.66589999804273,
+        61.80520000634715
+      ],
+      "median_ms": 66.66589999804273,
+      "p95_ms": 66.66589999804273,
+      "max_ms": 68.30469999840716
+    },
+    {
+      "prefix_turns": 100,
+      "internal_tail_mib": 0,
+      "mode": "legacy_reopen",
+      "journal_bytes": 61528,
+      "response_bytes": 5560,
+      "returned_events": 20,
+      "repeats": 3,
+      "samples_ms": [
+        4.922899999655783,
+        3.880399999616202,
+        3.335400004289113
+      ],
+      "median_ms": 3.880399999616202,
+      "p95_ms": 3.880399999616202,
+      "max_ms": 4.922899999655783
+    },
+    {
+      "prefix_turns": 100,
+      "internal_tail_mib": 0,
+      "mode": "indexed",
+      "journal_bytes": 61528,
+      "response_bytes": 5560,
+      "returned_events": 20,
+      "repeats": 3,
+      "samples_ms": [
+        2.9574000000138767,
+        3.513700001349207,
+        2.670000001671724
+      ],
+      "median_ms": 2.9574000000138767,
+      "p95_ms": 2.9574000000138767,
+      "max_ms": 3.513700001349207
+    },
+    {
+      "prefix_turns": 10000,
+      "internal_tail_mib": 0,
+      "mode": "legacy_first",
+      "journal_bytes": 5661328,
+      "response_bytes": 5560,
+      "returned_events": 20,
+      "repeats": 3,
+      "samples_ms": [
+        100.98429999925429,
+        68.71140000293963,
+        56.672400001843926
+      ],
+      "median_ms": 68.71140000293963,
+      "p95_ms": 68.71140000293963,
+      "max_ms": 100.98429999925429
+    },
+    {
+      "prefix_turns": 10000,
+      "internal_tail_mib": 0,
+      "mode": "legacy_reopen",
+      "journal_bytes": 5661328,
+      "response_bytes": 5560,
+      "returned_events": 20,
+      "repeats": 3,
+      "samples_ms": [
+        4.21440000354778,
+        3.763799999433104,
+        5.579600001510698
+      ],
+      "median_ms": 4.21440000354778,
+      "p95_ms": 4.21440000354778,
+      "max_ms": 5.579600001510698
+    },
+    {
+      "prefix_turns": 10000,
+      "internal_tail_mib": 0,
+      "mode": "indexed",
+      "journal_bytes": 5661328,
+      "response_bytes": 5560,
+      "returned_events": 20,
+      "repeats": 3,
+      "samples_ms": [
+        3.369199999724515,
+        2.6819999984581955,
+        1.816000003600493
+      ],
+      "median_ms": 2.6819999984581955,
+      "p95_ms": 2.6819999984581955,
+      "max_ms": 3.369199999724515
+    },
+    {
+      "prefix_turns": 100000,
+      "internal_tail_mib": 0,
+      "mode": "legacy_first",
+      "journal_bytes": 56961328,
+      "response_bytes": 5560,
+      "returned_events": 20,
+      "repeats": 3,
+      "samples_ms": [
+        56.65100000624079,
+        75.19909999973606,
+        624.3012999984785
+      ],
+      "median_ms": 75.19909999973606,
+      "p95_ms": 75.19909999973606,
+      "max_ms": 624.3012999984785
+    },
+    {
+      "prefix_turns": 100000,
+      "internal_tail_mib": 0,
+      "mode": "legacy_reopen",
+      "journal_bytes": 56961328,
+      "response_bytes": 5560,
+      "returned_events": 20,
+      "repeats": 3,
+      "samples_ms": [
+        4.489500002819113,
+        3.2866999972611666,
+        4.075400000147056
+      ],
+      "median_ms": 4.075400000147056,
+      "p95_ms": 4.075400000147056,
+      "max_ms": 4.489500002819113
+    },
+    {
+      "prefix_turns": 100000,
+      "internal_tail_mib": 0,
+      "mode": "indexed",
+      "journal_bytes": 56961328,
+      "response_bytes": 5560,
+      "returned_events": 20,
+      "repeats": 3,
+      "samples_ms": [
+        89.23650000360794,
+        2.2735999955330044,
+        2.7652999997371808
+      ],
+      "median_ms": 2.7652999997371808,
+      "p95_ms": 2.7652999997371808,
+      "max_ms": 89.23650000360794
+    },
+    {
+      "prefix_turns": 100,
+      "internal_tail_mib": 64,
+      "mode": "legacy_first",
+      "journal_bytes": 67170521,
+      "response_bytes": 5560,
+      "returned_events": 20,
+      "repeats": 3,
+      "samples_ms": [
+        206.8994000001112,
+        153.91660000022966,
+        101.41039999871282
+      ],
+      "median_ms": 153.91660000022966,
+      "p95_ms": 153.91660000022966,
+      "max_ms": 206.8994000001112
+    },
+    {
+      "prefix_turns": 100,
+      "internal_tail_mib": 64,
+      "mode": "legacy_reopen",
+      "journal_bytes": 67170521,
+      "response_bytes": 5560,
+      "returned_events": 20,
+      "repeats": 3,
+      "samples_ms": [
+        4.765700003190432,
+        1.9965000028605573,
+        2.362300001550466
+      ],
+      "median_ms": 2.362300001550466,
+      "p95_ms": 2.362300001550466,
+      "max_ms": 4.765700003190432
+    },
+    {
+      "prefix_turns": 100,
+      "internal_tail_mib": 64,
+      "mode": "indexed",
+      "journal_bytes": 67170521,
+      "response_bytes": 5560,
+      "returned_events": 20,
+      "repeats": 3,
+      "samples_ms": [
+        1.7453000036766753,
+        1.7666999992798083,
+        1.6289999985019676
+      ],
+      "median_ms": 1.7453000036766753,
+      "p95_ms": 1.7453000036766753,
+      "max_ms": 1.7666999992798083
+    }
+  ],
+  "base_commit": "f91f3c91ab21a858793b4d4e9036f8704946f0fa",
+  "source_sha256": {
+    "agent/src/agent/sessions/__init__.py": "864b28109f701d6615d7651b4554b0f3a69921cb110156d8351b12d98e64b417",
+    "agent/src/agent/sessions/access/__init__.py": "c81c95f9f1bbd826514a975f09830dd1b07dd7caa7f6c10cf3fd78acf0c02d01",
+    "agent/src/agent/sessions/access/service.py": "b23022f05d7078d49269cf4ed9c39a66392b0cbdfde76fb1ac84316abb0f8e00",
+    "agent/src/agent/sessions/business_index/__init__.py": "f95cecaac2f511afb5c6afaf0c1e598d5bb91df7670048215d0fbd32af9298d3",
+    "agent/src/agent/sessions/business_index/build.py": "4486cdb980c69fdc40ee4c6aa1d436a3b69677ab46701bd4d5d3e7d57cb15a47",
+    "agent/src/agent/sessions/business_index/builds.py": "bb66d5cb81799084eb62c73520d3e46ce9d819b5fc9de09c241e45e69af20358",
+    "agent/src/agent/sessions/business_index/cancellation.py": "240e32810e1cd9ba58d2523bc7b6907cdbca05df8a8d5efb37675bbfc12e9e4b",
+    "agent/src/agent/sessions/business_index/chat_tail.py": "0851f805be445885999933d6a5d391ca0ca581a632a2f7b6ea5114c821501be4",
+    "agent/src/agent/sessions/business_index/index.py": "9128ecd3404a7e9918b4cbf114222a3b26b7189bba95b195d85f836a97d21e5a",
+    "agent/src/agent/sessions/business_index/pages.py": "b8b912d1f35045ed8182bad361101cfa4e5ae01a1716a4c8b91f4cd01d9c7038",
+    "agent/src/agent/sessions/business_index/text_views.py": "619e6237bfb33f69e6d5d76052bd1208112f4f9e8f33777da49adb4178366f8a",
+    "agent/src/agent/sessions/cache_epoch.py": "36dae725b80ab0d42be1f95cbfedda2c8c87e90f0d3244a3836b3afac604b78e",
+    "agent/src/agent/sessions/catalog.py": "e4516bcf269a58340825b910bad83afbf768a155f4607ed2aa8eb317207ec4f2",
+    "agent/src/agent/sessions/changes.py": "0c72ba9fcd7991aa423c217a315981ecb271979e01b1112ebbfcf932e95c0533",
+    "agent/src/agent/sessions/continuation.py": "92cb1802693894b55b3b40ee39eef0605d4996745c7e95a6c5db08d0359bdadf",
+    "agent/src/agent/sessions/delivery_recovery.py": "6aae78d7a42e7a50b40096274b6a727f09425451b8b54c01d0edc72a3ad709c2",
+    "agent/src/agent/sessions/diagnostic_export.py": "d2f617e658f76dc3e77d6af6745b54a3d72f3d60c6bde760752a5e36014341dc",
+    "agent/src/agent/sessions/errors.py": "6333ca28ea98d09cb985d10628635379d9c17c134320ca813dabdb2fdc2813d1",
+    "agent/src/agent/sessions/events.py": "f0a8ea40063d3eb6fafde28c755f14e7616469c48972083c1474b0c3ee9add6d",
+    "agent/src/agent/sessions/execution_cache/__init__.py": "77d94684f43772f0196bab45c34d07b371d9f03282d564e8db28d64278e70fa9",
+    "agent/src/agent/sessions/execution_cache/codec.py": "6570e2fe0ba95b9b399eb8bc3bcd93ff06d7dcb2dc5f4018484b10d5ed7372c8",
+    "agent/src/agent/sessions/execution_cache/digests.py": "546ec3b83bed6633533c29cd598358cbc2cdc31144b33bfacadf6e2fd7991bea",
+    "agent/src/agent/sessions/execution_loading.py": "c65ca89b143b2e5fc7655bd7d1eafc17bf51df29973ab0af6f771484995dce64",
+    "agent/src/agent/sessions/file_observation.py": "de8a190b3e27b6df7836439deb93e10b92f893c2978c4e560711e0d1a85bb0c6",
+    "agent/src/agent/sessions/interruption.py": "8a283d60ccdb441dbe31960bc5bc7f9d44451720eb84c073147a613dd8806563",
+    "agent/src/agent/sessions/maintenance.py": "1cf87825f635acf5cc838a6da123ba6b8240f042810fa9acbe2a82171f69e9fd",
+    "agent/src/agent/sessions/manager.py": "647cd69291bacc7fe35925efea972a4db44280c2ad93f3fe5d67a5949b7c6080",
+    "agent/src/agent/sessions/message_access.py": "92f968740ce00456c86f5292cfcfef72237a5fe250014f4380a24947b71c09a0",
+    "agent/src/agent/sessions/metadata.py": "fac64558987d7f2c4908f902fd1f9376e4d6b7e04f09cd4c1dad692de86aca65",
+    "agent/src/agent/sessions/model_context.py": "28084e5f1c3da71527a5ef1c161d8f78af5f31113fbdeb6fd2c49637cdc602c6",
+    "agent/src/agent/sessions/model_history.py": "ab5f9c74c8d83e4b987dbdb7aec99f8f7f9df7b73c0225cfccf916fcf79531d1",
+    "agent/src/agent/sessions/preparation.py": "935803ff60ea231154d2ddd1009920e6f73ac49e58cc12b6e3e118a864c8cf93",
+    "agent/src/agent/sessions/query.py": "2c8475bcf11c7f906577a5e5f0fc5f9f6bd4f5b2814cae20184f0bad14903af8",
+    "agent/src/agent/sessions/query_observation.py": "8dfd2b400a883ab56823be183e102521f93d17f6b9c8997ed1e7970600d63f00",
+    "agent/src/agent/sessions/read_views/__init__.py": "659aa98a7cbc9ee3ea2a45cc3fe78d572eb109e9747fa6863624a3642bb5931e",
+    "agent/src/agent/sessions/read_views/activity.py": "4a30ca3d4ecb10d7c82b4dd70a2e9060105f3ade6e92c233448edabd5a8c96d7",
+    "agent/src/agent/sessions/read_views/configuration.py": "a6b552740a481978c8f3c33f556f4f0acf66c8f8603f2250d04c933b9679eca9",
+    "agent/src/agent/sessions/read_views/display.py": "16bdcf68b68eda8c441a63314256eb22b3125139d44e6e91888ae8605b0bcc32",
+    "agent/src/agent/sessions/read_views/journal.py": "a453ae715474f37e84612acddf1957a18b11cf897bcb839b210c8851214c38fd",
+    "agent/src/agent/sessions/reading/__init__.py": "75687ccf24f1e467f377088d3a436a4af02adb728ccc37ff071456fc177a2d1f",
+    "agent/src/agent/sessions/reading/maintenance.py": "98a2df614a8b99609d2335ad02599f984369323b1112c1e057783b9fe38a3c2e",
+    "agent/src/agent/sessions/reading/observation.py": "275d35dc58c599739177fa79ac771cb1a48dfe68e1a0f4d1e0ffef967fe31c56",
+    "agent/src/agent/sessions/reading/reader.py": "3eb063a44f2f9aea1406680334e66e6aa42d97d6220c27ec4398ec0e022abfc5",
+    "agent/src/agent/sessions/reading/snapshot.py": "102a10c6a5e210f599913b86f4417906b0a6d772ca05cf2778dfc7406821e1ee",
+    "agent/src/agent/sessions/reading/types.py": "95dc8487aadeb86f823f247b7ccc283d327643948c8f622f9c80d83db0dd4d1d",
+    "agent/src/agent/sessions/recall/__init__.py": "0e38f3818cb25ae698895e10b344a63062e0df676068920fb6fc5b5e30b6f517",
+    "agent/src/agent/sessions/recall/index.py": "4a1b68a729ce873f3ffef414ad6686b5904ad40d30a6f424b7b1336a529d1350",
+    "agent/src/agent/sessions/recall/snapshot.py": "78aa309aba002f44fbbd60f84090ee54484f2d92220da7e3a17bab24d1197c68",
+    "agent/src/agent/sessions/recovery.py": "ed117e7f68d1153098b125b3fabf9c66be6edfca7f0f3f0f675f610950905ffa",
+    "agent/src/agent/sessions/residency.py": "abf94dec2d1490823e2fe0d428defa6e89e20303192a8e3479077d3d7e383ada",
+    "agent/src/agent/sessions/rollout.py": "7f0e6d08c0d65387015a689fc17527981efc8a0c935c8cb16ae9b7ae4b5610b5",
+    "agent/src/agent/sessions/rollout_encoding.py": "efd133c9b3bb8fb5f08607d2048b74331e3fd1b10debe1a8555737403d5f2524",
+    "agent/src/agent/sessions/rollout_items.py": "541270055fb87bd162cc4cfe09279f1b05ff4666d97cb2d6a17005f48c0c9ba0",
+    "agent/src/agent/sessions/search.py": "64eaa9c41222eb7f67135ac2fab0983d3542f8b83936ab510ba144399b77cad7",
+    "agent/src/agent/sessions/session.py": "c0b0809b83d902a019abe4e7890f2344d1d1d51c985af0e7d7e2426238a179a6",
+    "agent/src/agent/sessions/store.py": "81dd8f145eaaa1b88aec26e0f9b60a38143aff8ebb36585921bf1a628aa1d3fb",
+    "agent/src/agent/sessions/store_types.py": "ad746d4cdb17c04cf5c0f186bbb34d51caff48c5260953ea037c9ff083077ddc",
+    "agent/src/agent/sessions/tool_execution_evidence.py": "b0e221fe862553bc030ae7ab966b875fd7cda268c1ff8b38da01027ac03e251d",
+    "agent/src/agent/sessions/turn_origin.py": "35a983268de26ac381a7459d119bebfd6144b097086a188f1c6bd2abd105671e"
+  },
+  "source_unchanged": true,
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.6"
+  },
+  "real_llm_calls": 0,
+  "limits": [
+    "storage plus JSON encoding only; no HTTP or desktop rendering",
+    "fresh store for each read; OS filesystem cache uncontrolled",
+    "unindexed legacy tail traversal is not a strict constant-I/O proof"
+  ]
+}

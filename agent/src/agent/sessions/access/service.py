@@ -15,6 +15,7 @@ from ...message_exposure import content_version
 from ..catalog import SessionCatalog
 from ..message_access import MessagePage, message_payload
 from ..query import CancelCheck, check_cancel
+from ..reading import session_reader
 from ..store import SessionStore, navigation_summaries
 
 
@@ -80,11 +81,9 @@ class ConversationAccessService:
             ) from exc
 
     def page(self, session_id: str, **kwargs: Any) -> MessagePage:
-        method = getattr(self.store, "query_messages", None)
-        if not callable(method):
-            raise ConversationAccessError("read_unavailable", "当前会话存储不支持直接读取。")
+        kwargs.setdefault("include_counts", False)
         try:
-            return cast(MessagePage, method(session_id, **kwargs))
+            return session_reader(self.store).messages(session_id, **kwargs)
         except ValueError as exc:
             raise ConversationAccessError(
                 "history_changed", "历史或读取范围已变化，请重新读取最新消息，不要复用旧游标。"
@@ -187,7 +186,7 @@ class ConversationAccessService:
         current_session_id: str = "",
         cancel_check: CancelCheck = None,
     ) -> dict[str, Any]:
-        if not any(d.session_id == session_id for d in self.catalog.list_all()):
+        if not self.catalog.contains(session_id):
             raise ConversationAccessError(
                 "target_missing",
                 "目标不在可读取会话中，请从 list_conversations 取得 session_id，不要填标题或通知去向。",

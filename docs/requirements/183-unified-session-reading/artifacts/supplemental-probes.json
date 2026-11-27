@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "source_commit": "f91f3c91ab21a858793b4d4e9036f8704946f0fa",
+  "recorded_date": "2026-11-27",
+  "python": "3.12.6",
+  "evidence_kind": "actual_methods_with_in_memory_dependencies",
+  "original_output": "current Codex conversation; summarized here, no standalone original harness archived",
+  "results": [
+    {
+      "probe": "voice empty-session check transport",
+      "requests": [["GET", "/v1/sessions/probe"]]
+    },
+    {
+      "probe": "two one-character source pages from second event",
+      "available_events": 100,
+      "events_consumed": 200,
+      "output_chars": 2
+    },
+    {
+      "probe": "read one known tool call",
+      "business_queries": 1,
+      "events_in_snapshot": 101,
+      "event_visits": 202
+    }
+  ],
+  "limits": [
+    "Not an end-to-end latency benchmark",
+    "No real LLM or external message delivery",
+    "No user data or product code changed"
+  ]
+}

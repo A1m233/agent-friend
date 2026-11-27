@@ -182,7 +182,7 @@ def _play_locked(
                     "recovery_required",
                     "模拟器已重启，需要配对恢复游戏与 AF 上下文；不能直接用旧会话操作新游戏。",
                 )
-            session = manager.open(data["session_id"])
+            session = manager.open_for_execution(data["session_id"])
             finish = root / "finish.json"
             if finish.exists():
                 archived = root / "stop_history"

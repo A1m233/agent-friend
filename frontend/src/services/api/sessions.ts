@@ -126,10 +126,6 @@ export const sessionsApi = {
     }
   },
 
-  getFull(sessionId: string): Promise<SessionDetail> {
-    return http.get<unknown, SessionDetail>(`/v1/sessions/${encodeURIComponent(sessionId)}?view=active`);
-  },
-
   getOlder(sessionId: string, before: string, epoch: string): Promise<SessionDetail> {
     const query = new URLSearchParams({ turn_limit: "30", before, history_epoch: epoch });
     return http.get<unknown, SessionDetail>(`/v1/sessions/${encodeURIComponent(sessionId)}/history?${query}`);

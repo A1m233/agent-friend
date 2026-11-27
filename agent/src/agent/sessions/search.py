@@ -12,7 +12,8 @@ from typing import Literal, Protocol
 from .catalog import SessionCatalog, SessionDescriptor
 from .errors import SessionNotFoundError
 from .events import Event
-from .query import SourceVersion, query_session
+from .query import SourceVersion
+from .reading import session_reader
 from .residency import retained_bytes
 from .store import SessionStore
 
@@ -179,13 +180,13 @@ class SessionSearchService:
 
     def conversation_text(self, session_id: str) -> list[dict[str, str]]:
         """Read only this history and keep each visible block's navigation anchor."""
-        snapshot = query_session(self._store, session_id)
-        return [
-            {"anchor": block.event_uuid, "text": block.text, "role": message.role}
-            for message in _project_search_messages(list(snapshot.active_events))
-            for block in message.content_blocks
-            if block.text
-        ]
+        with session_reader(self._store).snapshot(session_id) as read:
+            return [
+                {"anchor": block.event_uuid, "text": block.text, "role": message.role}
+                for message in _project_search_messages(read.search_events())
+                for block in message.content_blocks
+                if block.text
+            ]
 
     def _refresh_documents(
         self,
@@ -208,34 +209,24 @@ class SessionSearchService:
             with self._lock:
                 cached = self._cache.get(descriptor.session_id)
             previous_cached = cached
-            snapshot = None
-            # Native stores validate physical source identity even when a writer
-            # bypassed the best-effort revision notification wrapper.
-            if callable(getattr(self._store, "query", None)):
+            try:
+                version = session_reader(self._store).version(descriptor.session_id)
+            except SessionNotFoundError:
+                continue
+            if cached is None or cached.source_version != version:
                 try:
-                    snapshot = query_session(self._store, descriptor.session_id)
-                except SessionNotFoundError:
-                    continue
-            if (
-                cached is None
-                or (snapshot is not None and cached.source_version != snapshot.source_version)
-                or (
-                    snapshot is None
-                    and (cached.revision != revision or cached.updated_at != descriptor.updated_at)
-                )
-            ):
-                try:
-                    snapshot = snapshot or query_session(self._store, descriptor.session_id)
+                    with session_reader(self._store).snapshot(descriptor.session_id) as read:
+                        messages = _project_search_messages(read.search_events())
+                        version = read.source_version
                 except SessionNotFoundError:
                     with self._lock:
                         self._cache.pop(descriptor.session_id, None)
                     continue
-                messages = _project_search_messages(list(snapshot.active_events))
                 cached = _CachedSearchDocument(
                     revision=revision,
                     updated_at=descriptor.updated_at,
                     messages=messages,
-                    source_version=snapshot.source_version,
+                    source_version=version,
                     estimated_bytes=retained_bytes(messages) + 512,
                 )
                 with self._lock:
@@ -309,7 +300,7 @@ class SessionSearchService:
         return results
 
 
-def _project_search_messages(events: list[Event]) -> tuple[_SearchMessage, ...]:
+def _project_search_messages(events: Iterable[Event]) -> tuple[_SearchMessage, ...]:
     messages: list[_SearchMessage] = []
     hidden_run_ids: set[str] = set()
     current_assistant: _MessageBuilder | None = None

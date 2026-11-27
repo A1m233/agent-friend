@@ -62,7 +62,7 @@ def capture_changes(
         }
         counts = None
         if lower is not None:
-            counts = access.page(sid, limit=1, **bounds).counts.copy()
+            counts = access.page(sid, limit=1, include_counts=True, **bounds).counts.copy()
             counts["assistant_replies"] = counts["assistant"] - counts["proactive"]
         entries.append(
             {

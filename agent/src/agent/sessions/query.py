@@ -409,10 +409,7 @@ def query_session_page(
     history_epoch: str | None = None,
     cancel_check: CancelCheck = None,
 ) -> SessionHistoryPage:
-    """Native stores select a page; legacy stores retain the existing projection."""
-    from ..errors import AgentError
-    from .continuation import continuation_target
-
+    """Page capability is explicit; unsupported stores never silently full-load."""
     method = getattr(store, "query_page", None)
     if callable(method):
         return cast(
@@ -425,25 +422,7 @@ def query_session_page(
                 cancel_check=cancel_check,
             ),
         )
-    snapshot = query_session(store, session_id, cancel_check=cancel_check)
-    if history_epoch is not None and history_epoch != snapshot.history_epoch:
-        raise ValueError("History changed; reload the latest page")
-    events, cursor = snapshot.page_events(turn_limit=turn_limit, before=before)
-    try:
-        recovery = continuation_target(snapshot.active_events)
-    except AgentError:
-        recovery = None
-    return SessionHistoryPage(
-        snapshot.session_id,
-        snapshot.initial_title,
-        snapshot.current_persona,
-        snapshot.current_model,
-        snapshot.current_model_config,
-        events,
-        cursor,
-        snapshot.history_epoch,
-        recovery,
-    )
+    raise NotImplementedError("store does not support bounded history pages")
 
 
 def list_session_activity(

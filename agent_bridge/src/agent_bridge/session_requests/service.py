@@ -52,14 +52,15 @@ class SessionRequestService:
 
     def _terminal(self, session_id: str, run_id: str) -> tuple[str, str] | None:
         try:
-            session = self.runtime.persistent_session_manager.query(session_id)
+            event = self.runtime.persistent_session_manager.reader.latest(
+                session_id, "run_terminal", run_id=run_id, active=False
+            )
         except SessionNotFoundError:
             return None
-        for event in reversed(session.events):
-            if event.type == "run_terminal" and event.meta.get("run_id") == run_id:
-                return str(event.payload.get("status", "interrupted")), str(
-                    event.payload.get("reason_code", "")
-                )
+        if event is not None:
+            return str(event.payload.get("status", "interrupted")), str(
+                event.payload.get("reason_code", "")
+            )
         return None
 
     def _finished(self, snapshot: Any) -> None:
@@ -81,7 +82,8 @@ class SessionRequestService:
             # retained writer lease. Actual bind rechecks source ownership;
             # admission need not rebuild the full business history as well.
             if manager.preparation_status(session_id) != "ready":
-                manager.query(session_id)
+                with manager.reader.snapshot(session_id):
+                    pass  # Validated index certificate; no full business hydration.
         except SessionNotFoundError as exc:
             raise SessionRequestError(
                 "target_session_missing", "目标会话已不存在，请选择其它会话。"

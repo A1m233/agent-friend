@@ -17,7 +17,7 @@ from agent_bridge.protocols.im.qq_references import (
 from agent_bridge.protocols.im.reference_aliases import IMReferenceAliasIndex
 from qqbot_agent_sdk.dto import MSG_TYPE_QUOTE, MsgElement
 
-from agent import Session
+from agent import Event, JsonlSessionStore, Session
 
 
 def _event(
@@ -70,7 +70,10 @@ async def test_rewritten_bubble_quote_recovers_only_its_original_span(tmp_path: 
         uuid="answer", type="assistant_message", payload={"content": "找到了。还没验证。"}
     )
     session = cast(Session, SimpleNamespace(active_events=[answer]))
-    resolver = QQReferenceResolver(IMReferenceAliasIndex(path), lambda _: session)
+    resolver = QQReferenceResolver(
+        IMReferenceAliasIndex(path),
+        lambda _, ids: {e.uuid: e for e in session.active_events if e.uuid in ids},
+    )
     result = await resolver.resolve(
         "qq", _event(elements=[MsgElement(msg_idx="REFIDX-SOURCE")]), provider_bind_id="BOT-1"
     )
@@ -102,7 +105,10 @@ async def test_aggregate_quote_restores_all_source_items_and_fails_closed_if_ina
             SimpleNamespace(uuid="final", type="assistant_message", payload={"content": "回答"}),
         ]
     )
-    resolver = QQReferenceResolver(IMReferenceAliasIndex(path), lambda _: cast(Session, session))
+    resolver = QQReferenceResolver(
+        IMReferenceAliasIndex(path),
+        lambda _, ids: {e.uuid: e for e in session.active_events if e.uuid in ids},
+    )
     event = _event(elements=[MsgElement(msg_idx="REFIDX-SOURCE")])
     result = await resolver.resolve("qq", event, provider_bind_id="BOT-1")
     assert result.references[0].quoted_text == "进度\n\n回答"
@@ -124,7 +130,9 @@ async def test_qq_quote_prefers_direct_snapshot_and_recovers_session_anchor(tmp_
             )
         ]
     )
-    resolver = QQReferenceResolver(aliases, lambda _session_id: cast(Session, session))
+    resolver = QQReferenceResolver(
+        aliases, lambda _, ids: {e.uuid: e for e in session.active_events if e.uuid in ids}
+    )
 
     result = await resolver.resolve(
         "qq",
@@ -156,7 +164,9 @@ async def test_qq_quote_recovers_snapshot_from_alias_when_payload_has_no_body(
             )
         ]
     )
-    resolver = QQReferenceResolver(aliases, lambda _session_id: cast(Session, session))
+    resolver = QQReferenceResolver(
+        aliases, lambda _, ids: {e.uuid: e for e in session.active_events if e.uuid in ids}
+    )
 
     result = await resolver.resolve(
         "qq",
@@ -175,7 +185,7 @@ async def test_unknown_qq_quote_is_preserved_as_unavailable_external_reference(
     aliases = IMReferenceAliasIndex(tmp_path / "references.json")
     resolver = QQReferenceResolver(
         aliases,
-        lambda _session_id: cast(Session, SimpleNamespace(active_events=[])),
+        lambda _, ids: {},
     )
     event = _event(
         raw={
@@ -219,3 +229,47 @@ def test_alias_index_is_bounded_persistent_and_does_not_store_provider_ids(tmp_p
     assert "BOT-SECRET" not in encoded
     assert "CHAT-SECRET" not in encoded
     assert "REFIDX-SECRET" not in encoded
+
+
+@pytest.mark.asyncio
+async def test_qq_quote_reads_only_known_ids_and_rejects_rewritten_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    aliases = IMReferenceAliasIndex(tmp_path / "references.json")
+    _put_alias(aliases)
+    store = JsonlSessionStore(tmp_path / "sessions")
+    session = Session.new("quote", "default", "test/model", session_id="session-1")
+    store.create(session)
+    store.append_events(
+        session.session_id,
+        [
+            Event("assistant_message", "event-source", session.created_at, {"content": "answer"}),
+            *[
+                Event(
+                    "tool_call_result",
+                    f"unrelated-{i}",
+                    session.created_at,
+                    {"content": "x" * 1000},
+                )
+                for i in range(100)
+            ],
+        ],
+    )
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("QQ quote must not load full history")
+
+    for name in ("load", "query", "load_business", "iter_events"):
+        monkeypatch.setattr(store, name, forbidden)
+    resolver = QQReferenceResolver(aliases, store.reader.events_by_id)
+    event = _event(elements=[MsgElement(msg_idx="REFIDX-SOURCE")])
+    result = await resolver.resolve("qq", event, provider_bind_id="BOT-1")
+    assert result.references[0].quoted_text == "answer"
+    store.append_event(
+        session.session_id,
+        Event(
+            "turn_rewrite", "undo", session.created_at, {"inactive_event_uuids": ["event-source"]}
+        ),
+    )
+    result = await resolver.resolve("qq", event, provider_bind_id="BOT-1")
+    assert result.references[0].availability == "unavailable"

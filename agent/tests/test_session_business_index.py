@@ -107,18 +107,17 @@ def test_append_during_initial_build_publishes_caught_up_index_without_rescan(
     store = make_store(tmp_path)
     store.discard_business_index("one")
     entered, release = Signal(), Signal()
-    original = store._read_records
+    original = store.iter_events
     calls = 0
 
     def scan(*args: object, **kwargs: object):  # type: ignore[no-untyped-def]
         nonlocal calls
-        result = original(*args, **kwargs)  # type: ignore[arg-type]
+        yield from original(*args, **kwargs)  # type: ignore[arg-type]
         calls += 1
         entered.set()
         assert release.wait(5)
-        return result
 
-    monkeypatch.setattr(store, "_read_records", scan)
+    monkeypatch.setattr(store, "iter_events", scan)
     with ThreadPoolExecutor(max_workers=2) as pool:
         future = pool.submit(store.query_page, "one", turn_limit=30)
         assert entered.wait(5)
@@ -128,7 +127,7 @@ def test_append_during_initial_build_publishes_caught_up_index_without_rescan(
             release.set()
         assert future.result(5).active_events[-1].uuid == "added"
     assert calls == 1
-    monkeypatch.setattr(store, "_read_records", forbid)
+    monkeypatch.setattr(store, "iter_events", forbid)
     assert store.query_page("one", turn_limit=30).active_events[-1].uuid == "added"
 
 
@@ -406,7 +405,7 @@ def test_old_index_schema_rebuilds_without_changing_original(tmp_path: Path) -> 
     fresh = JsonlSessionStore(tmp_path)
     assert fresh.query_page("one", turn_limit=1).active_events == expected
     with closing(sqlite3.connect(fresh._business_index.path("one"))) as db, db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 5
         assert not db.execute("SELECT name FROM sqlite_master WHERE name='runs'").fetchone()
         columns = {r[1] for r in db.execute("PRAGMA table_info(events)")}
         assert columns == {"position", "uuid", "kind", "body", "active", "recovery"}
@@ -438,6 +437,15 @@ def test_corrupted_index_body_rebuilds_from_original(tmp_path: Path) -> None:
     expected = store.query_page("one", turn_limit=1).active_events
     source = (tmp_path / "one.jsonl").read_bytes()
     with closing(sqlite3.connect(store._business_index.path("one"))) as db, db:
+        # Simulate out-of-band damage, bypassing expression-index JSON validation.
+        for name in (
+            "run_order",
+            "evidence_lookup",
+            "tool_lookup",
+            "provider_tool_lookup",
+            "attachment_order",
+        ):
+            db.execute(f"DROP INDEX {name}")
         db.execute("UPDATE events SET body='not-json' WHERE uuid='u'")
     assert JsonlSessionStore(tmp_path).query_page("one", turn_limit=1).active_events == expected
     assert (tmp_path / "one.jsonl").read_bytes() == source

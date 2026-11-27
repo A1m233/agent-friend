@@ -14,7 +14,8 @@ from typing import Any, ClassVar
 import pytest
 from agent.scheduled_tasks import ScheduledTaskService, ScheduledTaskStatus, ScheduledTaskStore
 from agent.scheduling import OnceSchedule
-from agent.sessions.query import CancelCheck, SessionQuerySnapshot
+from agent.sessions.query import CancelCheck
+from agent.sessions.reading import SessionState
 from agent_bridge.app import create_app_with_runtime
 from agent_bridge.assembly import BridgeRuntime
 from agent_bridge.settings import BridgeSettings
@@ -512,18 +513,16 @@ class TestEditResendLatestEndpoint:
             source = (await http.post("/v1/sessions", json={})).json()["session_id"]
             other = (await http.post("/v1/sessions", json={})).json()["session_id"]
             manager = runtime.persistent_session_manager
-            query = manager.query
+            query = manager.reader.state
             loop = asyncio.get_running_loop()
             entered, release = asyncio.Event(), ThreadEvent()
 
-            def slow_query(
-                session_id: str, *, cancel_check: CancelCheck = None
-            ) -> SessionQuerySnapshot:
+            def slow_query(session_id: str, *, cancel_check: CancelCheck = None) -> SessionState:
                 loop.call_soon_threadsafe(entered.set)
                 assert release.wait(5)
                 return query(session_id, cancel_check=cancel_check)
 
-            monkeypatch.setattr(manager, "query", slow_query)
+            monkeypatch.setattr(manager.reader, "state", slow_query)
             edit = asyncio.create_task(
                 http.post(f"/v1/sessions/{source}/edit-resend-latest", json={"text": "edit"})
             )

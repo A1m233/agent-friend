@@ -91,7 +91,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         actual_session_id = session_id or str(uuid4())
         with session_mutation_context(origin="dev_mock", channel="text"):
             try:
-                manager.open(actual_session_id)
+                manager.reader.identity(actual_session_id)
             except SessionNotFoundError:
                 manager.create(
                     persona=runtime.default_persona,
