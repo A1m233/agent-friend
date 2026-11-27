@@ -22,7 +22,7 @@ from agent.personas import BUILTIN_DEFAULT_PERSONA_ID
 from agent.runtime.models import RunOutcome, RunSnapshot
 from agent.sessions import Session, SessionPersistError
 from agent.sessions.metadata import SessionMetadataStore
-from agent.sessions.query import load_business_session
+from agent.sessions.reading import SessionState, session_reader
 from agent.sessions.store import SessionStore
 from agent.todos import ReminderOccurrence, TodoStore
 
@@ -319,12 +319,13 @@ class NotificationService:
 
     def _session_fact(
         self,
-        session: Session,
+        session: Session | SessionState,
         *,
         event_key: str,
         kind: Any,
         run_id: str | None = None,
         approval_id: str | None = None,
+        include_history: bool = True,
     ) -> NotificationFact:
         title = session.initial_title
         if self.session_metadata_store is not None:
@@ -336,24 +337,27 @@ class NotificationService:
                     session.session_id,
                     exc_info=True,
                 )
-        events = session.active_events
-        task = next(
-            (
-                str(e.payload.get("content", ""))
-                for e in reversed(events)
-                if e.type == "user_message"
-            ),
-            "",
-        )
-        reply = next(
-            (
-                str(e.payload.get("content", ""))
-                for e in reversed(events)
-                if e.type == "assistant_message"
-                and (run_id is None or e.meta.get("run_id") == run_id)
-            ),
-            "",
-        )
+        task = reply = ""
+        if include_history:
+            if isinstance(session, Session):
+                # Recovery already owns this validated projection; do not read it again.
+                events = session.active_events
+                user = next((e for e in reversed(events) if e.type == "user_message"), None)
+                answer = next(
+                    (
+                        e
+                        for e in reversed(events)
+                        if e.type == "assistant_message"
+                        and (run_id is None or e.meta.get("run_id") == run_id)
+                    ),
+                    None,
+                )
+            else:
+                with session_reader(self.sessions).snapshot(session.session_id) as read:
+                    user = read.latest("user_message")
+                    answer = read.latest("assistant_message", run_id=run_id)
+            task = str(user.payload.get("content", "")) if user else ""
+            reply = str(answer.payload.get("content", "")) if answer else ""
         return NotificationFact(
             event_key=event_key,
             kind=kind,
@@ -377,7 +381,7 @@ class NotificationService:
         if snapshot.presentation == "none":
             return
         try:
-            session = load_business_session(self.sessions, snapshot.session_id)
+            session = session_reader(self.sessions).state(snapshot.session_id)
         except Exception:
             return  # Stateless/private editor runs have no persistent destination.
         if snapshot.outcome is RunOutcome.COMPLETED:
@@ -411,8 +415,10 @@ class NotificationService:
         self, session_id: str, delivery_id: str, content: str, created_at: datetime
     ) -> None:
         """Use the already composed message and existing quiet/visibility settings."""
-        session = load_business_session(self.sessions, session_id)
-        fact = self._session_fact(session, event_key=f"delivery:{delivery_id}", kind="reply_ready")
+        session = session_reader(self.sessions).state(session_id)
+        fact = self._session_fact(
+            session, event_key=f"delivery:{delivery_id}", kind="reply_ready", include_history=False
+        )
         self.accept(
             replace(fact, task="", reply=content[:800], created_at=created_at),
             provided_text=content[:160],
@@ -455,7 +461,7 @@ class NotificationService:
         if self._stopping.is_set():
             return
         try:
-            session = load_business_session(self.sessions, str(payload.get("session_id") or ""))
+            session = session_reader(self.sessions).state(str(payload.get("session_id") or ""))
         except Exception:
             return
         self.accept(
@@ -471,7 +477,7 @@ class NotificationService:
     def on_todo(self, occurrence: ReminderOccurrence) -> str:
         if occurrence.persistence_session_id is None:
             raise ValueError("reminder persistence target is not frozen")
-        session = load_business_session(self.sessions, occurrence.persistence_session_id)
+        session = session_reader(self.sessions).state(occurrence.persistence_session_id)
         fact = NotificationFact(
             event_key=f"todo:{occurrence.id}",
             kind="todo_due",

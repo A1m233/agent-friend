@@ -1,0 +1,1074 @@
+{
+  "schema_version": 1,
+  "kind": "syntactic_candidates_not_findings",
+  "source_commit": "f91f3c91ab21a858793b4d4e9036f8704946f0fa",
+  "scanned_roots": [
+    "agent/src",
+    "agent_bridge/src",
+    "voice_bridge/src",
+    "memory/src",
+    "tools/src"
+  ],
+  "excluded": "builtin_assets; tests outside src; obvious file.open and no-arg persona load",
+  "scanned_python_files": 529,
+  "candidate_count": 127,
+  "file_sha256": {
+    "agent/src/agent/desktop_applications/tool.py": "058aba9c02032c28a547d064ecd8b3fb5da0463e7fbaf1eb54055a2672b3ce2a",
+    "agent/src/agent/memory_maintenance/dispatch.py": "3fab14c81c36505a8c59389e68fcb1feb9cbeabcd09ca694f727ce5d31caa18b",
+    "agent/src/agent/memory_maintenance/sources.py": "d1327ffbcbacbf00be2498f8a7f128bbcb7a56c4195bb10b5dcef60b273d106d",
+    "agent/src/agent/sessions/delivery_recovery.py": "6aae78d7a42e7a50b40096274b6a727f09425451b8b54c01d0edc72a3ad709c2",
+    "agent/src/agent/sessions/maintenance.py": "1cf87825f635acf5cc838a6da123ba6b8240f042810fa9acbe2a82171f69e9fd",
+    "agent/src/agent/sessions/manager.py": "dd2390143201d758186beb70e28d3b6b7e836d3840373f09db1a037d30c04c3d",
+    "agent/src/agent/sessions/query.py": "1c203261b41003dade7a3ee9a74fe9587325327eb90c0e300da2b1c0529404cd",
+    "agent/src/agent/sessions/recovery.py": "ad9f72b8e1e1ec6a9436d23e83da6d3030c08c2cb4c04ccf21f07d063d3399f0",
+    "agent/src/agent/sessions/search.py": "80ba452eac55cf86058df0fd4bf4be2d7e25d5db97246ab20fa8b92a808cc690",
+    "agent/src/agent/sessions/store.py": "f1afb717079e7a4cabc36280db3dd757b342f5b2f21a3c36d95e84ba0b451ae2",
+    "agent/src/agent/sessions/tool_execution_evidence.py": "b0e221fe862553bc030ae7ab966b875fd7cda268c1ff8b38da01027ac03e251d",
+    "agent/src/agent/session_files/service.py": "164817cf11404b2e1b480faf5ebf3d9a76e4d999eca46e8db6af5a824adf868f",
+    "agent/src/agent/skills/service.py": "b08a3f0351af006f8372722849518881e89b187a886697b85cff76c3f96389e1",
+    "agent/src/agent/tools/builtin/conversation_access/inner_activity.py": "1c2e15b08667fcb77225148029b0e989e915d1699b5c8a420962114fd6361608",
+    "agent/src/agent/tools/builtin/tool_call_history/tool.py": "04feeaaaaf77d3e3de26df39ef9e18174efdb1d9b58e440fb6cb54d8978284fb",
+    "agent/src/agent/tools/builtin/tool_result_recovery/tool.py": "bbfd7728e652ed4a832b12f0a1d8b2b9cffcb9f0d93de2769688ff690381110f",
+    "agent/src/agent/tools/builtin/social_platforms/bilibili_interactions/tool.py": "9a53946972172a5fa8d98ec9f438bacce1fe638514f74a1b097df2deebb6c2fa",
+    "agent/src/agent/skills/first_party_updates/store.py": "79c2d1a5a86d4dd0b95f1aa3c75c03491bcffd469207e8d25d1060822a2ea9a2",
+    "agent/src/agent/sessions/access/service.py": "6da09e5d984b20e113b7efb5a0ad46c32718aa6c2f28966a59b3a4d91a21a88b",
+    "agent/src/agent/sessions/recall/snapshot.py": "88538b14dc6851bb4dbb934ec00ef4fdc4012e0acd45983a0f0d567c817cfc1b",
+    "agent_bridge/src/agent_bridge/assembly.py": "beb4afa5626a22d97f557ddc9f7bdab748462e5d28e4266717ae0eb714e63671",
+    "agent_bridge/src/agent_bridge/attachment_reconciliation.py": "86c135a98bbbf6959daadf6c37d3b63a2f203dee08077b42bafef1d643bfb3a2",
+    "agent_bridge/src/agent_bridge/message_exposure.py": "d0acc9dace995def0160ab11e3c1c02f9a3a13468d66a83071ed8c28ce9b9289",
+    "agent_bridge/src/agent_bridge/reminders.py": "c6a2512fe4a62295e5b1e274db49eeb5e5dfb932570aad23d70054be3068bf30",
+    "agent_bridge/src/agent_bridge/session_bridge.py": "a1d2eeab56d0d1543d66fbe1ab28b5fd7e7745fc56d138bf03b0a1ea33948220",
+    "agent_bridge/src/agent_bridge/dev/fire_source.py": "14c7946cc7cd6cef5637f2d88ce1aa4e236ba9c9858ff7865a041590fcea70c8",
+    "agent_bridge/src/agent_bridge/notifications/service.py": "d5976e7724da9c39da1f07f2e988381f87baa61105e19e1886b4c2ef700d2050",
+    "agent_bridge/src/agent_bridge/routes/approvals.py": "c7a51106cf3a285cefdec07c3369b4e7a203c7f478c3d5be8705f7a9b7ed3490",
+    "agent_bridge/src/agent_bridge/routes/link_targets.py": "89a168f5764a86477c8f09656c195a0d68cfa9109ab65f650e3ef65be92cb45a",
+    "agent_bridge/src/agent_bridge/routes/meta.py": "c995d0aac80336b1a390f3a38b18dd282af6b6700f02316c564ad394fa24d911",
+    "agent_bridge/src/agent_bridge/routes/scheduled_tasks.py": "374223fb5fab49ac13846f30cf7493077907f5b8e283cf23d348008f90cab606",
+    "agent_bridge/src/agent_bridge/scheduled_tasks/notifications.py": "f6892fae106658e07ed3e2ffd30b8f8ced8f4fa34a34112214df1bb1aa3e14e0",
+    "agent_bridge/src/agent_bridge/session_delivery/service.py": "5f87d6a76055f855f7226dd8fa4e105ea93a77e2b65acaec02a9eb34e9c8f5a1",
+    "agent_bridge/src/agent_bridge/session_requests/service.py": "1ecdd293d54c1bcdd57bc99968949a2482a280362b0df83d0207ef4cf836874e",
+    "agent_bridge/src/agent_bridge/protocols/im/control.py": "d322423fa3ca47a174ea4fa52901d43f41d5df1b20e0c1c8ba4dba00d767b9a3",
+    "memory/src/memory/search/vector.py": "85eb006c148a4c8f4e5b0883c474074a2b6b4fdc7957781b9aa00205b6e39259",
+    "tools/src/tools/pokemon/desktop_pilot.py": "91a2cf97582c2dd75e4d19173746235540a47eb22a0bc647ceeed37cb8ed7581",
+    "tools/src/tools/pokemon/runner.py": "72acf9a7c9152c4d5664edbcf5f6a014648f882abf835eb7b449158618d95792",
+    "tools/src/tools/pokemon/runtime/commands.py": "b48cd747515f8fd586756ef059e2ed684815d88e961a5c7778fa0f93a8d77e96"
+  },
+  "candidates": [
+    {
+      "path": "agent/src/agent/desktop_applications/tool.py",
+      "line": 140,
+      "caller": "LaunchDesktopApplicationTool.invoke",
+      "call": "self._evidence_store.load",
+      "expression": "self._evidence_store.load(session_id, reference)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/memory_maintenance/dispatch.py",
+      "line": 52,
+      "caller": "MaintenanceDispatch._invoke",
+      "call": "repo.query",
+      "expression": "repo.query(owner, query=args.get('query', ''), after_id=args.get('after_id', ''), limit=args.get('limit', 20))",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/memory_maintenance/sources.py",
+      "line": 43,
+      "caller": "MaintenanceSources.read",
+      "call": "getattr",
+      "expression": "getattr(self.sessions, 'iter_events', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/delivery_recovery.py",
+      "line": 46,
+      "caller": "recover_delivery_history",
+      "call": "store.load_execution",
+      "expression": "store.load_execution(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/delivery_recovery.py",
+      "line": 85,
+      "caller": "recover_delivery_history",
+      "call": "store.iter_events",
+      "expression": "store.iter_events(session_id, state)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/delivery_recovery.py",
+      "line": 142,
+      "caller": "recover_delivery_history",
+      "call": "staged_store.load_business",
+      "expression": "staged_store.load_business(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/delivery_recovery.py",
+      "line": 152,
+      "caller": "recover_delivery_history",
+      "call": "staged_store.load_execution",
+      "expression": "staged_store.load_execution(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/maintenance.py",
+      "line": 22,
+      "caller": "_logical_digest",
+      "call": "store.iter_events",
+      "expression": "store.iter_events(session_id, state)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/maintenance.py",
+      "line": 42,
+      "caller": "compact_session",
+      "call": "store.load_execution",
+      "expression": "store.load_execution(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/maintenance.py",
+      "line": 58,
+      "caller": "compact_session",
+      "call": "store.iter_events",
+      "expression": "store.iter_events(session_id, state)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/maintenance.py",
+      "line": 65,
+      "caller": "compact_session",
+      "call": "staged_store.load_execution",
+      "expression": "staged_store.load_execution(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "line": 432,
+      "caller": "SessionManager.is_inner",
+      "call": "getattr",
+      "expression": "getattr(self._store, 'session_head', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "line": 444,
+      "caller": "SessionManager.open",
+      "call": "load_session",
+      "expression": "load_session(self._store, session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "line": 455,
+      "caller": "SessionManager.query_page",
+      "call": "query_session_page",
+      "expression": "query_session_page(self._store, session_id, turn_limit=turn_limit, before=before, history_epoch=history_epoch, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "line": 465,
+      "caller": "SessionManager.query",
+      "call": "query_session",
+      "expression": "query_session(self._store, session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "line": 492,
+      "caller": "SessionManager.open_for_execution",
+      "call": "getattr",
+      "expression": "getattr(self._store, 'load_execution', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "line": 495,
+      "caller": "SessionManager.open_for_execution",
+      "call": "self.open",
+      "expression": "self.open(session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "line": 498,
+      "caller": "SessionManager._load_for_preparation",
+      "call": "getattr",
+      "expression": "getattr(self._store, 'load_execution', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "line": 526,
+      "caller": "SessionManager.composer_session",
+      "call": "getattr",
+      "expression": "getattr(self._store, 'composer_session', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "line": 529,
+      "caller": "SessionManager.composer_session",
+      "call": "self.open",
+      "expression": "self.open(session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "line": 713,
+      "caller": "SessionManager.rename",
+      "call": "self.query",
+      "expression": "self.query(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "line": 730,
+      "caller": "SessionManager.archive",
+      "call": "self.query",
+      "expression": "self.query(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "line": 741,
+      "caller": "SessionManager.unarchive",
+      "call": "self.query",
+      "expression": "self.query(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "line": 823,
+      "caller": "SessionManager._summary",
+      "call": "self._store.load",
+      "expression": "self._store.load(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "line": 502,
+      "caller": "SessionManager._load_for_preparation",
+      "call": "self.open",
+      "expression": "self.open(session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/manager.py",
+      "line": 547,
+      "caller": "SessionManager.update_model_config",
+      "call": "self.composer_session",
+      "expression": "self.composer_session(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/query.py",
+      "line": 370,
+      "caller": "load_session",
+      "call": "store.load",
+      "expression": "store.load(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/query.py",
+      "line": 380,
+      "caller": "load_business_session",
+      "call": "getattr",
+      "expression": "getattr(store, 'load_business', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/query.py",
+      "line": 383,
+      "caller": "load_business_session",
+      "call": "load_session",
+      "expression": "load_session(store, session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/query.py",
+      "line": 390,
+      "caller": "query_session",
+      "call": "getattr",
+      "expression": "getattr(store, 'query', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/query.py",
+      "line": 393,
+      "caller": "query_session",
+      "call": "load_session",
+      "expression": "load_session(store, session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/query.py",
+      "line": 416,
+      "caller": "query_session_page",
+      "call": "getattr",
+      "expression": "getattr(store, 'query_page', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/query.py",
+      "line": 428,
+      "caller": "query_session_page",
+      "call": "query_session",
+      "expression": "query_session(store, session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/query.py",
+      "line": 366,
+      "caller": "load_session",
+      "call": "store.load",
+      "expression": "store.load(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/recovery.py",
+      "line": 145,
+      "caller": "ToolTransactionReconciler._reconcile_summary",
+      "call": "load_business_session",
+      "expression": "load_business_session(self._store, session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/recovery.py",
+      "line": 178,
+      "caller": "ToolTransactionReconciler._reconcile_session_once",
+      "call": "load_session",
+      "expression": "load_session(self._store, session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/search.py",
+      "line": 182,
+      "caller": "SessionSearchService.conversation_text",
+      "call": "query_session",
+      "expression": "query_session(self._store, session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/search.py",
+      "line": 214,
+      "caller": "SessionSearchService._refresh_documents",
+      "call": "getattr",
+      "expression": "getattr(self._store, 'query', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/search.py",
+      "line": 216,
+      "caller": "SessionSearchService._refresh_documents",
+      "call": "query_session",
+      "expression": "query_session(self._store, descriptor.session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/search.py",
+      "line": 228,
+      "caller": "SessionSearchService._refresh_documents",
+      "call": "query_session",
+      "expression": "query_session(self._store, descriptor.session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 636,
+      "caller": "JsonlSessionStore.load",
+      "call": "self._read_records",
+      "expression": "self._read_records(session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 666,
+      "caller": "JsonlSessionStore.load_business",
+      "call": "self._read_records",
+      "expression": "self._read_records(session_id, query_only=True, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 691,
+      "caller": "JsonlSessionStore.load_execution",
+      "call": "load_execution_session",
+      "expression": "load_execution_session(lambda state: self.iter_events(session_id, state, cancel_check=cancel_check), cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 717,
+      "caller": "JsonlSessionStore.composer_session",
+      "call": "read_configuration",
+      "expression": "read_configuration(path, version, cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 818,
+      "caller": "JsonlSessionStore.history_window",
+      "call": "read_window",
+      "expression": "read_window(path, version, turn_limit=turn_limit, before=before, history_epoch=history_epoch, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 920,
+      "caller": "JsonlSessionStore.cancellable_load",
+      "call": "self.load",
+      "expression": "self.load(session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1326,
+      "caller": "JsonlSessionStore._history_version",
+      "call": "self.query",
+      "expression": "self.query(session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1351,
+      "caller": "JsonlSessionStore.query_page",
+      "call": "self._history_version",
+      "expression": "self._history_version(session_id, cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1380,
+      "caller": "JsonlSessionStore.query_messages",
+      "call": "self._history_version",
+      "expression": "self._history_version(session_id, cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1817,
+      "caller": "NotifyingSessionStore.load",
+      "call": "self._inner.load",
+      "expression": "self._inner.load(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1827,
+      "caller": "NotifyingSessionStore.iter_events",
+      "call": "getattr",
+      "expression": "getattr(self._inner, 'iter_events', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1835,
+      "caller": "NotifyingSessionStore.session_head",
+      "call": "getattr",
+      "expression": "getattr(self._inner, 'session_head', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1838,
+      "caller": "NotifyingSessionStore.session_head",
+      "call": "self._inner.load",
+      "expression": "self._inner.load(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1841,
+      "caller": "NotifyingSessionStore.composer_session",
+      "call": "getattr",
+      "expression": "getattr(self._inner, 'composer_session', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1844,
+      "caller": "NotifyingSessionStore.composer_session",
+      "call": "load_session",
+      "expression": "load_session(self._inner, session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1847,
+      "caller": "NotifyingSessionStore.history_window",
+      "call": "getattr",
+      "expression": "getattr(self._inner, 'history_window', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1853,
+      "caller": "NotifyingSessionStore.query_messages",
+      "call": "getattr",
+      "expression": "getattr(self._inner, 'query_messages', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1859,
+      "caller": "NotifyingSessionStore.cancellable_load",
+      "call": "load_session",
+      "expression": "load_session(self._inner, session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1862,
+      "caller": "NotifyingSessionStore.load_business",
+      "call": "load_business_session",
+      "expression": "load_business_session(self._inner, session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1865,
+      "caller": "NotifyingSessionStore.load_execution",
+      "call": "getattr",
+      "expression": "getattr(self._inner, 'load_execution', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1868,
+      "caller": "NotifyingSessionStore.load_execution",
+      "call": "load_session",
+      "expression": "load_session(self._inner, session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1894,
+      "caller": "NotifyingSessionStore.query_page",
+      "call": "query_session_page",
+      "expression": "query_session_page(self._inner, session_id, **kwargs)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1901,
+      "caller": "NotifyingSessionStore.query",
+      "call": "query_session",
+      "expression": "query_session(self._inner, session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 659,
+      "caller": "JsonlSessionStore.load_business",
+      "call": "self._business_index.read_existing",
+      "expression": "self._business_index.read_existing(session_id, self._source_version(path), cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 764,
+      "caller": "JsonlSessionStore.history_window",
+      "call": "read_window",
+      "expression": "read_window(path, version, turn_limit=turn_limit, anchor_event_uuid=anchor_event_uuid, history_epoch=history_epoch, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1126,
+      "caller": "JsonlSessionStore.query",
+      "call": "self._query_snapshot",
+      "expression": "self._query_snapshot(session_id, sticky_cancellation(cancel_check), observation)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1856,
+      "caller": "NotifyingSessionStore.query_messages",
+      "call": "query",
+      "expression": "query(session_id, **kwargs)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 692,
+      "caller": "JsonlSessionStore.load_execution",
+      "call": "self.iter_events",
+      "expression": "self.iter_events(session_id, state, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 907,
+      "caller": "JsonlSessionStore.bind_execution_projection.journal",
+      "call": "self.iter_events",
+      "expression": "self.iter_events(session_id, state)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1722,
+      "caller": "JsonlSessionStore._latest_model_runtime_config",
+      "call": "self.composer_session",
+      "expression": "self.composer_session(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 989,
+      "caller": "JsonlSessionStore._read_records",
+      "call": "self.iter_events",
+      "expression": "self.iter_events(session_id, state, cancel_check=cancel_check, materialize_rollout=not query_only)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1175,
+      "caller": "JsonlSessionStore.query_recall",
+      "call": "self.iter_events",
+      "expression": "self.iter_events(session_id, state, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1273,
+      "caller": "JsonlSessionStore._query_snapshot",
+      "call": "self._read_records",
+      "expression": "self._read_records(session_id, query_only=True, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1369,
+      "caller": "JsonlSessionStore.query_page",
+      "call": "self._history_version",
+      "expression": "self._history_version(session_id, cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/store.py",
+      "line": 1393,
+      "caller": "JsonlSessionStore.query_messages",
+      "call": "self._history_version",
+      "expression": "self._history_version(session_id, cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/tool_execution_evidence.py",
+      "line": 343,
+      "caller": "ToolExecutionEvidenceStore.load_for_transaction",
+      "call": "self.load",
+      "expression": "self.load(session_id, evidence_ref)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/session_files/service.py",
+      "line": 79,
+      "caller": "SessionFileService.files",
+      "call": "self.sessions.load",
+      "expression": "self.sessions.load(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/skills/service.py",
+      "line": 121,
+      "caller": "SkillCatalogService.refresh",
+      "call": "self._loader.load",
+      "expression": "self._loader.load(roots, generation=previous.generation + 1)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/skills/service.py",
+      "line": 373,
+      "caller": "SkillCatalogService._activate_one",
+      "call": "SkillLoader().load",
+      "expression": "SkillLoader().load((SkillRoot(record.source, package.root),))",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/tools/builtin/conversation_access/inner_activity.py",
+      "line": 87,
+      "caller": "ReadInnerActivityTool._read",
+      "call": "getattr",
+      "expression": "getattr(self.access.store, 'history_window', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/tools/builtin/tool_call_history/tool.py",
+      "line": 134,
+      "caller": "InspectToolCallsTool.invoke",
+      "call": "query_session",
+      "expression": "query_session(self._store, session_id, cancel_check=check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/tools/builtin/tool_result_recovery/tool.py",
+      "line": 128,
+      "caller": "ToolResultRecoveryTool.invoke",
+      "call": "self._session_store.load",
+      "expression": "self._session_store.load(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/tools/builtin/tool_result_recovery/tool.py",
+      "line": 204,
+      "caller": "ToolResultRecoveryTool.invoke",
+      "call": "evidence_store.load",
+      "expression": "evidence_store.load(session_id, evidence_ref)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/tools/builtin/social_platforms/bilibili_interactions/tool.py",
+      "line": 244,
+      "caller": "BilibiliReplyTool.invoke",
+      "call": "self.evidence.load",
+      "expression": "self.evidence.load(sid, reference)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/skills/first_party_updates/store.py",
+      "line": 210,
+      "caller": "FirstPartySkillStore.validate_package",
+      "call": "self._loader.load",
+      "expression": "self._loader.load((SkillRoot('builtin', root),), generation=0)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent/src/agent/sessions/access/service.py",
+      "line": 83,
+      "caller": "ConversationAccessService.page",
+      "call": "getattr",
+      "expression": "getattr(self.store, 'query_messages', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/recall/snapshot.py",
+      "line": 104,
+      "caller": "query_session_recall",
+      "call": "getattr",
+      "expression": "getattr(store, 'query_recall', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent/src/agent/sessions/recall/snapshot.py",
+      "line": 107,
+      "caller": "query_session_recall",
+      "call": "query_session",
+      "expression": "query_session(store, session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/assembly.py",
+      "line": 953,
+      "caller": "build_runtime",
+      "call": "persistent_session_manager.query",
+      "expression": "persistent_session_manager.query(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/assembly.py",
+      "line": 965,
+      "caller": "build_runtime",
+      "call": "persistent_session_manager.query",
+      "expression": "persistent_session_manager.query(sid)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/attachment_reconciliation.py",
+      "line": 50,
+      "caller": "_reconcile_locked",
+      "call": "load_business_session",
+      "expression": "load_business_session(runtime.persistent_store, summary.session_id, cancel_check=check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/message_exposure.py",
+      "line": 63,
+      "caller": "MessageExposureService.changes",
+      "call": "manager.query",
+      "expression": "manager.query(sid)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/reminders.py",
+      "line": 260,
+      "caller": "ReminderDeliveryOrchestrator._latest_user_interaction_at",
+      "call": "self._sessions.load",
+      "expression": "self._sessions.load(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/reminders.py",
+      "line": 364,
+      "caller": "ReminderDeliveryOrchestrator._append_reminder_fact",
+      "call": "self._sessions.load",
+      "expression": "self._sessions.load(target.session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/reminders.py",
+      "line": 168,
+      "caller": "ReminderDeliveryOrchestrator._resolve_or_freeze",
+      "call": "self._sessions.load",
+      "expression": "self._sessions.load(target.session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/reminders.py",
+      "line": 627,
+      "caller": "ReminderDeliveryOrchestrator._session_exists",
+      "call": "self._sessions.load",
+      "expression": "self._sessions.load(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/session_bridge.py",
+      "line": 159,
+      "caller": "SessionBridge.persistent_event",
+      "call": "self._runtime.persistent_session_manager.query",
+      "expression": "self._runtime.persistent_session_manager.query(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/session_bridge.py",
+      "line": 174,
+      "caller": "SessionBridge.assistant_events_after",
+      "call": "self._runtime.persistent_session_manager.query",
+      "expression": "self._runtime.persistent_session_manager.query(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/session_bridge.py",
+      "line": 151,
+      "caller": "SessionBridge.persistent_model",
+      "call": "self._runtime.persistent_session_manager.query",
+      "expression": "self._runtime.persistent_session_manager.query(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/dev/fire_source.py",
+      "line": 94,
+      "caller": "register_routes.mock_session_event",
+      "call": "manager.open",
+      "expression": "manager.open(actual_session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/notifications/service.py",
+      "line": 414,
+      "caller": "NotificationService.on_prepared_message",
+      "call": "load_business_session",
+      "expression": "load_business_session(self.sessions, session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/notifications/service.py",
+      "line": 474,
+      "caller": "NotificationService.on_todo",
+      "call": "load_business_session",
+      "expression": "load_business_session(self.sessions, occurrence.persistence_session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/notifications/service.py",
+      "line": 380,
+      "caller": "NotificationService.on_terminal",
+      "call": "load_business_session",
+      "expression": "load_business_session(self.sessions, snapshot.session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/notifications/service.py",
+      "line": 458,
+      "caller": "NotificationService.on_approval",
+      "call": "load_business_session",
+      "expression": "load_business_session(self.sessions, str(payload.get('session_id') or ''))",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/routes/approvals.py",
+      "line": 65,
+      "caller": "register_routes.reauthorize_review",
+      "call": "manager.open",
+      "expression": "manager.open(body.session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/routes/link_targets.py",
+      "line": 133,
+      "caller": "resolve_target",
+      "call": "runtime.persistent_store.load",
+      "expression": "runtime.persistent_store.load(request.session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/routes/meta.py",
+      "line": 221,
+      "caller": "register_routes.get_history_window.load",
+      "call": "getattr",
+      "expression": "getattr(runtime.persistent_store, 'history_window', None)",
+      "dynamic_capability": true
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/routes/meta.py",
+      "line": 524,
+      "caller": "register_routes.edit_resend_latest.read_edit_target",
+      "call": "mgr.query",
+      "expression": "mgr.query(session_id, cancel_check=cancel)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/routes/meta.py",
+      "line": 313,
+      "caller": "register_routes.create_session",
+      "call": "mgr.open",
+      "expression": "mgr.open(body.creation_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/routes/meta.py",
+      "line": 202,
+      "caller": "register_routes.get_composer",
+      "call": "mgr.composer_session",
+      "expression": "mgr.composer_session(session_id, cancel_check=cancel)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/routes/meta.py",
+      "line": 254,
+      "caller": "register_routes.prepare_session",
+      "call": "mgr.composer_session",
+      "expression": "mgr.composer_session(session_id, cancel_check=cancel)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/routes/meta.py",
+      "line": 409,
+      "caller": "register_routes.get_session.load.current",
+      "call": "mgr.query_page",
+      "expression": "mgr.query_page(session_id, turn_limit=turn_limit, before=before, history_epoch=history_epoch, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/routes/meta.py",
+      "line": 417,
+      "caller": "register_routes.get_session.load.current",
+      "call": "mgr.query",
+      "expression": "mgr.query(session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/routes/meta.py",
+      "line": 419,
+      "caller": "register_routes.get_session.load.current",
+      "call": "mgr.open",
+      "expression": "mgr.open(session_id, cancel_check=cancel_check)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/routes/meta.py",
+      "line": 721,
+      "caller": "register_routes.continue_tool_result",
+      "call": "mgr.query",
+      "expression": "mgr.query(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/routes/scheduled_tasks.py",
+      "line": 259,
+      "caller": "_target_model",
+      "call": "runtime.persistent_session_manager.query",
+      "expression": "runtime.persistent_session_manager.query(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/scheduled_tasks/notifications.py",
+      "line": 142,
+      "caller": "ScheduledIMNotifications._deliver",
+      "call": "query_session",
+      "expression": "query_session(self._sessions, session_id, cancel_check=self._check_stop)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/session_delivery/service.py",
+      "line": 116,
+      "caller": "SessionDeliveryService.submit",
+      "call": "sessions.query",
+      "expression": "sessions.query(source)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/session_delivery/service.py",
+      "line": 156,
+      "caller": "SessionDeliveryService.submit",
+      "call": "sessions.query",
+      "expression": "sessions.query(sid)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/session_requests/service.py",
+      "line": 55,
+      "caller": "SessionRequestService._terminal",
+      "call": "self.runtime.persistent_session_manager.query",
+      "expression": "self.runtime.persistent_session_manager.query(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/session_requests/service.py",
+      "line": 84,
+      "caller": "SessionRequestService.validate_target",
+      "call": "manager.query",
+      "expression": "manager.query(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/protocols/im/control.py",
+      "line": 565,
+      "caller": "IMControlService._bound_session",
+      "call": "self._sessions.query",
+      "expression": "self._sessions.query(binding.session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "agent_bridge/src/agent_bridge/protocols/im/control.py",
+      "line": 412,
+      "caller": "IMControlService._switch_session",
+      "call": "self._sessions.query",
+      "expression": "self._sessions.query(session_id)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "memory/src/memory/search/vector.py",
+      "line": 152,
+      "caller": "SqliteVecIndex.__init__",
+      "call": "sqlite_vec.load",
+      "expression": "sqlite_vec.load(self._conn)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "tools/src/tools/pokemon/desktop_pilot.py",
+      "line": 52,
+      "caller": "watch.api",
+      "call": "json.load",
+      "expression": "json.load(response)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "tools/src/tools/pokemon/runner.py",
+      "line": 69,
+      "caller": "play",
+      "call": "SkillLoader().load",
+      "expression": "SkillLoader().load((SkillRoot('personal', skill_path.parent),), generation=1)",
+      "dynamic_capability": false
+    },
+    {
+      "path": "tools/src/tools/pokemon/runtime/commands.py",
+      "line": 58,
+      "caller": "execute",
+      "call": "knowledge.query",
+      "expression": "knowledge.query(args.section, args.entity, details=args.details, all_records=args.all_records)",
+      "dynamic_capability": false
+    }
+  ]
+}

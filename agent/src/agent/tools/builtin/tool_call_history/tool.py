@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import base64
 import json
+import sqlite3
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 from ....sessions.errors import SessionCorruptError, SessionNotFoundError, SessionPersistError
-from ....sessions.query import query_session
+from ....sessions.reading import SessionRead, session_reader
 from ....sessions.store import SessionStore
 from ....tool_runtime.control import TOOL_INVOCATION_CONTROL_ARG, ToolInvocationControl
 from ...protocol import ToolResult
@@ -131,13 +133,24 @@ class InspectToolCallsTool:
                 control.check_cancelled()
 
         try:
-            snapshot = query_session(self._store, session_id, cancel_check=check)
-        except (SessionNotFoundError, SessionPersistError, SessionCorruptError):
+            with session_reader(self._store).snapshot(session_id, cancel_check=check) as read:
+                return self._invoke_read(args, session_id, read, check)
+        except (
+            SessionNotFoundError,
+            SessionPersistError,
+            SessionCorruptError,
+            ValueError,
+            sqlite3.Error,
+        ):
             return _output(
                 {"error": "history_unavailable", "message": "历史读取失败，不代表没有执行记录。"},
                 error=True,
             )
-        if snapshot.load_diagnostics.parse_error_count:
+
+    def _invoke_read(
+        self, args: dict[str, Any], session_id: str, read: SessionRead, check: Callable[[], None]
+    ) -> ToolResult:
+        if read.diagnostics.parse_error_count:
             return _output(
                 {
                     "error": "history_incomplete",
@@ -145,9 +158,10 @@ class InspectToolCallsTool:
                 },
                 error=True,
             )
-        history = CallHistory(snapshot, check)
+        history = CallHistory(read, check)
         if args["mode"] == "read":
-            call = history.by_ref.get(args["call_ref"])
+            selected = history.call(args["call_ref"])
+            call = selected[1] if selected else None
             if call is None:
                 return _output(
                     {
@@ -180,9 +194,9 @@ class InspectToolCallsTool:
                 }
             )
         tool_name, query = args.get("tool_name"), args.get("query")
-        calls = history.calls
-        anchor = calls[-1].uuid if calls else None
-        end = len(calls)
+        latest = history.calls_before(None, 1)
+        anchor = latest[0][1].uuid if latest else None
+        before: int | None = None
         if args.get("cursor"):
             try:
                 cursor = json.loads(base64.urlsafe_b64decode(args["cursor"]).decode("utf-8"))
@@ -193,12 +207,11 @@ class InspectToolCallsTool:
                 ):
                     raise ValueError("stale cursor")
                 anchor = cursor["anchor"]
-                if anchor not in history.by_ref:
+                anchor_row = history.call(anchor)
+                previous = history.call(cursor["before"])
+                if anchor_row is None or previous is None or previous[0] > anchor_row[0]:
                     raise ValueError("missing anchor")
-                end = next(i for i, call in enumerate(calls) if call.uuid == cursor["before"])
-                anchor_index = next(i for i, call in enumerate(calls) if call.uuid == anchor)
-                if end > anchor_index:
-                    raise ValueError("cursor beyond anchor")
+                before = previous[0]
             except (ValueError, KeyError, TypeError, StopIteration):
                 return _output(
                     {
@@ -209,11 +222,19 @@ class InspectToolCallsTool:
                 )
         found: list[dict[str, Any]] = []
         scanned = 0
-        while end and scanned < _SCAN_LIMIT and len(found) < args.get("limit", 10):
+        last_ref = None
+        batch = iter(history.calls_before(before))
+        while scanned < _SCAN_LIMIT and len(found) < args.get("limit", 10):
             check()
-            end -= 1
+            row = next(batch, None)
+            if row is None:
+                batch = iter(history.calls_before(before))
+                row = next(batch, None)
+                if row is None:
+                    break
+            before, call = row
+            last_ref = call.uuid
             scanned += 1
-            call = calls[end]
             if tool_name and call.payload.get("tool_name") != tool_name:
                 continue
             result, _ = history.result(call)
@@ -229,14 +250,15 @@ class InspectToolCallsTool:
                 continue
             found.append(history.describe(call))
         next_cursor = None
-        if end:
+        has_more = bool(history.calls_before(before, 1)) if last_ref else False
+        if has_more:
             next_cursor = base64.urlsafe_b64encode(
                 json.dumps(
                     {
                         "session": session_id,
                         "rewrite": history.rewrite,
                         "anchor": anchor,
-                        "before": calls[end].uuid,
+                        "before": last_ref,
                         "filter": [tool_name, query],
                     }
                 ).encode()
@@ -246,7 +268,7 @@ class InspectToolCallsTool:
                 "source_type": "historical_tool_calls",
                 "results": found,
                 "scanned_calls": scanned,
-                "complete": end == 0,
+                "complete": not has_more,
                 "next_cursor": next_cursor,
                 "authorization": "historical_only",
             }

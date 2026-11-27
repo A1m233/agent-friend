@@ -9,7 +9,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
 from ..events import ROLLOUT_EVENT_TYPES, Event
-from ..query import CancelCheck, check_cancel, query_session
+from ..query import CancelCheck, check_cancel
 from ..store_types import SessionLoadDiagnostics, SourceVersion
 
 if TYPE_CHECKING:
@@ -104,13 +104,4 @@ def query_session_recall(
     method = getattr(store, "query_recall", None)
     if callable(method):
         return cast(SessionRecallSnapshot, method(session_id, cancel_check=cancel_check))
-    source = query_session(store, session_id, cancel_check=cancel_check)
-    builder = RecallBuilder()
-    for event in source.events:
-        check_cancel(cancel_check)
-        builder.add(source.raw_event_indices[event.uuid], event)
-    return builder.snapshot(
-        count=source.raw_event_count,
-        version=source.source_version,
-        diagnostics=source.load_diagnostics,
-    )
+    raise NotImplementedError("store does not support conversation text reads")

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from agent.message_exposure import MessageExposureStore, content_version
 from agent.paths import message_exposure_db_path
 from agent.sessions.events import Event
+from agent.sessions.reading import EventFilter
 
 if TYPE_CHECKING:
     from .assembly import BridgeRuntime
@@ -60,7 +61,16 @@ class MessageExposureService:
                 self.store.delete_session(sid)
                 continue
             if sid not in sessions:
-                sessions[sid] = {e.uuid: e for e in manager.query(sid).active_events}
+                ids = tuple(
+                    {row["message_id"] for row in page["items"] if row["session_id"] == sid}
+                )
+                with self.runtime.persistent_session_manager.reader.snapshot(sid) as read:
+                    sessions[sid] = {
+                        e.uuid: e
+                        for _, e in read.scan(
+                            EventFilter(ids=ids), purpose="exposure page validation"
+                        )
+                    }
             event = sessions[sid].get(item["message_id"])
             if (
                 event is None

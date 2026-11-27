@@ -10,6 +10,7 @@ from agent.approvals import (
     ApprovalRequestStaleError,
 )
 from agent.command_runtime import CommandApprovalDecision, CommandRuntimeError
+from agent.sessions.reading import session_reader
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -61,8 +62,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         broker = runtime.approval_broker
         if broker is None or broker.automatic is None:
             raise HTTPException(status_code=503, detail="auto review unavailable")
-        manager = runtime.persistent_session_manager
-        session = manager.open(body.session_id)
+        session = session_reader(runtime.persistent_store).identity(body.session_id)
         if session.origin_kind == "inner_world":
             raise HTTPException(status_code=409, detail="自主活动不能申请人工授权")
         if broker.mode_state(body.session_id).mode != "auto_review":

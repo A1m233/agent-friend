@@ -39,6 +39,7 @@ from agent.runtime.models import RunRequest
 from agent.sessions.continuation import continuation_target
 from agent.sessions.query import CancelCheck, SessionHistoryPage, SessionQuerySnapshot
 from agent.sessions.read_views.display import display_event, public_reasoning_payload
+from agent.sessions.reading import EventFilter
 from agent.system_prompt import DESKTOP_CHAT_SURFACE
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -310,7 +311,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         model_name = body.model or runtime.default_model
         try:
             session = (
-                mgr.open(body.creation_id)
+                mgr.reader.state(body.creation_id)
                 if body.creation_id and mgr.exists(body.creation_id)
                 else mgr.create(
                     persona=persona_info.name,
@@ -367,6 +368,20 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except SessionPersistError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @router.get("/sessions/{session_id}/dialog-status")
+    def get_dialog_status(session_id: str) -> dict[str, bool]:
+        try:
+            with mgr.reader.snapshot(session_id) as read:
+                # Empty-session cleanup considers raw audit history, including
+                # messages subsequently rewritten out of the active conversation.
+                return {
+                    "has_dialog": read.contains(
+                        EventFilter(kinds=("user_message", "assistant_message"), active=False)
+                    )
+                }
+        except SessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.get("/sessions/{session_id}/diagnostics")
     def get_session_diagnostics(
@@ -521,11 +536,11 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         run_id = body.run_id or uuid4().hex
 
         def read_edit_target(cancel: CancelCheck) -> tuple[Event | None, str]:
-            snapshot = mgr.query(session_id, cancel_check=cancel)
-            target = next(
-                (e for e in reversed(snapshot.active_events) if e.type == "user_message"), None
-            )
-            return target, snapshot.current_model
+            config = mgr.reader.state(session_id, cancel_check=cancel)
+            with mgr.reader.snapshot(session_id, cancel_check=cancel) as read:
+                if read.source_version != config.source_version:
+                    raise ValueError("history_changed")
+                return read.latest("user_message"), config.current_model
 
         target, model = await read_session(request, read_edit_target)
         if target is None:
@@ -717,10 +732,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     )
                 admission.enter_context(runtime.turn_coordinator.try_hold(session_id))
                 try:
-                    target = continuation_target(
-                        mgr.query(session_id).active_events,
-                        body.source_run_id if body else None,
-                    )
+                    with mgr.reader.snapshot(session_id) as read:
+                        target = read.continuation(body.source_run_id if body else None)
                 except SessionNotFoundError as exc:
                     raise HTTPException(status_code=404, detail=str(exc)) from exc
                 except AgentError as exc:

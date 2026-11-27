@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from agent.scheduled_tasks import ScheduledOccurrence, ScheduledTaskStore
 from agent.sessions.events import Event
-from agent.sessions.query import query_session
+from agent.sessions.reading import EventFilter, session_reader
 from agent.sessions.store import SessionStore
 
 if TYPE_CHECKING:
@@ -139,10 +139,25 @@ class ScheduledIMNotifications:
             text = ""
             if occurrence.run_id and session_id:
                 try:
-                    snapshot = query_session(
-                        self._sessions, session_id, cancel_check=self._check_stop
-                    )
-                    text = final_run_text(snapshot.active_events, occurrence.run_id)
+                    with session_reader(self._sessions).snapshot(
+                        session_id, cancel_check=self._check_stop
+                    ) as read:
+                        events = tuple(
+                            e
+                            for _, e in read.scan(
+                                EventFilter(
+                                    run_id=occurrence.run_id,
+                                    kinds=(
+                                        "assistant_message",
+                                        "assistant_phase",
+                                        "tool_call_request",
+                                        "tool_call_result",
+                                    ),
+                                ),
+                                purpose="scheduled final reply",
+                            )
+                        )
+                        text = final_run_text(events, occurrence.run_id)
                 except Exception:
                     if self._stopping.is_set():
                         return

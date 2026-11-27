@@ -1,0 +1,70 @@
+{
+  "platform": "Windows 11; Python 3.12.6",
+  "source": "implementation-source.json",
+  "checks": [
+    {
+      "command": "scripts/check/run.ps1 --stage backend",
+      "status": "passed",
+      "passed": 5058,
+      "skipped": 6,
+      "warnings": 23,
+      "pytest_seconds": 880.03,
+      "stage_seconds": 897.7
+    },
+    {
+      "command": "scripts/test/run.ps1 agent/tests/test_session_reading.py agent/tests/test_session_reading_architecture.py agent_bridge/tests/test_im_qq_references.py agent_bridge/tests/test_assembly.py -q --tb=short",
+      "status": "passed",
+      "passed": 50,
+      "seconds": 23.34,
+      "scope": "Additional QQ callback/batch reader/gate changes after full-stage collection; not additive distinct test count"
+    },
+    {
+      "command": "scripts/check/run.ps1 --stage frontend",
+      "status": "passed",
+      "files": 200,
+      "tests": 1652,
+      "includes": [
+        "lint",
+        "typecheck",
+        "production build"
+      ],
+      "reuse": "frontend source unchanged since this run"
+    },
+    {
+      "command": "scripts/check/run.ps1 --stage rust",
+      "status": "passed",
+      "passed": 355,
+      "ignored": 1,
+      "includes": [
+        "release check"
+      ],
+      "reuse": "no Rust source changes; conservative impact selection"
+    },
+    {
+      "command": "scripts/lint/run.ps1",
+      "status": "passed",
+      "formatted_files": 1199
+    },
+    {
+      "command": "scripts/typecheck/run.ps1",
+      "status": "passed",
+      "source_files": 982
+    },
+    {
+      "command": "git diff --check",
+      "status": "passed"
+    }
+  ],
+  "desktop": "desktop-links.json",
+  "growth": [
+    "point-growth.json",
+    "first-page-growth.json"
+  ],
+  "limitations": [
+    "6 backend skips and 1 Rust ignored case are not passes",
+    "Windows verification only; no installer or original user-session acceptance",
+    "Dependency warnings and ignored bilibili_api atexit cleanup warning remain visible; exit code 0"
+  ],
+  "user_acceptance": "2026-11-27: user requested merge to main and push",
+  "commit_merge_push": "authorized; delivery in progress"
+}

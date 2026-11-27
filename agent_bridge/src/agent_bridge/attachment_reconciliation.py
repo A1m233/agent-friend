@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 from threading import Event
 
-from agent.sessions.query import load_business_session
+from agent.sessions.reading.maintenance import maintenance_events
+from agent.sessions.store_types import SessionReadState
 
 from .assembly import BridgeRuntime
 
@@ -47,12 +48,14 @@ def _reconcile_locked(runtime: BridgeRuntime, stopping: Event | None) -> dict[st
         ]
         for summary in summaries:
             check()
-            session = load_business_session(
-                runtime.persistent_store, summary.session_id, cancel_check=check
-            )
-            if session.load_diagnostics.parse_error_count:
-                raise ValueError("incomplete session history during attachment mark")
-            for event in session.events:
+            state = SessionReadState()
+            for event in maintenance_events(
+                runtime.persistent_store,
+                summary.session_id,
+                state,
+                purpose="attachment_reachability",
+                cancel_check=check,
+            ):
                 attachments = [
                     *(event.payload.get("attachments") or []),
                     *(event.payload.get("images") or []),
@@ -65,6 +68,8 @@ def _reconcile_locked(runtime: BridgeRuntime, stopping: Event | None) -> dict[st
                     asset_id = attachment.get("asset_id")
                     if isinstance(asset_id, str):
                         marked.add(asset_id)
+            if state.diagnostics.parse_error_count:
+                raise ValueError("incomplete session history during attachment mark")
         if runtime.scheduled_task_store is not None:
             marked.update(runtime.scheduled_task_store.referenced_assets())
         if runtime.session_request_service is not None:

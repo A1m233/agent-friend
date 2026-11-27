@@ -79,6 +79,7 @@ from .session import Session
 from .store_types import SessionLoadDiagnostics, SessionReadState
 
 if TYPE_CHECKING:
+    from .reading import SessionReader
     from .rollout import RolloutCommitState
 
 _LOCK_TIMEOUT_SECONDS = 10.0
@@ -286,6 +287,9 @@ class JsonlSessionStore:
         Args:
             base_dir: 会话文件根目录；不存在会自动创建。
         """
+        from .reading import SessionReader
+
+        self.reader = SessionReader(self)
         self._base_dir = Path(base_dir)
         self._query_cache = SessionQueryCache(
             max_entries=query_cache_entries, max_bytes=query_cache_bytes
@@ -394,13 +398,13 @@ class JsonlSessionStore:
                 created_version = self._handle_version(binary, path)
                 try:
                     self._configuration.publish(session, created_version)
-                    snapshot = SessionQuerySnapshot.build(
-                        enumerate(session.events),
-                        raw_event_count=len(session.events),
-                        diagnostics=SessionLoadDiagnostics(),
-                        source_version=created_version,
+                    state = SessionReadState(
+                        source_version=created_version, event_count=len(session.events)
                     )
-                    self._business_index.publish(snapshot, lambda: True)
+                    self._business_index.rebuild_stream(
+                        session.session_id, created_version, session.events, state, lambda: True
+                    )
+
                 except Exception as exc:
                     observe_query_maintenance_failure(session.session_id, exc)
         except LockException as e:
@@ -550,12 +554,33 @@ class JsonlSessionStore:
     ) -> None:
         # Never hold the file lock while updating an in-process projection.
         cached = self._query_cache.get(session_id, before)
-        if clean_boundary and cached is not None and not cached.load_diagnostics.parse_error_count:
+        invalidates = any(
+            e.type
+            in {
+                "turn_rewrite",
+                "persona_change",
+                "model_change",
+                "model_config_change",
+                "channel_change",
+            }
+            for e in events
+        )
+        if (
+            clean_boundary
+            and not invalidates
+            and cached is not None
+            and not cached.load_diagnostics.parse_error_count
+        ):
             updated = cached.appended(events, after)
             self._query_cache.put(updated, is_current=lambda: self._source_version(path) == after)
         else:
             self._query_cache.discard(session_id)
+        rewrite_changes_config = self._business_index.rewrite_changes_config(
+            session_id, before, events
+        )
         with self._summary_lock:
+            if rewrite_changes_config:
+                self._summary_cache.pop(path, None)
             summary_entry = self._summary_cache.get(path)
             if clean_boundary and summary_entry is not None and summary_entry[0] == before:
                 summary = summary_entry[1]
@@ -1130,6 +1155,7 @@ class JsonlSessionStore:
         session_id: str,
         *,
         cancel_check: CancelCheck = None,
+        position_ids: set[str] | None = None,
     ) -> SessionRecallSnapshot:
         with observe_session_query(session_id, projection_kind="recall") as observation:
             check_cancel(cancel_check)
@@ -1151,6 +1177,7 @@ class JsonlSessionStore:
                         session_id,
                         self._source_version(path),
                         projection_cancel,
+                        **({"position_ids": position_ids} if position_ids is not None else {}),
                     )
                 except (sqlite3.Error, OSError, LockException) as exc:
                     if cancellation_errors:
@@ -1172,7 +1199,9 @@ class JsonlSessionStore:
                 builder = RecallBuilder()
                 state = SessionReadState()
                 for position, event in enumerate(
-                    self.iter_events(session_id, state, cancel_check=cancel_check)
+                    self.iter_events(
+                        session_id, state, cancel_check=cancel_check, materialize_rollout=False
+                    )
                 ):
                     builder.add(position, event)
                 snapshot = builder.snapshot(
@@ -1197,6 +1226,16 @@ class JsonlSessionStore:
                     check_cancel(cancel_check)
                     observation.published = False
                     observe_query_maintenance_failure(session_id, exc)
+                if position_ids is not None:
+                    selected_ids = position_ids | {event.uuid for event in snapshot.events}
+                    snapshot = replace(
+                        snapshot,
+                        raw_event_indices={
+                            uid: pos
+                            for uid, pos in snapshot.raw_event_indices.items()
+                            if uid in selected_ids
+                        },
+                    )
                 return snapshot
 
     def diagnostic_export(self, session_id: str, *, turn_limit: int | None) -> dict[str, object]:
@@ -1243,76 +1282,44 @@ class JsonlSessionStore:
                 observation.cache_source = "memory"
                 check_cancel(cancel_check)
                 return cached
-            with self._business_index.building(session_id, cancel_check):
-                try:
-                    disk = self._business_index.read(
-                        session_id, self._source_version(path), cancel_check
-                    )
-                except (
-                    sqlite3.Error,
-                    OSError,
-                    LockException,
-                    ValueError,
-                    SessionCorruptError,
-                ) as exc:
-                    check_cancel(cancel_check)
-                    observe_query_maintenance_failure(session_id, exc)
-                    disk = None
-                if disk is not None:
-                    observation.action = "hit"
-                    observation.cache_source = "persistent"
-                    self._query_cache.put(
-                        disk,
-                        is_current=lambda: self._source_version(path) == disk.source_version,
-                        observation=observation,
-                    )
-                    return disk
-                observation.action = "rebuilt"
-                observation.cache_source = "journal"
-                with self._business_builds.capture(session_id) as tail:
-                    records, diagnostics, version, count = self._read_records(
-                        session_id, query_only=True, cancel_check=cancel_check
-                    )
-                    snapshot = SessionQuerySnapshot.build(
-                        records,
-                        raw_event_count=count,
-                        diagnostics=diagnostics,
-                        source_version=version,
-                        cancel_check=cancel_check,
-                    )
-                    # At most one catch-up retry; source churn must never cause
-                    # unbounded full JSONL rescans in a single read.
-                    for _ in range(2):
-                        check_cancel(cancel_check)
-                        snapshot = self._business_builds.catch_up(tail, snapshot)
-
-                        def still_current(current: SessionQuerySnapshot = snapshot) -> bool:
-                            return self._source_version(path) == current.source_version
-
-                        try:
-                            if self._business_index.publish(
-                                snapshot,
-                                still_current,
-                                cancel_check,
-                            ):
-                                break
-                        except (sqlite3.Error, OSError, LockException) as exc:
-                            check_cancel(cancel_check)
-                            observe_query_maintenance_failure(session_id, exc)
-                            break
-                    self._query_cache.put(
-                        snapshot,
-                        is_current=lambda: self._source_version(path) == snapshot.source_version,
-                        observation=observation,
-                    )
-                    return snapshot
+            # Full snapshots remain an explicit compatibility/maintenance read.
+            # Bootstrap is shared with point/range reads and never stages a
+            # second complete projection in memory before publishing the index.
+            version = self._history_version(session_id, cancel_check, observation)
+            disk = self._business_index.read(session_id, version, cancel_check)
+            if disk is None:
+                raise ValueError("history_changed")
+            if observation.cache_source is None:
+                observation.action = "hit"
+                observation.cache_source = "persistent"
+            self._query_cache.put(
+                disk,
+                is_current=lambda: self._source_version(path) == version,
+                observation=observation,
+            )
+            return disk
 
     def discard_business_index(self, session_id: str) -> None:
         """Discard disposable data only; never change the authoritative journal."""
         self._query_cache.discard(session_id)
         self._business_index.delete(session_id)
 
-    def _history_version(self, session_id: str, cancel_check: CancelCheck) -> SourceVersion:
+    def _history_version(
+        self,
+        session_id: str,
+        cancel_check: CancelCheck,
+        observation: SessionQueryObservation | None = None,
+    ) -> SourceVersion:
+        if observation is not None:
+            return self._ensure_history_version(session_id, cancel_check, observation)
+        with observe_session_query(session_id) as own:
+            own.action = "hit"
+            own.cache_source = "persistent"
+            return self._ensure_history_version(session_id, cancel_check, own)
+
+    def _ensure_history_version(
+        self, session_id: str, cancel_check: CancelCheck, observation: SessionQueryObservation
+    ) -> SourceVersion:
         path = self._existing_path(session_id)
         if path is None:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
@@ -1323,20 +1330,42 @@ class JsonlSessionStore:
         except (sqlite3.Error, OSError, LockException) as exc:
             check_cancel(cancel_check)
             observe_query_maintenance_failure(session_id, exc)
-        snapshot = self.query(session_id, cancel_check=cancel_check)
-        if snapshot.source_version is not None and not self._business_index.matches(
-            session_id, snapshot.source_version, cancel_check
-        ):
-            self._business_index.publish(
-                snapshot,
-                lambda: self._source_version(path) == snapshot.source_version,
-                cancel_check,
-            )
-        if snapshot.source_version is None or not self._business_index.matches(
-            session_id, snapshot.source_version, cancel_check
-        ):
-            raise SessionPersistError("会话历史索引暂不可用，请重试")
-        return snapshot.source_version
+            if (getattr(exc, "sqlite_errorcode", 0) & 0xFF) in {
+                sqlite3.SQLITE_CORRUPT,
+                sqlite3.SQLITE_NOTADB,
+                sqlite3.SQLITE_SCHEMA,
+            }:
+                self.discard_business_index(session_id)
+        # An ordinary point/page miss may bootstrap one session, but must not
+        # allocate a full SessionQuerySnapshot or expand historical rollout.
+        with self._business_index.building(session_id, cancel_check):
+            version = self._source_version(path)
+            if self._business_index.matches(session_id, version, cancel_check):
+                return version
+            state = SessionReadState()
+            with self._business_builds.capture(session_id) as tail:
+
+                def records() -> Iterator[Event]:
+                    yield from self.iter_events(
+                        session_id, state, cancel_check=cancel_check, materialize_rollout=False
+                    )
+                    yield from self._business_builds.stream_catch_up(tail, state)
+
+                observation.action = "rebuilt"
+                observation.cache_source = "journal"
+                observation.published = self._business_index.rebuild_stream(
+                    session_id,
+                    version,
+                    records(),
+                    state,
+                    lambda: self._source_version(path) == state.source_version,
+                    cancel_check,
+                )
+                observation.publish_reason = "stored" if observation.published else "source_changed"
+                if not observation.published:
+                    raise ValueError("history_changed")
+            assert state.source_version is not None
+            return state.source_version
 
     def query_page(
         self,
@@ -1788,6 +1817,12 @@ class NotifyingSessionStore:
         self._broker = broker
 
     @property
+    def reader(self) -> SessionReader:
+        from .reading import session_reader
+
+        return session_reader(self._inner)
+
+    @property
     def inner(self) -> SessionStore:
         return self._inner
 
@@ -1835,13 +1870,13 @@ class NotifyingSessionStore:
         method = getattr(self._inner, "session_head", None)
         if callable(method):
             return cast(Session, method(session_id))
-        return self._inner.load(session_id)
+        raise NotImplementedError("store does not support session identity reads")
 
     def composer_session(self, session_id: str, *, cancel_check: CancelCheck = None) -> Session:
         method = getattr(self._inner, "composer_session", None)
         if callable(method):
             return cast(Session, method(session_id, cancel_check=cancel_check))
-        return load_session(self._inner, session_id, cancel_check=cancel_check)
+        raise NotImplementedError("store does not support configuration reads")
 
     def history_window(self, session_id: str, **kwargs: Any) -> HistoryWindow:
         method = getattr(self._inner, "history_window", None)

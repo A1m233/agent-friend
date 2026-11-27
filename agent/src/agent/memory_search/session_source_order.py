@@ -5,7 +5,7 @@ from __future__ import annotations
 from memory.search.execution import CancelCheck, check_cancel
 
 from ..sessions import SessionError, SessionStore
-from ..sessions.recall import query_session_recall
+from ..sessions.reading import session_reader
 
 
 class SessionStoreSourceOrderProvider:
@@ -25,22 +25,10 @@ class SessionStoreSourceOrderProvider:
     ) -> tuple[str, ...] | None:
         check_cancel(cancel_check)
         try:
-            session = query_session_recall(self._store, session_id, cancel_check=cancel_check)
+            with session_reader(self._store).snapshot(
+                session_id, cancel_check=cancel_check
+            ) as read:
+                return read.conversation_ids()
         except SessionError:
             check_cancel(cancel_check)
             return None
-        result: list[str] = []
-        for event in session.events:
-            check_cancel(cancel_check)
-            if _is_completed_conversation_event(event.type, event.payload):
-                result.append(event.uuid)
-        return tuple(result)
-
-
-def _is_completed_conversation_event(event_type: str, payload: dict[str, object]) -> bool:
-    if event_type not in ("user_message", "assistant_message"):
-        return False
-    if event_type == "assistant_message" and payload.get("partial"):
-        return False
-    content = payload.get("content")
-    return isinstance(content, str) and bool(content.strip())

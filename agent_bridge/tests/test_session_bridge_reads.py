@@ -25,6 +25,7 @@ def test_polling_and_outbound_reads_use_presence_and_active_projection(
     manager = SessionManager(store=store)
     runtime = MagicMock()
     runtime.persistent_session_manager = manager
+    runtime.persistent_store = store
     bridge = SessionBridge(runtime)
 
     def no_full_load(*args: object, **kwargs: object) -> Session:

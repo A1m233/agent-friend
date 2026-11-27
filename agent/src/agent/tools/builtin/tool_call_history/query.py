@@ -7,7 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ....sessions.events import Event
-from ....sessions.query import SessionQuerySnapshot
+from ....sessions.reading import EventFilter, SessionRead
 
 RECOVERY_TOOLS = {"inspect_tool_calls", "recover_tool_result"}
 
@@ -33,55 +33,73 @@ def _key(event: Event, field: str, value: str) -> tuple[str, str, str]:
 
 
 class CallHistory:
-    def __init__(self, snapshot: SessionQuerySnapshot, check: Callable[[], None]) -> None:
-        self.calls: list[Event] = []
-        self.by_ref: dict[str, Event] = {}
-        self.requests: dict[tuple[str, str, str], list[Event]] = {}
-        self.results: dict[tuple[str, str, str], list[Event]] = {}
-        self.rewrite = "initial"
-        for event in snapshot.events:
-            check()
-            if event.type == "turn_rewrite":
-                self.rewrite = event.uuid
-        for event in snapshot.active_events:
-            check()
-            if (
-                event.type == "tool_call_request"
-                and event.payload.get("tool_name") not in RECOVERY_TOOLS
-            ):
-                self.calls.append(event)
-                self.by_ref[event.uuid] = event
-                for field in ("event_tool_call_id", "tool_call_id"):
-                    value = event.payload.get(field)
-                    if isinstance(value, str) and value:
-                        key = _key(event, field, value)
-                        self.requests.setdefault(key, []).append(event)
-            elif event.type == "tool_call_result":
-                for field in ("event_tool_call_id", "tool_call_id"):
-                    value = event.payload.get(field)
-                    if isinstance(value, str) and value:
-                        key = _key(event, field, value)
-                        self.results.setdefault(key, []).append(event)
+    def __init__(self, read: SessionRead, check: Callable[[], None]) -> None:
+        self.read = read
+        self.check = check
+        marker = read.latest("turn_rewrite", active=False)
+        self.rewrite = marker.uuid if marker else "initial"
+        self._results: dict[str, tuple[Event | None, bool]] = {}
+
+    def call(self, ref: str) -> tuple[int, Event] | None:
+        rows = self.read.events(
+            EventFilter(
+                ids=(ref,), kinds=("tool_call_request",), exclude_tools=tuple(RECOVERY_TOOLS)
+            ),
+            limit=1,
+        )
+        return rows[0] if rows else None
+
+    def calls_before(self, before: int | None, limit: int = 100) -> tuple[tuple[int, Event], ...]:
+        return self.read.events(
+            EventFilter(
+                kinds=("tool_call_request",), before=before, exclude_tools=tuple(RECOVERY_TOOLS)
+            ),
+            limit=limit,
+            reverse=True,
+        )
 
     def result(self, call: Event) -> tuple[Event | None, bool]:
+        if call.uuid in self._results:
+            return self._results[call.uuid]
+        result = self._result(call)
+        self._results[call.uuid] = result
+        return result
+
+    def _result(self, call: Event) -> tuple[Event | None, bool]:
         for field in ("event_tool_call_id", "tool_call_id"):
             value = call.payload.get(field)
             if not isinstance(value, str) or not value:
                 continue
-            key = _key(call, field, value)
-            if len(self.requests.get(key, [])) != 1:
-                return None, True
-            matches = self.results.get(key, [])
-            matches = [
-                item
-                for item in matches
-                if item.payload.get("tool_name") == call.payload.get("tool_name")
-            ]
-            if len(matches) > 1:
+            # Explicit IDs are session-wide; provider IDs are run-local. Select
+            # only this association, preserving duplicate-request/result conflicts.
+            selection = EventFilter(
+                event_tool_call_id=value if field == "event_tool_call_id" else None,
+                tool_call_id=value if field == "tool_call_id" else None,
+                kinds=("tool_call_request", "tool_call_result"),
+            )
+            requests = 0
+            matches = []
+            for _, event in self.read.scan(selection, purpose="tool association"):
+                self.check()
+                if field == "tool_call_id" and _key(event, field, value) != _key(
+                    call, field, value
+                ):
+                    continue
+                if (
+                    event.type == "tool_call_request"
+                    and event.payload.get("tool_name") not in RECOVERY_TOOLS
+                ):
+                    requests += 1
+                elif event.type == "tool_call_result" and event.payload.get(
+                    "tool_name"
+                ) == call.payload.get("tool_name"):
+                    matches.append(event)
+                if requests > 1 or len(matches) > 1:
+                    return None, True
+            if requests != 1:
                 return None, True
             if matches:
                 return matches[0], False
-            # An explicit identity must not fall back to a reused provider ID.
             if field == "event_tool_call_id":
                 return None, False
         return None, False

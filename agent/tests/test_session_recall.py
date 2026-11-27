@@ -18,7 +18,7 @@ from agent.sessions import JsonlSessionStore, Session, SessionCorruptError, Sess
 from agent.sessions.events import Event, EventType
 from agent.sessions.metadata import SessionMetadataStore
 from agent.sessions.query import CancelCheck
-from agent.sessions.recall import query_session_recall
+from agent.sessions.recall import RecallBuilder, SessionRecallSnapshot, query_session_recall
 from agent.sessions.store import SessionStore
 from agent.sessions.store_types import SessionReadState
 from agent.tools.builtin.conversation_history.tool import ConversationHistoryTool
@@ -218,9 +218,15 @@ def test_cancelled_build_is_not_published_and_cancelled_hit_is_not_discarded(
     original = store.iter_events
 
     def cancelling(
-        sid: str, state: SessionReadState, *, cancel_check: CancelCheck = None
+        sid: str,
+        state: SessionReadState,
+        *,
+        cancel_check: CancelCheck = None,
+        materialize_rollout: bool = True,
     ) -> Iterator[Event]:
-        for item in original(sid, state, cancel_check=cancel_check):
+        for item in original(
+            sid, state, cancel_check=cancel_check, materialize_rollout=materialize_rollout
+        ):
             yield item
             token.cancel(CancelReason.EXPLICIT_REQUEST)
 
@@ -295,8 +301,25 @@ def test_recall_candidates_match_business_projection(
             ),
         ],
     )
+
+    def oracle_text(
+        sid: str, *, cancel_check: CancelCheck = None, boundary_id: str | None = None
+    ) -> SessionRecallSnapshot:
+        source = store.query(sid, cancel_check=cancel_check)
+        builder = RecallBuilder()
+        for e in source.events:
+            builder.add(source.raw_event_indices[e.uuid], e)
+        return builder.snapshot(
+            count=source.raw_event_count,
+            version=source.source_version,
+            diagnostics=source.load_diagnostics,
+        )
+
     oracle = cast(
-        SessionStore, SimpleNamespace(query=store.query, list_activity=store.list_activity)
+        SessionStore,
+        SimpleNamespace(
+            reader=SimpleNamespace(recall_text=oracle_text), list_activity=store.list_activity
+        ),
     )
     request = SearchRequest(
         text=text,
@@ -310,7 +333,7 @@ def test_recall_candidates_match_business_projection(
     assert actual
     assert actual == SessionHistorySource(oracle).search(query, request=request, limit=10)
     assert SessionStoreSourceOrderProvider(store).active_conversation_event_uuids("one") == (
-        SessionStoreSourceOrderProvider(oracle).active_conversation_event_uuids("one")
+        tuple(e.uuid for e in oracle_text("one").events)
     )
 
 

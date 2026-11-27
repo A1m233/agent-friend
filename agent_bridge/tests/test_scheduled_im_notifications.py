@@ -22,6 +22,8 @@ from agent_bridge.protocols.im.provider import OutboundSendResult
 from agent_bridge.protocols.im.runtime import IMRuntime
 from agent_bridge.scheduled_tasks.notifications import ScheduledIMNotifications, final_run_text
 
+from agent import JsonlSessionStore, Session
+
 NOW = datetime(2026, 10, 27, tzinfo=UTC)
 A = "qq|bot|c2c|user-a|session"
 B = "qq|bot|c2c|user-b|session"
@@ -48,9 +50,11 @@ def setup(tmp_path: Path, *, enabled: bool = True, outcome: str = "completed") -
     store.mark_terminal(
         occurrence.id, outcome=ScheduledOccurrenceOutcome(outcome), reason_code="test", now=NOW
     )
-    sessions = Mock()
-    sessions.query.return_value = SimpleNamespace(
-        active_events=[
+    sessions = JsonlSessionStore(tmp_path / "sessions")
+    sessions.create(Session.new("scheduled", "default", "fake/model", session_id="session"))
+    sessions.append_events(
+        "session",
+        [
             event("assistant_message", claim.run_id or "", content="result", phase="final_answer"),
             event(
                 "assistant_message",
@@ -58,7 +62,7 @@ def setup(tmp_path: Path, *, enabled: bool = True, outcome: str = "completed") -
                 content="PRIVATE OTHER RESULT",
                 phase="final_answer",
             ),
-        ]
+        ],
     )
     im = Mock()
     im.presence_snapshots.return_value = [
@@ -88,7 +92,8 @@ def test_empty_failure_has_safe_status_without_model_or_business_rerun(
     tmp_path: Path, outcome: str
 ) -> None:
     store, _, _, occurrence, sessions, im, worker = setup(tmp_path, outcome=outcome)
-    sessions.query.return_value.active_events = []
+    sessions.delete("session")
+    sessions.create(Session.new("empty", "default", "fake/model", session_id="session"))
     worker.deliver_pending()
     assert im.send_proactive.call_count == 2
     assert "请在原会话查看执行记录" in im.send_proactive.call_args.args[1]
@@ -179,7 +184,7 @@ def test_receipt_write_failure_does_not_repeat_external_send(
 
 def test_pre_submit_rejection_can_notify_without_session_body(tmp_path: Path) -> None:
     store, _, _, occurrence, sessions, im, worker = setup(tmp_path, outcome="rejected")
-    sessions.query.side_effect = FileNotFoundError("no conversation yet")
+    sessions.delete("session")
     worker.deliver_pending()
     assert "请求未能开始执行" in im.send_proactive.call_args.args[1]
     assert store.notifications.summary(occurrence.id)["state"] == "settled"

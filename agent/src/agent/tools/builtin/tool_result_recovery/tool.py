@@ -6,6 +6,7 @@ from typing import Any, ClassVar
 
 from ....attachments.models import parse_image_refs
 from ....sessions.errors import SessionNotFoundError
+from ....sessions.reading import EventFilter, session_reader
 from ....sessions.store import SessionStore
 from ....sessions.tool_execution_evidence import (
     ToolExecutionEvidenceError,
@@ -125,31 +126,19 @@ class ToolResultRecoveryTool:
             )
 
         try:
-            session = self._session_store.load(session_id)
+            with session_reader(self._session_store).snapshot(session_id) as read:
+                rows = read.events(
+                    EventFilter(
+                        kinds=("tool_call_result",),
+                        ids=(str(result_ref),) if has_result_ref else None,
+                        evidence_ref=str(evidence_ref) if has_evidence_ref else None,
+                    ),
+                    limit=1,
+                )
+                event = rows[0][1] if rows else None
         except SessionNotFoundError:
             return ToolResult("当前会话不存在，无法恢复工具结果。", is_error=True)
 
-        if has_result_ref:
-            assert isinstance(result_ref, str)
-            event = next(
-                (
-                    item
-                    for item in session.active_events
-                    if item.type == "tool_call_result" and item.uuid == result_ref
-                ),
-                None,
-            )
-        else:
-            assert isinstance(evidence_ref, str)
-            event = next(
-                (
-                    item
-                    for item in session.active_events
-                    if item.type == "tool_call_result"
-                    and item.payload.get("evidence_ref") == evidence_ref
-                ),
-                None,
-            )
         if event is None:
             return ToolResult(
                 "当前会话的有效历史中没有这个引用。",

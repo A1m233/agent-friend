@@ -17,6 +17,7 @@ from agent.session_delivery import SessionDeliveryStore
 from agent.sessions.access.service import ConversationAccessError
 from agent.sessions.errors import SessionNotFoundError, SessionWriterConflictError
 from agent.sessions.manager import delivered_message_events
+from agent.sessions.reading import EventFilter
 
 from ..protocols.im.delivery.once import DeliveryAttempt, deliver_once
 
@@ -113,14 +114,8 @@ class SessionDeliveryService:
         attachments = []
         asset_ids = args.get("attachment_asset_ids", [])
         if asset_ids:
-            source_session = sessions.query(source)
-            known = {
-                str(item.get("asset_id"))
-                for event in source_session.active_events
-                for key in ("attachments", "images")
-                for item in event.payload.get(key, [])
-                if isinstance(item, dict)
-            }
+            with self.runtime.persistent_session_manager.reader.snapshot(source) as read:
+                known = {asset_id for asset_id in asset_ids if read.has_asset(asset_id)}
             assets = self.runtime.attachment_store
             if assets is None or not set(asset_ids) <= known:
                 raise ConversationAccessError(
@@ -145,6 +140,7 @@ class SessionDeliveryService:
         if refs := args.get("source_messages"):
             if not isinstance(refs, list) or len(refs) > 8:
                 raise ConversationAccessError("invalid_sources", "最多关联八条已读取消息。")
+            by_session: dict[str, list[str]] = {}
             for ref in refs:
                 if not isinstance(ref, dict) or set(ref) != {"session_id", "message_id"}:
                     raise ConversationAccessError(
@@ -153,13 +149,21 @@ class SessionDeliveryService:
                 sid, mid = ref["session_id"], ref["message_id"]
                 if not isinstance(sid, str) or not isinstance(mid, str) or not sessions.exists(sid):
                     raise ConversationAccessError("source_missing", "来源消息不可用，请重新读取。")
-                event = next((e for e in sessions.query(sid).active_events if e.uuid == mid), None)
-                if event is None or not self.source_was_read(
-                    source, sid, mid, content_version(str(event.payload.get("content", "")))
-                ):
-                    raise ConversationAccessError(
-                        "source_not_read", "来源未读取或已变化，请先用read_conversation读取原消息。"
-                    )
+                by_session.setdefault(sid, []).append(mid)
+            for sid, ids in by_session.items():
+                with self.runtime.persistent_session_manager.reader.snapshot(sid) as read:
+                    events = {
+                        e.uuid: e for _, e in read.events(EventFilter(ids=tuple(ids)), limit=8)
+                    }
+                    for mid in ids:
+                        event = events.get(mid)
+                        if event is None or not self.source_was_read(
+                            source, sid, mid, content_version(str(event.payload.get("content", "")))
+                        ):
+                            raise ConversationAccessError(
+                                "source_not_read",
+                                "来源未读取或已变化，请先用read_conversation读取原消息。",
+                            )
             request["source_messages"] = refs
         if (
             "notify_im" not in args

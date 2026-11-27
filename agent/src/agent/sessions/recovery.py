@@ -13,7 +13,8 @@ from typing import Protocol
 from uuid import uuid4
 
 from .events import Event
-from .query import CancelCheck, check_cancel, load_business_session, load_session
+from .query import CancelCheck, check_cancel
+from .reading.maintenance import maintenance_session
 from .session import Session
 from .store import SessionStore, navigation_summaries
 from .tool_execution_evidence import (
@@ -142,7 +143,7 @@ class ToolTransactionReconciler:
 
     def _reconcile_summary(self, session_id: str) -> ReconciliationSummary:
         # Scope the full result to this call, including the last scanned session.
-        session = load_business_session(self._store, session_id)
+        session = maintenance_session(self._store, session_id, purpose="tool_transaction_recovery")
         report = self.reconcile_session(session_id, loaded_session=session)
         return ReconciliationSummary(
             session_id=session_id,
@@ -175,7 +176,13 @@ class ToolTransactionReconciler:
         ):
             session = loaded_session
         else:
-            session = load_session(self._store, session_id, cancel_check=cancel_check)
+            session = maintenance_session(
+                self._store,
+                session_id,
+                purpose="tool_transaction_recovery",
+                raw=True,
+                cancel_check=cancel_check,
+            )
         requests: dict[tuple[str, str], Event] = {}
         results: set[tuple[str, str]] = set()
         checkpoints: dict[tuple[str, str], Event] = {}

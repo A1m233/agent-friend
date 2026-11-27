@@ -19,6 +19,7 @@ from ..command_runtime.workspace import (
     reject_linked_path,
     session_workspace_path,
 )
+from ..sessions.reading import session_reader
 from ..sessions.store import SessionStore
 
 
@@ -73,43 +74,61 @@ class SessionFileService:
         self.root = root.absolute()
         self._lock = RLock()
 
-    def files(self, session_id: str) -> list[SessionFile]:
+    @staticmethod
+    def _file(row: tuple[str, str, str, object]) -> SessionFile:
+        file_ref, message_id, kind, raw = row
+        try:
+            ref = AttachmentRef.from_dict(raw)  # type: ignore[arg-type]
+        except (KeyError, ValueError, TypeError) as exc:
+            raise SessionFileError("session_file_reference_invalid") from exc
+        if (
+            not re.fullmatch(r"[0-9a-f]{64}", ref.asset_id)
+            or ref.asset_id != ref.sha256
+            or ref.size_bytes < 0
+        ):
+            raise SessionFileError("session_file_reference_invalid")
+        return SessionFile(
+            file_ref,
+            message_id,
+            ref,
+            "assistant_generated" if kind == "assistant_message" else "user_upload",
+        )
+
+    def page(
+        self, session_id: str, *, offset: int = 0, limit: int = 20
+    ) -> tuple[list[SessionFile], int]:
         if not session_id:
             raise SessionFileError("session_context_missing")
-        session = self.sessions.load(session_id)
-        found = []
-        for event in session.active_events:
-            if event.type not in {"user_message", "assistant_message"}:
-                continue
-            for index, raw in enumerate(event.payload.get("attachments") or []):
-                try:
-                    ref = AttachmentRef.from_dict(raw)
-                except (KeyError, ValueError, TypeError) as exc:
-                    raise SessionFileError("session_file_reference_invalid") from exc
-                if (
-                    not re.fullmatch(r"[0-9a-f]{64}", ref.asset_id)
-                    or ref.asset_id != ref.sha256
-                    or ref.size_bytes < 0
-                ):
-                    raise SessionFileError("session_file_reference_invalid")
-                identity = hashlib.sha256(f"{event.uuid}:{index}".encode()).hexdigest()
-                found.append(
-                    SessionFile(
-                        f"file-{identity}",
-                        event.uuid,
-                        ref,
-                        "assistant_generated"
-                        if event.type == "assistant_message"
-                        else "user_upload",
-                    )
-                )
-        return found
+        with session_reader(self.sessions).snapshot(session_id) as read:
+            rows, total = read.attachments(offset=offset, limit=limit, count=True)
+            return [self._file(row) for row in rows], int(total or 0)
+
+    def files(self, session_id: str, *, message_id: str | None = None) -> list[SessionFile]:
+        if not session_id:
+            raise SessionFileError("session_context_missing")
+        with session_reader(self.sessions).snapshot(session_id) as read:
+            found: list[SessionFile] = []
+            offset = 0
+            while True:
+                rows, _ = read.attachments(message_id=message_id, offset=offset)
+                found.extend(self._file(row) for row in rows)
+                if len(rows) < 100:
+                    return found
+                offset += len(rows)
+
+    def recent_images(self, session_id: str, count: int) -> list[SessionFile]:
+        with session_reader(self.sessions).snapshot(session_id) as read:
+            rows, _ = read.attachments(limit=count, image_only=True, reverse=True)
+            return [self._file(row) for row in reversed(rows)]
+
+    def file(self, session_id: str, file_ref: str) -> SessionFile | None:
+        with session_reader(self.sessions).snapshot(session_id) as read:
+            rows, _ = read.attachments(file_ref=file_ref, limit=1)
+            return self._file(rows[0]) if rows else None
 
     def read_bytes(self, session_id: str, file_ref: str, *, max_bytes: int) -> tuple[bytes, str]:
         """Read a bounded original through an active-session reference, not a workspace path."""
-        selected = next(
-            (item for item in self.files(session_id) if item.file_ref == file_ref), None
-        )
+        selected = self.file(session_id, file_ref)
         if selected is None:
             raise SessionFileError("session_file_not_found")
         ref = selected.attachment
@@ -123,9 +142,7 @@ class SessionFileService:
 
     def prepare(self, session_id: str, file_ref: str) -> dict[str, Any]:
         with self._lock:
-            selected = next(
-                (item for item in self.files(session_id) if item.file_ref == file_ref), None
-            )
+            selected = self.file(session_id, file_ref)
             if selected is None:
                 raise SessionFileError("session_file_not_found")
             ref = selected.attachment

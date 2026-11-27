@@ -118,8 +118,7 @@ def test_prepared_admission_avoids_rebuilding_business_history(
         monkeypatch.setattr(manager, "query", forbidden)
         service.validate_target(session.session_id)
         manager.cancel_preparation(session.session_id)
-        with pytest.raises(AssertionError, match="full business query"):
-            service.validate_target(session.session_id)
+        service.validate_target(session.session_id)  # Cold admission uses the validated index too.
     finally:
         manager.close()
 

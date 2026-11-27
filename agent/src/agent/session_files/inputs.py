@@ -24,11 +24,7 @@ class SessionFileInputs:
         self._prepared = []
         if event_id is None:
             return
-        files = [
-            item
-            for item in self.service.files(self.session_id)
-            if item.source_message_ref == event_id
-        ]
+        files = self.service.files(self.session_id, message_id=event_id)
         prepared = []
         for item in files:
             if cancel_check is not None:

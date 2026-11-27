@@ -26,15 +26,13 @@ class MessagePage:
 # Business messages only: never mistake a synthetic user input or a hidden
 # system turn for fresh human activity. Filtering happens before LIMIT/counts.
 _VISIBLE = """e.active=1 AND e.kind IN ('user_message','assistant_message')
-AND COALESCE(json_extract(e.body,'$.payload.partial'),0)=0
-AND NOT (e.kind='user_message'
-    AND json_extract(e.body,'$.payload.request_source.kind') IS NOT NULL)
+AND v.partial=0
+AND NOT (e.kind='user_message' AND v.request_source=1)
 AND NOT EXISTS (
-    SELECT 1 FROM events t WHERE t.active=1 AND t.kind='system_trigger'
-    AND json_extract(t.body,'$.meta.run_id') IS NOT NULL
-    AND json_extract(t.body,'$.meta.run_id')=json_extract(e.body,'$.meta.run_id')
-    AND COALESCE(json_extract(t.body,'$.payload.presentation'),'ambient')!='conversation'
+    SELECT 1 FROM text_views h JOIN events t ON t.uuid=h.uuid
+    WHERE t.active=1 AND h.hidden_trigger=1 AND h.run_id=v.run_id
 )"""
+_FROM = "events e JOIN text_views v ON e.uuid=v.uuid"
 
 
 def read_message_page(
@@ -48,6 +46,7 @@ def read_message_page(
     anchor_message_id: str | None = None,
     forward: bool = False,
     cancel_check: CancelCheck = None,
+    include_counts: bool = True,
 ) -> MessagePage:
     """Read at most limit messages in a fixed raw-event interval (lower, upper)."""
     if not 1 <= limit <= 100 or lower < -1:
@@ -63,7 +62,7 @@ def read_message_page(
     anchor_position = None
     if anchor_message_id is not None:
         anchor = db.execute(
-            f"SELECT e.position FROM events e WHERE e.uuid=? AND {_VISIBLE}",
+            f"SELECT e.position FROM {_FROM} WHERE e.uuid=? AND {_VISIBLE}",
             (anchor_message_id,),
         ).fetchone()
         if anchor is not None:
@@ -73,19 +72,20 @@ def read_message_page(
         raise ValueError("invalid message range")
     where = f"{_VISIBLE} AND e.position>? AND e.position<?"
     counts = {"user": 0, "assistant": 0, "proactive": 0}
-    for row in db.execute(
-        f"SELECT e.kind, COUNT(*) AS n FROM events e WHERE {where} GROUP BY e.kind",
-        (lower, end),
-    ):
-        counts["user" if row["kind"] == "user_message" else "assistant"] = row["n"]
-    counts["proactive"] = db.execute(
-        f"SELECT COUNT(*) FROM events e WHERE {where} AND e.kind='assistant_message' "
-        "AND json_extract(e.body,'$.meta.message_source.kind')='agent_initiated'",
-        (lower, end),
-    ).fetchone()[0]
+    if include_counts:
+        for row in db.execute(
+            f"SELECT e.kind, COUNT(*) AS n FROM {_FROM} WHERE {where} GROUP BY e.kind",
+            (lower, end),
+        ):
+            counts["user" if row["kind"] == "user_message" else "assistant"] = row["n"]
+        counts["proactive"] = db.execute(
+            f"SELECT COUNT(*) FROM {_FROM} WHERE {where} AND e.kind='assistant_message' "
+            "AND v.proactive=1",
+            (lower, end),
+        ).fetchone()[0]
     order = "ASC" if forward else "DESC"
     rows = db.execute(
-        f"SELECT e.position,e.body FROM events e WHERE {where} ORDER BY e.position {order} LIMIT ?",
+        f"SELECT e.position,e.body FROM {_FROM} WHERE {where} ORDER BY e.position {order} LIMIT ?",
         (lower, end, limit + 1),
     ).fetchall()
     selected = rows[:limit]

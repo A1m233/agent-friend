@@ -115,7 +115,7 @@ class ImagegenTool:
         refs = args.get("reference_images", [])
         count = args.get("num_last_images_to_include")
         if count is not None:
-            recent = [f.file_ref for f in self.files.files(session) if f.attachment.kind == "image"]
+            recent = [f.file_ref for f in self.files.recent_images(session, count)]
             if len(recent) < count:
                 raise SessionFileError("session_reference_images_missing")
             refs = [{"file_ref": ref} for ref in recent[-count:]]

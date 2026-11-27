@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Literal
 
 from .metadata import SessionMetadataStore
+from .reading import session_reader
 from .store import SessionStore, navigation_summaries
 
 _LEADING_TITLE_RE = re.compile(r"^\s*(.+?)\s*[（(【\[]")
@@ -51,6 +52,13 @@ class SessionCatalog:
     ) -> None:
         self._store = store
         self._metadata_store = metadata_store
+
+    def contains(self, session_id: str) -> bool:
+        reader = session_reader(self._store)
+        return reader.exists(session_id) and reader.identity(session_id).origin_kind not in {
+            "scheduled_task",
+            "inner_world",
+        }
 
     def list_all(self) -> tuple[SessionDescriptor, ...]:
         metadata = self._metadata_store.load_all() if self._metadata_store is not None else {}

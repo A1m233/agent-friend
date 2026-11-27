@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import closing, contextmanager
 from dataclasses import asdict, replace
 from hashlib import sha256
@@ -21,8 +21,8 @@ from ..query import CancelCheck, SessionHistoryPage, SessionQuerySnapshot, check
 from ..read_views.display import display_event
 from ..read_views.journal import HistoryWindow
 from ..session import Session
-from ..store_types import SessionLoadDiagnostics, SourceVersion
-from . import chat_tail
+from ..store_types import SessionLoadDiagnostics, SessionReadState, SourceVersion
+from . import build, chat_tail, text_views
 from .pages import page, recovery_body
 
 
@@ -30,7 +30,7 @@ def dump(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-_SCHEMA = 4
+_SCHEMA = 5
 _CHAT_BODIES = "CREATE TABLE IF NOT EXISTS chat_bodies (uuid TEXT PRIMARY KEY, body TEXT NOT NULL)"
 _DDL = (
     "CREATE TABLE state (id INTEGER PRIMARY KEY CHECK(id=1), version TEXT NOT NULL, "
@@ -39,7 +39,22 @@ _DDL = (
     "kind TEXT NOT NULL, body TEXT NOT NULL, active INTEGER NOT NULL, recovery TEXT)",
     "CREATE INDEX active_order ON events(active,position)",
     "CREATE INDEX turn_order ON events(active,kind,position)",
+    "CREATE INDEX kind_order ON events(kind,position)",
+    "CREATE INDEX run_order ON events(active,json_extract(body,'$.meta.run_id'),position)",
+    "CREATE INDEX evidence_lookup ON events(json_extract(body,'$.payload.evidence_ref'),active)",
+    "CREATE INDEX tool_lookup ON events(json_extract(body,'$.payload.event_tool_call_id'),active)",
+    "CREATE INDEX provider_tool_lookup ON events(json_extract(body,'$.payload.tool_call_id'),active)",
+    "CREATE INDEX attachment_order ON events(active,position) WHERE "
+    "json_array_length(body,'$.payload.attachments')>0",
     "CREATE TABLE inactive (uuid TEXT PRIMARY KEY)",
+    "CREATE TABLE attachment_refs (file_ref TEXT PRIMARY KEY, uuid TEXT NOT NULL, ordinal INTEGER NOT NULL, asset_id TEXT, body TEXT NOT NULL, position INTEGER NOT NULL, category TEXT)",
+    "CREATE INDEX attachment_asset ON attachment_refs(asset_id,uuid)",
+    "CREATE INDEX attachment_event ON attachment_refs(uuid,ordinal)",
+    "CREATE INDEX attachment_page ON attachment_refs(position,ordinal)",
+    "CREATE INDEX attachment_image_page ON attachment_refs(category,position,ordinal)",
+    "CREATE TABLE asset_refs (asset_id TEXT NOT NULL, uuid TEXT NOT NULL, PRIMARY KEY(asset_id,uuid))",
+    "CREATE TABLE journal_positions (uuid TEXT PRIMARY KEY, position INTEGER UNIQUE NOT NULL, kind TEXT NOT NULL)",
+    *text_views.DDL,
 )
 
 
@@ -119,8 +134,29 @@ class BusinessIndex:
                                 "SELECT name FROM sqlite_master WHERE type='table'"
                             )
                         }
-                        if version != _SCHEMA or not {"state", "events", "inactive"} <= tables:
-                            for table in ("state", "events", "inactive", "runs"):
+                        if (
+                            version != _SCHEMA
+                            or not {
+                                "state",
+                                "events",
+                                "inactive",
+                                "text_views",
+                                "journal_positions",
+                                "asset_refs",
+                                "attachment_refs",
+                            }
+                            <= tables
+                        ):
+                            for table in (
+                                "state",
+                                "events",
+                                "inactive",
+                                "runs",
+                                "attachment_refs",
+                                "asset_refs",
+                                "text_views",
+                                "journal_positions",
+                            ):
                                 db.execute(f"DROP TABLE IF EXISTS {table}")
                             for statement in _DDL:
                                 db.execute(statement)
@@ -156,11 +192,73 @@ class BusinessIndex:
         version: SourceVersion,
         cancel_check: CancelCheck = None,
     ) -> bool:
-        if not self.path(session_id).exists():
+        path = self.path(session_id)
+        if not path.exists():
             return False
-        with self.database(session_id, cancel_check) as db:
+        check_cancel(cancel_check)
+        # Warm readers use the committed WAL snapshot without waiting behind
+        # a full export or derived-index writer's sidecar lock.
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0)) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("BEGIN")
+            if db.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA:
+                return False
+            tables = {
+                row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            if (
+                not {
+                    "state",
+                    "events",
+                    "inactive",
+                    "text_views",
+                    "journal_positions",
+                    "asset_refs",
+                    "attachment_refs",
+                }
+                <= tables
+            ):
+                return False
             row = db.execute("SELECT version FROM state WHERE id=1").fetchone()
             return row is not None and row["version"] == dump(version)
+
+    def rewrite_changes_config(
+        self, session_id: str, before: SourceVersion, events: list[Event]
+    ) -> bool:
+        """Conservative invalidation using only the rewritten IDs' indexed kinds."""
+        ids = [
+            uid
+            for event in events
+            if event.type == "turn_rewrite"
+            for uid in event.payload.get("inactive_event_uuids", [])
+            if isinstance(uid, str)
+        ]
+        if not ids:
+            return False
+        changed_ids = set(ids)
+        if any(event.uuid in changed_ids and event.type in build.CONFIG_KINDS for event in events):
+            return True
+        path = self.path(session_id)
+        if not path.exists():
+            return True
+        try:
+            with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0)) as db:
+                db.execute("BEGIN")
+                if not db.execute(
+                    "SELECT 1 FROM state WHERE version=?", (dump(before),)
+                ).fetchone():
+                    return True
+                for start in range(0, len(ids), 500):
+                    batch = ids[start : start + 500]
+                    rows = db.execute(
+                        f"SELECT kind FROM events WHERE uuid IN ({','.join('?' for _ in batch)})",
+                        batch,
+                    )
+                    if any(kind in build.CONFIG_KINDS for (kind,) in rows):
+                        return True
+        except (sqlite3.Error, OSError):
+            return True
+        return False
 
     @staticmethod
     def _snapshot(
@@ -265,7 +363,16 @@ class BusinessIndex:
             if db.execute("SELECT 1 FROM sqlite_schema WHERE name='chat_tail_state'").fetchone():
                 db.execute("DELETE FROM chat_tail_state")
                 db.execute("DELETE FROM chat_tail_rows")
-            for table in ("state", "events", "inactive", "chat_bodies"):
+            for table in (
+                "state",
+                "events",
+                "inactive",
+                "chat_bodies",
+                "attachment_refs",
+                "asset_refs",
+                "text_views",
+                "journal_positions",
+            ):
                 db.execute(f"DELETE FROM {table}")
             inactive = {
                 str(uuid)
@@ -293,8 +400,23 @@ class BusinessIndex:
                 return False
             return True
 
+    def rebuild_stream(
+        self,
+        session_id: str,
+        version: SourceVersion,
+        events: Iterable[Event],
+        state: SessionReadState,
+        is_current: Callable[[], bool],
+        cancel_check: CancelCheck = None,
+    ) -> bool:
+        with self.database(session_id, cancel_check) as db:
+            return build.rebuild(db, events, state, version, self._insert, is_current, cancel_check)
+
     @staticmethod
     def _insert(db: sqlite3.Connection, position: int, event: Event) -> None:
+        db.execute(
+            "INSERT INTO journal_positions VALUES (?,?,?)", (event.uuid, position, event.type)
+        )
         if event.type in ROLLOUT_EVENT_TYPES:
             return
         active = event.type != "turn_rewrite" and not bool(
@@ -308,6 +430,30 @@ class BusinessIndex:
             "INSERT OR REPLACE INTO chat_bodies VALUES (?,?)",
             (event.uuid, display_event(event).to_jsonl()),
         )
+        text_views.insert(db, event)
+        for key in ("attachments", "images"):
+            for ref in event.payload.get(key, []) or []:
+                if isinstance(ref, dict) and isinstance(ref.get("asset_id"), str):
+                    db.execute(
+                        "INSERT OR IGNORE INTO asset_refs VALUES (?,?)",
+                        (ref["asset_id"], event.uuid),
+                    )
+        if event.type in {"user_message", "assistant_message"}:
+            for ordinal, ref in enumerate(event.payload.get("attachments", []) or []):
+                file_ref = "file-" + sha256(f"{event.uuid}:{ordinal}".encode()).hexdigest()
+                asset_id = ref.get("asset_id") if isinstance(ref, dict) else None
+                db.execute(
+                    "INSERT INTO attachment_refs VALUES (?,?,?,?,?,?,?)",
+                    (
+                        file_ref,
+                        event.uuid,
+                        ordinal,
+                        asset_id,
+                        dump(ref),
+                        position,
+                        ref.get("kind") if isinstance(ref, dict) else None,
+                    ),
+                )
 
     def advance(
         self,
@@ -337,43 +483,20 @@ class BusinessIndex:
                 return
             if json.loads(row["diagnostics"])["parse_error_count"]:
                 return
-            if any(event.type == "turn_rewrite" for event in events):
-                # Existing business rows are sufficient; never replay historical rollout.
-                current = self._snapshot(db, row, None).appended(events, after)
-                # Rebuild after releasing the short database transaction below.
-            else:
-                current = None
-                for position, event in enumerate(events, start=row["count"]):
-                    self._insert(db, position, event)
+            for position, event in enumerate(events, start=row["count"]):
+                build.apply_rewrite(db, event)
+                self._insert(db, position, event)
+            db.execute(
+                "UPDATE state SET version=?,count=? WHERE id=1",
+                (dump(after), row["count"] + len(events)),
+            )
+            if any(event.type in (*build.CONFIG_KINDS, "turn_rewrite") for event in events):
                 db.execute(
-                    "UPDATE state SET version=?,count=? WHERE id=1",
-                    (
-                        dump(after),
-                        row["count"] + len(events),
-                    ),
+                    "UPDATE state SET metadata=? WHERE id=1",
+                    (dump(build.metadata(db, row["epoch"])),),
                 )
-                if any(
-                    event.type
-                    in {"persona_change", "model_change", "model_config_change", "channel_change"}
-                    for event in events
-                ):
-                    metadata = json.loads(row["metadata"])
-                    session = Session.new(
-                        metadata["title"],
-                        metadata["persona"],
-                        metadata["model"],
-                        session_id=session_id,
-                        reasoning_preset=metadata["reasoningPreset"],
-                    )
-                    session.events.extend(events)
-                    metadata.update(
-                        persona=session.current_persona,
-                        model=session.current_model,
-                        reasoningPreset=session.current_model_config.reasoning_preset,
-                    )
-                    db.execute("UPDATE state SET metadata=? WHERE id=1", (dump(metadata),))
-        if current is not None:
-            self.publish(current, is_current)
+            if not is_current():
+                db.rollback()
 
     def page(self, session_id: str, version: SourceVersion, **kwargs: Any) -> SessionHistoryPage:
         with self.database(session_id, kwargs.get("cancel_check")) as db:

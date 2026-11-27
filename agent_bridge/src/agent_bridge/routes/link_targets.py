@@ -10,6 +10,7 @@ from urllib.parse import unquote, urlsplit
 
 from agent.command_runtime.workspace import session_workspace_path
 from agent.paths import command_workspaces_dir
+from agent.sessions.reading import session_reader
 from fastapi import APIRouter, FastAPI
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -128,9 +129,7 @@ def resolve_target(runtime: BridgeRuntime, request: LinkRequest) -> dict[str, st
     value = request.target or ""
     try:
         base: Path | None = None
-        session = None
         if request.context == "session" and request.session_id:
-            session = runtime.persistent_store.load(request.session_id)
             base = session_workspace_path(command_workspaces_dir(), request.session_id)
         elif request.context == "persona" and runtime.persona_store is not None:
             base = runtime.persona_store.user_file.parent
@@ -142,14 +141,12 @@ def resolve_target(runtime: BridgeRuntime, request: LinkRequest) -> dict[str, st
                 ref = store.draft(request.draft_id)
                 path = store.verify(ref.asset_id)
             else:
-                if session is None or not any(
-                    isinstance(item, dict) and item.get("asset_id") == request.asset_id
-                    for event in session.active_events
-                    if event.type == "user_message"
-                    or (event.type == "assistant_message" and "generated_image" in event.payload)
-                    for item in event.payload.get("attachments", []) or []
-                ):
+                if request.context != "session" or not request.session_id:
                     return unavailable("", "此会话没有该附件的有效引用")
+                assert request.asset_id is not None
+                with session_reader(runtime.persistent_store).snapshot(request.session_id) as read:
+                    if not read.has_attachment(request.asset_id):
+                        return unavailable("", "此会话没有该附件的有效引用")
                 assert request.asset_id is not None
                 path = store.verify(request.asset_id)
             return inspect_path(path)

@@ -57,6 +57,7 @@ class FakeProvider:
 
 class FakeSessions:
     def __init__(self) -> None:
+        self.reader = self
         self.sessions = {
             "SESSION-A": SimpleNamespace(
                 session_id="SESSION-A",
@@ -82,8 +83,15 @@ class FakeSessions:
             SimpleNamespace(session_id="SESSION-B", title="Beta", updated_at=now),
         ]
 
-    def query(self, session_id: str) -> Any:
+    def state(self, session_id: str) -> Any:
         return self.sessions[session_id]
+
+    def latest(self, session_id: str, kind: str) -> Any:
+        messages = self.sessions[session_id].messages
+        return SimpleNamespace(payload={"content": messages[-1].content}) if messages else None
+
+    def summary(self, session_id: str) -> Any:
+        return next((s for s in self.summaries if s.session_id == session_id), None)
 
     def list(self, *, archived: bool = False) -> list[Any]:
         return [] if archived else self.summaries

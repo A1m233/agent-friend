@@ -57,6 +57,8 @@ from .query import (
     query_session,
     query_session_page,
 )
+from .reading import SessionReader, session_reader
+from .reading.maintenance import MaintenancePurpose, maintenance_session
 from .recovery import ToolTransactionReconciler
 from .residency import retained_bytes
 from .rollout import SessionRolloutRecorder, finish_rollout_restore, restore_rollout
@@ -424,6 +426,20 @@ class SessionManager:
             self._store.create(session)
         return session
 
+    @property
+    def reader(self) -> SessionReader:
+        return session_reader(self._store)
+
+    def maintenance(
+        self, session_id: str, *, purpose: MaintenancePurpose, cancel_check: CancelCheck = None
+    ) -> Session:
+        return maintenance_session(
+            self._store, session_id, purpose=purpose, cancel_check=cancel_check
+        )
+
+    def summary(self, session_id: str) -> SessionSummary:
+        return self._summary(session_id)
+
     def exists(self, session_id: str) -> bool:
         """Check persistence without loading or validating conversation history."""
         return self._store.exists(session_id)
@@ -526,7 +542,7 @@ class SessionManager:
         loader = getattr(self._store, "composer_session", None)
         if callable(loader):
             return cast(Session, loader(session_id, cancel_check=cancel_check))
-        return self.open(session_id, cancel_check=cancel_check)
+        raise NotImplementedError("store does not support configuration reads")
 
     def update_model_config(
         self, session_id: str, *, model: str | None, reasoning_preset: str | None
@@ -710,7 +726,7 @@ class SessionManager:
             raise ValueError("title 不能为空")
         if len(normalized) > 80:
             raise ValueError("title 不能超过 80 个字符")
-        self.query(session_id)
+        session_reader(self._store).identity(session_id)
         if self._metadata_store is not None:
             self._metadata_store.set_display_title(session_id, normalized)
         if self._session_change_broker is not None:
@@ -727,7 +743,7 @@ class SessionManager:
 
     def archive(self, session_id: str) -> SessionSummary:
         """归档会话。"""
-        self.query(session_id)
+        session_reader(self._store).identity(session_id)
         if self._metadata_store is not None:
             self._metadata_store.set_archived_at(session_id, datetime.now(UTC))
         if self._session_change_broker is not None:
@@ -738,7 +754,7 @@ class SessionManager:
 
     def unarchive(self, session_id: str) -> SessionSummary:
         """取消归档会话。"""
-        self.query(session_id)
+        session_reader(self._store).identity(session_id)
         if self._metadata_store is not None:
             self._metadata_store.set_archived_at(session_id, None)
         if self._session_change_broker is not None:
@@ -816,12 +832,7 @@ class SessionManager:
         return None
 
     def _summary(self, session_id: str) -> SessionSummary:
-        for summary in self._store.list():
-            if summary.session_id == session_id:
-                return self._apply_metadata(summary)
-        # list() 与 load() 的一致性通常应成立；若中间被其它进程删除，交给 load 抛出。
-        self._store.load(session_id)
-        raise RuntimeError(f"session summary missing after load: {session_id}")
+        return self._apply_metadata(session_reader(self._store).summary(session_id))
 
     def _apply_metadata(self, summary: SessionSummary) -> SessionSummary:
         if self._metadata_store is None:

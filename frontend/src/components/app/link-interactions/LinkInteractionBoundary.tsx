@@ -38,7 +38,7 @@ function feedback(error: unknown) {
   toast.error(error instanceof Error ? error.message : "链接操作失败，请稍后重试");
 }
 
-interface MenuTarget { hit: Hit; resolved?: ResolvedLink; selectedText: string; sourceKey: string; keyboard: boolean }
+interface MenuTarget { hit: Hit; resolved?: ResolvedLink; error?: string; selectedText: string; sourceKey: string; keyboard: boolean }
 
 export function LinkInteractionBoundary({ context, children }: { context: LinkContext; children: ReactNode }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -77,10 +77,8 @@ export function LinkInteractionBoundary({ context, children }: { context: LinkCo
   }, [open, menuHit]);
 
   const resolve = async (hit: Hit): Promise<ResolvedLink> => {
-    let result: ResolvedLink;
-    try { result = await resolveLink(hit.href, context); }
-    catch (error) { result = { kind: "unavailable", value: originalLinkHref(hit.href), reason: error instanceof Error ? error.message : "无法解析链接" }; }
-    if (hit.node instanceof HTMLAnchorElement && hit.node.getAttribute("href") === hit.href) {
+    const result = await resolveLink(hit.href, context);
+    if (activeContext.current === contextKey && currentHit(hit) && hit.node instanceof HTMLAnchorElement) {
       hit.node.title = result.kind === "unavailable" ? result.reason ?? "链接不可用" : result.value;
       if (result.kind === "unavailable") {
         hit.node.setAttribute("aria-disabled", "true");
@@ -98,10 +96,23 @@ export function LinkInteractionBoundary({ context, children }: { context: LinkCo
 
   const activate = async (hit: Hit) => {
     const version = ++actionGeneration.current;
-    const target = await resolve(hit);
-    if (version !== actionGeneration.current || !currentHit(hit) || !rootRef.current) return;
-    const contentRoot = hit.node.getRootNode();
-    try { await activateLink(target, contentRoot instanceof ShadowRoot ? contentRoot : rootRef.current); } catch (error) { feedback(error); }
+    try {
+      const target = await resolve(hit);
+      if (version !== actionGeneration.current || !currentHit(hit) || !rootRef.current) return;
+      const contentRoot = hit.node.getRootNode();
+      await activateLink(target, contentRoot instanceof ShadowRoot ? contentRoot : rootRef.current);
+    } catch (error) {
+      if (version === actionGeneration.current && currentHit(hit)) feedback(error);
+    }
+
+  };
+
+  const resolveMenu = (snapshot: MenuTarget, version: number) => {
+    void resolve(snapshot.hit).then(resolved => {
+      if (valid(snapshot.hit, version)) setMenu({ ...snapshot, resolved, error: undefined });
+    }).catch(error => {
+      if (valid(snapshot.hit, version)) setMenu({ ...snapshot, error: error instanceof Error ? error.message : "解析失败，请重试" });
+    });
   };
 
   const onClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -145,9 +156,7 @@ export function LinkInteractionBoundary({ context, children }: { context: LinkCo
           const selectedText = window.getSelection()?.toString() ?? "";
           const snapshot = { hit, selectedText, sourceKey: contextKey, keyboard: event.button === 0 };
           setMenu(snapshot);
-          void resolve(hit).then(resolved => {
-            if (valid(hit, version)) setMenu({ ...snapshot, resolved });
-          });
+          resolveMenu(snapshot, version);
         }}>
         {children}
       </div>
@@ -158,7 +167,13 @@ export function LinkInteractionBoundary({ context, children }: { context: LinkCo
         menu.hit.node.focus({ preventScroll: true });
       }
     }}>
-      {!menu.resolved ? <ContextMenuLabel>正在解析链接…</ContextMenuLabel>
+      {menu.error ? <><ContextMenuLabel>{menu.error}</ContextMenuLabel><ContextMenuItem onSelect={(event) => {
+        event.preventDefault();
+        const snapshot = { ...menu, error: undefined, resolved: undefined };
+        setMenu(snapshot);
+        resolveMenu(snapshot, ++generation.current);
+      }}>重新解析链接</ContextMenuItem></>
+        : !menu.resolved ? <ContextMenuLabel>正在解析链接…</ContextMenuLabel>
         : menu.resolved.kind === "unavailable" ? <ContextMenuLabel>{menu.resolved.reason}</ContextMenuLabel>
         : <ContextMenuItem onSelect={() => { void activate(menu.hit); }}>{linkActionLabel(menu.resolved)}</ContextMenuItem>}
       <ContextMenuItem onSelect={() => { void copyLink(menu.resolved?.value ?? originalLinkHref(menu.hit.href)).catch(feedback); }}>
