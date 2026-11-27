@@ -1,0 +1,23 @@
+{
+  "synthetic": true,
+  "platform": "Windows 11/Python 3.12.6",
+  "method": "Wrap the real TemporaryFile factory, record the maximum write position, consume actual JsonlSessionStore.diagnostic_stream. One 20-turn fixture with 1 MiB user/assistant records. No HTTP or Rust in this measurement.",
+  "sourceSha256": "7105b457e6fc403e8a65ec32d6c5fda048dab6b6ef9c547dab0353c1373ffa54",
+  "observations": [
+    {
+      "turnLimit": 10,
+      "events": 21,
+      "peakPythonSpoolLogicalBytes": 20977890,
+      "elapsedMs": 119.45,
+      "closedAfterExport": true
+    },
+    {
+      "turnLimit": null,
+      "events": 41,
+      "peakPythonSpoolLogicalBytes": 41955780,
+      "elapsedMs": 231.26,
+      "closedAfterExport": true
+    }
+  ],
+  "limitations": "Logical spool bytes, not filesystem allocation; measured separately, not a total simultaneous disk peak for the desktop pipeline."
+}

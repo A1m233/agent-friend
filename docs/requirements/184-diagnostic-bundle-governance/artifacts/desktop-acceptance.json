@@ -1,0 +1,334 @@
+{
+  "synthetic": true,
+  "platform": "Windows 11 x64",
+  "configuration": "Tauri dev debug; actual bridge; no chat turns sent",
+  "baseCommit": "36605682fd49ecb6fc394926f1db08b4fdc3b4af",
+  "sourceFilesSha256": {
+    "agent/src/agent/sessions/diagnostic_export.py": "7105b457e6fc403e8a65ec32d6c5fda048dab6b6ef9c547dab0353c1373ffa54",
+    "agent/src/agent/sessions/manager.py": "c27ef8e965cb4b88ffd7709c608b6ac86d52aacc2b8409ef38f044ec42ca2f1e",
+    "agent/src/agent/sessions/store.py": "2485274f0486cdcc2b1a285a1638d307676c448e0fb45fd50e7c6eea9cc4d29c",
+    "agent_bridge/src/agent_bridge/__main__.py": "6c13ccf622027d1b8d6126c6fb3333d2c9fb5e27df1897da872d23dc11c4d2ba",
+    "agent_bridge/src/agent_bridge/app.py": "b38ef1975e964f311454cf4f8637f786b0f7b39a9a4bab0a6c4484850aa482d3",
+    "agent_bridge/src/agent_bridge/request_observation.py": "f4a7ac18c65bc4763fc2bbf88b9a2a235e18b4d088965ab2301c62fc36b24cd1",
+    "agent_bridge/src/agent_bridge/routes/meta.py": "aa55a78a4cd05918508200dd0325e398acd093dca379587bd370ef268a049518",
+    "agent_bridge/src/agent_bridge/routes/session_reads.py": "d8807a733d49a7d32f176c81d50a14353a9495c6fb94874b1880e0f0699ca7f8",
+    "frontend/src-tauri/src/diagnostics/bundle-contract-v1.json": "45fec6a09fe4a52caccc9ba4213799a19c5600dbc5378b7a45f752c1e9fd8279",
+    "frontend/src-tauri/src/diagnostics/contract.rs": "ed00a477e951368eb62d556c524c0cfc8552f2ae4fd462912316c730d7ce31ba",
+    "frontend/src-tauri/src/diagnostics/job.rs": "ad5bb915f0f1772f19699e187edffb7f4b21e8e25c36f94ef5c6ab823d81d7c9",
+    "frontend/src-tauri/src/diagnostics/mod.rs": "5e0e7b4fb5b6ea15b73133f79845d153e731ac49c0d0306b96bb68e7b73dd82e",
+    "frontend/src-tauri/src/diagnostics/native_crash_export.rs": "ff0fe7d0e9a2b7a13e8bf573b59318265a8d11ac581fcba7fdea80bb65471624",
+    "frontend/src-tauri/src/diagnostics/performance.rs": "ccd59c78d327b67f6be6b83fd4c8c712f18967b73d95c2321b53699728353776",
+    "frontend/src-tauri/src/diagnostics/scratch.rs": "2fcb54071b0d0339160692f4fb3d59c9670c511260306af45befe39a6d463d39",
+    "frontend/src-tauri/src/diagnostics/selection.rs": "2fd72cdcfdca19052697215317cf2c2aacb94d62946b862a0d1eba4af18047fa",
+    "frontend/src-tauri/src/diagnostics/session_stream.rs": "10fb3dddf217f455c426ab8ee25946c1bc0301be3b50dca68679f57229bed102",
+    "frontend/src-tauri/src/diagnostics/staged_log.rs": "a6d19f15870ab9d2d38c313931e7f1b4c892552e0ac917c653d3b769db64830a",
+    "frontend/src-tauri/src/install_contract.rs": "a0ea9e89c95fc49d576a169688ba5cf4b185ba13c875447f411fb5f6c3b1854b",
+    "frontend/src-tauri/src/lib.rs": "964e4d082bb43a6e393cae54cee130cf06d118deb5bfe422d363d680b903bf37",
+    "frontend/src-tauri/src/paths.rs": "516b83a9364bba9b1479a6bb5db62c1a733dae66fda748acd21186767d739295",
+    "frontend/src-tauri/src/runtime_services/mod.rs": "0ed55a2811ee8e817f36ab74cded712e79d681b858024646c7a8e040e056ef59",
+    "frontend/src-tauri/src/runtime_services/output_log.rs": "e74d69f596085f21bfadf01bac3779828a484e68464e2ec7bff6682eef7d8810",
+    "frontend/src-tauri/src/runtime_services/process.rs": "85f1dd957bb71b4a3fd916d0e80334c6afe8aca0b7c6d36cd13bc5bcf30e16b5",
+    "frontend/src-tauri/src/runtime_services/supervisor.rs": "741b850e2dccb52b8ce34852da96abf58ae1facd3790eb0c853024479734378d",
+    "frontend/src/pages/settings/components/FeedbackDiagnosticsPanel.tsx": "365c6e93c8054ce0ed3c1cd4b0b9a66418369f88c9ca28190832e1cadc36f882",
+    "frontend/src/services/diagnostics.ts": "e9ca7271c75f2a78a2682a3f5060af514317f412dd72b295c8d07bad015cd97f",
+    "frontend/src/stores/diagnosticExport.ts": "4aeee3196d5d7decb5c57b80b39ff195d3025734820912f3e080d6ae7e46ec58",
+    "voice_bridge/src/voice_bridge/app.py": "5a3af30c9930ac1f88bc803da023199687055ed63218c40c44057bfef467dbcb"
+  },
+  "cases": [
+    {
+      "action": "recent",
+      "status": "complete",
+      "elapsedMs": 819,
+      "wallMs": 1274,
+      "selection": {
+        "includeAttachmentOriginals": false,
+        "includeCrashDumps": false,
+        "includeRenderEvidence": false,
+        "logs": "recent",
+        "sessionCount": 1,
+        "sessionTurnLimit": 10,
+        "verifyInstallFiles": false
+      },
+      "resources": {
+        "synthetic": true,
+        "sampleCount": 26,
+        "samplingIntervalMs": 50,
+        "baselineShellRssBytes": 103747584,
+        "peakShellRssBytes": 115011584,
+        "peakChildRssSumBytes": 1822720000,
+        "peakStagedFileBytes": 1800443,
+        "limitations": "Sampled RSS includes normal desktop activity. Child RSS sums may double-count shared pages. Staging excludes ZIP-in-progress in Downloads and short peaks between samples."
+      },
+      "zipBytes": 235742,
+      "runtimeLog": {
+        "source": "runtime-bridge.log",
+        "entry": "logs/runtime-bridge.log",
+        "modifiedAtUnixSeconds": 1795799269,
+        "originalBytes": 268421120,
+        "tailStartOffset": 263178256,
+        "readBytes": 5242881,
+        "omission": "recent_log_budget",
+        "includedBytes": 1608605
+      },
+      "includedTurns": [
+        10
+      ],
+      "verifiedOriginalCount": 0,
+      "stageMetrics": [
+        {
+          "durationMs": 0,
+          "processedBytes": 0,
+          "stage": "preparing"
+        },
+        {
+          "durationMs": 15,
+          "processedBytes": 0,
+          "stage": "preparing"
+        },
+        {
+          "durationMs": 17,
+          "processedBytes": 0,
+          "stage": "basic-state"
+        },
+        {
+          "durationMs": 8,
+          "processedBytes": 4958,
+          "stage": "sessions"
+        },
+        {
+          "durationMs": 6,
+          "processedBytes": 0,
+          "stage": "attachments"
+        },
+        {
+          "durationMs": 314,
+          "processedBytes": 5433888,
+          "stage": "logs"
+        },
+        {
+          "durationMs": 165,
+          "processedBytes": 0,
+          "stage": "incident-evidence"
+        },
+        {
+          "durationMs": 294,
+          "processedBytes": 10830525,
+          "stage": "archive"
+        }
+      ],
+      "crcVerified": true,
+      "consumerVerified": true,
+      "syntheticCredentialAbsent": true
+    },
+    {
+      "action": "all",
+      "status": "complete",
+      "elapsedMs": 14959,
+      "wallMs": 15345,
+      "selection": {
+        "includeAttachmentOriginals": false,
+        "includeCrashDumps": false,
+        "includeRenderEvidence": false,
+        "logs": "all-retained",
+        "sessionCount": 1,
+        "sessionTurnLimit": null,
+        "verifyInstallFiles": false
+      },
+      "resources": {
+        "synthetic": true,
+        "sampleCount": 231,
+        "samplingIntervalMs": 50,
+        "baselineShellRssBytes": 105664512,
+        "peakShellRssBytes": 115269632,
+        "peakChildRssSumBytes": 1912279040,
+        "peakStagedFileBytes": 82552626,
+        "limitations": "Sampled RSS includes normal desktop activity. Child RSS sums may double-count shared pages. Staging excludes ZIP-in-progress in Downloads and short peaks between samples."
+      },
+      "zipBytes": 437708,
+      "runtimeLog": {
+        "source": "runtime-bridge.log",
+        "entry": "logs/runtime-bridge.log",
+        "modifiedAtUnixSeconds": 1795799269,
+        "originalBytes": 268421120,
+        "tailStartOffset": 0,
+        "readBytes": 268421120,
+        "omission": null,
+        "includedBytes": 82356479
+      },
+      "includedTurns": [
+        20
+      ],
+      "verifiedOriginalCount": 0,
+      "stageMetrics": [
+        {
+          "durationMs": 0,
+          "processedBytes": 0,
+          "stage": "preparing"
+        },
+        {
+          "durationMs": 16,
+          "processedBytes": 0,
+          "stage": "preparing"
+        },
+        {
+          "durationMs": 15,
+          "processedBytes": 0,
+          "stage": "basic-state"
+        },
+        {
+          "durationMs": 9,
+          "processedBytes": 8887,
+          "stage": "sessions"
+        },
+        {
+          "durationMs": 7,
+          "processedBytes": 0,
+          "stage": "attachments"
+        },
+        {
+          "durationMs": 13309,
+          "processedBytes": 268613270,
+          "stage": "logs"
+        },
+        {
+          "durationMs": 153,
+          "processedBytes": 0,
+          "stage": "incident-evidence"
+        },
+        {
+          "durationMs": 1450,
+          "processedBytes": 91307102,
+          "stage": "archive"
+        }
+      ],
+      "crcVerified": true,
+      "consumerVerified": true,
+      "syntheticCredentialAbsent": true
+    },
+    {
+      "action": "materials",
+      "status": "complete",
+      "elapsedMs": 12601,
+      "wallMs": 12788,
+      "selection": {
+        "includeAttachmentOriginals": true,
+        "includeCrashDumps": false,
+        "includeRenderEvidence": false,
+        "logs": "recent",
+        "sessionCount": 3,
+        "sessionTurnLimit": null,
+        "verifyInstallFiles": false
+      },
+      "resources": {
+        "synthetic": true,
+        "sampleCount": 200,
+        "samplingIntervalMs": 50,
+        "baselineShellRssBytes": 105684992,
+        "peakShellRssBytes": 116649984,
+        "peakChildRssSumBytes": 1903583232,
+        "peakStagedFileBytes": 119272378,
+        "limitations": "Sampled RSS includes normal desktop activity. Child RSS sums may double-count shared pages. Staging excludes ZIP-in-progress in Downloads and short peaks between samples."
+      },
+      "zipBytes": 388109,
+      "runtimeLog": {
+        "source": "runtime-bridge.log",
+        "entry": "logs/runtime-bridge.log",
+        "modifiedAtUnixSeconds": 1795799269,
+        "originalBytes": 268421120,
+        "tailStartOffset": 263178256,
+        "readBytes": 5242881,
+        "omission": "recent_log_budget",
+        "includedBytes": 1608605
+      },
+      "includedTurns": [
+        20,
+        20,
+        20
+      ],
+      "verifiedOriginalCount": 2,
+      "stageMetrics": [
+        {
+          "durationMs": 0,
+          "processedBytes": 0,
+          "stage": "preparing"
+        },
+        {
+          "durationMs": 17,
+          "processedBytes": 0,
+          "stage": "preparing"
+        },
+        {
+          "durationMs": 16,
+          "processedBytes": 0,
+          "stage": "basic-state"
+        },
+        {
+          "durationMs": 9375,
+          "processedBytes": 83927559,
+          "stage": "sessions"
+        },
+        {
+          "durationMs": 588,
+          "processedBytes": 33554432,
+          "stage": "attachments"
+        },
+        {
+          "durationMs": 304,
+          "processedBytes": 5436728,
+          "stage": "logs"
+        },
+        {
+          "durationMs": 188,
+          "processedBytes": 0,
+          "stage": "incident-evidence"
+        },
+        {
+          "durationMs": 2113,
+          "processedBytes": 128671047,
+          "stage": "archive"
+        }
+      ],
+      "crcVerified": true,
+      "consumerVerified": true,
+      "syntheticCredentialAbsent": true
+    },
+    {
+      "action": "cancel",
+      "status": "cancelled",
+      "elapsedMs": 406,
+      "wallMs": 556,
+      "selection": {
+        "includeAttachmentOriginals": false,
+        "includeCrashDumps": false,
+        "includeRenderEvidence": false,
+        "logs": "all-retained",
+        "sessionCount": 1,
+        "sessionTurnLimit": 10,
+        "verifyInstallFiles": false
+      },
+      "resources": {
+        "synthetic": true,
+        "sampleCount": 17,
+        "samplingIntervalMs": 50,
+        "baselineShellRssBytes": 105857024,
+        "peakShellRssBytes": 106397696,
+        "peakChildRssSumBytes": 1873612800,
+        "peakStagedFileBytes": 1765460,
+        "limitations": "Sampled RSS includes normal desktop activity. Child RSS sums may double-count shared pages. Staging excludes ZIP-in-progress in Downloads and short peaks between samples."
+      },
+      "cancellationMs": 46,
+      "duplicateRejected": true,
+      "navigationRestoredSameJob": true
+    }
+  ],
+  "cleanup": {
+    "stagedFiles": 0,
+    "archiveParts": 0,
+    "checkedAt": "2026-11-28T01:27:18.3802133+08:00"
+  },
+  "limits": [
+    "Single local run per scenario, not a latency SLA or a release-build benchmark.",
+    "RSS and temporary peaks are sampled; maximum record size was 1 MiB in the multi-session fixture.",
+    "Native Common Controls/desktop screenshot observed separately; macOS not verified."
+  ]
+}

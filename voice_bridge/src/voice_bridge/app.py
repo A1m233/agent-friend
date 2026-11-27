@@ -94,6 +94,11 @@ def _configure_logging(level: str, *, file_log: bool = False) -> None:
         handler.setLevel(level.upper())
         handler._agent_friend_voice_bridge_file = True  # type: ignore[attr-defined]
         root_logger.addHandler(handler)
+        if getattr(sys, "frozen", False):
+            for console in list(root_logger.handlers):
+                if type(console) is logging.StreamHandler:
+                    root_logger.removeHandler(console)
+                    console.close()
     except OSError as e:
         logging.getLogger(__name__).warning("voice_bridge file log disabled: %s", e)
 

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
+    io::Read,
     path::{Component, Path, PathBuf},
     time::Instant,
 };
@@ -138,21 +139,38 @@ fn sha256_bytes(value: &[u8]) -> String {
     format!("{:x}", Sha256::digest(value))
 }
 
-fn sha256_file(path: &Path, metrics: &mut VerificationMetrics) -> Result<String, String> {
-    let start = Instant::now();
-    let read = fs::read(path);
-    metrics.read_ms += start.elapsed().as_secs_f64() * 1000.0;
-    let bytes = read.map_err(|error| {
+fn sha256_file(
+    path: &Path,
+    metrics: &mut VerificationMetrics,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<String, String> {
+    let mut file = fs::File::open(path).map_err(|error| {
         format!(
             "install_integrity_file_unreadable: {}: {error}",
             path.display()
         )
     })?;
-    metrics.bytes_read += bytes.len() as u64;
-    let start = Instant::now();
-    let digest = sha256_bytes(&bytes);
-    metrics.hash_ms += start.elapsed().as_secs_f64() * 1000.0;
-    Ok(digest)
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        check()?;
+        let start = Instant::now();
+        let count = file.read(&mut buffer).map_err(|error| {
+            format!(
+                "install_integrity_file_unreadable: {}: {error}",
+                path.display()
+            )
+        })?;
+        metrics.read_ms += start.elapsed().as_secs_f64() * 1000.0;
+        if count == 0 {
+            break;
+        }
+        metrics.bytes_read += count as u64;
+        let start = Instant::now();
+        digest.update(&buffer[..count]);
+        metrics.hash_ms += start.elapsed().as_secs_f64() * 1000.0;
+    }
+    Ok(format!("{:x}", digest.finalize()))
 }
 
 fn safe_relative_path(value: &str) -> Result<PathBuf, String> {
@@ -194,6 +212,24 @@ pub fn verify_candidate_payload_with_metrics(
     expected_build_id: &str,
     metrics: &mut VerificationMetrics,
 ) -> Result<VerifiedPayload, String> {
+    verify_candidate_payload_controlled(
+        install_root,
+        payload_relative_path,
+        expected_profile_id,
+        expected_build_id,
+        metrics,
+        &|| Ok(()),
+    )
+}
+
+fn verify_candidate_payload_controlled(
+    install_root: &Path,
+    payload_relative_path: &str,
+    expected_profile_id: &str,
+    expected_build_id: &str,
+    metrics: &mut VerificationMetrics,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<VerifiedPayload, String> {
     *metrics = VerificationMetrics::default();
     let start = Instant::now();
     let result = verify_candidate_payload_inner(
@@ -202,6 +238,7 @@ pub fn verify_candidate_payload_with_metrics(
         expected_profile_id,
         expected_build_id,
         metrics,
+        check,
     );
     metrics.total_ms = start.elapsed().as_secs_f64() * 1000.0;
     result
@@ -213,7 +250,9 @@ fn verify_candidate_payload_inner(
     expected_profile_id: &str,
     expected_build_id: &str,
     metrics: &mut VerificationMetrics,
+    check: &dyn Fn() -> Result<(), String>,
 ) -> Result<VerifiedPayload, String> {
+    check()?;
     let install_root = install_root
         .canonicalize()
         .map_err(|error| format!("install_integrity_root_unreadable: {error}"))?;
@@ -255,6 +294,7 @@ fn verify_candidate_payload_inner(
     let mut seen = std::collections::HashSet::new();
     metrics.manifest_files = manifest.files.len();
     for item in &manifest.files {
+        check()?;
         let relative = safe_relative_path(&item.path)?;
         let folded = item.path.replace('\\', "/").to_lowercase();
         if !seen.insert(folded) {
@@ -273,7 +313,7 @@ fn verify_candidate_payload_inner(
         metrics.metadata_checked += 1;
         if !metadata.is_file()
             || metadata.len() != item.size
-            || sha256_file(&path, metrics)? != item.sha256
+            || sha256_file(&path, metrics, check)? != item.sha256
         {
             return Err(format!(
                 "install_integrity_payload_hash_mismatch: {}",
@@ -314,6 +354,22 @@ pub fn discover_active_payload_with_metrics(
     resource_dir: Option<&Path>,
     metrics: &mut VerificationMetrics,
 ) -> Result<Option<ActivePayload>, String> {
+    discover_active_payload_controlled(resource_dir, metrics, &|| Ok(()))
+}
+
+pub fn discover_active_payload_cancellable(
+    resource_dir: Option<&Path>,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<Option<ActivePayload>, String> {
+    discover_active_payload_controlled(resource_dir, &mut VerificationMetrics::default(), check)
+}
+
+fn discover_active_payload_controlled(
+    resource_dir: Option<&Path>,
+    metrics: &mut VerificationMetrics,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<Option<ActivePayload>, String> {
+    check()?;
     let Some((identity, identity_sha256)) = embedded_identity()? else {
         return Ok(None);
     };
@@ -321,8 +377,15 @@ pub fn discover_active_payload_with_metrics(
     let install_root = resource_dir.ok_or_else(|| {
         "install_integrity_resource_dir_unavailable: packaged resource root is missing".to_string()
     })?;
-    validate_active_payload_measured(install_root, identity, identity_sha256, &profile, metrics)
-        .map(Some)
+    validate_active_payload_controlled(
+        install_root,
+        identity,
+        identity_sha256,
+        &profile,
+        metrics,
+        check,
+    )
+    .map(Some)
 }
 
 #[cfg(test)]
@@ -341,6 +404,7 @@ fn validate_active_payload(
     )
 }
 
+#[cfg(test)]
 fn validate_active_payload_measured(
     install_root: &Path,
     shell_identity: BuildIdentity,
@@ -348,6 +412,25 @@ fn validate_active_payload_measured(
     profile: &InstallProfile,
     metrics: &mut VerificationMetrics,
 ) -> Result<ActivePayload, String> {
+    validate_active_payload_controlled(
+        install_root,
+        shell_identity,
+        shell_identity_sha256,
+        profile,
+        metrics,
+        &|| Ok(()),
+    )
+}
+
+fn validate_active_payload_controlled(
+    install_root: &Path,
+    shell_identity: BuildIdentity,
+    shell_identity_sha256: String,
+    profile: &InstallProfile,
+    metrics: &mut VerificationMetrics,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<ActivePayload, String> {
+    check()?;
     let receipt_path = install_root.join(ACTIVE_INSTALL_FILE);
     let receipt: ActiveInstallReceipt = serde_json::from_slice(
         &fs::read(&receipt_path)
@@ -375,12 +458,13 @@ fn validate_active_payload_measured(
         return Err("install_integrity_payload_escaped_root".to_string());
     }
 
-    let verified = verify_candidate_payload_with_metrics(
+    let verified = verify_candidate_payload_controlled(
         &install_root,
         &receipt.payload_relative_path,
         &profile.profile_id,
         &receipt.build_id,
         metrics,
+        check,
     )?;
     if verified.manifest_sha256 != receipt.payload_manifest_sha256 {
         return Err("install_integrity_manifest_hash_mismatch".to_string());

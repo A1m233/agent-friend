@@ -1,0 +1,71 @@
+{
+  "ok": true,
+  "synthetic": true,
+  "observations": [
+    {
+      "oldTurns": 2048,
+      "sourceBytes": 16942795,
+      "readBytes": 65587,
+      "sessionBytes": 1418,
+      "zipBytes": 1429,
+      "readSerializeZipMs": 8.61
+    },
+    {
+      "oldTurns": 20480,
+      "sourceBytes": 169441221,
+      "readBytes": 65587,
+      "sessionBytes": 1432,
+      "zipBytes": 1431,
+      "readSerializeZipMs": 7.13
+    }
+  ],
+  "fullSessionStream": {
+    "sourceBytes": 169441221,
+    "eventCount": 20491,
+    "peakPythonBytes": 242671,
+    "elapsedMs": 1874.5
+  },
+  "nativeLogs": {
+    "buildProfile": "debug",
+    "observations": [
+      {
+        "allRetained": false,
+        "archiveMs": 93.222,
+        "collectMs": 343.873,
+        "readBytes": 5242881,
+        "sourceBytes": 134217680,
+        "stagedBytes": 5505023,
+        "zipBytes": 18972
+      },
+      {
+        "allRetained": true,
+        "archiveMs": 2159.9404999999997,
+        "collectMs": 8558.5554,
+        "readBytes": 134217680,
+        "sourceBytes": 134217680,
+        "stagedBytes": 140928563,
+        "zipBytes": 478593
+      },
+      {
+        "allRetained": true,
+        "archiveMs": 2151.1551999999997,
+        "collectMs": 8816.2598,
+        "readBytes": 134217680,
+        "sourceBytes": 134217680,
+        "stagedBytes": 140928563,
+        "zipBytes": 478593
+      },
+      {
+        "allRetained": false,
+        "archiveMs": 91.3142,
+        "collectMs": 346.286,
+        "readBytes": 5242881,
+        "sourceBytes": 134217680,
+        "stagedBytes": 5505023,
+        "zipBytes": 18972
+      }
+    ],
+    "platform": "windows",
+    "synthetic": true
+  }
+}

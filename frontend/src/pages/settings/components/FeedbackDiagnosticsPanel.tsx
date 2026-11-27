@@ -1,7 +1,11 @@
+import { DiagnosticExportCancelled, diagnosticJobActive, getDiagnosticLogEstimate } from "@/services/diagnostics";
+import { startDiagnosticExportSync, useDiagnosticExportStore } from "@/stores/diagnosticExport";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { PetRenderEvidencePanel } from "./PetRenderEvidencePanel";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
+  ChevronRight,
   Copy,
   FileArchive,
   FolderOpen,
@@ -35,6 +39,7 @@ export interface FeedbackDiagnosticsPrefill {
 
 function resultTitle(result: GenerateDiagnosticBundleResult): string {
   if (result.outcome === "partial") return "诊断包已生成，但部分内容获取失败";
+  if (result.warnings?.some((warning) => warning.collection === "temporary-files")) return "诊断包已生成，但临时文件清理未完成";
   return result.warnings?.length
     ? "诊断包已生成，部分历史证据不完整"
     : "诊断包已生成";
@@ -47,15 +52,31 @@ export function FeedbackDiagnosticsPanel({
 }) {
   const sessions = useSessionsStore((state) => state.list);
   const sessionsLoading = useSessionsStore((state) => state.loading);
+  const sessionsLoaded = useSessionsStore((state) => state.loaded);
   const refreshSessions = useSessionsStore((state) => state.refresh);
   const archivedSessions = useArchivedSessionsStore((state) => state.list);
   const archivedLoading = useArchivedSessionsStore((state) => state.loading);
+  const archivedLoaded = useArchivedSessionsStore((state) => state.loaded);
   const refreshArchived = useArchivedSessionsStore((state) => state.refresh);
   const [description, setDescription] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const descriptionRevision = useRef(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
-  const [generating, setGenerating] = useState(false);
-  const [allTurns, setAllTurns] = useState(true);
+  const [submitting, setGenerating] = useState(false);
+  const job = useDiagnosticExportStore((state) => state.job);
+  const jobError = useDiagnosticExportStore((state) => state.error);
+  const cancelExport = useDiagnosticExportStore((state) => state.cancel);
+  const generating = submitting || diagnosticJobActive(job);
+  useEffect(startDiagnosticExportSync, []);
+  const [logEstimate, setLogEstimate] = useState<number | null>(null);
+  useEffect(() => {
+    let stopped = false;
+    void getDiagnosticLogEstimate().then((value) => { if (!stopped) setLogEstimate(value.retainedBytes); }).catch(() => {});
+    return () => { stopped = true; };
+  }, []);
+  const [allRetainedLogs, setAllRetainedLogs] = useState(false);
+  const [verifyInstallFiles, setVerifyInstallFiles] = useState(false);
+  const [allTurns, setAllTurns] = useState(false);
   const [turnLimit, setTurnLimit] = useState("10");
   const validTurnLimit = /^\d+$/.test(turnLimit) && Number(turnLimit) >= 1 && Number(turnLimit) <= 100;
   const [includeAttachmentOriginals, setIncludeAttachmentOriginals] = useState(false);
@@ -64,7 +85,8 @@ export function FeedbackDiagnosticsPanel({
   const [renderEvidenceStatus, setRenderEvidenceStatus] =
     useState<RenderEvidenceStatus | null>(null);
   const [renderEvidenceUpdating, setRenderEvidenceUpdating] = useState(false);
-  const [result, setResult] = useState<GenerateDiagnosticBundleResult | null>(null);
+  const [localResult, setResult] = useState<GenerateDiagnosticBundleResult | null>(null);
+  const result = generating ? null : job?.result ?? localResult;
   const appliedPrefillRequestId = useRef(0);
 
   useEffect(() => {
@@ -95,6 +117,12 @@ export function FeedbackDiagnosticsPanel({
       b.updated_at.localeCompare(a.updated_at),
     );
   }, [archivedSessions, sessions]);
+
+  // Focus refreshes the shared stores. Keep cached rows mounted so the
+  // content-sized list and the controls below it do not collapse while fetching.
+  const initialLoading = combinedSessions.length === 0 && (
+    (sessionsLoading && !sessionsLoaded) || (archivedLoading && !archivedLoaded)
+  );
 
   useEffect(() => {
     if (!prefill || prefill.requestId <= appliedPrefillRequestId.current) return;
@@ -140,6 +168,8 @@ export function FeedbackDiagnosticsPanel({
         includeAttachmentOriginals,
         includeRenderEvidence,
         includeCrashDumps,
+        allRetainedLogs,
+        verifyInstallFiles,
       });
       setResult(next);
       // A generated bundle contains the submitted description, including partial exports.
@@ -154,6 +184,7 @@ export function FeedbackDiagnosticsPanel({
         },
       });
     } catch (error) {
+      if (error instanceof DiagnosticExportCancelled) return;
       const message = error instanceof Error ? error.message : String(error);
       toast.error("无法生成诊断包", { description: message });
     } finally {
@@ -223,33 +254,21 @@ export function FeedbackDiagnosticsPanel({
     }
   };
 
+  const extraOptions = [
+    allRetainedLogs && "全部日志",
+    verifyInstallFiles && "安装文件校验",
+    selectedIds.size > 0 && includeAttachmentOriginals && "附件原件",
+    includeCrashDumps && "原始崩溃转储",
+    (renderEvidenceStatus?.pending?.automaticIncident || includeRenderEvidence) && "渲染截图",
+  ].filter(Boolean);
+  const includesScreenshots = renderEvidenceStatus?.pending?.automaticIncident || includeRenderEvidence;
+
   return (
     <SettingsPageLayout title="帮助与反馈">
-      <SettingsGroup title="问题说明（选填）">
-        <Textarea
-          value={description}
-          maxLength={20_000}
-          rows={5}
-          placeholder="可以描述实际表现、期望表现和复现方式"
-          onChange={(event) => {
-            descriptionRevision.current += 1;
-            setDescription(event.target.value);
-          }}
-          aria-label="问题说明"
-        />
-        <p className="text-xs text-muted">不填写也可以生成基础诊断包。</p>
-      </SettingsGroup>
-
-      <SettingsGroup title="相关会话（选填）">
-        <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-fg">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
-          <p>
-            选中的完整会话会包含私人聊天、工具调用参数和结果。应用只过滤可识别的认证凭据，不会审查或删除一般私人内容，请仅选择与问题相关的会话。
-          </p>
-        </div>
-        <ScrollArea className="h-72 rounded-md border border-border">
+      <SettingsGroup title="选择相关会话" description="可多选；不选会话也能导出基础诊断信息。">
+        <ScrollArea className="rounded-md border border-border" viewportClassName="max-h-60">
           <div className="flex flex-col p-2">
-            {sessionsLoading || archivedLoading ? (
+            {initialLoading ? (
               <p className="p-3 text-sm text-muted">正在加载会话…</p>
             ) : combinedSessions.length === 0 ? (
               <p className="p-3 text-sm text-muted">暂无可导出的已持久化会话</p>
@@ -264,6 +283,7 @@ export function FeedbackDiagnosticsPanel({
                     <Checkbox
                       className="mt-0.5"
                       checked={selectedIds.has(session.session_id)}
+                      disabled={generating}
                       onCheckedChange={(checked) =>
                         toggleSession(session.session_id, checked === true)
                       }
@@ -290,12 +310,190 @@ export function FeedbackDiagnosticsPanel({
             )}
           </div>
         </ScrollArea>
-        <p className="text-xs text-muted">已选择 {selectedIds.size} 个会话。</p>
+        {selectedIds.size > 0 ? (
+          <div className="flex flex-col gap-3">
+            <p className="text-xs text-muted">已选择 {selectedIds.size} 个会话</p>
+            <label className="flex flex-wrap items-center gap-3">
+              <span className="text-sm font-medium text-fg">每个会话最近</span>
+              <Input
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                value={turnLimit}
+                disabled={allTurns || generating}
+                onChange={(event) => setTurnLimit(event.target.value)}
+                aria-label="采集最近轮数"
+                aria-invalid={!allTurns && !validTurnLimit}
+                className="w-20"
+              />
+              <span className="text-sm text-fg">轮</span>
+            </label>
+            <label className="flex select-none items-center gap-3">
+              <Checkbox checked={allTurns} disabled={generating}
+                onCheckedChange={(checked) => setAllTurns(checked === true)}
+                aria-label="采集全部轮次" />
+              <span className="text-sm text-fg">采集全部轮次（可能耗时较长）</span>
+            </label>
+            {!allTurns && !validTurnLimit ? (
+              <p role="alert" className="text-xs text-danger">请输入 1～100 的整数。</p>
+            ) : null}
+          </div>
+        ) : null}
+        <label className="flex flex-col gap-2">
+          <span className="text-sm font-medium text-fg">补充问题说明（选填）</span>
+          <Textarea
+            value={description}
+            maxLength={20_000}
+            rows={3}
+            placeholder="描述遇到的问题和复现方式"
+            onChange={(event) => {
+              descriptionRevision.current += 1;
+              setDescription(event.target.value);
+            }}
+            aria-label="问题说明"
+          />
+        </label>
+        <div className="space-y-2 text-xs text-muted">
+          <p>自动附带近期运行日志和相关故障记录。</p>
+          {selectedIds.size > 0 ? (
+            <p>所选轮次包含私人聊天、工具参数和结果，仅过滤可识别的认证凭据；分享前请检查私人内容。</p>
+          ) : null}
+          {extraOptions.length > 0 ? <p>高级选项已开启：{extraOptions.join("、")}。</p> : null}
+          {includesScreenshots ? (
+            <p className="text-warning">本次会包含完整桌面截图，可能有其他应用的私人内容；可在高级选项中查看或清除。</p>
+          ) : null}
+          {includeCrashDumps ? (
+            <p className="text-warning">原始崩溃转储可能含聊天、凭据等内存内容，无法自动脱敏。</p>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm text-muted">
+            <FileArchive className="size-4" />
+            仅保存到本机下载目录，不会上传。
+          </div>
+          <Button
+            loading={generating}
+            disabled={selectedIds.size > 0 && !allTurns && !validTurnLimit}
+            onClick={() => void generate()}
+          >
+            生成诊断包
+          </Button>
+        </div>
+
+        {job ? (
+          <div role="status" aria-live="polite" className="flex flex-col gap-2 text-sm text-muted">
+            <p>{job.status === "cancelling" ? "正在取消，等待后台停止并清理…" : job.status === "cancelled" ? "诊断导出已取消" : job.status === "failed" ? "诊断导出失败" : diagnosticJobActive(job) ? `正在${({ preparing: "准备", "basic-state": "收集基础状态", "install-files": "校验安装文件", sessions: "收集会话", attachments: "收集附件", logs: "收集日志", "incident-evidence": "收集故障证据", archive: "生成 ZIP" } as Record<string, string>)[job.stage] ?? "处理"}…` : "导出处理已结束"}</p>
+            <p>已用 {Math.floor(job.elapsedMs / 1000)} 秒{job.processedBytes > 0 ? ` · 本阶段已处理 ${(job.processedBytes / 1024 / 1024).toFixed(1)} MiB` : ""}</p>
+            {job.selection ? <p>本次任务：{job.selection.logs === "all-retained" ? "全部已保留日志" : "近期日志"} · {job.selection.sessionCount} 个会话（{job.selection.sessionTurnLimit == null ? "全部轮次" : `最近 ${job.selection.sessionTurnLimit} 轮`}）{job.selection.includeAttachmentOriginals ? " · 含附件原件" : ""}{job.selection.includeCrashDumps ? " · 含原始崩溃转储" : ""}{job.selection.verifyInstallFiles ? " · 校验安装文件" : ""}</p> : null}
+            {job.error || jobError ? <p role="alert" className="text-danger">{job.error || jobError}</p> : null}
+            {job.status === "running" ? <Button variant="outline" size="sm" onClick={() => void cancelExport()}>取消导出</Button> : null}
+          </div>
+        ) : null}
+        {result ? (
+          <div className="flex flex-col gap-3 rounded-md border border-border bg-bg p-3">
+            <div className="flex items-start gap-2 text-sm">
+              {result.outcome === "complete" ? (
+                <Check className="mt-0.5 size-4 shrink-0 text-success" />
+              ) : (
+                <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-fg">
+                  {resultTitle(result)}
+                </p>
+                <p className="mt-1 break-all text-xs text-muted">{result.path}</p>
+              </div>
+            </div>
+            {result.failures.length > 0 ? (
+              <ul className="list-disc space-y-1 pl-5 text-xs text-muted">
+                {result.failures.map((failure, index) => (
+                  <li key={`${failure.collection}-${failure.item ?? index}`}>
+                    {failure.item ? `${failure.item}：` : ""}
+                    {failure.message}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {result.warnings?.length ? (
+              <div className="text-xs text-muted">
+                <p className="font-medium">{result.warnings.some((warning) => warning.collection === "temporary-files") ? "导出说明" : "历史证据说明"}</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {result.warnings.map((warning, index) => (
+                    <li key={`${warning.collection}-${warning.item ?? index}`}>
+                      {warning.item ? `${warning.item}：` : ""}
+                      {warning.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => void copyPath()}>
+                <Copy className="size-4" />
+                复制路径
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => void reveal(result.path)}>
+                <FolderOpen className="size-4" />
+                打开所在目录
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </SettingsGroup>
-
-      <PetRenderEvidencePanel />
-
-      <SettingsGroup title="生成本地诊断包">
+      <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="rounded-lg border border-border bg-surface/50">
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" className="h-auto w-full justify-between p-4" aria-label="高级选项">
+            <span>高级选项</span>
+            <ChevronRight className={advancedOpen ? "size-4 rotate-90" : "size-4"} />
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent forceMount hidden={!advancedOpen} className="flex flex-col gap-4 px-4 pb-4 data-[state=closed]:hidden">
+          <p className="text-xs text-muted">仅在需要更多排查材料时调整，可能增加生成时间和文件大小。</p>
+            <label className="flex items-start gap-3">
+              <Checkbox checked={allRetainedLogs} disabled={generating} onCheckedChange={(value) => setAllRetainedLogs(value === true)} aria-label="收集全部已保留日志" />
+              <span className="text-sm text-fg">收集全部已保留日志<span className="block text-xs text-muted">包括保留期内的旧日志，可能显著增加时间与大小；不改变会话范围或其它检查。{logEstimate == null ? "当前日志总量暂无法估计。" : `当前保留约 ${(logEstimate / 1024 / 1024).toFixed(1)} MiB（未压缩），生成时可能变化。`}</span></span>
+            </label>
+            <label className="flex items-start gap-3">
+              <Checkbox checked={verifyInstallFiles} disabled={generating} onCheckedChange={(value) => setVerifyInstallFiles(value === true)} aria-label="校验安装文件完整性" />
+              <span className="text-sm text-fg">校验安装文件完整性<span className="block text-xs text-muted">逐个读取安装文件。默认只报告身份和已有检查记录，本次校验标为未执行。</span></span>
+            </label>
+        {selectedIds.size > 0 ? (
+          <label className="flex cursor-pointer select-none items-start gap-3 rounded-md border border-border p-3">
+            <Checkbox
+              className="mt-0.5"
+              checked={includeAttachmentOriginals}
+              disabled={generating}
+              onCheckedChange={(checked) => setIncludeAttachmentOriginals(checked === true)}
+              aria-label="包含相关原始附件"
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-medium text-fg">包含相关原始附件</span>
+              <span className="mt-1 block text-xs text-muted">
+                默认不包含。开启后仅收集本次采集轮次引用的附件原件，可能包含私人图片和文档，并会增大诊断包，不设导出体积上限。
+              </span>
+            </span>
+          </label>
+        ) : null}
+        <label className="flex cursor-pointer select-none items-start gap-3 rounded-md border border-border p-3">
+          <Checkbox
+            className="mt-0.5"
+            checked={includeCrashDumps}
+            disabled={generating}
+            onCheckedChange={(checked) => setIncludeCrashDumps(checked === true)}
+            aria-label="包含原始崩溃转储"
+          />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium text-fg">包含原始崩溃转储</span>
+            <span className="mt-1 block text-xs text-muted">
+              默认只导出崩溃摘要、记录覆盖情况和采集错误。原始转储可能包含聊天、凭据等内存内容，无法自动脱敏；仅在需要进一步定位时选择，发送前请按私人文件处理。
+            </span>
+          </span>
+        </label>
+          <p className="text-xs text-muted">
+            默认普通日志每类最多读取 5 MiB、合计最多 32 MiB，不是整个 ZIP 的大小限制。会话按上方轮数采集，大小需处理后确定；已删除的历史无法补回。
+          </p>
+          <PetRenderEvidencePanel />
         {renderEvidenceStatus?.supported ? (
           <div className="flex flex-col gap-3 rounded-md border border-warning/40 bg-warning/10 p-3">
             <div className="flex items-start gap-3">
@@ -376,7 +574,7 @@ export function FeedbackDiagnosticsPanel({
                       renderEvidenceStatus.pending.automaticIncident ||
                       includeRenderEvidence
                     }
-                    disabled={renderEvidenceStatus.pending.automaticIncident}
+                    disabled={generating || renderEvidenceStatus.pending.automaticIncident}
                     onCheckedChange={(checked) =>
                       setIncludeRenderEvidence(checked === true)
                     }
@@ -417,134 +615,8 @@ export function FeedbackDiagnosticsPanel({
           </div>
         ) : null}
 
-        {selectedIds.size > 0 ? (
-          <div className="flex flex-col gap-3 rounded-md border border-border p-3">
-            <label className="flex items-center gap-3">
-              <span className="text-sm font-medium text-fg">每个所选会话最近</span>
-              <Input
-                type="number"
-                min={1}
-                max={100}
-                step={1}
-                value={turnLimit}
-                disabled={allTurns || generating}
-                onChange={(event) => setTurnLimit(event.target.value)}
-                aria-label="采集最近轮数"
-                aria-invalid={!allTurns && !validTurnLimit}
-                className="w-24"
-              />
-              <span className="text-sm text-fg">轮</span>
-            </label>
-            <label className="flex select-none items-center gap-3">
-              <Checkbox checked={allTurns} disabled={generating}
-                onCheckedChange={(checked) => setAllTurns(checked === true)}
-                aria-label="采集全部轮次" />
-              <span className="text-sm text-fg">采集全部轮次（可能耗时较长）</span>
-            </label>
-            {!allTurns && !validTurnLimit ? (
-              <p role="alert" className="text-xs text-danger">请输入 1～100 的整数。</p>
-            ) : null}
-            <p className="text-xs text-muted">
-              默认采集全部已保存轮次，不按体积截断；也可取消勾选，仅采集最近指定轮数。内部快照正文和模型私有推理仍会过滤，历史已删除的记录无法补回。
-            </p>
-          </div>
-        ) : null}
-        {selectedIds.size > 0 ? (
-          <label className="flex cursor-pointer select-none items-start gap-3 rounded-md border border-border p-3">
-            <Checkbox
-              className="mt-0.5"
-              checked={includeAttachmentOriginals}
-              onCheckedChange={(checked) => setIncludeAttachmentOriginals(checked === true)}
-              aria-label="包含相关原始附件"
-            />
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-medium text-fg">包含相关原始附件</span>
-              <span className="mt-1 block text-xs text-muted">
-                默认不包含。开启后仅收集本次采集轮次引用的附件原件，可能包含私人图片和文档，并会增大诊断包，不设导出体积上限。
-              </span>
-            </span>
-          </label>
-        ) : null}
-        <label className="flex cursor-pointer select-none items-start gap-3 rounded-md border border-border p-3">
-          <Checkbox
-            className="mt-0.5"
-            checked={includeCrashDumps}
-            disabled={generating}
-            onCheckedChange={(checked) => setIncludeCrashDumps(checked === true)}
-            aria-label="包含原始崩溃转储"
-          />
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-medium text-fg">包含原始崩溃转储</span>
-            <span className="mt-1 block text-xs text-muted">
-              默认只导出崩溃摘要、记录覆盖情况和采集错误。原始转储可能包含聊天、凭据等内存内容，无法自动脱敏；仅在需要进一步定位时选择，发送前请按私人文件处理。
-            </span>
-          </span>
-        </label>
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-sm text-muted">
-            <FileArchive className="size-4" />
-            ZIP 只保存在本机下载目录，不会自动上传。
-          </div>
-          <Button
-            loading={generating}
-            disabled={selectedIds.size > 0 && !allTurns && !validTurnLimit}
-            onClick={() => void generate()}
-          >
-            生成诊断包
-          </Button>
-        </div>
-
-        {result ? (
-          <div className="flex flex-col gap-3 rounded-md border border-border bg-bg p-3">
-            <div className="flex items-start gap-2 text-sm">
-              {result.outcome === "complete" ? (
-                <Check className="mt-0.5 size-4 shrink-0 text-success" />
-              ) : (
-                <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="font-medium text-fg">
-                  {resultTitle(result)}
-                </p>
-                <p className="mt-1 break-all text-xs text-muted">{result.path}</p>
-              </div>
-            </div>
-            {result.failures.length > 0 ? (
-              <ul className="list-disc space-y-1 pl-5 text-xs text-muted">
-                {result.failures.map((failure, index) => (
-                  <li key={`${failure.collection}-${failure.item ?? index}`}>
-                    {failure.item ? `${failure.item}：` : ""}
-                    {failure.message}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {result.warnings?.length ? (
-              <div className="text-xs text-muted">
-                <p className="font-medium">历史证据说明</p>
-                <ul className="mt-1 list-disc space-y-1 pl-5">
-                  {result.warnings.map((warning, index) => (
-                    <li key={`${warning.collection}-${warning.item ?? index}`}>
-                      {warning.item ? `${warning.item}：` : ""}
-                      {warning.message}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => void copyPath()}>
-                <Copy className="size-4" />
-                复制路径
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => void reveal(result.path)}>
-                <FolderOpen className="size-4" />
-                打开所在目录
-              </Button>
-            </div>
-          </div>
-        ) : null}
-      </SettingsGroup>
+        </CollapsibleContent>
+      </Collapsible>
     </SettingsPageLayout>
   );
 }

@@ -49,3 +49,32 @@ def test_observation_failure_does_not_change_response(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(request_observation.logger, "log", fail)
     assert TestClient(app).get("/ok").json() == {"ok": True}
+
+
+def test_fast_http_errors_remain_visible_when_success_polling_is_quiet(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from fastapi.responses import JSONResponse
+
+    app = FastAPI()
+    app.add_middleware(RequestObservationMiddleware)
+
+    @app.get("/poll")
+    def poll() -> dict[str, bool]:
+        return {"ok": True}
+
+    @app.get("/error")
+    def error() -> JSONResponse:
+        return JSONResponse({"error": "unavailable"}, status_code=503)
+
+    caplog.set_level(logging.INFO, logger="agent_bridge.request_observation")
+    with TestClient(app) as client:
+        client.get("/poll")
+        client.get("/error")
+    messages = [
+        record.message
+        for record in caplog.records
+        if record.name == "agent_bridge.request_observation"
+    ]
+    assert any("status=503" in message for message in messages)
+    assert not any("route=/poll " in message for message in messages)

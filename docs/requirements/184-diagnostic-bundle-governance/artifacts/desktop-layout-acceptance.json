@@ -1,0 +1,60 @@
+{
+  "synthetic": true,
+  "platform": "Windows 11 x64",
+  "configuration": "Existing Tauri dev runtime; live WebView CDP, current frontend via Vite HMR; real bridge, no model calls",
+  "sourceFilesSha256": {
+    "frontend\\src\\pages\\settings\\components\\FeedbackDiagnosticsPanel.tsx": "63c4fc135e92293a1b4f8a6f9c121fff5a3ffe0046173a433e534544af2c600e",
+    "frontend\\src\\pages\\settings\\components\\FeedbackDiagnosticsPanel.test.ts": "d4d07cc527f4cd0c84d9f272edac466fa52b128c3b11622643cac4e55bfef121",
+    "scripts\\diagnostics-smoke\\desktop.mjs": "0d730aae1d8d56fb461ca541d1a6a1a3a5fead56cbb98b1544b913c71e885049"
+  },
+  "viewport": {
+    "width": 1472,
+    "height": 890
+  },
+  "buttonBounds": {
+    "x": 1153.2000732421875,
+    "y": 641.8250122070312,
+    "width": 102,
+    "height": 36
+  },
+  "horizontalOverflow": false,
+  "keyboardToggle": true,
+  "advancedChoiceRetained": true,
+  "selection": {
+    "includeAttachmentOriginals": false,
+    "includeCrashDumps": false,
+    "includeRenderEvidence": false,
+    "logs": "recent",
+    "sessionCount": 1,
+    "sessionTurnLimit": 5,
+    "verifyInstallFiles": false
+  },
+  "outcome": "complete",
+  "warningCollections": [
+    "native-crash"
+  ],
+  "includedTurns": [
+    5
+  ],
+  "crcVerified": true,
+  "consumerVerified": true,
+  "bundleSha256": "1778a763539cf0942da7ee5419827bb6c04e2db4ab4216d681e785fa6d6e9de8",
+  "checks": {
+    "frontendStage": "passed",
+    "testFiles": 201,
+    "tests": 1659
+  },
+  "limits": [
+    "One synthetic desktop run. Prior Windows native/package evidence is retained; the package candidate predates this frontend layout revision.",
+    "macOS not executed at user request."
+  ],
+  "headingBounds": {
+    "x": 636,
+    "y": 16,
+    "width": 100,
+    "height": 28
+  },
+  "descriptionVisible": true,
+  "advancedCollapsed": true,
+  "newJobIdRequired": true
+}

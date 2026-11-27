@@ -34,6 +34,20 @@ def test_file_log_uses_rotating_handler(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert file_handlers[0].backupCount == 5
 
 
+def test_frozen_file_logger_does_not_duplicate_console(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import sys
+
+    monkeypatch.setenv("AGENT_FRIEND_LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    _configure_logging("INFO", file_log=True)
+    assert not any(
+        type(handler) is logging.StreamHandler for handler in logging.getLogger().handlers
+    )
+    assert any(isinstance(handler, RotatingFileHandler) for handler in logging.getLogger().handlers)
+
+
 def test_repeated_file_log_setup_does_not_duplicate_handler(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
