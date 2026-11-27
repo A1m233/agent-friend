@@ -574,6 +574,16 @@ def _build_bundle(
         "failures": [],
         "warnings": [],
         "excluded": [],
+        "selection": {
+            "logs": "all-retained",
+            "sessionTurnLimit": None,
+            "includeAttachmentOriginals": False,
+            "verifyInstallFiles": True,
+        },
+        "exportMetrics": {
+            "elapsedMs": 5,
+            "stages": [{"stage": "logs", "durationMs": 4, "processedBytes": 4}],
+        },
         "logLimits": {
             "maxBytesPerFile": None,
             "maxBytesTotal": None,
@@ -1193,7 +1203,7 @@ def test_inspector_accepts_older_v1_without_webview2_capability(tmp_path: Path) 
                 ):
                     if capability in manifest["capabilities"]:
                         manifest["capabilities"].remove(capability)
-                manifest["capabilities"].remove("install-integrity-v1")
+                manifest["capabilities"].remove("install-integrity-v2")
                 manifest["capabilities"].remove("managed-execution-environment-v1")
                 manifest.pop("renderEvidence")
                 data = json.dumps(manifest).encode()
@@ -1245,7 +1255,7 @@ def test_inspector_accepts_schema_v2_without_render_evidence(tmp_path: Path) -> 
                 ):
                     if capability in manifest["capabilities"]:
                         manifest["capabilities"].remove(capability)
-                manifest["capabilities"].remove("install-integrity-v1")
+                manifest["capabilities"].remove("install-integrity-v2")
                 manifest["capabilities"].remove("managed-execution-environment-v1")
                 manifest.pop("renderEvidence")
                 data = json.dumps(manifest).encode()
@@ -1314,6 +1324,57 @@ def _rewrite_pet_bundle(
             if replacements and name in replacements:
                 data = replacements[name]
             target.writestr(name, data)
+
+
+def test_scoped_export_distinguishes_unrequested_hashes_from_failures(tmp_path: Path) -> None:
+    source, bundle = tmp_path / "source.zip", tmp_path / "scoped.zip"
+    _build_bundle(source, _load_contract())
+    attachment_summary = {"itemCount": 1, "includeOriginalsRequested": False}
+    _rewrite_pet_bundle(
+        source,
+        bundle,
+        replacements={
+            "diagnostics/attachments.json": json.dumps(
+                {
+                    "formatVersion": 2,
+                    "summary": attachment_summary,
+                    "items": [
+                        {
+                            "metadataMatches": True,
+                            "blobExists": True,
+                            "sizeMatches": True,
+                            "hashMatches": None,
+                            "hashCheck": "not_requested",
+                            "originalStatus": "excluded",
+                        }
+                    ],
+                }
+            ).encode(),
+            "install/integrity.json": json.dumps(
+                {
+                    "schemaVersion": 2,
+                    "status": "not_checked",
+                    "fileVerificationRequested": False,
+                    "payload": {"validated": False},
+                }
+            ).encode(),
+        },
+        manifest_updates={
+            "attachments": attachment_summary,
+            "selection": {"logs": "recent", "sessionTurnLimit": 10},
+        },
+    )
+    summary = INSPECTOR.inspect_bundle(bundle, verify_crc=True)
+    assert summary["attachments"]["integrity"] == {
+        "checkedItems": 0,
+        "uncheckedItems": 1,
+        "failedItems": 0,
+    }
+    assert summary["installIntegrity"]["fileVerificationRequested"] is False
+    assert summary["installIntegrity"]["status"] == "not_checked"
+    assert summary["exportObservation"]["stages"][0]["stage"] == "logs"
+    assert summary["exportObservation"]["excludesFinalization"] is True
+    assert summary["manifest"]["unhandledCapabilities"] == []
 
 
 def test_pet_input_old_v1_without_capabilities_is_not_corruption(tmp_path: Path) -> None:

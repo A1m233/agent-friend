@@ -1463,6 +1463,7 @@ pub fn run() {
         .manage(runtime_service_supervisor.clone())
         .manage(runtime_credential_coordinator)
         .manage(model_connections::ModelConnectionCoordinator::default())
+        .manage(diagnostics::job::Jobs::default())
         .manage(migration_coordinator)
         .manage(avatar_model_manager)
         .plugin(navigation_guard())
@@ -1511,7 +1512,10 @@ pub fn run() {
         consume_pending_workspace_navigation,
         open_persona_target,
         link_navigation::reveal_link_target,
-        diagnostics::generate_diagnostic_bundle,
+        diagnostics::get_diagnostic_log_estimate,
+        diagnostics::job::start_diagnostic_bundle,
+        diagnostics::job::get_diagnostic_bundle_job,
+        diagnostics::job::cancel_diagnostic_bundle,
         webview_diagnostics::get_webview_render_evidence_status,
         webview_diagnostics::set_webview_render_evidence_armed,
         webview_diagnostics::capture_webview_render_evidence_now,
@@ -1630,7 +1634,10 @@ pub fn run() {
         data_migration::coordinator::clear_last_migration_result,
         open_persona_target,
         link_navigation::reveal_link_target,
-        diagnostics::generate_diagnostic_bundle,
+        diagnostics::get_diagnostic_log_estimate,
+        diagnostics::job::start_diagnostic_bundle,
+        diagnostics::job::get_diagnostic_bundle_job,
+        diagnostics::job::cancel_diagnostic_bundle,
         webview_diagnostics::get_webview_render_evidence_status,
         webview_diagnostics::set_webview_render_evidence_armed,
         webview_diagnostics::capture_webview_render_evidence_now,

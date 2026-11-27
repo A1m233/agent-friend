@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+from collections.abc import Buffer
 from typing import Any
 
 import pytest
@@ -167,3 +168,42 @@ def test_damaged_tail_does_not_invent_complete_turn_count() -> None:
     raw = json.dumps(event("session_meta", "meta")).encode() + b'\n{"broken"'
     result = export.export_prefix(io.BytesIO(raw), len(raw), 10)
     assert result["coverage"]["gaps"] == ["invalid_record"]
+
+
+def test_stream_cancellation_interrupts_a_single_large_record() -> None:
+    raw = json.dumps(event("session_meta", "meta")).encode() + b"\n" + b"x" * (1024 * 1024)
+    checks = 0
+
+    def cancel() -> None:
+        nonlocal checks
+        checks += 1
+        if checks >= 5:
+            raise RuntimeError("cancelled")
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        list(export.stream_prefix(io.BytesIO(raw), len(raw), None, cancel))
+    assert checks == 5
+
+
+def test_disk_full_is_not_misreported_as_source_corruption(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FullDisk(io.BytesIO):
+        def write(self, value: Buffer, /) -> int:
+            raise OSError("disk full")
+
+    monkeypatch.setattr(export, "TemporaryFile", FullDisk)
+    with pytest.raises(OSError, match="disk full"):
+        collect([event("session_meta", "meta"), event("user_message", "u")])
+
+
+def test_stream_preserves_order_and_has_one_final_coverage() -> None:
+    events = [event("session_meta", "meta"), *[event("user_message", str(i)) for i in range(20)]]
+    raw = b"\n".join(json.dumps(e).encode() for e in events) + b"\n"
+    records = list(export.stream_prefix(io.BytesIO(raw), len(raw), 3))
+    assert [r["event"]["uuid"] for r in records if r["kind"] == "event"] == [
+        "meta",
+        "17",
+        "18",
+        "19",
+    ]
+    assert records[-1]["kind"] == "coverage"
+    assert records[-1]["coverage"]["includedTurns"] == 3

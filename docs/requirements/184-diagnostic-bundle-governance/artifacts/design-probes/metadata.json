@@ -1,0 +1,37 @@
+{
+  "head": "36605682fd49ecb6fc394926f1db08b4fdc3b4af",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "source_sha256": "42bfd5df5a41ec1cf7f17f6a498695cb65e00ec3cb2172bc8ec65ca50f2148ee",
+  "redact_sha256": "7084ca93166a234dac09d95681f9e981953cd361bd25181f27c02c6d407e70b7",
+  "harness_sha256": "7c6c645838d27f02e80121ea3b2117ebc253a9fb0f6bb2dad1e1678ca070b984",
+  "changes": "Only temp filename nonce shim in baseline; buffered candidate changes staging sink only. Timed region is collect; output FNV and bytes verified outside timing.",
+  "fixtures": [
+    {
+      "name": "fixture-128.log",
+      "bytes": 134160072,
+      "sha256": "7836473ba25b350cfebdd65f065cc1c21abe7b4aaf1b16e0be72ac6d390823c5"
+    },
+    {
+      "name": "fixture-16.log",
+      "bytes": 16640072,
+      "sha256": "701a1e8ff96ace193b527c733f6f2305adc5b050accb1226ef3c5ed9a841f8bb"
+    }
+  ],
+  "date": "2026-11-27",
+  "compileCommand": "rustc --edition=2021 -O probe.rs -o probe.exe",
+  "runCommand": "probe.exe baseline|buffered fixture-128.log",
+  "fixtureRecipe": {
+    "line": "2026-11-27T10:00:00+08:00 [INFO] HTTP GET /v1/status 200 synthetic-home record 000000000000000000000000\n",
+    "blockLines": 10000,
+    "fullBlocks": "floor(labelMiB * 1024 * 1024 / blockBytes)",
+    "tail": "Authorization: synthetic-secret\nlast C:/synthetic-home synthetic-secret\n"
+  },
+  "limits": [
+    "Extracted production stager and redactor; only nonce for temporary filename replaced in baseline",
+    "Buffered prototype is not integrated product code",
+    "Initial pilot overlapped dependency setup and diagnostics-smoke; use controlled-results for sequential comparison",
+    "FNV64 and output size compared; not a cryptographic proof of identity",
+    "No user payloads, no LLM calls, no desktop runtime, no installed-product mutation",
+    "Large fixture files and compiled executable are not archived; recipe and hashes supplied"
+  ]
+}

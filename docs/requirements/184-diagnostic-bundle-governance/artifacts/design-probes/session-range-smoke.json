@@ -1,0 +1,32 @@
+{
+  "date": "2026-11-27",
+  "command": "scripts/diagnostics-smoke/run.ps1",
+  "exitCode": 0,
+  "sourceCommit": "36605682fd49ecb6fc394926f1db08b4fdc3b4af",
+  "sourceSha256": "44ae52e3a733b5245856079310a2fb329042c3525b892367e96043a833873c01",
+  "synthetic": true,
+  "observations": [
+    {
+      "oldTurns": 2048,
+      "sourceBytes": 16942795,
+      "readBytes": 65587,
+      "sessionBytes": 1418,
+      "zipBytes": 1428,
+      "readSerializeZipMs": 8.17
+    },
+    {
+      "oldTurns": 20480,
+      "sourceBytes": 169441221,
+      "readBytes": 65587,
+      "sessionBytes": 1432,
+      "zipBytes": 1430,
+      "readSerializeZipMs": 7.6
+    }
+  ],
+  "limits": [
+    "Existing smoke combines production range reader with Python serialization and ZIP; not Rust/Tauri end-to-end",
+    "Single run per size, no performance stability claim",
+    "Initial run created an ignored local Python virtual environment; dependency setup excluded from printed stage timing",
+    "Dependency SyntaxWarnings observed; exit code was zero"
+  ]
+}

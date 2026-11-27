@@ -58,7 +58,7 @@ class RequestObservationMiddleware:
                 route = getattr(scope.get("route"), "path", "unmatched")
                 logger.log(
                     logging.INFO
-                    if finished - started >= 0.1 or outcome != "success"
+                    if finished - started >= 0.1 or outcome != "success" or status >= 400
                     else logging.DEBUG,
                     "http_request request_id=%s method=%s route=%s status=%s started=%.6f "
                     "response_started=%s finished=%.6f total_ms=%.3f bytes=%s outcome=%s",

@@ -1,0 +1,88 @@
+{
+  "kind": "isolated-design-probe-not-end-to-end",
+  "rows": [
+    {
+      "mode": "baseline",
+      "inputBytes": 16640072,
+      "outputBytes": 16640065,
+      "seconds": 0.807511,
+      "outputFnv64": "2185258781201131575",
+      "peakWorkingSetBytes": 4800512,
+      "fixtureMiBLabel": 16
+    },
+    {
+      "mode": "buffered",
+      "inputBytes": 16640072,
+      "outputBytes": 16640065,
+      "seconds": 0.115361,
+      "outputFnv64": "2185258781201131575",
+      "peakWorkingSetBytes": 4460544,
+      "fixtureMiBLabel": 16
+    },
+    {
+      "mode": "baseline",
+      "inputBytes": 134160072,
+      "outputBytes": 134160065,
+      "seconds": 11.731559,
+      "outputFnv64": "2572080967568707895",
+      "peakWorkingSetBytes": 4239360,
+      "fixtureMiBLabel": 128
+    },
+    {
+      "mode": "buffered",
+      "inputBytes": 134160072,
+      "outputBytes": 134160065,
+      "seconds": 0.789996,
+      "outputFnv64": "2572080967568707895",
+      "peakWorkingSetBytes": 4464640,
+      "fixtureMiBLabel": 128
+    },
+    {
+      "mode": "buffered",
+      "inputBytes": 134160072,
+      "outputBytes": 134160065,
+      "seconds": 0.769956,
+      "outputFnv64": "2572080967568707895",
+      "peakWorkingSetBytes": 4464640,
+      "fixtureMiBLabel": 128
+    },
+    {
+      "mode": "baseline",
+      "inputBytes": 134160072,
+      "outputBytes": 134160065,
+      "seconds": 7.319554,
+      "outputFnv64": "2572080967568707895",
+      "peakWorkingSetBytes": 4231168,
+      "fixtureMiBLabel": 128
+    },
+    {
+      "mode": "baseline",
+      "inputBytes": 134160072,
+      "outputBytes": 134160065,
+      "seconds": 7.840705,
+      "outputFnv64": "2572080967568707895",
+      "peakWorkingSetBytes": 4235264,
+      "fixtureMiBLabel": 128
+    },
+    {
+      "mode": "buffered",
+      "inputBytes": 134160072,
+      "outputBytes": 134160065,
+      "seconds": 0.761074,
+      "outputFnv64": "2572080967568707895",
+      "peakWorkingSetBytes": 4468736,
+      "fixtureMiBLabel": 128
+    }
+  ],
+  "median128Seconds": {
+    "baseline": 7.840705,
+    "buffered": 0.769956
+  },
+  "ratio": 10.183315669986337,
+  "limits": [
+    "Synthetic short lines; only log staging measured",
+    "Single host, warm filesystem cache, no actual ZIP or network",
+    "Memory is sampled process peak working set; not whole desktop",
+    "Candidate is temporary and not production code"
+  ]
+}

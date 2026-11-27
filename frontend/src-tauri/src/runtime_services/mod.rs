@@ -1,5 +1,6 @@
 pub(crate) mod endpoints;
 mod model;
+mod output_log;
 mod process;
 mod source;
 mod supervisor;

@@ -1238,19 +1238,36 @@ class JsonlSessionStore:
                     )
                 return snapshot
 
-    def diagnostic_export(self, session_id: str, *, turn_limit: int | None) -> dict[str, object]:
-        from .diagnostic_export import export_prefix
+    def diagnostic_stream(
+        self, session_id: str, *, turn_limit: int | None, cancel_check: CancelCheck = None
+    ) -> Iterator[dict[str, Any]]:
+        from .diagnostic_export import stream_prefix
 
         path = self._existing_path(session_id)
         if path is None:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
-        with self._read_lock(path, None) as locked:
+        with self._read_lock(path, cancel_check) as locked:
             version = self._handle_version(locked, path)
             descriptor = os.dup(locked.fileno())
         with os.fdopen(descriptor, "rb") as snapshot:
-            result = export_prefix(snapshot, version[2], turn_limit)
-        result["session_id"] = session_id
-        return result
+            for record in stream_prefix(snapshot, version[2], turn_limit, cancel_check):
+                if record["kind"] == "coverage":
+                    record["session_id"] = session_id
+                yield record
+
+    def diagnostic_export(
+        self, session_id: str, *, turn_limit: int | None, cancel_check: CancelCheck = None
+    ) -> dict[str, object]:
+        events = []
+        result: dict[str, object] = {}
+        for record in self.diagnostic_stream(
+            session_id, turn_limit=turn_limit, cancel_check=cancel_check
+        ):
+            if record["kind"] == "event":
+                events.append(record["event"])
+            elif record["kind"] == "coverage":
+                result = {key: value for key, value in record.items() if key != "kind"}
+        return {**result, "events": events}
 
     def _query_snapshot(
         self,
@@ -1942,6 +1959,17 @@ class NotifyingSessionStore:
         cancel_check: CancelCheck = None,
     ) -> SessionRecallSnapshot:
         return query_session_recall(self._inner, session_id, cancel_check=cancel_check)
+
+    def diagnostic_stream(
+        self, session_id: str, *, turn_limit: int | None, cancel_check: CancelCheck = None
+    ) -> Iterator[dict[str, Any]]:
+        method = getattr(self._inner, "diagnostic_stream", None)
+        if not callable(method):
+            raise NotImplementedError("store does not support streaming diagnostic export")
+        return cast(
+            Iterator[dict[str, Any]],
+            method(session_id, turn_limit=turn_limit, cancel_check=cancel_check),
+        )
 
     def diagnostic_export(self, session_id: str, *, turn_limit: int | None) -> dict[str, object]:
         method = getattr(self._inner, "diagnostic_export", None)

@@ -39,8 +39,11 @@ CAPABILITY_HANDLERS = {
     "model-catalog-v1": "modelCatalog",
     "bounded-log-tail-v1": "logs",
     "full-retained-logs-v1": "logs",
+    "scoped-retained-logs-v1": "logs",
+    "export-observation-v1": "exportObservation",
     "attachment-integrity-v1": "attachments",
     "attachment-integrity-v2": "attachments",
+    "attachment-integrity-v3": "attachments",
     "windows-shell-history-v1": "windowsShell",
     "webview2-process-health-v1": "webView2",
     "webview2-render-evidence-v1": "webView2RenderEvidence",
@@ -49,6 +52,7 @@ CAPABILITY_HANDLERS = {
     "webview2-render-evidence-v4": "webView2RenderEvidence",
     "installer-attempts-v1": "installerAttempts",
     "install-integrity-v1": "installIntegrity",
+    "install-integrity-v2": "installIntegrity",
     "desktop-instance-governance-v1": "desktopInstance",
     "managed-execution-environment-v1": "executionEnvironments",
     "command-runtime-health-v1": "commandRuntime",
@@ -295,6 +299,47 @@ def summarize_installer_attempts(
     }
 
 
+def summarize_export_observation(manifest: dict[str, Any]) -> dict[str, Any]:
+    metrics = manifest.get("exportMetrics")
+    if not isinstance(metrics, dict):
+        return {"evidence": "not-collected"}
+    known_stages = {
+        "preparing",
+        "basic-state",
+        "install-files",
+        "sessions",
+        "attachments",
+        "logs",
+        "incident-evidence",
+        "archive",
+    }
+    stages = []
+    for stage in metrics.get("stages", []) if isinstance(metrics.get("stages"), list) else []:
+        if not isinstance(stage, dict):
+            continue
+        stages.append(
+            {
+                "stage": stage.get("stage")
+                if isinstance(stage.get("stage"), str) and stage.get("stage") in known_stages
+                else "unknown",
+                "durationMs": stage.get("durationMs")
+                if type(stage.get("durationMs")) in (int, float)
+                else None,
+                "processedBytes": stage.get("processedBytes")
+                if type(stage.get("processedBytes")) is int
+                else None,
+            }
+        )
+    return {
+        "evidence": "collected",
+        "elapsedMs": metrics.get("elapsedMs")
+        if type(metrics.get("elapsedMs")) in (int, float)
+        else None,
+        "stages": stages,
+        "excludesFinalization": True,
+    }
+
+
 def summarize_install_integrity(value: Any, *, collected: bool) -> dict[str, Any]:
     if value is None:
         return {
@@ -320,6 +365,7 @@ def summarize_install_integrity(value: Any, *, collected: bool) -> dict[str, Any
     )
     return {
         "schemaVersion": value.get("schemaVersion"),
+        "fileVerificationRequested": value.get("fileVerificationRequested"),
         "status": value.get("status"),
         "errorCode": value.get("errorCode"),
         "evidence": "collected",
@@ -1857,11 +1903,23 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             items = [item for item in attachments["items"] if isinstance(item, dict)]
             integrity_fields = ("metadataMatches", "blobExists", "sizeMatches", "hashMatches")
             attachment_integrity = {
-                "checkedItems": len(items),
+                "checkedItems": sum(
+                    item.get("hashCheck") not in ("not_requested", "unavailable") for item in items
+                ),
+                "uncheckedItems": sum(
+                    item.get("hashCheck") in ("not_requested", "unavailable") for item in items
+                ),
                 "failedItems": sum(
                     1
                     for item in items
-                    if not all(item.get(field) is True for field in integrity_fields)
+                    if (
+                        item.get("hashCheck") != "not_requested"
+                        and not all(item.get(field) is True for field in integrity_fields)
+                    )
+                    or (
+                        item.get("hashCheck") == "not_requested"
+                        and any(item.get(field) is False for field in integrity_fields[:-1])
+                    )
                 ),
             }
             attachment_statuses = dict(
@@ -1897,6 +1955,8 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                     "modifiedAtUnixSeconds": item.get("modifiedAtUnixSeconds"),
                     "originalBytes": item.get("originalBytes"),
                     "tailStartOffset": item.get("tailStartOffset"),
+                    "readBytes": item.get("readBytes"),
+                    "omission": item.get("omission"),
                     "includedBytes": item.get("includedBytes"),
                 }
             )
@@ -1929,6 +1989,7 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 "includedSessionIds": manifest.get("includedSessionIds", []),
                 "excluded": manifest.get("excluded", []),
                 "logLimits": manifest.get("logLimits"),
+                "selection": manifest.get("selection"),
                 "attachmentSummary": manifest.get("attachments"),
                 "renderEvidenceSummary": manifest.get("renderEvidence"),
             },
@@ -1956,6 +2017,7 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             },
             "sessions": sessions,
             "logs": log_entries,
+            "exportObservation": summarize_export_observation(manifest),
             "attachments": {
                 "summary": attachments.get("summary") if isinstance(attachments, dict) else None,
                 "statuses": attachment_statuses,

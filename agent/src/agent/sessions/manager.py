@@ -480,6 +480,14 @@ class SessionManager:
     def query(self, session_id: str, *, cancel_check: CancelCheck = None) -> SessionQuerySnapshot:
         return query_session(self._store, session_id, cancel_check=cancel_check)
 
+    def diagnostic_stream(
+        self, session_id: str, *, turn_limit: int | None, cancel_check: CancelCheck = None
+    ) -> Any:
+        method = getattr(self._store, "diagnostic_stream", None)
+        if method is None:
+            raise NotImplementedError("store does not support streaming diagnostic export")
+        return method(session_id, turn_limit=turn_limit, cancel_check=cancel_check)
+
     def diagnostic_export(self, session_id: str, *, turn_limit: int | None) -> dict[str, Any]:
         method = getattr(self._store, "diagnostic_export", None)
         if method is None:

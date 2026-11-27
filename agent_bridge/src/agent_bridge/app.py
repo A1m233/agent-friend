@@ -99,7 +99,7 @@ def create_app() -> FastAPI:
     """
     mode = config_mode_from_env()
     settings = BridgeSettings(**settings_kwargs_for_mode(mode))
-    _configure_logging(settings.log_level)
+    _configure_logging(settings.log_level, console=not getattr(sys, "frozen", False))
     logging.getLogger(__name__).info(
         "agent_bridge logging configured log_dir=%s pid=%s executable=%s base_executable=%s config_mode=%s",
         log_dir(),
@@ -291,10 +291,10 @@ class IsoLocalFormatter(logging.Formatter):
         return super().format(record)
 
 
-def _configure_logging(level: str) -> None:
+def _configure_logging(level: str, *, console: bool = True) -> None:
     """配置 root + memory 双 handler 树，统一格式写到 ``log_dir()`` 下。
 
-    - root logger 挂 stream + ``agent_bridge.log``，覆盖 ``agent.*`` / ``agent_bridge.*``
+    - root logger 挂 ``agent_bridge.log``；源码运行另挂 stream，冻结运行避免重复写后台输出日志，覆盖 ``agent.*`` / ``agent_bridge.*``
       / ``llm_providers.*`` / ``tools.*`` / ``shared.*`` 等子树。
     - ``memory`` logger ``propagate=False`` 单独挂 ``memory.log``，避免重复。
     - 调用前先清已有 handler，保证 idempotent（测试反复调用 / 生产二次初始化安全）。
@@ -309,9 +309,10 @@ def _configure_logging(level: str) -> None:
         root.removeHandler(h)
     root.setLevel(level_int)
 
-    stream = logging.StreamHandler()
-    stream.setFormatter(formatter)
-    root.addHandler(stream)
+    if console:
+        stream = logging.StreamHandler()
+        stream.setFormatter(formatter)
+        root.addHandler(stream)
 
     bridge_file = RotatingFileHandler(
         target_dir / "agent_bridge.log",

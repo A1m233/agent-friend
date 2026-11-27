@@ -7,7 +7,6 @@ use crate::{install_contract, paths, runtime_observability::RuntimeObserver};
 use rand::{rngs::OsRng, RngCore};
 use std::{
     collections::HashMap,
-    fs::{self, OpenOptions},
     io::{BufRead, BufReader},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     path::{Path, PathBuf},
@@ -1157,11 +1156,7 @@ fn spawn_service(
                     serde_json::to_string(identity)
                         .map_err(|error| format!("runtime_identity_serialize_failed: {error}"))?,
                 );
-            if let Some((stdout, stderr)) = packaged_runtime_stdio(service) {
-                command.stdout(stdout).stderr(stderr);
-            } else {
-                command.stdout(Stdio::null()).stderr(Stdio::null());
-            }
+            command.stdout(Stdio::piped()).stderr(Stdio::piped());
             configure_packaged_process(&mut command);
             command
         }
@@ -1190,31 +1185,16 @@ fn spawn_service(
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .stdin(Stdio::null());
-    ServiceProcess::spawn(&mut command, process_job)
-        .map_err(|error| format!("failed to launch {}: {error}", service.module()))
-}
-
-fn packaged_runtime_stdio(service: RuntimeServiceKind) -> Option<(Stdio, Stdio)> {
-    let log_dir = paths::log_dir();
-    if let Err(error) = fs::create_dir_all(&log_dir) {
-        log::warn!("failed to create packaged runtime log dir {log_dir:?}: {error}");
-        return None;
+    let mut process = ServiceProcess::spawn(&mut command, process_job)
+        .map_err(|error| format!("failed to launch {}: {error}", service.module()))?;
+    if matches!(context, RuntimeLaunchContext::Packaged { .. }) {
+        let name = match service {
+            RuntimeServiceKind::Bridge => "runtime-bridge.log",
+            RuntimeServiceKind::Voice => "runtime-voice.log",
+        };
+        process.capture_output(&paths::log_dir().join(name))?;
     }
-    let name = match service {
-        RuntimeServiceKind::Bridge => "runtime-bridge.log",
-        RuntimeServiceKind::Voice => "runtime-voice.log",
-    };
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_dir.join(name))
-        .map_err(|error| {
-            log::warn!("failed to open packaged runtime log {name}: {error}");
-            error
-        })
-        .ok()?;
-    let stdout = file.try_clone().ok()?;
-    Some((Stdio::from(stdout), Stdio::from(file)))
+    Ok(process)
 }
 
 fn spawn_quick_tunnel(

@@ -1,0 +1,104 @@
+{
+  "platform": "Windows 11 x64",
+  "source": "Actual Tauri WebView CDP; synthetic window focus events with real session metadata requests",
+  "sourceFilesSha256": {
+    "frontend/src/pages/settings/components/FeedbackDiagnosticsPanel.tsx": "6012907bc7e2e518d20b594e9f7ed09bd12fcaa4a4947382110a5cedf372b094",
+    "frontend/src/pages/settings/components/FeedbackDiagnosticsPanel.test.ts": "c849186e2b67aeb6205911ae1a7823faf5a3e586c19d297af572abf29c35e340",
+    "scripts/diagnostics-smoke/desktop.mjs": "7e5f5ead3799b324d0f5c1783ffb5fdba5566fc8af2628d1b3134220f524ecea"
+  },
+  "before": {
+    "listHeightRangePx": [
+      61.60000228881836,
+      209.5625
+    ],
+    "buttonVerticalShiftPx": 147.96249389648438,
+    "viewport": [
+      1472,
+      896,
+      1.25
+    ]
+  },
+  "after": {
+    "focusCount": 3,
+    "responseStatuses": [
+      200,
+      200,
+      200
+    ],
+    "samples": 117,
+    "geometry": {
+      "viewport": [
+        1472,
+        896,
+        1.25
+      ],
+      "list": [
+        656.7999877929688,
+        140.3000030517578,
+        598.4000244140625,
+        209.5625
+      ],
+      "textarea": [
+        656.7999877929688,
+        393.8625183105469,
+        598.4000244140625,
+        64
+      ],
+      "button": [
+        1153.2000732421875,
+        505.8500061035156,
+        102,
+        36
+      ],
+      "scroll": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          0
+        ]
+      ]
+    },
+    "verticalShiftPx": 0,
+    "originalRowsRetained": true,
+    "selectionRetained": true,
+    "loadingPlaceholderShown": false
+  },
+  "regressionTests": {
+    "beforeFix": {
+      "failed": 5,
+      "passed": 16
+    },
+    "afterFix": {
+      "frontendFiles": 201,
+      "frontendTests": 1664,
+      "status": "passed"
+    }
+  },
+  "limits": [
+    "Tests the focus-refresh layout mechanism; native title-bar drag was not automated.",
+    "No change to session refresh, backend, archive format or native window code."
+  ],
+  "checks": {
+    "command": "scripts/check/run.ps1 --stage frontend",
+    "lintTypecheckGuards": "passed",
+    "testFiles": 201,
+    "tests": 1664,
+    "productionBuild": "passed",
+    "exitCode": 0
+  }
+}

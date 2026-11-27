@@ -51,6 +51,7 @@ def main(argv: list[str] | None = None) -> int:
     server = uvicorn.Server(
         uvicorn.Config(
             app,
+            access_log=False,  # Content-free request observation retains errors and slow calls.
             host=settings.host,
             port=settings.port,
             log_level=settings.log_level.lower(),

@@ -193,6 +193,15 @@ pub fn log_dir() -> PathBuf {
     }
 }
 
+/// Owned diagnostic staging, separate from retained evidence and final Downloads.
+pub fn diagnostic_work_dir() -> PathBuf {
+    log_dir().join("diagnostic-exports")
+}
+
+pub fn diagnostic_archive_work_dir(output_dir: &std::path::Path) -> PathBuf {
+    output_dir.join(".agent-friend-diagnostic-work")
+}
+
 /// Earliest crash journal location. Unlike `log_dir`, this never panics on an invalid embedded
 /// profile, so identity-contract failures still leave persistent evidence.
 pub fn bootstrap_log_dir() -> PathBuf {

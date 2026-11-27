@@ -44,6 +44,22 @@ def test_root_has_stream_and_file_handler(monkeypatch: pytest.MonkeyPatch, tmp_p
     )
 
 
+def test_packaged_logging_keeps_file_without_duplicate_console(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(LOG_DIR_ENV, str(tmp_path))
+    _configure_logging("INFO", console=False)
+    root = logging.getLogger()
+    assert not any(type(handler) is logging.StreamHandler for handler in root.handlers)
+    assert any(
+        isinstance(handler, logging.handlers.RotatingFileHandler) for handler in root.handlers
+    )
+    root.warning("single-file-record")
+    assert (tmp_path / "agent_bridge.log").read_text(encoding="utf-8").count(
+        "single-file-record"
+    ) == 1
+
+
 def test_memory_logger_isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv(LOG_DIR_ENV, str(tmp_path))
     _configure_logging("INFO")
