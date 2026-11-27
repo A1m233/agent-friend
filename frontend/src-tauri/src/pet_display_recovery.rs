@@ -121,6 +121,7 @@ impl SessionDisplayState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DisplayObservation {
     None,
+    WaitForUnlock,
     BeginRecovery { generation: u64 },
     BeginRefresh { generation: u64 },
 }
@@ -173,6 +174,8 @@ fn decide_presented_probe_action(
 #[derive(Debug)]
 pub struct PetDisplayRecoveryState {
     last_display_state: Option<SessionDisplayState>,
+    session_locked: bool,
+    pending_display_resume: bool,
     protection_enabled: bool,
     desired_visible: bool,
     next_generation: u64,
@@ -184,6 +187,8 @@ impl Default for PetDisplayRecoveryState {
     fn default() -> Self {
         Self {
             last_display_state: None,
+            session_locked: false,
+            pending_display_resume: false,
             protection_enabled: true,
             desired_visible: true,
             next_generation: 0,
@@ -207,8 +212,40 @@ impl PetDisplayRecoveryState {
             return DisplayObservation::None;
         }
 
-        if state != SessionDisplayState::On
-            || !previous.is_some_and(SessionDisplayState::is_not_rendering)
+        if state == SessionDisplayState::On
+            && previous.is_some_and(SessionDisplayState::is_not_rendering)
+        {
+            self.pending_display_resume = self.desired_visible;
+        }
+        self.begin_pending_display_resume()
+    }
+
+    pub fn observe_session_locked(&mut self, locked: bool) -> DisplayObservation {
+        if self.session_locked == locked {
+            return DisplayObservation::None;
+        }
+        self.session_locked = locked;
+        if locked {
+            // Locking also cancels a probe already in flight. No recovery clock
+            // runs while locked; unlock starts a new generation and full delay.
+            if self
+                .active_recovery
+                .is_some_and(|active| active.cause == RecoveryCause::DisplayResume)
+            {
+                self.active_recovery = None;
+            }
+            self.pending_display_resume = self.desired_visible;
+            return if self.desired_visible {
+                DisplayObservation::WaitForUnlock
+            } else {
+                DisplayObservation::None
+            };
+        }
+        self.begin_pending_display_resume()
+    }
+
+    fn begin_pending_display_resume(&mut self) -> DisplayObservation {
+        if !self.pending_display_resume
             || !self.desired_visible
             || self
                 .active_recovery
@@ -217,7 +254,17 @@ impl PetDisplayRecoveryState {
         {
             return DisplayObservation::None;
         }
+        if self.session_locked {
+            return DisplayObservation::WaitForUnlock;
+        }
+        if self
+            .last_display_state
+            .is_some_and(|state| state != SessionDisplayState::On)
+        {
+            return DisplayObservation::None;
+        }
 
+        self.pending_display_resume = false;
         self.next_generation = self.next_generation.saturating_add(1);
         self.active_recovery = Some(ActiveRecovery {
             generation: self.next_generation,
@@ -239,7 +286,8 @@ impl PetDisplayRecoveryState {
         self.desired_visible = visible;
         self.active_recovery = None;
         self.safety_suppressed = None;
-        if visible {
+        self.pending_display_resume = visible && self.session_locked;
+        if visible && !self.session_locked {
             VisibilityCommand::Show
         } else {
             VisibilityCommand::Hide
@@ -248,6 +296,7 @@ impl PetDisplayRecoveryState {
 
     pub fn toggle_requested(&mut self, physically_visible: bool) -> VisibilityCommand {
         if !physically_visible
+            && !self.session_locked
             && self.desired_visible
             && (self.active_recovery.is_some() || self.safety_suppressed.is_some())
         {
@@ -328,7 +377,7 @@ impl PetDisplayRecoveryState {
             self.safety_suppressed = None;
         }
         let interrupted = interrupted_active || interrupted_suppressed;
-        interrupted.then_some(if self.desired_visible {
+        interrupted.then_some(if self.desired_visible && !self.session_locked {
             VisibilityCommand::Show
         } else {
             VisibilityCommand::Hide
@@ -667,6 +716,39 @@ fn complete_and_restore(
     Ok(true)
 }
 
+#[derive(Clone, Copy)]
+enum RecoveryVisibility {
+    Probe(VisibilityCommand),
+    Complete,
+}
+
+/// Check the generation and mutate HWND visibility in the same UI dispatch as
+/// session notifications. A probe finishing after lock must not show stale UI.
+async fn apply_current_recovery_visibility(
+    app: &tauri::AppHandle,
+    generation: u64,
+    action: RecoveryVisibility,
+    reason: &'static str,
+) -> Result<bool, String> {
+    let handle = app.clone();
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let result = if !is_current(&handle, generation) {
+            Ok(false)
+        } else {
+            match action {
+                RecoveryVisibility::Complete => complete_and_restore(&handle, generation, reason),
+                RecoveryVisibility::Probe(command) => {
+                    apply_visibility_command(&handle, command, reason).map(|()| true)
+                }
+            }
+        };
+        let _ = sender.send(result);
+    })
+    .map_err(|error| error.to_string())?;
+    receiver.await.map_err(|error| error.to_string())?
+}
+
 pub(crate) fn set_desired_visibility(
     app: &tauri::AppHandle,
     visible: bool,
@@ -884,11 +966,12 @@ fn schedule(app: &tauri::AppHandle, generation: u64, cause: RecoveryCause) {
                             "diagnostics-unavailable",
                             "WebView diagnostics manager is unavailable",
                         );
-                    } else if let Err(error) = complete_and_restore(
+                    } else if let Err(error) = apply_current_recovery_visibility(
                         &handle,
                         generation,
+                        RecoveryVisibility::Complete,
                         "display-resume-gate-disabled",
-                    ) {
+                    ).await {
                         log::warn!("pet display recovery legacy restore failed: {error}");
                     }
                     return;
@@ -906,11 +989,14 @@ fn schedule(app: &tauri::AppHandle, generation: u64, cause: RecoveryCause) {
                     Err(error) => {
                         if gate_enabled {
                             fail_recovery(&handle, generation, cause, "baseline-capture", &error);
-                        } else if let Err(restore_error) = complete_and_restore(
+                        } else if let Err(restore_error) = apply_current_recovery_visibility(
                             &handle,
                             generation,
+                            RecoveryVisibility::Complete,
                             "display-resume-gate-disabled",
-                        ) {
+                        )
+                        .await
+                        {
                             log::warn!(
                                 "pet display recovery legacy restore failed after baseline error: {restore_error}"
                             );
@@ -944,8 +1030,14 @@ fn schedule(app: &tauri::AppHandle, generation: u64, cause: RecoveryCause) {
                     );
                 }
                 if !should_present(&handle, generation) {
-                    if complete_and_restore(&handle, generation, cause.complete_reason())
-                        .unwrap_or(false)
+                    if apply_current_recovery_visibility(
+                        &handle,
+                        generation,
+                        RecoveryVisibility::Complete,
+                        cause.complete_reason(),
+                    )
+                    .await
+                    .unwrap_or(false)
                     {
                         log::info!(
                             "pet render recovery completed from a healthy hidden baseline without presenting a user-hidden pet: cause={} generation={} elapsed_ms={}",
@@ -965,13 +1057,20 @@ fn schedule(app: &tauri::AppHandle, generation: u64, cause: RecoveryCause) {
                 }
                 let mut attempt = 1;
                 loop {
-                    if let Err(error) = apply_visibility_command(
+                    match apply_current_recovery_visibility(
                         &handle,
-                        VisibilityCommand::Show,
+                        generation,
+                        RecoveryVisibility::Probe(VisibilityCommand::Show),
                         cause.probe_reason(),
-                    ) {
-                        fail_recovery(&handle, generation, cause, "probe-show", &error);
-                        return;
+                    )
+                    .await
+                    {
+                        Ok(true) => {}
+                        Ok(false) => return,
+                        Err(error) => {
+                            fail_recovery(&handle, generation, cause, "probe-show", &error);
+                            return;
+                        }
                     }
                     let probe_elapsed_ms =
                         started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
@@ -991,8 +1090,14 @@ fn schedule(app: &tauri::AppHandle, generation: u64, cause: RecoveryCause) {
                         attempt,
                     ) {
                         PresentedProbeAction::Complete => {
-                            if complete_and_restore(&handle, generation, cause.complete_reason())
-                                .unwrap_or(false)
+                            if apply_current_recovery_visibility(
+                                &handle,
+                                generation,
+                                RecoveryVisibility::Complete,
+                                cause.complete_reason(),
+                            )
+                            .await
+                            .unwrap_or(false)
                             {
                                 log::info!(
                                     "pet render recovery completed with render evidence: cause={} generation={} elapsed_ms={} attempts={}",
@@ -1014,21 +1119,28 @@ fn schedule(app: &tauri::AppHandle, generation: u64, cause: RecoveryCause) {
                             let error = presented_safe
                                 .as_ref()
                                 .expect_err("retry is only selected for probe errors");
-                            if let Err(hide_error) = apply_visibility_command(
+                            match apply_current_recovery_visibility(
                                 &handle,
-                                VisibilityCommand::Hide,
+                                generation,
+                                RecoveryVisibility::Probe(VisibilityCommand::Hide),
                                 cause.probe_reason(),
-                            ) {
-                                fail_recovery(
-                                    &handle,
-                                    generation,
-                                    cause,
-                                    "probe-retry-hide",
-                                    &format!(
-                                        "probe error: {error}; retry hide failed: {hide_error}"
-                                    ),
-                                );
-                                return;
+                            )
+                            .await
+                            {
+                                Ok(true) => {}
+                                Ok(false) => return,
+                                Err(hide_error) => {
+                                    fail_recovery(
+                                        &handle,
+                                        generation,
+                                        cause,
+                                        "probe-retry-hide",
+                                        &format!(
+                                            "probe error: {error}; retry hide failed: {hide_error}"
+                                        ),
+                                    );
+                                    return;
+                                }
                             }
                             log::warn!(
                                 "pet display recovery presented probe failed; retrying safely hidden: generation={} attempt={} max_attempts={} retry_delay_ms={} error={}",
@@ -1149,18 +1261,41 @@ pub(crate) fn handle_gpu_process_failure(
     schedule(app, generation, RecoveryCause::WebView2GpuProcessExit);
 }
 
-pub(crate) fn handle_session_display_state(app: &tauri::AppHandle, raw_state: u32) {
-    let state = SessionDisplayState::from_raw(raw_state);
-    crate::pet_render_evidence::record(app, json!({"kind":"display-state","state":state.label()}));
-    let protection_enabled = app
-        .try_state::<std::sync::Arc<std::sync::Mutex<crate::settings::Settings>>>()
+fn display_protection_enabled(app: &tauri::AppHandle) -> bool {
+    app.try_state::<std::sync::Arc<std::sync::Mutex<crate::settings::Settings>>>()
         .and_then(|settings| {
             settings
                 .lock()
                 .ok()
                 .map(|settings| settings.display_recovery_protection_enabled)
         })
-        .unwrap_or(false);
+        .unwrap_or(false)
+}
+
+pub(crate) fn handle_session_locked(app: &tauri::AppHandle, locked: bool, source: &str) {
+    let protection_enabled = display_protection_enabled(app);
+    log::info!(
+        "windows session lock state observed: locked={} source={} protection_enabled={}",
+        locked,
+        source,
+        protection_enabled
+    );
+    let observation = app
+        .try_state::<crate::PetOverlayState>()
+        .and_then(|state| {
+            state.inner.lock().ok().map(|mut guard| {
+                guard.display_recovery.protection_enabled = protection_enabled;
+                guard.display_recovery.observe_session_locked(locked)
+            })
+        })
+        .unwrap_or(DisplayObservation::None);
+    apply_display_observation(app, observation);
+}
+
+pub(crate) fn handle_session_display_state(app: &tauri::AppHandle, raw_state: u32) {
+    let state = SessionDisplayState::from_raw(raw_state);
+    crate::pet_render_evidence::record(app, json!({"kind":"display-state","state":state.label()}));
+    let protection_enabled = display_protection_enabled(app);
     log::info!(
         "windows session display state observed: state={} raw={} protection_enabled={}",
         state.label(),
@@ -1176,7 +1311,18 @@ pub(crate) fn handle_session_display_state(app: &tauri::AppHandle, raw_state: u3
             })
         })
         .unwrap_or(DisplayObservation::None);
+    apply_display_observation(app, observation);
+}
+
+fn apply_display_observation(app: &tauri::AppHandle, observation: DisplayObservation) {
     match observation {
+        DisplayObservation::WaitForUnlock => {
+            if let Err(error) =
+                apply_visibility_command(app, VisibilityCommand::Hide, "session-locked")
+            {
+                log::warn!("pet display recovery waiting for unlock: hide failed: {error}");
+            }
+        }
         DisplayObservation::BeginRecovery { generation } => {
             schedule(app, generation, RecoveryCause::DisplayResume);
         }
@@ -1225,6 +1371,143 @@ mod tests {
             state.observe_display_state(SessionDisplayState::On),
             DisplayObservation::None
         );
+    }
+
+    #[test]
+    fn locked_wake_starts_no_recovery_clock_until_unlock() {
+        let mut state = PetDisplayRecoveryState::default();
+        state.observe_display_state(SessionDisplayState::On);
+        assert_eq!(
+            state.observe_session_locked(true),
+            DisplayObservation::WaitForUnlock
+        );
+        state.observe_display_state(SessionDisplayState::Off);
+        assert_eq!(
+            state.observe_display_state(SessionDisplayState::On),
+            DisplayObservation::WaitForUnlock
+        );
+        assert!(state.active_recovery.is_none());
+        assert!(!state.timeout(1));
+        assert_eq!(state.complete(1), None);
+        assert_eq!(
+            state.observe_session_locked(false),
+            DisplayObservation::BeginRecovery { generation: 1 }
+        );
+        assert_eq!(
+            state.observe_session_locked(false),
+            DisplayObservation::None
+        );
+        assert_eq!(
+            state.observe_display_state(SessionDisplayState::On),
+            DisplayObservation::None
+        );
+        assert_eq!(state.complete(1), Some(VisibilityCommand::Show));
+    }
+
+    #[test]
+    fn unlock_before_display_on_waits_for_both_conditions() {
+        let mut state = PetDisplayRecoveryState::default();
+        state.observe_session_locked(true);
+        state.observe_display_state(SessionDisplayState::Off);
+        assert_eq!(
+            state.observe_session_locked(false),
+            DisplayObservation::None
+        );
+        assert!(state.active_recovery.is_none());
+        assert_eq!(
+            state.observe_display_state(SessionDisplayState::On),
+            DisplayObservation::BeginRecovery { generation: 1 }
+        );
+    }
+
+    #[test]
+    fn lock_without_sleep_also_recovers_after_unlock() {
+        let mut state = PetDisplayRecoveryState::default();
+        state.observe_display_state(SessionDisplayState::On);
+        state.observe_session_locked(true);
+        assert_eq!(
+            state.observe_session_locked(false),
+            DisplayObservation::BeginRecovery { generation: 1 }
+        );
+    }
+
+    #[test]
+    fn relocking_invalidates_old_probes_and_unlock_starts_a_fresh_generation() {
+        let mut state = PetDisplayRecoveryState::default();
+        state.observe_display_state(SessionDisplayState::Off);
+        state.observe_display_state(SessionDisplayState::On);
+        assert!(state.should_present(1));
+        assert_eq!(
+            state.observe_session_locked(true),
+            DisplayObservation::WaitForUnlock
+        );
+        assert!(!state.should_present(1));
+        assert_eq!(state.complete(1), None);
+        assert!(!state.timeout(1));
+        assert_eq!(
+            state.observe_session_locked(false),
+            DisplayObservation::BeginRecovery { generation: 2 }
+        );
+        assert_eq!(state.complete(1), None);
+        assert!(state.should_present(2));
+    }
+
+    #[test]
+    fn user_hide_while_locked_cancels_the_pending_restore() {
+        let mut state = PetDisplayRecoveryState::default();
+        state.observe_session_locked(true);
+        state.observe_display_state(SessionDisplayState::Off);
+        state.observe_display_state(SessionDisplayState::On);
+        assert_eq!(state.set_desired_visible(false), VisibilityCommand::Hide);
+        assert_eq!(
+            state.observe_session_locked(false),
+            DisplayObservation::None
+        );
+        assert!(state.active_recovery.is_none());
+    }
+
+    #[test]
+    fn explicit_show_and_disabling_protection_do_not_bypass_lock() {
+        let mut state = PetDisplayRecoveryState::default();
+        state.observe_session_locked(true);
+        assert_eq!(state.set_desired_visible(true), VisibilityCommand::Hide);
+        assert_eq!(state.disable_protection(), None);
+        assert_eq!(
+            state.observe_session_locked(false),
+            DisplayObservation::BeginRefresh { generation: 1 }
+        );
+        assert_eq!(state.complete(1), Some(VisibilityCommand::Show));
+    }
+
+    #[test]
+    fn tray_toggle_while_waiting_for_unlock_can_hide_the_pet() {
+        let mut state = PetDisplayRecoveryState::default();
+        state.observe_session_locked(true);
+        assert_eq!(state.toggle_requested(false), VisibilityCommand::Hide);
+        assert_eq!(
+            state.observe_session_locked(false),
+            DisplayObservation::None
+        );
+        assert!(!state.desired_visible);
+    }
+
+    #[test]
+    fn unlock_cannot_override_gpu_containment() {
+        let mut state = PetDisplayRecoveryState::default();
+        let generation = state.begin_gpu_process_recovery().unwrap();
+        state.observe_session_locked(true);
+        assert!(state.is_current(generation));
+        assert_eq!(
+            state.observe_session_locked(false),
+            DisplayObservation::None
+        );
+        assert!(state.timeout(generation));
+        state.observe_session_locked(true);
+        assert_eq!(
+            state.observe_session_locked(false),
+            DisplayObservation::None
+        );
+        assert_eq!(state.complete(generation), None);
     }
 
     #[test]
