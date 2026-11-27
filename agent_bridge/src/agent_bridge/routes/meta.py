@@ -71,7 +71,7 @@ from ..attachment_reconciliation import reconcile_attachments
 from ..errors import build_openai_error_envelope, map_exception
 from ..protocols.ag_ui.encoders import encode_stream
 from .runs import DESKTOP_TEXT_CONTROL_SCOPE
-from .session_reads import read_session
+from .session_reads import read_session, stream_session_records
 
 logger = logging.getLogger(__name__)
 
@@ -382,6 +382,23 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 }
         except SessionNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.get("/sessions/{session_id}/diagnostics/stream")
+    async def stream_session_diagnostics(
+        session_id: str,
+        turn_limit: int | None = Query(10, ge=1, le=100),
+        all_turns: bool = Query(False),
+    ) -> StreamingResponse:
+        return StreamingResponse(
+            stream_session_records(
+                lambda check: mgr.diagnostic_stream(
+                    session_id,
+                    turn_limit=None if all_turns else turn_limit,
+                    cancel_check=check,
+                )
+            ),
+            media_type="application/x-ndjson",
+        )
 
     @router.get("/sessions/{session_id}/diagnostics")
     def get_session_diagnostics(

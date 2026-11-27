@@ -14,13 +14,19 @@ use std::{
     sync::Arc,
     time::{Duration, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 mod contract;
 mod installer_attempts;
+pub mod job;
 mod native_crash_export;
+#[cfg(test)]
+mod performance;
 mod sandbox_incidents;
+mod scratch;
+mod selection;
+mod session_stream;
 mod staged_log;
 
 const MAX_DESCRIPTION_CHARS: usize = 20_000;
@@ -41,10 +47,36 @@ pub struct GenerateDiagnosticBundleRequest {
     include_render_evidence: bool,
     #[serde(default)]
     include_crash_dumps: bool,
+    #[serde(default)]
+    all_retained_logs: bool,
+    #[serde(default)]
+    verify_install_files: bool,
 }
 
 fn default_session_turn_limit() -> Option<u32> {
-    None
+    Some(10)
+}
+
+#[tauri::command]
+pub async fn get_diagnostic_log_estimate() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(estimate_logs)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn estimate_logs() -> Result<Value, String> {
+    let mut bytes = 0_u64;
+    let mut files = 0_u64;
+    for entry in fs::read_dir(paths::log_dir()).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.file_type().map_err(|e| e.to_string())?.is_file()
+            && is_allowed_log_name(&entry.file_name().to_string_lossy())
+        {
+            bytes = bytes.saturating_add(entry.metadata().map_err(|e| e.to_string())?.len());
+            files += 1;
+        }
+    }
+    Ok(json!({"retainedBytes":bytes,"fileCount":files,"estimatedAt":Local::now().to_rfc3339()}))
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -55,7 +87,7 @@ pub struct CollectionFailure {
     message: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateDiagnosticBundleResult {
     path: String,
@@ -63,6 +95,7 @@ pub struct GenerateDiagnosticBundleResult {
     included_session_ids: Vec<String>,
     failures: Vec<CollectionFailure>,
     warnings: Vec<CollectionFailure>,
+    metrics: Value,
 }
 
 struct ArchiveEntry {
@@ -72,7 +105,7 @@ struct ArchiveEntry {
 
 enum ArchiveEntrySource {
     Bytes(Vec<u8>),
-    File(PathBuf),
+    Scratch(scratch::Scratch),
     StagedLog(staged_log::StagedLog),
     NativeCrashDump(crate::native_crash::ExportDump),
 }
@@ -88,15 +121,30 @@ struct AttachmentCandidate {
     references: Vec<Value>,
 }
 
-#[tauri::command]
-pub async fn generate_diagnostic_bundle(
+async fn run_bundle(
     app: AppHandle,
     request: GenerateDiagnosticBundleRequest,
-    services: State<'_, Arc<runtime_services::RuntimeServiceSupervisor>>,
-    desktop_instance_state: State<'_, desktop_instance::DesktopInstanceState>,
-    shell_diagnostics_manager: State<'_, Arc<shell_diagnostics::ShellDiagnosticsManager>>,
-    webview_diagnostics_manager: State<'_, Arc<webview_diagnostics::WebViewDiagnosticsManager>>,
+    control: Arc<job::Control>,
 ) -> Result<GenerateDiagnosticBundleResult, String> {
+    let services = app.state::<Arc<runtime_services::RuntimeServiceSupervisor>>();
+    let desktop_instance_state = app.state::<desktop_instance::DesktopInstanceState>();
+    let shell_diagnostics_manager = app.state::<Arc<shell_diagnostics::ShellDiagnosticsManager>>();
+    let webview_diagnostics_manager =
+        app.state::<Arc<webview_diagnostics::WebViewDiagnosticsManager>>();
+    control.stage("preparing")?;
+    scratch::reap(&paths::diagnostic_work_dir())?;
+    let output_dir = app
+        .path()
+        .download_dir()
+        .map_err(|e| format!("cannot locate Downloads directory: {e}"))?;
+    fs::create_dir_all(&output_dir).map_err(|e| e.to_string())?;
+    scratch::ensure_space(&output_dir, 0)?;
+    let selection = json!({
+        "logs": if request.all_retained_logs { "all-retained" } else { "recent" },
+        "sessionTurnLimit": request.session_turn_limit,
+        "includeAttachmentOriginals": request.include_attachment_originals,
+        "verifyInstallFiles": request.verify_install_files,
+    });
     let description = normalize_description(request.description)?;
     let session_ids = normalize_session_ids(request.session_ids)?;
     if request
@@ -134,112 +182,30 @@ pub async fn generate_diagnostic_bundle(
         .timeout(Duration::from_secs(5))
         .build()
         .map_err(|e| format!("create local diagnostics client failed: {e}"))?;
-    let model_catalog_result = {
-        let client = client.clone();
-        async move {
-            let mut url =
-                reqwest::Url::parse(&runtime_services::RuntimeServiceKind::Bridge.base_url())
-                    .map_err(|e| e.to_string())?;
-            url.path_segments_mut()
-                .map_err(|_| "bridge base URL cannot accept path segments".to_string())?
-                .extend(["v1", "models", "catalog"]);
-            let response = client.get(url).send().await.map_err(|e| e.to_string())?;
-            if !response.status().is_success() {
-                return Err(format!("bridge returned HTTP {}", response.status()));
-            }
-            response.json::<Value>().await.map_err(|e| e.to_string())
-        }
-    }
-    .await;
-    let execution_environments_result = {
-        let client = client.clone();
-        async move {
-            let mut url =
-                reqwest::Url::parse(&runtime_services::RuntimeServiceKind::Bridge.base_url())
-                    .map_err(|e| e.to_string())?;
-            url.path_segments_mut()
-                .map_err(|_| "bridge base URL cannot accept path segments".to_string())?
-                .extend(["v1", "execution-environments", "diagnostics"]);
-            let response = client.get(url).send().await.map_err(|e| e.to_string())?;
-            if !response.status().is_success() {
-                return Err(format!("bridge returned HTTP {}", response.status()));
-            }
-            response.json::<Value>().await.map_err(|e| e.to_string())
-        }
-    }
-    .await;
-    let command_runtime_result = {
-        let client = client.clone();
-        async move {
-            let mut url =
-                reqwest::Url::parse(&runtime_services::RuntimeServiceKind::Bridge.base_url())
-                    .map_err(|e| e.to_string())?;
-            url.path_segments_mut()
-                .map_err(|_| "bridge base URL cannot accept path segments".to_string())?
-                .extend(["v1", "command-runtime", "diagnostics"]);
-            let response = client.get(url).send().await.map_err(|e| e.to_string())?;
-            if !response.status().is_success() {
-                return Err(format!("bridge returned HTTP {}", response.status()));
-            }
-            response.json::<Value>().await.map_err(|e| e.to_string())
-        }
-    }
-    .await;
-    let desktop_applications_result = async {
-        let mut url = reqwest::Url::parse(&runtime_services::RuntimeServiceKind::Bridge.base_url())
-            .map_err(|e| e.to_string())?;
-        url.path_segments_mut()
-            .map_err(|_| "invalid bridge URL".to_string())?
-            .extend(["v1", "desktop-applications", "diagnostics"]);
-        let response = client.get(url).send().await.map_err(|e| e.to_string())?;
-        if !response.status().is_success() {
-            return Err(format!("bridge returned HTTP {}", response.status()));
-        }
-        response.json::<Value>().await.map_err(|e| e.to_string())
-    }
-    .await;
+    control.stage("basic-state")?;
+    let base_url = runtime_services::RuntimeServiceKind::Bridge.base_url();
+    let mut basic = control
+        .wait(futures_util::future::join_all(
+            [
+                "v1/models/catalog",
+                "v1/execution-environments/diagnostics",
+                "v1/command-runtime/diagnostics",
+                "v1/desktop-applications/diagnostics",
+            ]
+            .into_iter()
+            .map(|path| fetch_json(&client, &base_url, path)),
+        ))
+        .await?
+        .into_iter();
+    let model_catalog_result = basic.next().unwrap();
+    let execution_environments_result = basic.next().unwrap();
+    let command_runtime_result = basic.next().unwrap();
+    let desktop_applications_result = basic.next().unwrap();
     // Session exports may scan a large persisted snapshot. Do not apply the health-probe timeout.
     let session_client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .build()
         .map_err(|e| format!("create session diagnostics client failed: {e}"))?;
-    let mut session_results = Vec::new();
-    for session_id in &session_ids {
-        let client = session_client.clone();
-        let session_id = session_id.clone();
-        let result = async {
-            let mut url =
-                reqwest::Url::parse(&runtime_services::RuntimeServiceKind::Bridge.base_url())
-                    .map_err(|e| e.to_string())?;
-            url.path_segments_mut()
-                .map_err(|_| "bridge base URL cannot accept path segments".to_string())?
-                .extend(["v1", "sessions", &session_id, "diagnostics"]);
-            match request.session_turn_limit {
-                Some(limit) => {
-                    url.query_pairs_mut()
-                        .append_pair("turn_limit", &limit.to_string());
-                }
-                None => {
-                    url.query_pairs_mut().append_pair("all_turns", "true");
-                }
-            }
-            let response = client.get(url).send().await.map_err(|e| e.to_string())?;
-            if !response.status().is_success() {
-                return Err(format!("bridge returned HTTP {}", response.status()));
-            }
-            let mut value = response.json::<Value>().await.map_err(|e| e.to_string())?;
-            if !value.get("events").is_some_and(Value::is_array) {
-                return Err("session response is missing events".into());
-            }
-            if let Some(object) = value.as_object_mut() {
-                object.remove("active_events");
-            }
-            Ok::<_, String>((session_id, value))
-        }
-        .await;
-        session_results.push(result);
-    }
-
     let mut included_session_ids = Vec::new();
     let mut entries = Vec::new();
     let mut attachment_candidates = BTreeMap::new();
@@ -274,10 +240,16 @@ pub async fn generate_diagnostic_bundle(
     let mut render_evidence_export = webview_diagnostics_manager
         .export_render_evidence_for_bundle(request.include_render_evidence);
     let render_evidence_metadata = render_evidence_export.metadata;
+    if request.verify_install_files {
+        control.stage("install-files")?;
+    }
     let install_integrity = collect_install_integrity(
         resource_dir.as_deref(),
         services.install_integrity_runtime_evidence().await,
+        request.verify_install_files,
+        &control,
     );
+    control.check()?;
     let desktop_instance = desktop_instance_state.snapshot();
     let execution_environments = match execution_environments_result {
         Ok(value) => value,
@@ -378,47 +350,62 @@ pub async fn generate_diagnostic_bundle(
         }),
     }
 
-    for (index, result) in session_results.into_iter().enumerate() {
+    control.stage("sessions")?;
+    for (index, session_id) in session_ids.iter().enumerate() {
+        let result = session_stream::collect(
+            &session_client,
+            reqwest::Url::parse(&runtime_services::RuntimeServiceKind::Bridge.base_url())
+                .map_err(|e| e.to_string())?,
+            session_id,
+            request.session_turn_limit,
+            &credentials,
+            home.as_deref(),
+            &control,
+            &mut attachment_candidates,
+        )
+        .await;
+        control.check()?;
         match result {
-            Ok((session_id, mut value)) => {
-                if value
-                    .pointer("/coverage/completeWithinRequestedRange")
-                    .and_then(Value::as_bool)
-                    == Some(false)
-                {
+            Ok(export) => {
+                if !export.complete {
                     failures.push(CollectionFailure {
                         collection: "session-range".into(),
                         item: Some(session_id.clone()),
-                        message: "会话记录存在读取或格式缺口，已保留可用内容；详见 coverage。"
-                            .into(),
+                        message: "会话记录存在读取或格式缺口，详见 coverage。".into(),
                     });
                 }
-                collect_attachment_candidates(&session_id, &value, &mut attachment_candidates);
-                let mut count = 0;
-                redact_provider_reasoning_states(&mut value, &mut count);
-                redact_json(&mut value, &credentials, home.as_deref(), &mut count);
-                let entry_name = format!("sessions/session-{:03}.json", index + 1);
-                entries.push(json_entry(&entry_name, &value)?);
-                included_session_ids.push(session_id);
+                entries.push(ArchiveEntry {
+                    name: format!("sessions/session-{:03}.json", index + 1),
+                    source: ArchiveEntrySource::Scratch(export.file),
+                });
+                included_session_ids.push(session_id.clone());
             }
             Err(message) => failures.push(CollectionFailure {
                 collection: "sessions".into(),
-                item: session_ids.get(index).cloned(),
+                item: Some(session_id.clone()),
                 message: redact_text(&message, &credentials, home.as_deref()).0,
             }),
         }
     }
-
-    let attachment_collection = collect_attachment_diagnostics(
+    control.stage("attachments")?;
+    let attachment_collection = collect_attachment_diagnostics_controlled(
         &paths::user_data_dir().join("attachments"),
         attachment_candidates,
         request.include_attachment_originals,
+        &control,
     );
     entries.extend(attachment_collection.entries);
     failures.extend(attachment_collection.failures);
+    let mut attachment_manifest = attachment_collection.manifest;
+    redact_json(
+        &mut attachment_manifest,
+        &credentials,
+        home.as_deref(),
+        &mut 0,
+    );
     entries.push(json_entry(
         "diagnostics/attachments.json",
-        &attachment_collection.manifest,
+        &attachment_manifest,
     )?);
 
     let (attempt_entries, attempt_failures) = tauri::async_runtime::spawn_blocking(|| {
@@ -440,11 +427,21 @@ pub async fn generate_diagnostic_bundle(
     entries.extend(attempt_entries);
     failures.extend(attempt_failures);
 
+    control.stage("logs")?;
     let log_dir = paths::log_dir();
     let log_result = tauri::async_runtime::spawn_blocking({
         let credentials = credentials.clone();
         let home = home.clone();
-        move || collect_logs(&log_dir, &credentials, home.as_deref())
+        let control = control.clone();
+        move || {
+            collect_logs_selected(
+                &log_dir,
+                &credentials,
+                home.as_deref(),
+                request.all_retained_logs,
+                &control,
+            )
+        }
     })
     .await
     .map_err(|e| format!("log collector task failed: {e}"))?;
@@ -452,6 +449,7 @@ pub async fn generate_diagnostic_bundle(
     entries.extend(log_result.entries);
     failures.extend(log_result.failures);
 
+    control.stage("incident-evidence")?;
     let shell_export = shell_diagnostics_manager.export_for_bundle().await;
     let shell_artifact_names = shell_export
         .artifacts
@@ -559,21 +557,19 @@ pub async fn generate_diagnostic_bundle(
             attachments: &attachment_collection.summary,
             render_evidence: &render_evidence_export.summary,
             pet_input_evidence: &pet_summary,
+            selection: &selection,
         },
     );
     entries.push(json_entry("manifest.json", &manifest)?);
     bundle_contract.validate_bundle(&manifest, entries.iter().map(|entry| entry.name.as_str()))?;
 
-    let output_dir = app
-        .path()
-        .download_dir()
-        .map_err(|e| format!("cannot locate Downloads directory: {e}"))?;
     let base_name = format!(
         "agent-friend-diagnostics-{}",
         generated_at.format("%Y%m%d-%H%M%S")
     );
+    control.stage("archive")?;
     let output_path = tauri::async_runtime::spawn_blocking(move || {
-        write_archive_atomically(&output_dir, &base_name, entries)
+        write_archive_controlled(&output_dir, &base_name, entries, &control)
     })
     .await
     .map_err(|e| format!("archive writer task failed: {e}"))??;
@@ -584,6 +580,7 @@ pub async fn generate_diagnostic_bundle(
         included_session_ids,
         failures,
         warnings,
+        metrics: Value::Null, // Filled by the task owner after publication and cleanup.
     })
 }
 
@@ -621,7 +618,12 @@ fn load_package_build_metadata(resource_dir: Option<&Path>) -> Value {
     serde_json::from_slice(&bytes).unwrap_or(Value::Null)
 }
 
-fn collect_install_integrity(resource_dir: Option<&Path>, runtime: Value) -> Value {
+fn collect_install_integrity(
+    resource_dir: Option<&Path>,
+    runtime: Value,
+    verify_files: bool,
+    control: &job::Control,
+) -> Value {
     let embedded = install_contract::embedded_identity();
     let embedded_error_code = embedded
         .as_ref()
@@ -697,7 +699,11 @@ fn collect_install_integrity(resource_dir: Option<&Path>, runtime: Value) -> Val
                 })
         });
 
-    let active_result = install_contract::discover_active_payload(resource_dir);
+    let active_result = if verify_files {
+        install_contract::discover_active_payload_cancellable(resource_dir, &|| control.check())
+    } else {
+        Ok(None)
+    };
     let (mut status, error_code, payload) = match active_result {
         Ok(Some(active)) if observed_mismatch => (
             "runtime_identity_mismatch",
@@ -737,6 +743,14 @@ fn collect_install_integrity(resource_dir: Option<&Path>, runtime: Value) -> Val
         }
     };
 
+    if !verify_files {
+        status = if observed_mismatch {
+            "runtime_identity_mismatch"
+        } else {
+            "not_checked"
+        };
+    }
+
     let legacy_layout_present = resource_dir.is_some_and(|root| {
         root.join("runtime")
             .join("python")
@@ -759,7 +773,8 @@ fn collect_install_integrity(resource_dir: Option<&Path>, runtime: Value) -> Val
     }
 
     json!({
-        "schemaVersion": 1,
+        "schemaVersion": 2,
+        "fileVerificationRequested": verify_files,
         "status": status,
         "errorCode": error_code,
         "shell": shell,
@@ -872,10 +887,25 @@ fn collect_attachment_candidates(
     }
 }
 
+#[cfg(test)]
 fn collect_attachment_diagnostics(
     root: &Path,
     candidates: BTreeMap<String, AttachmentCandidate>,
     include_originals: bool,
+) -> AttachmentCollectionResult {
+    collect_attachment_diagnostics_controlled(
+        root,
+        candidates,
+        include_originals,
+        &job::Control::detached(),
+    )
+}
+
+fn collect_attachment_diagnostics_controlled(
+    root: &Path,
+    candidates: BTreeMap<String, AttachmentCandidate>,
+    include_originals: bool,
+    control: &job::Control,
 ) -> AttachmentCollectionResult {
     let mut entries = Vec::new();
     let mut failures = Vec::new();
@@ -886,6 +916,9 @@ fn collect_attachment_diagnostics(
     let mut failed_bytes = 0_u64;
 
     for (index, candidate) in candidates.into_values().enumerate() {
+        if control.check().is_err() {
+            break;
+        }
         let valid_id = candidate.asset_id.len() == 64
             && candidate
                 .asset_id
@@ -912,16 +945,47 @@ fn collect_attachment_diagnostics(
                             == Some(candidate.size_bytes)
                 });
         let blob_exists = valid_id && blob_path.is_file();
-        let actual_size = blob_path.metadata().ok().map(|value| value.len());
+        let actual_size = if valid_id {
+            blob_path.metadata().ok().map(|value| value.len())
+        } else {
+            None
+        };
         let size_matches = actual_size == Some(candidate.size_bytes);
-        let hash_matches = blob_exists
-            && hash_file(&blob_path)
-                .is_ok_and(|digest| digest == candidate.sha256 && digest == candidate.asset_id);
-        let integrity = metadata_matches && blob_exists && size_matches && hash_matches;
-
+        let (staged, hash_matches, hash_check) = if !include_originals {
+            (None, None, "not_requested")
+        } else if metadata_matches && blob_exists && size_matches {
+            match stage_attachment(
+                &blob_path,
+                candidate.size_bytes,
+                &candidate.sha256,
+                &candidate.asset_id,
+                control,
+            ) {
+                Ok(file) => (Some(file), Some(true), "verified"),
+                Err(message) if message == "attachment integrity mismatch" => {
+                    (None, Some(false), "mismatch")
+                }
+                Err(_) => (None, None, "unavailable"),
+            }
+        } else {
+            (None, None, "unavailable")
+        };
         let (original_status, archive_entry) = if !include_originals {
             ("excluded", None)
-        } else if !integrity {
+        } else if let Some(file) = staged {
+            included_bytes = included_bytes.saturating_add(candidate.size_bytes);
+            (
+                "included",
+                Some(ArchiveEntry {
+                    name: format!(
+                        "attachments/{:03}-{}",
+                        index + 1,
+                        sanitize_entry_name(&candidate.display_name)
+                    ),
+                    source: ArchiveEntrySource::Scratch(file),
+                }),
+            )
+        } else {
             failed_bytes = failed_bytes.saturating_add(candidate.size_bytes);
             failures.push(CollectionFailure {
                 collection: "attachments".into(),
@@ -929,20 +993,6 @@ fn collect_attachment_diagnostics(
                 message: "attachment original is missing or failed integrity verification".into(),
             });
             ("failed", None)
-        } else {
-            included_bytes = included_bytes.saturating_add(candidate.size_bytes);
-            let name = format!(
-                "attachments/{:03}-{}",
-                index + 1,
-                sanitize_entry_name(&candidate.display_name)
-            );
-            (
-                "included",
-                Some(ArchiveEntry {
-                    name,
-                    source: ArchiveEntrySource::File(blob_path),
-                }),
-            )
         };
         if let Some(entry) = archive_entry {
             entries.push(entry);
@@ -958,6 +1008,7 @@ fn collect_attachment_diagnostics(
             "blobExists": blob_exists,
             "sizeMatches": size_matches,
             "hashMatches": hash_matches,
+            "hashCheck": hash_check,
             "references": candidate.references,
             "processingStatus": "notRecorded",
             "originalStatus": original_status,
@@ -975,23 +1026,57 @@ fn collect_attachment_diagnostics(
     AttachmentCollectionResult {
         entries,
         failures,
-        manifest: json!({"formatVersion": 1, "summary": summary, "items": items}),
+        manifest: json!({"formatVersion": 2, "summary": summary, "items": items}),
         summary,
     }
 }
 
-fn hash_file(path: &Path) -> Result<String, String> {
-    let mut file = File::open(path).map_err(|error| error.to_string())?;
+fn stage_attachment(
+    path: &Path,
+    expected_size: u64,
+    expected_hash: &str,
+    asset_id: &str,
+    control: &job::Control,
+) -> Result<scratch::Scratch, String> {
+    let mut input = File::open(path).map_err(|e| e.to_string())?;
+    let mut file = scratch::Scratch::new()?.track_cleanup(control);
+    scratch::ensure_space(file.path(), expected_size)?;
     let mut digest = Sha256::new();
+    let mut size = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
-        let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
-        if read == 0 {
+        control.check()?;
+        let count = input.read(&mut buffer).map_err(|e| e.to_string())?;
+        if count == 0 {
             break;
         }
-        digest.update(&buffer[..read]);
+        size = size.saturating_add(count as u64);
+        if size > expected_size {
+            return Err("attachment changed during collection".into());
+        }
+        digest.update(&buffer[..count]);
+        file.file
+            .write_all(&buffer[..count])
+            .map_err(|e| e.to_string())?;
+        control.advance(count as u64)?;
     }
-    Ok(format!("{:x}", digest.finalize()))
+    let actual = format!("{:x}", digest.finalize());
+    if size != expected_size || actual != expected_hash || actual != asset_id {
+        return Err("attachment integrity mismatch".into());
+    }
+    file.rewind()?;
+    Ok(file)
+}
+
+async fn fetch_json(client: &reqwest::Client, base: &str, path: &str) -> Result<Value, String> {
+    let url = reqwest::Url::parse(base)
+        .and_then(|url| url.join(path))
+        .map_err(|e| e.to_string())?;
+    let response = client.get(url).send().await.map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("bridge returned HTTP {}", response.status()));
+    }
+    response.json().await.map_err(|e| e.to_string())
 }
 
 fn normalize_description(description: Option<String>) -> Result<Option<String>, String> {
@@ -1044,6 +1129,8 @@ struct LogManifestItem {
     original_bytes: u64,
     tail_start_offset: u64,
     included_bytes: usize,
+    read_bytes: u64,
+    omission: Option<&'static str>,
 }
 
 struct BundleManifestInput<'a> {
@@ -1058,6 +1145,7 @@ struct BundleManifestInput<'a> {
     attachments: &'a Value,
     render_evidence: &'a Value,
     pet_input_evidence: &'a Value,
+    selection: &'a Value,
 }
 
 fn build_bundle_manifest(
@@ -1081,9 +1169,13 @@ fn build_bundle_manifest(
             "full environment",
             "unselected sessions"
         ],
+        "selection": input.selection,
+        "exportMetrics": null,
         "logLimits": {
-            "maxBytesPerFile": null,
-            "maxBytesTotal": null
+            "budgetUnit": "sourceBytes",
+            "maxBytesPerFile": if input.selection["logs"] == "all-retained" { None } else { Some(selection::FAMILY_BYTES) },
+            "maxBytesPerFamily": if input.selection["logs"] == "all-retained" { None } else { Some(selection::FAMILY_BYTES) },
+            "maxBytesTotal": if input.selection["logs"] == "all-retained" { None } else { Some(selection::TOTAL_BYTES) }
         },
         "logs": input.logs,
         "windowsShell": input.windows_shell,
@@ -1093,10 +1185,21 @@ fn build_bundle_manifest(
     })
 }
 
+#[cfg(test)]
 fn collect_logs(
     log_dir: &Path,
     credentials: &[String],
     home: Option<&Path>,
+) -> LogCollectionResult {
+    collect_logs_selected(log_dir, credentials, home, true, &job::Control::detached())
+}
+
+fn collect_logs_selected(
+    log_dir: &Path,
+    credentials: &[String],
+    home: Option<&Path>,
+    all: bool,
+    control: &job::Control,
 ) -> LogCollectionResult {
     let mut result = LogCollectionResult {
         entries: Vec::new(),
@@ -1121,6 +1224,7 @@ fn collect_logs(
     };
     let mut candidates = read_dir
         .flatten()
+        .take_while(|_| control.check().is_ok())
         .filter_map(|entry| {
             let file_type = entry.file_type().ok()?;
             if !file_type.is_file() || file_type.is_symlink() {
@@ -1134,14 +1238,63 @@ fn collect_logs(
             if !path.starts_with(&canonical_dir) {
                 return None;
             }
-            let modified = entry.metadata().ok()?.modified().ok()?;
-            Some((modified, name, path))
+            let metadata = entry.metadata().ok()?;
+            let modified = metadata.modified().ok()?;
+            Some((
+                modified,
+                name,
+                path,
+                metadata.created().ok(),
+                metadata.len(),
+            ))
         })
         .collect::<Vec<_>>();
     candidates.sort_by(|a, b| b.0.cmp(&a.0));
 
-    for (modified, name, path) in candidates {
-        match staged_log::StagedLog::collect(&path, credentials, home) {
+    let mut budget = selection::Budget::new(all);
+    for (modified, name, path, created, observed_size) in candidates {
+        if control.check().is_err() {
+            break;
+        }
+        let input = match File::open(&path) {
+            Ok(input) => input,
+            Err(error) => {
+                result.failures.push(CollectionFailure {
+                    collection: "logs".into(),
+                    item: Some(name),
+                    message: error.to_string(),
+                });
+                continue;
+            }
+        };
+        let metadata = match input.metadata() {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                result.failures.push(CollectionFailure {
+                    collection: "logs".into(),
+                    item: Some(name),
+                    message: error.to_string(),
+                });
+                continue;
+            }
+        };
+        if metadata.created().ok() != created || metadata.len() < observed_size {
+            result.failures.push(CollectionFailure {
+                collection: "logs".into(),
+                item: Some(name),
+                message: "log rotated or was truncated while selecting the snapshot".into(),
+            });
+            continue;
+        }
+        let original = metadata.len();
+        let allowed = budget.allocate(selection::family(&name).unwrap_or(&name), original);
+        match staged_log::StagedLog::collect_open(
+            input,
+            credentials,
+            home,
+            if all { None } else { Some(allowed) },
+            control,
+        ) {
             Ok(log) => {
                 let entry_name = format!("logs/{}", sanitize_entry_name(&name));
                 result.items.push(LogManifestItem {
@@ -1152,8 +1305,10 @@ fn collect_logs(
                         .ok()
                         .map(|duration| duration.as_secs()),
                     original_bytes: log.original_bytes,
-                    tail_start_offset: 0,
+                    tail_start_offset: log.tail_start_offset,
                     included_bytes: log.included_bytes,
+                    read_bytes: log.read_bytes,
+                    omission: (log.tail_start_offset > 0).then_some("recent_log_budget"),
                 });
                 result.entries.push(ArchiveEntry {
                     name: entry_name,
@@ -1178,18 +1333,7 @@ fn collect_logs(
 }
 
 fn is_allowed_log_name(name: &str) -> bool {
-    [
-        "tauri.log",
-        "agent_bridge.log",
-        "voice_bridge.log",
-        "memory.log",
-        "runtime-bridge.log",
-        "runtime-voice.log",
-        "dev-bridge.log",
-        "dev-voice.log",
-    ]
-    .iter()
-    .any(|prefix| name == *prefix || name.starts_with(&format!("{prefix}.")))
+    selection::family(name).is_some()
 }
 
 fn sanitize_entry_name(name: &str) -> String {
@@ -1352,74 +1496,182 @@ fn redact_text(text: &str, credentials: &[String], home: Option<&Path>) -> (Stri
     (lines.join("\n"), count)
 }
 
+#[cfg(test)]
 fn write_archive_atomically(
     output_dir: &Path,
     base_name: &str,
     entries: Vec<ArchiveEntry>,
 ) -> Result<PathBuf, String> {
-    fs::create_dir_all(output_dir).map_err(|e| format!("create output directory failed: {e}"))?;
-    let mut suffix = 0_u32;
-    let final_path = loop {
-        let file_name = if suffix == 0 {
-            format!("{base_name}.zip")
-        } else {
-            format!("{base_name}-{suffix}.zip")
-        };
-        let candidate = output_dir.join(file_name);
-        let part = candidate.with_extension("zip.part");
-        if !candidate.exists() && !part.exists() {
-            break candidate;
+    write_archive_controlled(output_dir, base_name, entries, &job::Control::detached())
+}
+
+fn copy_controlled(
+    input: &mut impl Read,
+    output: &mut impl Write,
+    control: &job::Control,
+) -> Result<u64, String> {
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut total = 0;
+    loop {
+        control.check()?;
+        let count = input.read(&mut buffer).map_err(|e| e.to_string())?;
+        if count == 0 {
+            break;
         }
-        suffix = suffix.saturating_add(1);
-    };
-    let part_path = final_path.with_extension("zip.part");
-    let write_result = (|| -> Result<(), String> {
-        let file = File::create(&part_path).map_err(|e| format!("create ZIP failed: {e}"))?;
-        let mut writer = ZipWriter::new(file);
+        output
+            .write_all(&buffer[..count])
+            .map_err(|e| e.to_string())?;
+        control.advance(count as u64)?;
+        total += count as u64;
+    }
+    Ok(total)
+}
+
+fn write_archive_controlled(
+    output_dir: &Path,
+    base_name: &str,
+    entries: Vec<ArchiveEntry>,
+    control: &job::Control,
+) -> Result<PathBuf, String> {
+    let mut part = scratch::Scratch::archive(output_dir)?.track_cleanup(control);
+    {
+        let mut writer = ZipWriter::new(&mut part.file);
         let options = SimpleFileOptions::default()
             .compression_method(CompressionMethod::Deflated)
             .large_file(true);
-        for entry in entries {
+        for mut entry in entries {
+            control.check()?;
+            if entry.name == "manifest.json" {
+                if let ArchiveEntrySource::Bytes(bytes) = &mut entry.source {
+                    let mut manifest: Value =
+                        serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+                    manifest["exportMetrics"] = control.metrics();
+                    manifest["exportMetrics"]["measurementThrough"] = json!("archive entries before manifest; excludes ZIP finish, sync and publication");
+                    *bytes = serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?;
+                }
+            }
             writer
                 .start_file(entry.name, options)
                 .map_err(|e| format!("start ZIP entry failed: {e}"))?;
             match entry.source {
-                ArchiveEntrySource::Bytes(bytes) => writer
-                    .write_all(&bytes)
-                    .map_err(|e| format!("write ZIP entry failed: {e}"))?,
-                ArchiveEntrySource::StagedLog(mut log) => {
-                    std::io::copy(&mut log.file, &mut writer)
-                        .map_err(|e| format!("copy staged log failed: {e}"))?;
+                ArchiveEntrySource::Bytes(bytes) => {
+                    copy_controlled(&mut std::io::Cursor::new(bytes), &mut writer, control)?;
                 }
-                ArchiveEntrySource::File(path) => {
-                    let mut input =
-                        File::open(path).map_err(|e| format!("open ZIP source failed: {e}"))?;
-                    std::io::copy(&mut input, &mut writer)
-                        .map_err(|e| format!("copy ZIP source failed: {e}"))?;
+                ArchiveEntrySource::StagedLog(mut log) => {
+                    copy_controlled(&mut log.staged.file, &mut writer, control)?;
+                }
+                ArchiveEntrySource::Scratch(mut file) => {
+                    copy_controlled(&mut file.file, &mut writer, control)?;
                 }
                 ArchiveEntrySource::NativeCrashDump(dump) => {
-                    native_crash_export::write_dump(dump, &mut writer)?;
+                    native_crash_export::write_dump_controlled(dump, &mut writer, control)?
                 }
             }
         }
-        let file = writer
+        writer
             .finish()
             .map_err(|e| format!("finish ZIP failed: {e}"))?;
-        file.sync_all()
-            .map_err(|e| format!("sync ZIP failed: {e}"))?;
-        fs::rename(&part_path, &final_path).map_err(|e| format!("publish ZIP failed: {e}"))?;
-        Ok(())
-    })();
-    if let Err(error) = write_result {
-        let _ = fs::remove_file(&part_path);
-        return Err(error);
     }
-    Ok(final_path)
+    part.file
+        .sync_all()
+        .map_err(|e| format!("sync ZIP failed: {e}"))?;
+    control.publish(|| {
+        for suffix in 0..10_000_u32 {
+            let name = if suffix == 0 {
+                format!("{base_name}.zip")
+            } else {
+                format!("{base_name}-{suffix}.zip")
+            };
+            let destination = output_dir.join(name);
+            // Publish the finished file without replacing any name on the same filesystem.
+            match publish_no_replace(part.path(), &destination) {
+                Ok(()) => return Ok(destination),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(format!("publish ZIP failed: {error}")),
+            }
+        }
+        Err("cannot reserve a diagnostic ZIP filename".into())
+    })
+}
+
+#[cfg(not(windows))]
+fn publish_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::hard_link(source, destination)
+}
+
+#[cfg(windows)]
+fn publish_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::{
+        core::PCWSTR,
+        Win32::Storage::FileSystem::{MoveFileExW, MOVE_FILE_FLAGS},
+    };
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    // No REPLACE_EXISTING flag: this also works on Windows volumes without hard links.
+    unsafe {
+        MoveFileExW(
+            PCWSTR(source.as_ptr()),
+            PCWSTR(destination.as_ptr()),
+            MOVE_FILE_FLAGS(0),
+        )
+    }
+    .map_err(|error| std::io::Error::from_raw_os_error(error.code().0 & 0xffff))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concurrent_publication_never_overwrites_an_existing_bundle() {
+        let root = std::env::temp_dir().join(format!("af-publish-{:032x}", rand::random::<u128>()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("same.zip"), b"existing-user-file").unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let mut threads = Vec::new();
+        for value in ["first", "second"] {
+            let dir = root.clone();
+            let barrier = barrier.clone();
+            threads.push(std::thread::spawn(move || {
+                barrier.wait();
+                write_archive_atomically(
+                    &dir,
+                    "same",
+                    vec![ArchiveEntry {
+                        name: "test.txt".into(),
+                        source: ArchiveEntrySource::Bytes(value.as_bytes().to_vec()),
+                    }],
+                )
+                .unwrap()
+            }));
+        }
+        let paths = threads
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_ne!(paths[0], paths[1]);
+        assert_eq!(
+            fs::read(root.join("same.zip")).unwrap(),
+            b"existing-user-file"
+        );
+        for path in paths {
+            assert!(zip::ZipArchive::new(File::open(path).unwrap()).is_ok());
+        }
+        assert!(fs::read_dir(paths::diagnostic_archive_work_dir(&root))
+            .unwrap()
+            .next()
+            .is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn current_bundle_manifest_matches_machine_contract() {
@@ -1455,6 +1707,7 @@ mod tests {
                 attachments: &attachments,
                 render_evidence: &render_evidence,
                 pet_input_evidence: &json!({"status":"not-collected","artifacts":["diagnostics/pet-input/coverage.json"]}),
+                selection: &json!({"logs":"recent"}),
             },
         );
 
@@ -1576,6 +1829,7 @@ mod tests {
                 attachments: &json!({}),
                 render_evidence: &json!({}),
                 pet_input_evidence: &pet_summary,
+                selection: &json!({"logs":"recent"}),
             },
         );
         entries.push(json_entry("manifest.json", &manifest).unwrap());
@@ -1813,6 +2067,7 @@ mod tests {
         assert!(path.exists());
         assert!(!path.with_extension("zip.part").exists());
         fs::remove_file(path).unwrap();
+        fs::remove_dir(paths::diagnostic_archive_work_dir(&dir)).unwrap();
         fs::remove_dir(dir).unwrap();
     }
 
@@ -1940,6 +2195,7 @@ mod tests {
         }
         fs::remove_file(path).unwrap();
         fs::remove_file(root.join("agent_bridge.log")).unwrap();
+        fs::remove_dir(paths::diagnostic_archive_work_dir(&root)).unwrap();
         fs::remove_dir(root).unwrap();
     }
 
@@ -1999,6 +2255,7 @@ mod tests {
         assert!(contents.contains("\"dataCharCount\": 24"));
 
         fs::remove_file(path).unwrap();
+        fs::remove_dir(paths::diagnostic_archive_work_dir(&dir)).unwrap();
         fs::remove_dir(dir).unwrap();
     }
 }

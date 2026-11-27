@@ -98,6 +98,7 @@ impl ProcessJob {
 
 pub(super) struct ServiceProcess {
     child: Child,
+    output_threads: Vec<thread::JoinHandle<()>>,
     #[cfg(unix)]
     group: Option<libc::pid_t>,
     #[cfg(windows)]
@@ -105,6 +106,35 @@ pub(super) struct ServiceProcess {
 }
 
 impl ServiceProcess {
+    pub(super) fn capture_output(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let writer = match super::output_log::OutputLog::open(path) {
+            Ok(writer) => Some(std::sync::Arc::new(std::sync::Mutex::new(writer))),
+            Err(error) => {
+                log::error!(
+                    "runtime output log unavailable; draining output without saving: {error}"
+                );
+                None
+            }
+        };
+        if let Some(stdout) = self.child.stdout.take() {
+            self.output_threads.push(match &writer {
+                Some(writer) => super::output_log::OutputLog::drain(writer, stdout),
+                None => thread::spawn(move || {
+                    let _ = std::io::copy(&mut { stdout }, &mut std::io::sink());
+                }),
+            });
+        }
+        if let Some(stderr) = self.child.stderr.take() {
+            self.output_threads.push(match &writer {
+                Some(writer) => super::output_log::OutputLog::drain(writer, stderr),
+                None => thread::spawn(move || {
+                    let _ = std::io::copy(&mut { stderr }, &mut std::io::sink());
+                }),
+            });
+        }
+        Ok(())
+    }
+
     pub(super) fn register_crash_observer(&self, role: &str, generation: u64) {
         #[cfg(windows)]
         crate::native_crash::register_service(&self.child, role, generation);
@@ -135,7 +165,11 @@ impl ServiceProcess {
                 let _ = child.wait();
                 return Err(error);
             }
-            Ok(Self { child, job })
+            Ok(Self {
+                child,
+                job,
+                output_threads: Vec::new(),
+            })
         }
         #[cfg(not(windows))]
         {
@@ -147,6 +181,7 @@ impl ServiceProcess {
                 .spawn()
                 .map_err(|e| e.to_string())?;
             Ok(Self {
+                output_threads: Vec::new(),
                 group: Some(child.id() as libc::pid_t),
                 child,
             })
@@ -216,6 +251,9 @@ impl ServiceProcess {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if self.try_wait()?.is_some() {
+                for worker in self.output_threads.drain(..) {
+                    let _ = worker.join();
+                }
                 return Ok(());
             }
             if Instant::now() >= deadline {

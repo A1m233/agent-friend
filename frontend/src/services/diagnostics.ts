@@ -21,6 +21,44 @@ export interface GenerateDiagnosticBundleInput {
   includeAttachmentOriginals?: boolean;
   includeRenderEvidence?: boolean;
   includeCrashDumps?: boolean;
+  allRetainedLogs?: boolean;
+  verifyInstallFiles?: boolean;
+}
+
+export interface DiagnosticJob {
+  id: string;
+  ordinal: number;
+  version: number;
+  status: "running" | "cancelling" | "publishing" | "complete" | "partial" | "cancelled" | "failed";
+  stage: string;
+  processedBytes: number;
+  elapsedMs: number;
+  result: GenerateDiagnosticBundleResult | null;
+  error: string | null;
+  selection?: {
+    logs: "recent" | "all-retained";
+    sessionCount: number;
+    sessionTurnLimit: number | null;
+    includeAttachmentOriginals: boolean;
+    includeCrashDumps: boolean;
+    verifyInstallFiles: boolean;
+  };
+}
+
+export function diagnosticJobActive(job: DiagnosticJob | null): boolean {
+  return job != null && ["running", "cancelling", "publishing"].includes(job.status);
+}
+
+export function getDiagnosticJob(): Promise<DiagnosticJob | null> {
+  return invoke("get_diagnostic_bundle_job");
+}
+
+export function getDiagnosticLogEstimate(): Promise<{ retainedBytes: number; fileCount: number }> {
+  return invoke("get_diagnostic_log_estimate");
+}
+
+export function cancelDiagnosticJob(jobId: string): Promise<DiagnosticJob> {
+  return invoke("cancel_diagnostic_bundle", { jobId });
 }
 
 export interface RenderEvidencePendingSummary {
@@ -43,22 +81,46 @@ export interface RenderEvidenceStatus {
   storageError: string | null;
 }
 
-export function generateDiagnosticBundle(
+export function startDiagnosticBundle(
   input: GenerateDiagnosticBundleInput,
-): Promise<GenerateDiagnosticBundleResult> {
+): Promise<DiagnosticJob> {
   const resolved = Intl.DateTimeFormat().resolvedOptions();
-  return invoke("generate_diagnostic_bundle", {
+  return invoke("start_diagnostic_bundle", {
     request: {
       description: input.description || null,
       sessionIds: input.sessionIds,
-      sessionTurnLimit: input.sessionTurnLimit ?? null,
+      sessionTurnLimit: input.sessionTurnLimit === undefined ? 10 : input.sessionTurnLimit,
       locale: navigator.language || null,
       timezone: resolved.timeZone || null,
       includeAttachmentOriginals: input.includeAttachmentOriginals ?? false,
       includeRenderEvidence: input.includeRenderEvidence ?? false,
       includeCrashDumps: input.includeCrashDumps ?? false,
+      allRetainedLogs: input.allRetainedLogs ?? false,
+      verifyInstallFiles: input.verifyInstallFiles ?? false,
     },
   });
+}
+
+// Existing callers can await completion; ownership stays in Rust when a page unmounts.
+export class DiagnosticExportCancelled extends Error {
+  constructor(message = "诊断导出已取消") {
+    super(message);
+    this.name = "DiagnosticExportCancelled";
+  }
+}
+
+export async function generateDiagnosticBundle(input: GenerateDiagnosticBundleInput): Promise<GenerateDiagnosticBundleResult> {
+  let job = await startDiagnosticBundle(input);
+  const id = job.id;
+  while (diagnosticJobActive(job)) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const next = await getDiagnosticJob();
+    if (!next || next.id !== id) throw new Error("诊断任务已变化，请查看最新状态。");
+    job = next;
+  }
+  if (job.result) return job.result;
+  if (job.status === "cancelled") throw new DiagnosticExportCancelled(job.error || undefined);
+  throw new Error(job.error || "诊断导出失败");
 }
 
 export function getRenderEvidenceStatus(): Promise<RenderEvidenceStatus> {

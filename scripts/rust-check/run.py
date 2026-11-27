@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -28,13 +29,21 @@ def main() -> int:
     if any(a == "--target-dir" or a.startswith("--target-dir=") for a in args):
         raise ValueError("set CARGO_TARGET_DIR to apply an explicit target to both Rust stages")
     env = {**os.environ, "CARGO_TARGET_DIR": str(target)}
+    runner: list[str] = []
+    if os.name == "nt":
+        # Cargo's runner owns only test EXEs; production builds keep Tauri resources.
+        runner = [
+            "--config",
+            "target.x86_64-pc-windows-msvc.runner="
+            + json.dumps([sys.executable, str(Path(__file__).with_name("windows_runner.py"))]),
+        ]
     with (
         reserve(storage, [("rust-check", target, 12 * GIB)]),
         use_target(storage, target, "rust-check") as record,
     ):
         for command in (
             ["cargo", "fmt", "--check", "--manifest-path", "frontend/src-tauri/Cargo.toml"],
-            ["cargo", "test", "--manifest-path", "frontend/src-tauri/Cargo.toml", *args],
+            ["cargo", "test", *runner, "--manifest-path", "frontend/src-tauri/Cargo.toml", *args],
             ["cargo", "check", "--release", "--manifest-path", "frontend/src-tauri/Cargo.toml"],
         ):
             subprocess.run(command, cwd=ROOT, env=env, check=True)

@@ -283,23 +283,24 @@ function Start-LoggedDevProcess([string]$name, [string[]]$commandArgs, [string]$
     $scriptPath = Join-Path $env:TEMP ("agent-friend-dev-" + $name + "-" + [guid]::NewGuid().ToString("N") + ".ps1")
     $quotedCwd = Quote-PowerShellSingle $workingDirectory
     $quotedLog = Quote-PowerShellSingle $logPath
-    # This helper is intentionally used only for fixed dev commands such as
-    # `uv run python -m agent_bridge`; cmd.exe does the stderr merge before tee.
-    $cmdLine = "(" + ($commandArgs -join " ") + ") 2>&1"
-    $quotedCmdLine = Quote-PowerShellSingle $cmdLine
-    $timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss.fffK")
+    $quotedLogger = Quote-PowerShellSingle $foregroundLogPath
+    $quotedArgs = ($commandArgs | ForEach-Object { Quote-PowerShellSingle $_ }) -join " "
     $script = @"
 `$ErrorActionPreference = "Continue"
 `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false)
 Set-Location -LiteralPath $quotedCwd
-"===== $timestamp $name start: $($commandArgs -join ' ') =====" | Tee-Object -FilePath $quotedLog -Append
-& cmd.exe /d /s /c $quotedCmdLine | Tee-Object -FilePath $quotedLog -Append
+& uv run python $quotedLogger --log $quotedLog --cwd $quotedCwd -- $quotedArgs
 `$exitCode = `$LASTEXITCODE
 Remove-Item -LiteralPath `$PSCommandPath -Force -ErrorAction SilentlyContinue
 exit `$exitCode
 "@
     [System.IO.File]::WriteAllText($scriptPath, $script, [System.Text.UTF8Encoding]::new($true))
-    return Start-Process -FilePath "powershell" -ArgumentList @("-NoProfile", "-File", $scriptPath) -PassThru -NoNewWindow
+    $start = [System.Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = "powershell"
+    $start.Arguments = '-NoProfile -File "' + $scriptPath + '"'
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    return [System.Diagnostics.Process]::Start($start)
 }
 
 function Get-PortListeners($port) {

@@ -380,8 +380,7 @@ fi
 
 echo "===> 启动 bridge（127.0.0.1:18800）…"
 echo "===> 配置模式：${AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
-printf '\n===== %s bridge start: uv run python -m agent_bridge =====\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" >>"$DEV_BRIDGE_LOG"
-(cd "$ROOT" && uv run python -m agent_bridge) 2>&1 | tee -a "$DEV_BRIDGE_LOG" | prefix "[bridge] " &
+uv run python "$FOREGROUND_LOG" --log "$DEV_BRIDGE_LOG" --cwd "$ROOT" --prefix "[bridge] " -- uv run python -m agent_bridge &
 
 if [ "$VOICE_MODE" != "off" ]; then
     NEEDS_VOICE_TUNNEL=0
@@ -414,8 +413,7 @@ if [ "$VOICE_MODE" != "off" ]; then
         else
             echo "===> 启动 voice_bridge（127.0.0.1:18900，本地 ASR 模式，不启动 cloudflared）…"
         fi
-        printf '\n===== %s voice start: uv run python -m voice_bridge =====\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" >>"$DEV_VOICE_LOG"
-        (cd "$ROOT" && uv run python -m voice_bridge) 2>&1 | tee -a "$DEV_VOICE_LOG" | prefix "[voice] " &
+        uv run python "$FOREGROUND_LOG" --log "$DEV_VOICE_LOG" --cwd "$ROOT" --prefix "[voice] " -- uv run python -m voice_bridge &
         if ! wait_http_ok "http://127.0.0.1:18900/healthz" 50; then
             echo "  [ERROR] voice_bridge 启动后 10 秒内未通过健康检查。请查看上方 [voice] 日志。" >&2
             exit 1

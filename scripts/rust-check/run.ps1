@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"
+# Windows test harnesses receive Common Controls v6 through the shared Python runner.
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Set-Location (Join-Path $PSScriptRoot "..\..")
 . (Join-Path $PSScriptRoot "..\_lib\python312.ps1")

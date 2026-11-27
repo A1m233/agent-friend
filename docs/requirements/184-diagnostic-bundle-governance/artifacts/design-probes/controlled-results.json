@@ -1,0 +1,61 @@
+{
+  "kind": "isolated-log-staging-comparison",
+  "phase": "design-mechanism-check",
+  "rows": [
+    {
+      "mode": "buffered",
+      "inputBytes": 134160072,
+      "outputBytes": 134160065,
+      "seconds": 0.72412,
+      "outputFnv64": "2572080967568707895"
+    },
+    {
+      "mode": "baseline",
+      "inputBytes": 134160072,
+      "outputBytes": 134160065,
+      "seconds": 6.376118,
+      "outputFnv64": "2572080967568707895"
+    },
+    {
+      "mode": "baseline",
+      "inputBytes": 134160072,
+      "outputBytes": 134160065,
+      "seconds": 6.444968,
+      "outputFnv64": "2572080967568707895"
+    },
+    {
+      "mode": "buffered",
+      "inputBytes": 134160072,
+      "outputBytes": 134160065,
+      "seconds": 0.706999,
+      "outputFnv64": "2572080967568707895"
+    },
+    {
+      "mode": "buffered",
+      "inputBytes": 134160072,
+      "outputBytes": 134160065,
+      "seconds": 0.750842,
+      "outputFnv64": "2572080967568707895"
+    },
+    {
+      "mode": "baseline",
+      "inputBytes": 134160072,
+      "outputBytes": 134160065,
+      "seconds": 6.381929,
+      "outputFnv64": "2572080967568707895"
+    }
+  ],
+  "medianSeconds": {
+    "baseline": 6.381929,
+    "buffered": 0.72412
+  },
+  "ratio": 8.813358283157488,
+  "platform": "Windows-11-10.0.26200-SP0",
+  "concurrency": "This run started after the dependency setup and diagnostics-smoke completed. Host not exclusively reserved.",
+  "limits": [
+    "Synthetic short lines; collect only, no ZIP or network",
+    "Single host and warm filesystem cache; not end-to-end acceptance",
+    "Only one worker and one file; no real user data",
+    "Previous results.json is retained as pilot and overlapped setup/smoke IO"
+  ]
+}

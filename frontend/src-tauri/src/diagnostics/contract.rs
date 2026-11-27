@@ -243,6 +243,8 @@ mod tests {
             "warnings": [],
             "excluded": [],
             "logLimits": {},
+            "selection": {},
+            "exportMetrics": {},
             "logs": [],
             "windowsShell": {},
             "attachments": {},

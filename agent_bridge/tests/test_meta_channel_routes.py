@@ -14,8 +14,10 @@ from typing import Any, ClassVar
 import pytest
 from agent.scheduled_tasks import ScheduledTaskService, ScheduledTaskStatus, ScheduledTaskStore
 from agent.scheduling import OnceSchedule
+from agent.sessions.changes import SessionChangeBroker, SessionRevisionStore
 from agent.sessions.query import CancelCheck
 from agent.sessions.reading import SessionState
+from agent.sessions.store import NotifyingSessionStore
 from agent_bridge.app import create_app_with_runtime
 from agent_bridge.assembly import BridgeRuntime
 from agent_bridge.settings import BridgeSettings
@@ -74,7 +76,11 @@ def runtime(tmp_path: Path) -> BridgeRuntime:
         sessions_dir=tmp_path / "sessions",
         attachments_dir=tmp_path / "attachments",
     )
-    persistent_store = JsonlSessionStore(settings.sessions_dir)
+    # Match production assembly, including the notification decorator.
+    persistent_store = NotifyingSessionStore(
+        JsonlSessionStore(settings.sessions_dir),
+        SessionChangeBroker(SessionRevisionStore(settings.sessions_dir / "revisions.json")),
+    )
     catalog = PersonaCatalog()
     tool_registry = make_default_registry()
 
@@ -124,6 +130,45 @@ def test_navigation_list_omits_execution_configuration(client: TestClient) -> No
     full = next(row for row in client.get("/v1/sessions").json() if row["session_id"] == sid)
     assert "model" not in nav and "reasoningPreset" not in nav
     assert full["model"] and nav["updated_at"] == full["updated_at"]
+
+
+def test_diagnostic_stream_matches_json_scope_and_filters_private_state(
+    client: TestClient, runtime: BridgeRuntime
+) -> None:
+    import json
+
+    sid = client.post("/v1/sessions", json={}).json()["session_id"]
+    for index in range(3):
+        runtime.persistent_store.append_event(
+            sid,
+            Event(
+                type="user_message",
+                uuid=f"u{index}",
+                ts=datetime.now(UTC),
+                payload={"content": str(index)},
+            ),
+        )
+    runtime.persistent_store.append_event(
+        sid,
+        Event(
+            type="provider_reasoning_state",
+            uuid="private",
+            ts=datetime.now(UTC),
+            payload={"data": "private-provider-state"},
+        ),
+    )
+    response = client.get(f"/v1/sessions/{sid}/diagnostics/stream?turn_limit=1")
+    assert response.status_code == 200
+    assert "private-provider-state" not in response.text
+    records = [json.loads(line) for line in response.text.splitlines()]
+    expected = client.get(f"/v1/sessions/{sid}/diagnostics?turn_limit=1").json()
+    assert [record["event"] for record in records if record["kind"] == "event"] == expected[
+        "events"
+    ]
+    assert records[-1]["session_id"] == sid
+    assert records[-1]["coverage"]["includedTurns"] == 1
+    full = client.get(f"/v1/sessions/{sid}/diagnostics/stream?all_turns=true")
+    assert json.loads(full.text.splitlines()[-1])["coverage"]["includedTurns"] == 3
 
 
 @pytest.mark.parametrize("delete", [False, True])

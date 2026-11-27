@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "profileId": "installer-smoke",
+  "reportFile": "smoke-20261127T173117Z-36605682fd49-1a673c7a.json",
+  "reportSha256": "ec0ac4f01fe7fdd080f79e2aae53eb74adf8a0747c0e9978cc3a960a8d6adf83",
+  "createdAt": "2026-11-27T18:20:51.846563+00:00",
+  "verificationInputs": {
+    "schemaVersion": 1,
+    "scope": "windows-installer-shared-behavior-v1",
+    "packageInputSha256": "86e8362304780b4992d8eb7c692b81b7dcb71bf9ced1844cb92344480ac8c9bf",
+    "fileCount": 1668,
+    "buildEnvironment": {
+      "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+      "node": "v22.15.0",
+      "platform_machine": "AMD64",
+      "platform_release": "11",
+      "platform_system": "Windows",
+      "platform_version": "10.0.26200",
+      "pnpm": "10.15.0",
+      "pyinstaller": "6.21.0",
+      "python": "3.12.6",
+      "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+      "source_content_identity": "git-clean-filter-v1",
+      "tauri_cli": "2.11.2"
+    }
+  },
+  "candidate": {
+    "buildId": "20261127T173117Z-36605682fd49-1a673c7a",
+    "version": "0.4.1",
+    "installerName": "agent-friend_0.4.1_windows_x64-local-test-NOT-FOR-DISTRIBUTION-setup.exe",
+    "installerSha256": "2e6270fdba14535ab8cca9fce907481d7897854d3dff6f538beafc0205453923"
+  },
+  "scenarios": [
+    {
+      "name": "collision_preflight",
+      "result": "passed",
+      "startedAt": "2026-11-27T17:59:07.666935+00:00",
+      "endedAt": "2026-11-27T17:59:07.666935+00:00",
+      "failureReason": null
+    },
+    {
+      "name": "fresh_install",
+      "result": "passed",
+      "startedAt": "2026-11-27T17:59:07.666935+00:00",
+      "endedAt": "2026-11-27T18:01:12.694761+00:00",
+      "failureReason": null
+    },
+    {
+      "name": "preinstall_launch_failure_diagnostics",
+      "result": "passed",
+      "startedAt": "2026-11-27T18:01:12.694761+00:00",
+      "endedAt": "2026-11-27T18:01:20.709244+00:00",
+      "failureReason": null
+    },
+    {
+      "name": "interrupted_install_retry",
+      "result": "passed",
+      "startedAt": "2026-11-27T18:01:20.709244+00:00",
+      "endedAt": "2026-11-27T18:02:17.907117+00:00",
+      "failureReason": null
+    },
+    {
+      "name": "legacy_fixed_layout_upgrade",
+      "result": "passed",
+      "startedAt": "2026-11-27T18:02:17.907117+00:00",
+      "endedAt": "2026-11-27T18:04:57.970641+00:00",
+      "failureReason": null
+    },
+    {
+      "name": "silent_success_exit_code",
+      "result": "passed",
+      "startedAt": "2026-11-27T18:04:57.970641+00:00",
+      "endedAt": "2026-11-27T18:04:57.970641+00:00",
+      "failureReason": null
+    },
+    {
+      "name": "same_version_repair",
+      "result": "passed",
+      "startedAt": "2026-11-27T18:04:57.970641+00:00",
+      "endedAt": "2026-11-27T18:07:18.738459+00:00",
+      "failureReason": null
+    },
+    {
+      "name": "newer_installed_version_rejected_without_mutation",
+      "result": "passed",
+      "startedAt": "2026-11-27T18:07:18.738459+00:00",
+      "endedAt": "2026-11-27T18:08:50.400008+00:00",
+      "failureReason": null
+    },
+    {
+      "name": "install_root_drift_rejected_without_move_intent",
+      "result": "passed",
+      "startedAt": "2026-11-27T18:08:50.400008+00:00",
+      "endedAt": "2026-11-27T18:10:05.154016+00:00",
+      "failureReason": null
+    },
+    {
+      "name": "overlong_migration_target_rolls_back",
+      "result": "passed",
+      "startedAt": "2026-11-27T18:10:05.154016+00:00",
+      "endedAt": "2026-11-27T18:11:22.266230+00:00",
+      "failureReason": null
+    },
+    {
+      "name": "explicit_program_root_migration",
+      "result": "passed",
+      "startedAt": "2026-11-27T18:11:22.266230+00:00",
+      "endedAt": "2026-11-27T18:13:26.689993+00:00",
+      "failureReason": null
+    },
+    {
+      "name": "running_shell_upgrade",
+      "result": "passed",
+      "startedAt": "2026-11-27T18:13:26.689993+00:00",
+      "endedAt": "2026-11-27T18:15:47.510907+00:00",
+      "failureReason": null
+    },
+    {
+      "name": "owned_orphan_runtime_upgrade",
+      "result": "passed",
+      "startedAt": "2026-11-27T18:15:47.510907+00:00",
+      "endedAt": "2026-11-27T18:18:18.914395+00:00",
+      "failureReason": null
+    },
+    {
+      "name": "unconfirmed_file_lock_failure_and_retry",
+      "result": "passed",
+      "startedAt": "2026-11-27T18:18:18.914395+00:00",
+      "endedAt": "2026-11-27T18:20:51.548576+00:00",
+      "failureReason": null
+    },
+    {
+      "name": "identity_mismatch_rejected",
+      "result": "passed",
+      "startedAt": "2026-11-27T18:20:51.548576+00:00",
+      "endedAt": "2026-11-27T18:20:51.562709+00:00",
+      "failureReason": null
+    }
+  ],
+  "reportVerifier": {
+    "command": "scripts/package/run.ps1 installer-smoke-verify with the recorded candidate and Guide pin",
+    "exitCode": 0,
+    "message": "installer smoke report verified"
+  },
+  "guide": {
+    "release": "agent-friend-guide-r129",
+    "commit": "7bfd59a312b5efc1c5965b92482a4ad5f2eb5eaf",
+    "snapshotSha256": "8709498d3a77b43ececa30f47b657a1b196b3334f3f683a02975d281f8fa54a8",
+    "lifecycle": "transient"
+  },
+  "scope": "Isolated installer-smoke profile only; production installation not performed."
+}

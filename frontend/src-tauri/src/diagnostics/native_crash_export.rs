@@ -82,13 +82,23 @@ pub(super) fn append(
     Ok(warnings)
 }
 
-pub(super) fn write_dump(mut dump: ExportDump, output: &mut impl Write) -> Result<(), String> {
+#[cfg(test)]
+pub(super) fn write_dump(dump: ExportDump, output: &mut impl Write) -> Result<(), String> {
+    write_dump_controlled(dump, output, &super::job::Control::detached())
+}
+
+pub(super) fn write_dump_controlled(
+    mut dump: ExportDump,
+    output: &mut impl Write,
+    control: &super::job::Control,
+) -> Result<(), String> {
     // Read the handle captured by the collector, never reopen a path subject to retention.
     // Recheck during streaming so mutation cannot make the ZIP contradict its metadata.
     let mut buffer = [0_u8; 64 * 1024];
     let mut hasher = Sha256::new();
     let mut copied = 0_u64;
     loop {
+        control.check()?;
         let read = dump
             .file
             .read(&mut buffer)
@@ -102,6 +112,7 @@ pub(super) fn write_dump(mut dump: ExportDump, output: &mut impl Write) -> Resul
         if copied > dump.size_bytes {
             return Err("native-crash dump changed during export".into());
         }
+        control.advance(read as u64)?;
         hasher.update(&buffer[..read]);
         output
             .write_all(&buffer[..read])
@@ -235,6 +246,7 @@ mod tests {
                     attachments: &json!({}),
                     render_evidence: &json!({}),
                     pet_input_evidence: &json!({}),
+                    selection: &json!({"logs":"recent"}),
                 },
             );
             entries.push(json_entry("manifest.json", &manifest).unwrap());
@@ -341,6 +353,7 @@ mod tests {
                     attachments: &json!({}),
                     render_evidence: &json!({}),
                     pet_input_evidence: &json!({}),
+                    selection: &json!({"logs":"recent"}),
                 },
             );
             let definition: serde_json::Value =

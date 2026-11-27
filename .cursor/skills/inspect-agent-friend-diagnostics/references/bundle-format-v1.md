@@ -369,3 +369,38 @@ For offline diagnosis, use `scripts/crash-diagnostics/run.*` with the exact priv
 `recordedAt` is Unix milliseconds; `monotonicMs` and `recordSeq` are process-local ordering aids. Renderer `renders` counts CPU-side completion of screen-target render calls; it is neither GPU completion nor proof of successful desktop presentation. Ticker and page-timer counters are separate. `observation-gap` means the native observer stopped receiving expected samples, not a proven renderer deadlock. `render-progress-missing` is a progress signal, not a flicker root-cause verdict. Hide/pause/context-loss and dropped samples restrict interpretation.
 
 A user mark is acknowledged as persisted only after the initial incident file is synced and published. `postWindowComplete: false` is expected while collecting the following ten seconds, on early exit, or when evidence remains incomplete. A timeout means acknowledgement is unknown; inspect retained files rather than inferring no write. Export reads bounded disk data without asking the pet page or forcing a writer flush. Coverage retains dropped/invalid/write failure/eviction counts, unknown tail completeness, missing artifacts and truncated tails. An old v1 bundle lacking this capability means not-collected, not corrupted. Raw system ETL/PresentMon files are not part of the default diagnostic ZIP.
+
+
+## Revision 24: independent export scopes and optional verification
+
+`scoped-retained-logs-v1` replaces the current producer's `full-retained-logs-v1` declaration.
+The inspector still understands both old capabilities. `selection.logs` is `recent` or
+`all-retained`; it changes only logs. Recent logs share 5 MiB per log family (including
+rotations), 32 MiB total. `logLimits` is null-valued for all-retained selection. Each log
+reports `readBytes`, `tailStartOffset`, and `omission`; `recent_log_budget` is a declared
+scope omission, not a collector failure. Unknown time coverage must not be invented from
+file modification time. Structured incident evidence keeps its own collector budgets.
+
+`selection.sessionTurnLimit` defaults to 10; null explicitly selects all persisted turns.
+It does not expand logs or activate integrity checks. Session entry JSON and existing
+selected-sessions-v4 projection/exclusion semantics remain unchanged by streaming transport.
+
+`attachment-integrity-v3` uses `hashCheck: not_requested` and `hashMatches: null` when
+originals are not selected. Do not count this as a passed hash check or a failed hash check;
+metadata/size/missing-file failures remain observable. Selected originals are staged and
+hashed from the same opened source; the ZIP includes those staged bytes. `uncheckedItems`
+is reported independently from `checkedItems` and actual failures.
+
+`install-integrity-v2` adds `fileVerificationRequested`. Default `status: not_checked`
+means this export did not re-hash installed payload files. Historical runtime evidence is
+still reported, but is not proof of a fresh successful verification. Explicit full file
+verification retains the existing integrity statuses. Old v1 bundles remain interpreted
+using their original always-check semantics.
+
+
+`export-observation-v1` owns `selection` and `exportMetrics`. Stage durations and processed
+bytes in the ZIP are measured through writing the preceding archive entries; they exclude
+manifest serialization, ZIP finalization, sync and publication. The desktop task result
+contains final elapsed time. Do not report the bundle's partial timing as total export time.
+Log budgets use source bytes (`logLimits.budgetUnit`); redaction can expand staged output,
+so included bytes and ZIP bytes are not bounded by the same numeric input budget.

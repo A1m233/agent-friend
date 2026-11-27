@@ -7,9 +7,11 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 DEFAULT_MAX_BYTES = 5 * 1024 * 1024
 DEFAULT_KEEP_FILES = 3
@@ -29,6 +31,22 @@ class RotatingBinaryLog:
 
     def __enter__(self) -> RotatingBinaryLog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.is_symlink():
+            raise ValueError("dev output log must not be a symlink")
+        now = int(time.time())
+        for old in self.path.parent.glob(f"{self.path.name}.legacy-*"):
+            suffix = old.name.removeprefix(f"{self.path.name}.legacy-").split("-", 1)
+            if len(suffix) != 2 or not suffix[0].isdigit() or len(suffix[1]) != 32:
+                continue
+            if (
+                all(c in "0123456789abcdef" for c in suffix[1])
+                and now - int(suffix[0]) >= 7 * 86400
+                and old.is_file()
+                and not old.is_symlink()
+            ):
+                old.unlink()
+        if self.path.exists() and self.path.stat().st_size > self.max_bytes:
+            self.path.rename(self.path.with_name(f"{self.path.name}.legacy-{now}-{uuid4().hex}"))
         self._open()
         return self
 
@@ -84,14 +102,17 @@ def _timestamp() -> str:
     return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
-def _write_console(data: bytes, prefix: bytes) -> None:
+def _write_console(data: bytes, prefix: bytes, at_line_start: bool = True) -> bool:
     try:
-        if prefix:
-            sys.stdout.buffer.write(prefix)
-        sys.stdout.buffer.write(data)
+        for piece in data.splitlines(keepends=True):
+            if prefix and at_line_start:
+                sys.stdout.buffer.write(prefix)
+            sys.stdout.buffer.write(piece)
+            at_line_start = piece.endswith(b"\n")
         sys.stdout.buffer.flush()
     except (BrokenPipeError, OSError):
         pass
+    return at_line_start
 
 
 def run_logged(
@@ -118,10 +139,23 @@ def run_logged(
             stdin=None,
         )
         assert process.stdout is not None
+        at_line_start = True
+        log_failed = False
+        dropped = 0
         try:
-            for line in iter(process.stdout.readline, b""):
-                sink.write(line)
-                _write_console(line, prefix_bytes)
+            for chunk in iter(lambda: process.stdout.read1(64 * 1024), b""):
+                if not log_failed:
+                    try:
+                        sink.write(chunk)
+                    except OSError as exc:
+                        log_failed = True
+                        print(
+                            f"dev output log failed; continuing to drain output: {exc}",
+                            file=sys.stderr,
+                        )
+                if log_failed:
+                    dropped += len(chunk)
+                at_line_start = _write_console(chunk, prefix_bytes, at_line_start)
             exit_code = process.wait()
         except KeyboardInterrupt:
             if process.poll() is None:
@@ -137,7 +171,10 @@ def run_logged(
             exit_code = process.returncode if process.returncode is not None else 130
 
         footer = f"===== {_timestamp()} exit: code={exit_code} =====\n".encode()
-        sink.write(footer)
+        if log_failed:
+            print(f"dev output log lost at least {dropped} bytes", file=sys.stderr)
+        else:
+            sink.write(footer)
         return exit_code
 
 
