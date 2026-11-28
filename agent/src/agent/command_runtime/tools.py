@@ -37,7 +37,11 @@ from ..skills.update_receipts import (
     prepare_update_receipt,
 )
 from ..tool_runtime.context import ToolRunContext
-from ..tool_runtime.control import TOOL_INVOCATION_CONTROL_ARG, ToolInvocationControl
+from ..tool_runtime.control import (
+    TOOL_INVOCATION_CONTROL_ARG,
+    ToolInvocationCancelled,
+    ToolInvocationControl,
+)
 from ..tools.protocol import Tool, ToolResult
 from .image_output import CommandImageOutput
 from .models import (
@@ -321,6 +325,10 @@ def _bounded_process_result(snapshot: CommandProcessSnapshot) -> dict[str, objec
     payload: dict[str, object] = {
         "status": snapshot.status,
         "process_status": snapshot.status,
+        "phase": snapshot.phase,
+        "execution_result": snapshot.execution_result,
+        "resource_state": snapshot.resource_state,
+        "resource_evidence": snapshot.resource_evidence,
         "semantic_status": (
             "not_evaluated" if snapshot.status in {"running", "exited"} else "unknown"
         ),
@@ -364,6 +372,11 @@ def _process_diagnostic_meta(snapshot: CommandProcessSnapshot) -> dict[str, obje
             "mode": snapshot.mode,
             "recovery_mode": snapshot.recovery_mode,
             "status": snapshot.status,
+            "phase": snapshot.phase,
+            "execution_result": snapshot.execution_result,
+            "resource_state": snapshot.resource_state,
+            "resource_evidence": snapshot.resource_evidence,
+            "executor_instance_id": snapshot.executor_instance_id,
             "started_at_utc": snapshot.started_at,
             "finished_at_utc": snapshot.finished_at,
             "duration_seconds": snapshot.duration_seconds,
@@ -883,17 +896,56 @@ class ExecCommandTool:
                         "approval_target_changed", "会话自动授权已变化，未继续执行。"
                     )
 
-        process_id: str | None = None
-        try:
-            with self._runtime.sandbox_recovery_scope(recovery_control, validate_resume):
-                if sandbox is not None and self._native_tools is not None:
-                    from agent.execution_environment.windows_read_access import prepare_read_access
+        process_id = f"proc_{uuid4().hex}"
+        evidence_ref = (
+            self._tool_execution_evidence_store.new_reference()
+            if self._tool_execution_evidence_store is not None and details.mode == "buffered"
+            else None
+        )
+        early_cancel_token: str | None = None
 
+        def stop_preparing(reason: str) -> None:
+            self._runtime.request_process_stop(
+                process_id, session_id=session_id, run_id=run_id, reason=reason
+            )
+
+        try:
+            self._runtime.register_preparing_process(
+                process_id=process_id,
+                session_id=session_id,
+                run_id=run_id,
+                tool_call_id=tool_call_id,
+                mode=details.mode,
+                sandboxed=sandbox is not None,
+                tool_name=self.name,
+                evidence_ref=evidence_ref,
+            )
+            context.register_command_handle(process_id, stop_preparing)
+            early_cancel_token = recovery_control.add_cancel_callback(stop_preparing)
+
+            def check_preparation_cancelled() -> None:
+                recovery_control.check_cancelled()
+                self._runtime.check_process_cancelled(process_id)
+
+            checkpoint = args.get(COMMAND_EXECUTION_CHECKPOINT_ARG)
+            if callable(checkpoint):
+                cast(Callable[[str, str, str | None], None], checkpoint)(
+                    process_id,
+                    "resident_only",
+                    evidence_ref,
+                )
+            with self._runtime.sandbox_recovery_scope(recovery_control, validate_resume):
+                recovery_control.check_cancelled()
+                if sandbox is not None and self._native_tools is not None:
                     environment_roots = [self._native_tools.root]
                     if details.managed_command is not None:
                         environment_roots.extend(details.managed_command.read_only_roots)
                     read_access_started = time.monotonic()
-                    prepare_read_access(environment_roots)
+                    self._runtime.prepare_environment_read_access(
+                        process_id,
+                        environment_roots,
+                        check_cancelled=check_preparation_cancelled,
+                    )
                     read_access_seconds = time.monotonic() - read_access_started
                 if (
                     sandbox is not None
@@ -901,9 +953,12 @@ class ExecCommandTool:
                     and details.filesystem_access == "read_only"
                 ):
                     self._runtime.prepare_owned_read_only_workdir(
-                        workdir, sandbox, operation_id=tool_call_id
+                        workdir,
+                        sandbox,
+                        operation_id=process_id,
+                        check_cancelled=check_preparation_cancelled,
                     )
-                process_id = f"proc_{uuid4().hex}"
+                recovery_control.check_cancelled()
                 if pending_update is not None:
                     details.environment_overrides.update(
                         {
@@ -915,19 +970,6 @@ class ExecCommandTool:
                         f"skill-update:{process_id}",
                         pending_update,
                         lambda: pending_update.receipt.unlink(missing_ok=True),
-                    )
-                evidence_ref = (
-                    self._tool_execution_evidence_store.new_reference()
-                    if self._tool_execution_evidence_store is not None
-                    and details.mode == "buffered"
-                    else None
-                )
-                checkpoint = args.get(COMMAND_EXECUTION_CHECKPOINT_ARG)
-                if callable(checkpoint):
-                    cast(Callable[[str, str, str | None], None], checkpoint)(
-                        process_id,
-                        "resident_only",
-                        evidence_ref,
                     )
                 start_rpc_started = time.monotonic()
                 snapshot = self._runtime.start_process(
@@ -960,9 +1002,18 @@ class ExecCommandTool:
                     self._terminate_for_context(uncertain_id, session_id, run_id, reason)
 
                 context.register_command_handle(uncertain_id, terminate_uncertain)
+            else:
+                self._runtime.finish_unstarted_process(process_id, cancelled=False)
             return _command_runtime_error_result(exc, fallback_status="failed")
         except ManagedEnvironmentError as exc:
+            self._runtime.finish_unstarted_process(process_id, cancelled=False)
             return _managed_environment_error_result(exc)
+        except ToolInvocationCancelled:
+            self._runtime.finish_unstarted_process(process_id, cancelled=True)
+            raise
+        finally:
+            if early_cancel_token is not None:
+                recovery_control.remove_cancel_callback(early_cancel_token)
 
         def terminate(reason: str) -> None:
             current = self._terminate_for_context(snapshot.process_id, session_id, run_id, reason)

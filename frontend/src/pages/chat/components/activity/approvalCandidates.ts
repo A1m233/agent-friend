@@ -4,6 +4,7 @@ import type {
   CommandProcessSnapshot,
   CommandRuntimeStatus,
 } from "@/services/api/commandRuntime";
+import { isActiveCommandProcess } from "@/services/api/commandRuntime";
 import type { FilesystemApprovalEntry } from "@/stores/filesystemApprovals";
 
 export type PendingApproval = {
@@ -226,7 +227,7 @@ export function buildRunningCommandQueue(input: {
   if (!currentSessionId || !activeRunId) return [];
   return Object.values(commandProcesses)
     .filter((process) => (
-      process.status === "running"
+      isActiveCommandProcess(process)
       && process.session_id === currentSessionId
       && process.run_id === activeRunId
     ))

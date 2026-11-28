@@ -2,11 +2,13 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import {
   commandRuntimeApi,
+  isActiveCommandProcess,
   type ExecutionApprovalRequest,
   type MemoryApprovalRequest,
   type CommandProcessSnapshot,
   type CommandRuntimeStatus,
   type SandboxCapabilitySnapshot,
+  type SandboxRecoverySnapshot,
 } from "@/services/api/commandRuntime";
 import { friendlyErrorMessage } from "@/services/http";
 import type { PushEnvelope } from "@/types/push";
@@ -38,7 +40,8 @@ interface CommandRuntimeState {
   finishRun: (runId: string) => void;
   decide: (requestId: string, allow: boolean) => Promise<CommandApprovalResult>;
   cancel: (processId: string) => Promise<void>;
-  setupWindowsSandbox: () => Promise<CommandRuntimeStatus | null>;
+  setupWindowsSandbox: (recheck?: boolean) => Promise<CommandRuntimeStatus | null>;
+  cancelSandboxRecovery: () => Promise<void>;
   markDisconnected: () => void;
   clear: () => void;
 }
@@ -99,10 +102,20 @@ export function preferNewerCommandRuntimeStatus(
   incoming: CommandRuntimeStatus,
 ): CommandRuntimeStatus {
   if (!current) return incoming;
-  if (current.sandbox_capability.version <= incoming.sandbox_capability.version) return incoming;
-  const capability = current.sandbox_capability;
+  if (current.runtime_instance_id && incoming.runtime_instance_id
+    && current.runtime_instance_id !== incoming.runtime_instance_id) return incoming;
+  const capability = current.sandbox_capability.version > incoming.sandbox_capability.version
+    ? current.sandbox_capability : incoming.sandbox_capability;
+  let recovery = incoming.recovery ?? incoming.sandbox_capability.recovery;
+  const previous = current.recovery ?? current.sandbox_capability.recovery;
+  if (previous && recovery && (previous.recovery_id === recovery.recovery_id
+    ? previous.version > recovery.version
+    : capability === current.sandbox_capability && capability !== incoming.sandbox_capability)) {
+    recovery = previous;
+  }
   return {
     ...incoming,
+    ...(recovery ? { recovery } : {}),
     sandbox_capability: capability,
     windows_sandbox_ready: capability.ready,
     requires_windows_sandbox_setup: capability.supported && !capability.ready,
@@ -110,6 +123,22 @@ export function preferNewerCommandRuntimeStatus(
 }
 
 let statusReadSequence = 0;
+let recoveryActionEpoch = 0;
+let recoveryRequestKey: string | null = null;
+const retiredRuntimeInstances = new Set<string>();
+
+function recovering(status: CommandRuntimeStatus | null): boolean {
+  const recovery = status?.recovery ?? status?.sandbox_capability.recovery;
+  return recovery ? recovery.result === null : status?.sandbox_capability.state === "setting_up";
+}
+
+function withRecovery(status: CommandRuntimeStatus | null, recovery: SandboxRecoverySnapshot): CommandRuntimeStatus | null {
+  if (!status || (recovery.runtime_instance_id && status.runtime_instance_id
+    && recovery.runtime_instance_id !== status.runtime_instance_id)) return status;
+  const previous = status.recovery;
+  if (previous?.recovery_id === recovery.recovery_id && previous.version > recovery.version) return status;
+  return { ...status, recovery };
+}
 
 export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => ({
   approvals: {},
@@ -127,10 +156,15 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
     try {
       const status = await commandRuntimeApi.status();
       if (sequence === statusReadSequence) {
-        set((state) => ({
-          runtimeStatus: preferNewerCommandRuntimeStatus(state.runtimeStatus, status),
-          statusReadFailed: false,
-        }));
+        if (status.runtime_instance_id && retiredRuntimeInstances.has(status.runtime_instance_id)) return;
+        set((state) => {
+          const previousId = state.runtimeStatus?.runtime_instance_id;
+          if (previousId && status.runtime_instance_id && previousId !== status.runtime_instance_id) {
+            retiredRuntimeInstances.add(previousId);
+          }
+          const runtimeStatus = preferNewerCommandRuntimeStatus(state.runtimeStatus, status);
+          return { runtimeStatus, statusReadFailed: false, settingUpSandbox: recovering(runtimeStatus) };
+        });
       }
     } catch (error) {
       if (sequence === statusReadSequence && get().runtimeStatus === previous) {
@@ -190,7 +224,7 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
       }
       for (const [processId, process] of Object.entries(nextProcesses)) {
         if (
-          process.status !== "running"
+          !isActiveCommandProcess(process)
           || processIds.has(processId)
           || !canReconcileSnapshotAbsence(state.processFence, processId, processRequestEpoch)
         ) continue;
@@ -237,20 +271,30 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
       && validSandboxCapability(envelope.sandbox_capability)
     ) {
       const capability = envelope.sandbox_capability;
+      const currentInstance = get().runtimeStatus?.runtime_instance_id;
+      if (capability.runtime_instance_id && currentInstance && capability.runtime_instance_id !== currentInstance) {
+        if (!retiredRuntimeInstances.has(capability.runtime_instance_id)) void get().refreshStatus().catch(() => undefined);
+        return;
+      }
       set((state) => {
         const current = state.runtimeStatus?.sandbox_capability;
         if (current && current.version > capability.version) return {};
         return {
           statusReadFailed: false,
+          settingUpSandbox: capability.recovery ? capability.recovery.result === null : capability.state === "setting_up",
           runtimeStatus: state.runtimeStatus
             ? {
                 ...state.runtimeStatus,
+                runtime_instance_id: capability.runtime_instance_id ?? state.runtimeStatus.runtime_instance_id,
+                recovery: capability.recovery ?? state.runtimeStatus.recovery,
                 sandbox_capability: capability,
                 windows_sandbox_ready: capability.ready,
                 requires_windows_sandbox_setup: !capability.ready,
               }
             : {
                 available: capability.supported,
+                runtime_instance_id: capability.runtime_instance_id,
+                recovery: capability.recovery,
                 platform: capability.supported ? "windows" : "other",
                 sandbox_capability: capability,
                 windows_sandbox_ready: capability.ready,
@@ -270,7 +314,7 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
         return [key, { ...request, status: "cancelled" as const }];
       }));
       const processes = Object.fromEntries(Object.entries(state.processes).map(([key, process]) => {
-        if (process.run_id !== runId || process.status !== "running") return [key, process];
+        if (process.run_id !== runId || !isActiveCommandProcess(process)) return [key, process];
         processFence = touchSnapshotKey(processFence, key);
         return [
           key,
@@ -352,24 +396,44 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
   },
   async cancel(processId) {
     const process = get().processes[processId];
-    if (!process || process.status !== "running") return;
+    if (!process || !isActiveCommandProcess(process)) return;
     await commandRuntimeApi.cancel(process);
   },
-  async setupWindowsSandbox() {
+  async setupWindowsSandbox(recheck = false) {
     if (get().settingUpSandbox) return null;
     set({ settingUpSandbox: true, setupError: null });
+    const epoch = recoveryActionEpoch;
+    recoveryRequestKey ??= globalThis.crypto?.randomUUID?.() ?? `recovery-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try {
-      const runtimeStatus = await commandRuntimeApi.setupWindowsSandbox();
-      set((state) => ({
-        statusReadFailed: false,
-        runtimeStatus: preferNewerCommandRuntimeStatus(state.runtimeStatus, runtimeStatus),
-      }));
-      return runtimeStatus;
+      const recovery = await commandRuntimeApi.setupWindowsSandbox(recoveryRequestKey, recheck);
+      if (epoch !== recoveryActionEpoch) return null;
+      recoveryRequestKey = null;
+      set((state) => {
+        const runtimeStatus = withRecovery(state.runtimeStatus, recovery);
+        return { runtimeStatus, settingUpSandbox: recovering(runtimeStatus), statusReadFailed: false };
+      });
+      await get().refreshStatus().catch(() => undefined);
+      return get().runtimeStatus;
     } catch (error) {
-      set({ setupError: friendlyErrorMessage(error) });
+      if (epoch !== recoveryActionEpoch) return null;
+      set((state) => ({ setupError: friendlyErrorMessage(error), settingUpSandbox: recovering(state.runtimeStatus) }));
+      await get().refreshStatus().catch(() => undefined);
       return null;
+    }
+  },
+  async cancelSandboxRecovery() {
+    const epoch = recoveryActionEpoch;
+    const recovery = get().runtimeStatus?.recovery;
+    if (!recovery || recovery.result !== null) return;
+    try {
+      const updated = await commandRuntimeApi.cancelRecovery(recovery);
+      if (epoch !== recoveryActionEpoch) return;
+      set((state) => {
+        const runtimeStatus = withRecovery(state.runtimeStatus, updated);
+        return { runtimeStatus, settingUpSandbox: recovering(runtimeStatus) };
+      });
     } finally {
-      set({ settingUpSandbox: false });
+      if (epoch === recoveryActionEpoch) await get().refreshStatus().catch(() => undefined);
     }
   },
   markDisconnected() {
@@ -383,13 +447,16 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
       processes: Object.fromEntries(
         Object.entries(state.processes).map(([key, process]) => [
           key,
-          process.status === "running" ? { ...process, status: "runtime_lost" as const } : process,
+          isActiveCommandProcess(process) ? { ...process, status: "runtime_lost" as const } : process,
         ]),
       ),
     }));
   },
   clear() {
     statusReadSequence++;
+    recoveryActionEpoch++;
+    recoveryRequestKey = null;
+    retiredRuntimeInstances.clear();
     set({
       approvals: {},
       processes: {},
@@ -434,8 +501,14 @@ export function startCommandRuntimeSync(): () => void {
   window.addEventListener("focus", refreshWhenVisible);
   document.addEventListener("visibilitychange", refreshWhenVisible);
   void refresh();
+  const recoveryPoll = window.setInterval(() => {
+    if (!disposed && useCommandRuntimeStore.getState().settingUpSandbox) {
+      void useCommandRuntimeStore.getState().refreshStatus().catch(() => undefined);
+    }
+  }, 1000);
   return () => {
     disposed = true;
+    window.clearInterval(recoveryPoll);
     window.removeEventListener("focus", refreshWhenVisible);
     document.removeEventListener("visibilitychange", refreshWhenVisible);
     unlisteners.forEach((unlisten) => unlisten());

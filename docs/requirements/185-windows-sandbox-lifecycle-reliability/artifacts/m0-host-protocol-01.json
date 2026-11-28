@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "status": "completed",
+  "qualification": "not_established",
+  "scope": "host_process_and_rpc_only; no sandbox provisioning or elevation",
+  "recorded_at": "2026-11-28T13:09:00.551215+00:00",
+  "platform": {
+    "system": "Windows",
+    "version": "10.0.26200",
+    "architecture": "AMD64"
+  },
+  "source": {
+    "commit": "15a400d1cbae6def4118c6fe0e691573a5bad804",
+    "overlay_sha256": {
+      "agent/src/agent/command_runtime/exec_server.py": "9d5143d2e27d6de2b21b5219d1e149959a58ac863d0a3136775a8a532f990b65",
+      "scripts/command-runtime/lifecycle_probe/__init__.py": "c797c49f327b4859be7ca25a57505f8db268d28f31e70d74e5d2ab3df7451e85",
+      "scripts/command-runtime/lifecycle_probe/fixture.py": "60eec6846fa5f015abf13fbd9e0f68f846bffbce9a1e24a69e93c4060be33d71",
+      "scripts/command-runtime/lifecycle_probe/probe.py": "62d27e80c016915fc0e952f7c0d47502e1c94ef847569d4e75943947459b214b",
+      "scripts/command-runtime/lifecycle_probe/windows_job.py": "b8ae020bea437382bb93d88922dd7307073ddd4cc24dc429af36142c899cca03",
+      "scripts/command-runtime/run.py": "b48860ab1452e9524e2047ec4ecc80144c8f8b1fea831d959b2b09d85aebddc1"
+    }
+  },
+  "backend": {
+    "version": "0.147.0",
+    "release_tag": "rust-v0.147.0",
+    "archive_sha256": "a1c073ede409178502b1ff11bed635d2b644424352f9d4f3999de8272c6aebbd",
+    "executable_sha256": "935a1911ed2556e4ffcec995f4886ac2ac425863ba26fed264df62e30272ad9d"
+  },
+  "unverified": [
+    "windows_sandbox_preparation_cancellation",
+    "alternate_identity_runner_containment",
+    "elevated_helper_containment",
+    "first_native_error_before_identity_refresh",
+    "cross_process_identity_maintenance",
+    "windows_10_native_behavior",
+    "installed_and_frozen_runtime"
+  ],
+  "cases": [
+    {
+      "case": "serial-control",
+      "status": "observed",
+      "observation": {
+        "long_poll_ms": 3000,
+        "terminate_elapsed_ms": 2860.0,
+        "terminate_response": {
+          "running": true
+        },
+        "query_response": {
+          "chunks": [],
+          "nextSeq": 1,
+          "exited": false,
+          "exitCode": null,
+          "closed": false,
+          "failure": null,
+          "sandboxDenied": false
+        },
+        "control_delayed_by_long_poll": true,
+        "fixture_confirmed_in_probe_job": true
+      },
+      "remaining_job_processes": 0
+    },
+    {
+      "case": "concurrent-control",
+      "status": "observed",
+      "observation": {
+        "long_poll_ms": 3000,
+        "terminate_elapsed_ms": 0.0,
+        "terminate_response": {
+          "running": true
+        },
+        "query_response": {
+          "chunks": [],
+          "nextSeq": 3,
+          "exited": true,
+          "exitCode": -1,
+          "closed": true,
+          "failure": null,
+          "sandboxDenied": false
+        },
+        "control_delayed_by_long_poll": false,
+        "fixture_confirmed_in_probe_job": true
+      },
+      "remaining_job_processes": 0
+    },
+    {
+      "case": "server-loss",
+      "status": "observed",
+      "observation": {
+        "executor_exit_confirmed": true,
+        "fixture_alive_after_executor_exit": false,
+        "connection_lost_observed": true,
+        "fixture_confirmed_in_probe_job": true
+      },
+      "remaining_job_processes": 0
+    },
+    {
+      "case": "closed-with-descendant",
+      "status": "observed",
+      "observation": {
+        "query_response": {
+          "chunks": [],
+          "nextSeq": 3,
+          "exited": true,
+          "exitCode": 0,
+          "closed": true,
+          "failure": null,
+          "sandboxDenied": false
+        },
+        "descendant_alive_after_closed": true,
+        "fixture_confirmed_in_probe_job": true
+      },
+      "remaining_job_processes": 0
+    }
+  ]
+}

@@ -67,6 +67,7 @@ describe("parseCommandToolResult", () => {
       message: "",
       status: "exited",
       exitCode: 0,
+      resourceState: "legacy_unverified",
       sandboxDenied: false,
       durationSeconds: 0.1,
       droppedBytes: 12,

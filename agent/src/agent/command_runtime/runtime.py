@@ -26,9 +26,13 @@ from typing import Any, cast
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
-from ..tool_runtime.control import ToolInvocationControl
+from ..tool_runtime.control import ToolInvocationCancelled, ToolInvocationControl
 from .diagnostics import CommandDiagnostics, classify_setup_error
-from .exec_server import ExecServerClient, ExecServerError
+from .exec_server import ExecServerClient, ExecServerError, ExecServerRequest
+from .lifecycle.diagnostics import snapshot as lifecycle_diagnostics
+from .lifecycle.helpers import run_windows_helper
+from .lifecycle.store import LifecycleStore, LifecycleUnavailable
+from .lifecycle.windows import maintenance_mutex
 from .models import (
     CommandMode,
     CommandProcessSnapshot,
@@ -36,7 +40,12 @@ from .models import (
     decode_process_output,
 )
 from .network import network_decision, valid_network_request
-from .recovery import RecoveryUnavailable, SandboxRecovery
+from .recovery import (
+    LEGACY_SETUP_WAIT_SECONDS,
+    RecoveryBlocked,
+    RecoveryUnavailable,
+    SandboxRecovery,
+)
 from .sandbox_evidence import SandboxEvidence, error_facts
 from .vendor import probe_setup_helper
 from .windows_home import elevated_command, home_directories, prepare_home, repair_home_script
@@ -62,6 +71,8 @@ def _recover_sandbox_call[RuntimeMethod: Callable[..., Any]](
 ) -> RuntimeMethod:
     @functools.wraps(method)
     def wrapped(self: CommandRuntime, *args: Any, **kwargs: Any) -> Any:
+        if method.__name__ == "start_process" and kwargs.get("process_id") is None:
+            kwargs["process_id"] = f"proc_{uuid4().hex}"
         sandbox = kwargs.get("sandbox")
         if method.__name__ == "prepare_owned_read_only_workdir":
             sandbox = sandbox or (args[1] if len(args) > 1 else None)
@@ -110,6 +121,9 @@ class _ProcessState:
         self.termination_reason: str | None = None
         self.termination_rpc_status: str | None = None
         self.termination_error: str | None = None
+        self.client: ExecServerClient | None = None
+        self.start_request: ExecServerRequest | None = None
+        self.root_closed = False
 
 
 def _powershell_literal(value: str) -> str:
@@ -233,7 +247,7 @@ def windows_sandbox_setup_command(
         f"$p=Start-Process -FilePath {_powershell_literal(str(powershell))} "
         "-ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',"
         f"'{child_encoded}') -Verb RunAs -Wait -PassThru -WindowStyle Hidden;"
-        "exit $p.ExitCode"
+        "[Console]::Out.WriteLine('AF_ELEVATED_WAIT_COMPLETED');exit $p.ExitCode"
     )
     return [
         str(powershell),
@@ -451,6 +465,7 @@ class CommandRuntime:
         diagnostics_path: Path | None = None,
         build_id: str = "",
         payload_status: str = "unknown",
+        lifecycle_dir: Path | None = None,
     ) -> None:
         self._codex_executable = codex_executable.resolve() if codex_executable else None
         self._codex_home = codex_home.resolve()
@@ -465,8 +480,23 @@ class CommandRuntime:
         self._base_env = dict(base_env or os.environ)
         self._output_tail_bytes = output_tail_bytes
         self._exec_server_command = list(exec_server_command) if exec_server_command else None
-        self._runtime_instance_id = runtime_instance_id
+        self._runtime_instance_id = runtime_instance_id or uuid4().hex
+        journal_directory = lifecycle_dir or (
+            managed_home_root / "lifecycle" if managed_home_root else None
+        )
+        if journal_directory is not None and any(
+            journal_directory.resolve() == root or root in journal_directory.resolve().parents
+            for root in (self._codex_home, self._execution_root)
+        ):
+            raise ValueError("lifecycle storage must be outside codex_home and execution_root")
+        self._lifecycle = LifecycleStore(
+            self._runtime_instance_id,
+            journal_directory,
+        )
         self._lock = threading.RLock()
+        self._closed = False
+        self._resource_observer: threading.Thread | None = None
+        self._resource_changed = threading.Event()
         self._diagnostics = CommandDiagnostics(
             diagnostics_path, runtime_instance_id or uuid4().hex, build_id
         )
@@ -482,19 +512,27 @@ class CommandRuntime:
         )
         self._network_grants: set[str] = set()
         self._setup_lock = threading.Lock()
-        self._sandbox_process_ids: set[str] = set()
-        self._uncertain_starts: set[str] = set()
+        self._reconcile_lock = threading.Lock()
         self._recovery = SandboxRecovery(
+            runtime_instance_id=self._runtime_instance_id,
             observe=lambda stage, code, operation: self._diagnostics.record(
                 stage, code, operation=operation
             ),
-            ready=lambda: self.windows_sandbox_ready,
+            ready=self._sandbox_ready_for_commands,
             idle=self._sandbox_idle,
+            reconcile=self._reconcile_sandbox_starts,
+            blockers=self._recovery_blockers,
+            persist=self._lifecycle.save_recoveries,
+            history=self._lifecycle.recoveries(),
+            changed=lambda: self.refresh_sandbox_capability(),
             repair=lambda check: self._setup_windows_sandbox(check_cancelled=check),
             retryable=lambda exc: isinstance(exc, CommandRuntimeError) and exc.safe_to_retry,
         )
         self._client: ExecServerClient | None = None
+        self._host_client: ExecServerClient | None = None
+        self._clients: dict[str, ExecServerClient] = {}
         self._processes: dict[str, _ProcessState] = {}
+        self._pending_preparations: dict[str, tuple[ExecServerClient, ExecServerRequest]] = {}
         self._listeners: list[Callable[[dict[str, object]], None]] = []
         self._evidence_listeners: list[Callable[[CommandProcessSnapshot], None]] = []
         self._capability_listeners: list[Callable[[dict[str, object]], None]] = []
@@ -522,7 +560,11 @@ class CommandRuntime:
     def windows_sandbox_ready(self) -> bool:
         if os.name != "nt" or self._exec_server_command is not None:
             return True
-        return self.sandbox_capability()["ready"] is True
+        return (
+            self._read_windows_sandbox_state()[0] == "ready"
+            and self._setup_error is None
+            and not self._setup_active
+        )
 
     def _read_windows_sandbox_state(self) -> tuple[str, dict[str, str] | None]:
         if os.name != "nt":
@@ -570,10 +612,34 @@ class CommandRuntime:
 
     def sandbox_capability(self) -> dict[str, object]:
         state, detected_error = self._read_windows_sandbox_state()
+        recovery = self._recovery.snapshot()
         with self._lock:
-            if self._setup_active:
+            if self._setup_active or (recovery is not None and recovery["result"] is None):
                 state = "setting_up"
                 error = None
+            elif (
+                recovery is not None
+                and recovery["result"] == "blocked"
+                and any(
+                    str(item.get("reason", "")).startswith("sandbox_maintenance_")
+                    for item in recovery["blockers"]
+                )
+            ):
+                state = "repair_required"
+                error = {
+                    "error": "sandbox_maintenance_blocked",
+                    "message": "另一实例的沙箱维护尚未确认结束，请等待后重新核对，或导出诊断。",
+                }
+            elif self._lifecycle.error or self._lifecycle.blockers():
+                state = "repair_required"
+                error = {
+                    "error": self._lifecycle.error or "sandbox_resources_unconfirmed",
+                    "message": "另一个应用实例正在使用沙箱恢复记录，请退出那个实例后重新启动当前应用。"
+                    if self._lifecycle.error == "lifecycle_owner_active"
+                    else "沙箱恢复记录无法安全读写，请检查磁盘和目录权限，或导出诊断。"
+                    if self._lifecycle.error
+                    else "旧操作的资源状态尚未确认，请查看修复进度中的阻塞原因。",
+                }
             elif self._setup_error is not None and state != "unsupported":
                 state = "repair_required"
                 error = self._setup_error
@@ -589,6 +655,8 @@ class CommandRuntime:
                 "ready": state == "ready",
                 "last_error": copy.deepcopy(error),
                 "version": self._capability_version,
+                "runtime_instance_id": self._runtime_instance_id,
+                "recovery": recovery,
             }
 
     def refresh_sandbox_capability(self) -> dict[str, object]:
@@ -598,6 +666,7 @@ class CommandRuntime:
             snapshot["state"],
             snapshot["supported"],
             json.dumps(error, sort_keys=True, ensure_ascii=False) if error else None,
+            json.dumps(snapshot.get("recovery"), sort_keys=True, ensure_ascii=False),
         )
         listeners: tuple[Callable[[dict[str, object]], None], ...] = ()
         with self._lock:
@@ -617,6 +686,8 @@ class CommandRuntime:
     def status(self) -> dict[str, object]:
         capability = self.refresh_sandbox_capability()
         return {
+            "runtime_instance_id": self._runtime_instance_id,
+            "recovery": self._recovery.snapshot(),
             "available": self.available,
             "platform": "windows" if os.name == "nt" else "other",
             "sandbox_capability": capability,
@@ -626,12 +697,385 @@ class CommandRuntime:
             ),
         }
 
+    def _recovery_blockers(self) -> list[dict[str, Any]]:
+        if self._lifecycle.error:
+            return [
+                {
+                    "operation_id": None,
+                    "reason": self._lifecycle.error,
+                    "available_actions": ["export_diagnostics"],
+                }
+            ]
+        result = []
+        for record in self._lifecycle.blockers(maintenance=True):
+            healthy = (
+                record.phase in {"preparing", "starting", "running"}
+                and not record.reconciliation_required
+            )
+            result.append(
+                {
+                    "operation_id": record.operation_id,
+                    "session_id": record.session_id,
+                    "run_id": record.run_id,
+                    "version": record.version,
+                    "executor_instance_id": record.executor_instance_id,
+                    "reason": "active_command" if healthy else record.resource_evidence,
+                    "available_actions": ["wait_for_tasks", "cancel_command"]
+                    if healthy
+                    else ["recheck", "restart_windows", "export_diagnostics"],
+                }
+            )
+        return result
+
+    def start_sandbox_recovery(self, request_key: str, *, recheck: bool = False) -> dict[str, Any]:
+        if os.name != "nt":
+            raise CommandRuntimeError(
+                "windows_sandbox_setup_not_applicable", "Windows sandbox only"
+            )
+        self._lifecycle.require_available()
+        return self._recovery.start(request_key, recheck=recheck)
+
+    def sandbox_recovery(self, recovery_id: str | None = None) -> dict[str, Any] | None:
+        return self._recovery.snapshot(recovery_id)
+
+    def cancel_sandbox_recovery(self, recovery_id: str, expected_version: int) -> dict[str, Any]:
+        return self._recovery.cancel(recovery_id, expected_version)
+
+    def _sandbox_ready_for_commands(self) -> bool:
+        # Intact identity files do not settle work left by a timeout or a lost
+        # connection. Route new sandbox commands through reconciliation first.
+        recovery = self._recovery.snapshot()
+        if (
+            recovery is not None
+            and recovery["result"] == "blocked"
+            and any(
+                str(item.get("reason", "")).startswith("sandbox_maintenance_")
+                for item in recovery["blockers"]
+            )
+        ):
+            return False
+        with self._lock:
+            if self._lifecycle.error or self._lifecycle.blockers():
+                return False
+        return self.windows_sandbox_ready
+
     def _sandbox_idle(self) -> bool:
         with self._lock:
-            return not (self._uncertain_starts & self._sandbox_process_ids) and not any(
-                process_id in self._sandbox_process_ids and not state.snapshot.terminal()
-                for process_id, state in self._processes.items()
+            return not self._lifecycle.error and not self._lifecycle.blockers(maintenance=True)
+
+    def _reconcile_sandbox_starts(self) -> None:
+        if not self._reconcile_lock.acquire(timeout=self._recovery.setup_timeout_seconds(3)):
+            raise RecoveryBlocked(self._recovery_blockers())
+        try:
+            self._reconcile_sandbox_operations()
+        finally:
+            self._reconcile_lock.release()
+
+    def _reconcile_sandbox_operations(self) -> None:
+        """Retire only authoritative unstarted rejections, never ambiguous work."""
+        for operation_id, (_, request) in tuple(self._pending_preparations.items()):
+            response = request.response if request.event.is_set() else None
+            if (
+                response is not None
+                and response.from_peer
+                and (
+                    (
+                        isinstance(response.result, dict)
+                        and isinstance(response.result.get("isDirectory"), bool)
+                    )
+                    or _known_setup_rejection(
+                        ExecServerError("late preparation", rpc_error=response.error)
+                    )
+                )
+            ):
+                self._lifecycle.change(
+                    operation_id,
+                    phase="finished",
+                    execution_result="not_started",
+                    resource_state="closed",
+                    resource_evidence="builtin_preparation_finished",
+                    reconciliation_required=False,
+                )
+                self._pending_preparations.pop(operation_id, None)
+        records = self._lifecycle.records(scope="sandbox")
+        for parent_record in records:
+            if parent_record.resource_evidence != "preparation_children_pending":
+                continue
+            children = [
+                child
+                for child in records
+                if child.parent_operation_id == parent_record.operation_id
+            ]
+            if children and all(
+                child.resource_state in {"closed", "not_created"}
+                and not child.reconciliation_required
+                for child in children
+            ):
+                self._lifecycle.change(
+                    parent_record.operation_id,
+                    resource_state="closed",
+                    resource_evidence="preparation_children_closed",
+                    reconciliation_required=False,
+                    phase="finished",
+                )
+                state = self._processes.get(parent_record.operation_id)
+                if state is not None:
+                    if not state.snapshot.terminal():
+                        self._finish(
+                            state,
+                            "cancelled" if state.termination_reason else "runtime_lost",
+                            "preparation_finished_without_command",
+                        )
+                    self._publish_state(state)
+        with self._lock:
+            states = [
+                self._processes[process_id]
+                for process_id in {
+                    r.operation_id
+                    for r in self._lifecycle.records(scope="sandbox")
+                    if r.reconciliation_required
+                    or (r.stop_reason and r.resource_state in {"active", "unverified"})
+                }
+                if process_id in self._processes
+            ]
+        for state in states:
+            with state.condition:
+                start_request = state.start_request
+                response = (
+                    start_request.response
+                    if start_request is not None and start_request.event.is_set()
+                    else None
+                )
+                if (
+                    response is None
+                    or not response.from_peer
+                    or not _known_setup_rejection(
+                        ExecServerError("late reply", rpc_error=response.error)
+                    )
+                ):
+                    continue
+            # Atomically check observations and claim finalization, but publish
+            # evidence without holding the process condition across callbacks.
+            # The retained handle is bound to the original request/connection.
+            if self._finish(
+                state,
+                "runtime_lost",
+                "process_start_rejected",
+                require_unobserved=True,
+                confirmed_not_started=True,
+            ) or (
+                state.snapshot.terminal()
+                and not state.root_closed
+                and state.snapshot.output_seq == 0
+                and state.snapshot.exit_code is None
+            ):
+                self._record_sandbox_failure(
+                    "start", str(response.error), operation=state.snapshot.process_id
+                )
+                self._lifecycle.change(
+                    state.snapshot.process_id,
+                    phase="finished",
+                    execution_result="not_started",
+                    resource_state="not_created",
+                    resource_evidence="explicit_start_rejection",
+                    reconciliation_required=False,
+                )
+                self._publish_state(state)
+        # Query the original executor only. Missing/starting is not evidence of
+        # non-execution; an actual start/exit can refine the old operation.
+        for state in states:
+            record = self._lifecycle.get(state.snapshot.process_id)
+            if record is None or not record.reconciliation_required or state.client is None:
+                continue
+            response = state.start_request.response if state.start_request else None
+            acknowledged = (
+                response is not None
+                and response.from_peer
+                and isinstance(response.result, dict)
+                and isinstance(response.result.get("sandboxType"), str)
             )
+            if acknowledged and state.termination_reason:
+                # A terminate sent while Starting may have returned not-found.
+                # Repeat the stop on the SAME id after the late start, never start again.
+                with suppress(ExecServerError):
+                    state.client.request(
+                        "process/terminate",
+                        {"processId": record.operation_id},
+                        timeout_seconds=self._recovery.setup_timeout_seconds(5),
+                    )
+            try:
+                observed = state.client.request(
+                    "process/read",
+                    {"processId": record.operation_id, "afterSeq": state.snapshot.output_seq},
+                    timeout_seconds=self._recovery.setup_timeout_seconds(2),
+                )
+            except ExecServerError:
+                continue
+            if not isinstance(observed, dict):
+                continue
+            for chunk in observed.get("chunks", []):
+                if isinstance(chunk, dict):
+                    self._handle_output(state, chunk)
+            if observed.get("exited") is True and type(observed.get("exitCode")) is int:
+                self._lifecycle.change(
+                    record.operation_id,
+                    execution_result="exited",
+                    exit_code=observed["exitCode"],
+                    resource_evidence="queried_root_exit",
+                )
+                with state.condition:
+                    state.snapshot.exit_code = observed["exitCode"]
+                if observed.get("closed") is True:
+                    self._finish(state, "exited", "queried_root_exit")
+                self._publish_state(state)
+        self._observe_executor_resources()
+        self._retire_failed_executors()
+        with self._lock:
+            if self._lifecycle.error or self._lifecycle.blockers():
+                raise RecoveryBlocked(self._recovery_blockers())
+
+    def _retire_failed_executors(self) -> None:
+        for executor_id, client in tuple(self._clients.items()):
+            self._recovery.checkpoint()
+            records = [
+                r
+                for r in self._lifecycle.records(scope="sandbox")
+                if r.executor_instance_id == executor_id
+                and r.resource_state in {"active", "unverified"}
+            ]
+            if not records or any(
+                r.kind != "command" or not (r.reconciliation_required or r.stop_reason)
+                for r in records
+            ):
+                continue
+            if not client.disconnected and not all(r.stop_reason for r in records):
+                continue
+            # Only acknowledged business work can be reclaimed through this Job.
+            # Unknown preparation/elevation retains an independent blocker.
+            if any(
+                (state := self._processes.get(r.operation_id)) is None
+                or state.start_request is None
+                or (reply := state.start_request.response) is None
+                or not reply.from_peer
+                or not isinstance(reply.result, dict)
+                or not isinstance(reply.result.get("sandboxType"), str)
+                for r in records
+            ):
+                continue
+            self._recovery.phase("stopping")
+            try:
+                client.close()
+            except (OSError, ExecServerError, subprocess.SubprocessError):
+                continue
+            if not client.resources_closed:
+                continue
+            with self._lock:
+                if self._client is client:
+                    self._client = None
+            for record in records:
+                self._lifecycle.change(
+                    record.operation_id,
+                    phase="finished",
+                    resource_state="closed",
+                    resource_evidence="failed_executor_owned_scope_closed",
+                    reconciliation_required=False,
+                )
+                state = self._processes.get(record.operation_id)
+                if state is not None:
+                    if not state.snapshot.terminal():
+                        self._finish(state, "runtime_lost", "executor_closed_result_unknown")
+                    self._publish_state(state)
+
+    def _start_completed(self, state: _ProcessState) -> None:
+        record = self._lifecycle.get(state.snapshot.process_id)
+        if (
+            self._closed
+            or record is None
+            or not (record.reconciliation_required or state.termination_reason)
+        ):
+            return
+
+        def settle() -> None:
+            with suppress(RecoveryUnavailable, LifecycleUnavailable, CommandRuntimeError):
+                self._reconcile_sandbox_starts()
+            self.refresh_sandbox_capability()
+
+        threading.Thread(target=settle, daemon=True, name="command-late-start").start()
+
+    def _observe_executor_resources(self) -> None:
+        """An idle owned Job can retire observed roots, never a pending UAC/refresh."""
+        for executor_id, client in tuple(self._clients.items()):
+            records = [
+                r
+                for r in self._lifecycle.records()
+                if r.executor_instance_id == executor_id
+                and r.resource_state in {"active", "unverified"}
+            ]
+            if not records or any(
+                r.phase not in {"finished", "stopping"} or r.execution_result != "exited"
+                for r in records
+            ):
+                continue
+            try:
+                idle = client.owned_scope_idle()
+            except OSError:
+                continue
+            if not idle:
+                # Preserve legitimate background descendants. No service-wide kill.
+                continue
+            for record in records:
+                self._lifecycle.change(
+                    record.operation_id,
+                    resource_state="closed",
+                    resource_evidence="observed_exit_owned_scope_empty",
+                    reconciliation_required=False,
+                )
+                state = self._processes.get(record.operation_id)
+                if state is not None:
+                    if (
+                        state.root_closed
+                        and not state.snapshot.terminal()
+                        and state.termination_reason
+                    ):
+                        self._finish(
+                            state,
+                            "timed_out" if state.termination_reason == "timeout" else "cancelled",
+                            state.termination_reason,
+                        )
+                    self._publish_state(state)
+
+    def _schedule_resource_observation(self) -> None:
+        if os.name != "nt" or self._closed:
+            return
+        self._resource_changed.set()
+        with self._lock:
+            if self._closed or self._resource_observer is not None:
+                return
+
+            def observe() -> None:
+                while not self._closed:
+                    self._resource_changed.wait()
+                    self._resource_changed.clear()
+                    deadline = time.monotonic() + 2
+                    while not self._closed and time.monotonic() < deadline:
+                        try:
+                            self._observe_executor_resources()
+                        except (LifecycleUnavailable, OSError):
+                            break
+                        if not any(
+                            state.root_closed
+                            and (record := self._lifecycle.get(state.snapshot.process_id))
+                            is not None
+                            and record.resource_state == "unverified"
+                            for state in tuple(self._processes.values())
+                        ):
+                            break
+                        time.sleep(0.02)
+
+            self._resource_observer = threading.Thread(
+                target=observe, daemon=True, name="command-resources"
+            )
+            self._resource_observer.start()
 
     def sandbox_recovery_scope(
         self, control: ToolInvocationControl, validate: Callable[[], None]
@@ -641,13 +1085,17 @@ class CommandRuntime:
     def setup_windows_sandbox(self, *, timeout_seconds: float = 300.0) -> dict[str, object]:
         if os.name != "nt" or self._exec_server_command is not None:
             return self._setup_windows_sandbox(timeout_seconds=timeout_seconds)
-        try:
-            self._recovery.repair_explicit(timeout_seconds=timeout_seconds)
-        except RecoveryUnavailable as exc:
-            cause = exc.__cause__
-            if isinstance(cause, CommandRuntimeError):
-                raise cause from exc
-            raise CommandRuntimeError("windows_sandbox_recovery_failed", str(exc)) from exc
+        recovery = self.start_sandbox_recovery(f"legacy-{uuid4().hex}", recheck=True)
+        deadline = time.monotonic() + min(timeout_seconds, LEGACY_SETUP_WAIT_SECONDS)
+        while recovery["result"] is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+            recovery = self.sandbox_recovery(recovery["recovery_id"]) or recovery
+        error = self._recovery.failure(recovery["recovery_id"])
+        if recovery["result"] in {"blocked", "failed"} and error is not None:
+            if isinstance(error, CommandRuntimeError):
+                raise error
+            raise CommandRuntimeError("windows_sandbox_recovery_failed", str(error)) from error
+        # The old shape is retained, with a durable reference when still pending.
         return self.status()
 
     def _setup_windows_sandbox(
@@ -670,7 +1118,7 @@ class CommandRuntime:
             raise CommandRuntimeError(
                 "command_runtime_unavailable", "product Codex executable is unavailable"
             )
-        with self._setup_lock:
+        with self._setup_lock, maintenance_mutex():
             check_cancelled()
             evidence = self._sandbox_evidence.begin("repair")
             self._sandbox_evidence.repair_started(evidence)
@@ -715,17 +1163,23 @@ class CommandRuntime:
                     check_cancelled()
                     evidence["repairPath"] = "probe_existing"
                     try:
+                        self._recovery.phase("verifying")
                         self._probe_windows_sandbox()
                     except CommandRuntimeError as exc:
                         evidence["initialProbeFailure"] = error_facts(str(exc))
                         evidence["repairPath"] = "probe_then_setup"
                         self._sandbox_evidence.repair_checkpoint(evidence)
                         check_cancelled()
+                        self._reconcile_sandbox_starts()
+                        if self._recovery_blockers():
+                            raise RecoveryBlocked(self._recovery_blockers()) from exc
+                        self._recovery.phase("repairing")
                         self._perform_windows_sandbox_setup(
                             executable,
                             timeout_seconds=self._recovery.setup_timeout_seconds(timeout_seconds),
                         )
                         check_cancelled()
+                        self._recovery.phase("verifying")
                         self._probe_windows_sandbox()
                 else:
                     check_cancelled()
@@ -735,6 +1189,7 @@ class CommandRuntime:
                         timeout_seconds=self._recovery.setup_timeout_seconds(timeout_seconds),
                     )
                     check_cancelled()
+                    self._recovery.phase("verifying")
                     self._probe_windows_sandbox()
                 check_cancelled()
             except Exception as exc:
@@ -755,6 +1210,8 @@ class CommandRuntime:
                 self._diagnostics.record("setup", "failed")
                 self._sandbox_evidence.finish(evidence, str(runtime_error))
                 self.refresh_sandbox_capability()
+                if isinstance(exc, (ToolInvocationCancelled, RecoveryBlocked)):
+                    raise
                 raise runtime_error from exc
             with self._lock:
                 self._setup_active = False
@@ -798,14 +1255,11 @@ class CommandRuntime:
             )
         user = f"{domain}\\{username}" if domain else username
         try:
-            completed = subprocess.run(
+            completed = self._run_elevated_helper(
                 elevated_command(
                     repair_home_script(self._host_home_directories, user), system_root
                 ),
-                env=self._windows_setup_env(),
-                capture_output=True,
-                timeout=timeout_seconds,
-                check=False,
+                timeout_seconds=timeout_seconds,
             )
         except subprocess.TimeoutExpired as exc:
             raise CommandRuntimeError(
@@ -822,7 +1276,7 @@ class CommandRuntime:
         self._execution_root.mkdir(parents=True, exist_ok=True)
         diagnostic_path = self._execution_root / f"windows-sandbox-setup-{uuid4().hex}.log"
         try:
-            completed = subprocess.run(
+            completed = self._run_elevated_helper(
                 windows_sandbox_setup_command(
                     executable,
                     self._codex_home,
@@ -830,10 +1284,7 @@ class CommandRuntime:
                     diagnostic_path=diagnostic_path,
                     proxy_port=safe_loopback_proxy_port(self._base_env),
                 ),
-                env=self._windows_setup_env(),
-                capture_output=True,
-                timeout=timeout_seconds,
-                check=False,
+                timeout_seconds=timeout_seconds,
             )
         except subprocess.TimeoutExpired as exc:
             detail = self._consume_windows_setup_diagnostic(diagnostic_path)
@@ -875,14 +1326,72 @@ class CommandRuntime:
                 f"was not updated{suffix}",
             )
 
+    def _run_elevated_helper(
+        self, command: list[str], *, timeout_seconds: float
+    ) -> subprocess.CompletedProcess[bytes]:
+        """Retain an independent UAC guard: outer Job closure cannot retire elevation."""
+        self._recovery.checkpoint()
+        operation = f"setup_{uuid4().hex}"
+        self._lifecycle.begin(
+            operation,
+            kind="setup",
+            phase="preparing",
+            resource_state="unverified",
+            resource_evidence="elevated_helper_pending",
+            reconciliation_required=True,
+        )
+        try:
+            completed = run_windows_helper(
+                command,
+                env=self._windows_setup_env(),
+                timeout=timeout_seconds,
+                check_cancelled=self._recovery.checkpoint,
+            )
+        except BaseException:
+            self._lifecycle.change(
+                operation,
+                phase="finished",
+                failure="elevated_helper_unconfirmed",
+                resource_evidence="elevated_helper_unconfirmed",
+            )
+            raise
+        confirmed = (
+            b"AF_ELEVATED_WAIT_COMPLETED" in completed.stdout
+            or _windows_setup_was_cancelled(
+                _windows_setup_process_detail(completed.stdout, completed.stderr)
+            )
+        )
+        self._lifecycle.change(
+            operation,
+            phase="finished",
+            resource_state="closed" if confirmed else "unverified",
+            resource_evidence="elevated_wait_completed"
+            if confirmed
+            else "elevated_helper_unconfirmed",
+            reconciliation_required=not confirmed,
+            exit_code=completed.returncode,
+            failure=None if confirmed else "elevated_helper_unconfirmed",
+        )
+        return completed
+
     def _probe_windows_sandbox(self) -> None:
         if self._read_windows_sandbox_state()[0] != "ready":
             raise CommandRuntimeError("windows_sandbox_setup_incomplete", "沙箱状态校验未通过。")
         system_root = _env_value(self._base_env, "SystemRoot", "WINDIR")
         if not system_root:
             raise CommandRuntimeError("windows_sandbox_probe_failed", "无法定位系统命令解释器。")
+        expected_user = read_state(self._codex_home / ".sandbox/setup_marker.json").get(
+            "offline_username"
+        )
+        if (
+            not isinstance(expected_user, str)
+            or not expected_user
+            or expected_user.casefold() == (_env_value(self._base_env, "USERNAME") or "").casefold()
+        ):
+            raise CommandRuntimeError("windows_sandbox_probe_failed", "沙箱执行身份无法核实。")
         self._execution_root.mkdir(parents=True, exist_ok=True)
         for writable in (True, False):
+            self._recovery.checkpoint()
             with tempfile.TemporaryDirectory(
                 prefix="sandbox-probe-", dir=self._execution_root
             ) as tmp:
@@ -894,14 +1403,24 @@ class CommandRuntime:
                 )
                 if not writable:
                     self.prepare_owned_read_only_workdir(
-                        workdir, probe_sandbox, operation_id="sandbox-probe"
+                        workdir,
+                        probe_sandbox,
+                        operation_id="sandbox-probe",
+                        check_cancelled=self._recovery.checkpoint,
                     )
                 process = self.start_process(
                     argv=(
                         str(Path(system_root) / "System32" / "cmd.exe"),
                         "/D",
                         "/C",
-                        "echo agent-friend-sandbox-ready",
+                        "echo proof>af-probe-write.txt 2>nul & "
+                        + (
+                            "if not exist af-probe-write.txt exit /b 29 & "
+                            if writable
+                            else "if exist af-probe-write.txt exit /b 30 & "
+                        )
+                        + "echo agent-friend-sandbox-ready & "
+                        + f'"{Path(system_root) / "System32" / "whoami.exe"}"',
                     ),
                     workdir=workdir,
                     env=self._windows_setup_env(),
@@ -912,12 +1431,30 @@ class CommandRuntime:
                     sandbox=probe_sandbox,
                     _setup_probe=True,
                 )
+                deadline = time.monotonic() + self._recovery.setup_timeout_seconds(15)
                 result = self.wait(
                     process.process_id,
                     session_id="sandbox-setup",
                     run_id="sandbox-probe",
-                    timeout_seconds=15,
+                    timeout_seconds=0,
                 )
+                try:
+                    while not result.terminal() and time.monotonic() < deadline:
+                        self._recovery.checkpoint()
+                        result = self.wait(
+                            process.process_id,
+                            session_id="sandbox-setup",
+                            run_id="sandbox-probe",
+                            timeout_seconds=min(0.1, max(0, deadline - time.monotonic())),
+                        )
+                except BaseException:
+                    self.request_process_stop(
+                        process.process_id,
+                        session_id="sandbox-setup",
+                        run_id="sandbox-probe",
+                        reason="recovery_cancelled",
+                    )
+                    raise
                 if not result.terminal():
                     with suppress(CommandRuntimeError):
                         self.terminate(
@@ -930,12 +1467,19 @@ class CommandRuntime:
                     not result.terminal()
                     or result.exit_code != 0
                     or b"agent-friend-sandbox-ready" not in result.stdout_tail
+                    or not any(
+                        line.strip().casefold().rsplit("\\", 1)[-1] == expected_user.casefold()
+                        for line in decode_process_output(result.stdout_tail).splitlines()
+                    )
                 ):
                     self._diagnostics.record("probe", "failed")
                     raise CommandRuntimeError(
                         "windows_sandbox_probe_failed",
                         "沙箱实际执行验证失败，请导出诊断并修复后重新发起命令。",
                     )
+        self._observe_executor_resources()
+        if self._recovery_blockers():
+            raise RecoveryBlocked(self._recovery_blockers())
         self._diagnostics.record("probe", "ok")
 
     def _record_sandbox_failure(self, stage: str, detail: str, *, operation: str = "") -> None:
@@ -956,6 +1500,7 @@ class CommandRuntime:
         return {
             **self._diagnostics.snapshot(),
             "incidentEvidence": self._sandbox_evidence.snapshot(),
+            "lifecycle": lifecycle_diagnostics(self._lifecycle, self._recovery.snapshot()),
             "status": capability["state"],
             "payloadStatus": self._payload_status,
             "errorCode": error.get("error") if isinstance(error, dict) else None,
@@ -1045,6 +1590,182 @@ class CommandRuntime:
         with self._lock:
             self._capability_listeners.append(listener)
 
+    def register_preparing_process(
+        self,
+        *,
+        process_id: str,
+        session_id: str,
+        run_id: str,
+        tool_call_id: str,
+        mode: CommandMode,
+        sandboxed: bool,
+        tool_name: str = "exec_command",
+        evidence_ref: str | None = None,
+    ) -> None:
+        if not process_id.startswith("proc_"):
+            raise CommandRuntimeError("invalid_process_id", "process id must use the proc_ prefix")
+        with self._lock:
+            if process_id in self._processes:
+                raise CommandRuntimeError(
+                    "duplicate_process_id", "process id is already registered"
+                )
+            previous = self._lifecycle.get(process_id)
+            try:
+                if previous is None:
+                    self._lifecycle.begin(
+                        process_id,
+                        scope="sandbox" if sandboxed else "host",
+                        session_id=session_id,
+                        run_id=run_id,
+                        tool_call_id=tool_call_id,
+                    )
+                elif (
+                    previous.execution_result != "not_started"
+                    or previous.resource_state != "not_created"
+                    or (previous.session_id, previous.run_id, previous.tool_call_id)
+                    != (session_id, run_id, tool_call_id)
+                ):
+                    raise LifecycleUnavailable("operation_already_submitted")
+                self._lifecycle.change(process_id, phase="preparing")
+            except LifecycleUnavailable as exc:
+                raise CommandRuntimeError("command_lifecycle_unavailable", str(exc)) from exc
+            snapshot = CommandProcessSnapshot(
+                process_id,
+                session_id,
+                run_id,
+                tool_call_id,
+                mode,
+                tool_name=tool_name,
+                evidence_ref=evidence_ref,
+                runtime_instance_id=self._runtime_instance_id,
+                status="preparing",
+                phase="preparing",
+                execution_result="not_started",
+                resource_state="not_created",
+                resource_evidence="not_submitted",
+            )
+            self._processes[process_id] = _ProcessState(snapshot)
+        self._publish_state(self._processes[process_id])
+
+    def check_process_cancelled(self, process_id: str) -> None:
+        with self._lock:
+            state = self._processes.get(process_id)
+        if state is not None:
+            with state.condition:
+                if state.termination_reason is not None:
+                    raise ToolInvocationCancelled(state.termination_reason)
+
+    def request_process_stop(
+        self, process_id: str, *, session_id: str, run_id: str, reason: str
+    ) -> None:
+        state = self._owned_state(process_id, session_id=session_id, run_id=run_id)
+        with state.condition:
+            if state.snapshot.terminal():
+                return
+            state.termination_reason = reason
+            state.snapshot.phase = "stopping"
+            state.snapshot.status = "stopping"
+        self._lifecycle.change(process_id, phase="stopping", stop_reason=reason)
+        self._publish_state(state)
+        if state.client is not None:
+
+            def stop() -> None:
+                with suppress(CommandRuntimeError):
+                    self.terminate(
+                        process_id,
+                        session_id=session_id,
+                        run_id=run_id,
+                        reason=reason,
+                        wait_for_terminal_seconds=0,
+                    )
+
+            threading.Thread(target=stop, daemon=True, name="command-stop").start()
+
+    def finish_unstarted_process(self, process_id: str, *, cancelled: bool) -> None:
+        with self._lock:
+            state = self._processes.get(process_id)
+        record = self._lifecycle.get(process_id)
+        if state is not None and record is not None and record.resource_state == "not_created":
+            children = [
+                child
+                for child in self._lifecycle.records()
+                if child.parent_operation_id == process_id
+                and child.resource_state in {"active", "unverified"}
+            ]
+            if children:
+                self._lifecycle.change(
+                    process_id,
+                    resource_state="unverified",
+                    resource_evidence="preparation_children_pending",
+                    reconciliation_required=True,
+                    phase="stopping" if cancelled else "finished",
+                )
+                with state.condition:
+                    state.snapshot.status = "stopping" if cancelled else "runtime_lost"
+                    state.snapshot.execution_result = "not_started"
+                    state.snapshot.version += 1
+                    state.condition.notify_all()
+                self._publish_state(state)
+                return
+            self._finish(
+                state,
+                "cancelled" if cancelled else "runtime_lost",
+                "cancelled_before_start" if cancelled else "preparation_failed",
+                confirmed_not_started=True,
+            )
+
+    def prepare_environment_read_access(
+        self,
+        process_id: str,
+        roots: list[Path],
+        *,
+        check_cancelled: Callable[[], None],
+    ) -> None:
+        if os.name != "nt":
+            return
+        from ..execution_environment.windows_read_access import prepare_read_access
+        from .lifecycle.helpers import HelperCleanupUnconfirmed
+
+        def prepare() -> None:
+            check_cancelled()
+            parent = self._lifecycle.get(process_id)
+            operation_id = f"prepare_{uuid4().hex}"
+            self._lifecycle.begin(
+                operation_id,
+                kind="prepare",
+                parent_operation_id=process_id,
+                session_id=parent.session_id if parent else "",
+                run_id=parent.run_id if parent else "",
+                phase="preparing",
+                resource_state="active",
+                resource_evidence="owned_read_access_helper",
+            )
+            try:
+                prepare_read_access(roots, check_cancelled=check_cancelled)
+            except BaseException as exc:
+                unknown = isinstance(exc, HelperCleanupUnconfirmed) or isinstance(
+                    exc.__cause__, HelperCleanupUnconfirmed
+                )
+                self._lifecycle.change(
+                    operation_id,
+                    phase="finished",
+                    resource_state="unverified" if unknown else "closed",
+                    resource_evidence="helper_cleanup_unconfirmed"
+                    if unknown
+                    else "owned_helper_closed",
+                    reconciliation_required=unknown,
+                    failure="read_access_failed",
+                )
+                raise
+            self._lifecycle.change(
+                operation_id,
+                phase="finished",
+                resource_state="closed",
+                resource_evidence="owned_helper_closed",
+            )
+
+        self._recovery.run(prepare)
+
     @_recover_sandbox_call
     def start_process(
         self,
@@ -1076,30 +1797,75 @@ class CommandRuntime:
         network_enabled = isinstance(permissions, dict) and permissions.get("network") == "enabled"
         if network_enabled:
             check_inherited_proxy(env)
-        client = self._ensure_client()
+        if process_id is not None:
+            self.check_process_cancelled(process_id)
+        client = (
+            self._ensure_host_client()
+            if sandbox is None and os.name == "nt"
+            else self._ensure_client()
+        )
         process_id = process_id or f"proc_{uuid4().hex}"
         if not process_id.startswith("proc_"):
             raise CommandRuntimeError("invalid_process_id", "process id must use the proc_ prefix")
         with self._lock:
-            if process_id in self._processes:
+            pending_state = self._processes.get(process_id)
+            if pending_state is not None and (
+                pending_state.snapshot.phase != "preparing"
+                or (
+                    pending_state.snapshot.session_id,
+                    pending_state.snapshot.run_id,
+                    pending_state.snapshot.tool_call_id,
+                )
+                != (session_id, run_id, tool_call_id)
+            ):
                 raise CommandRuntimeError(
                     "duplicate_process_id", "process id is already registered"
                 )
-        snapshot = CommandProcessSnapshot(
-            process_id=process_id,
-            session_id=session_id,
-            run_id=run_id,
-            tool_call_id=tool_call_id,
-            mode=mode,
-            tool_name=tool_name,
-            evidence_ref=evidence_ref,
-            runtime_instance_id=self._runtime_instance_id,
+        snapshot = (
+            pending_state.snapshot
+            if pending_state is not None
+            else CommandProcessSnapshot(
+                process_id=process_id,
+                session_id=session_id,
+                run_id=run_id,
+                tool_call_id=tool_call_id,
+                mode=mode,
+                tool_name=tool_name,
+                evidence_ref=evidence_ref,
+                runtime_instance_id=self._runtime_instance_id,
+            )
         )
-        state = _ProcessState(snapshot)
+        state = pending_state or _ProcessState(snapshot)
+        state.client = client
+        try:
+            previous = self._lifecycle.get(process_id)
+            if previous is None:
+                self._lifecycle.begin(
+                    process_id,
+                    scope="sandbox" if sandbox is not None else "host",
+                    session_id=session_id,
+                    run_id=run_id,
+                    tool_call_id=tool_call_id,
+                )
+            elif (
+                previous.execution_result != "not_started"
+                or previous.resource_state != "not_created"
+            ):
+                raise LifecycleUnavailable("operation_already_submitted")
+            self._lifecycle.change(
+                process_id,
+                phase="starting",
+                executor_instance_id=getattr(client, "instance_id", "fixture"),
+            )
+        except LifecycleUnavailable as exc:
+            raise CommandRuntimeError("command_lifecycle_unavailable", str(exc)) from exc
+        snapshot.status = "starting"
+        snapshot.phase = "starting"
+        snapshot.execution_result = "not_started"
+        snapshot.resource_state = "not_created"
+        snapshot.executor_instance_id = getattr(client, "instance_id", "fixture")
         with self._lock:
             self._processes[process_id] = state
-            if sandbox is not None:
-                self._sandbox_process_ids.add(process_id)
         params = {
             "processId": process_id,
             "argv": list(argv),
@@ -1130,10 +1896,33 @@ class CommandRuntime:
                 self._network_grants.add(process_id)
         self._diagnostics.record("start", "requested", operation=process_id, proxy=proxy)
         evidence = self._sandbox_evidence.begin("start") if os.name == "nt" else None
+
+        def submitted(request: ExecServerRequest) -> None:
+            with state.condition:
+                state.start_request = request
+                state.snapshot.execution_result = "unknown"
+                request.completed = lambda: self._start_completed(state)
+            self._lifecycle.change(
+                process_id,
+                execution_result="unknown",
+                resource_state="unverified",
+                resource_evidence="start_submitted",
+            )
+
+        def check_start() -> None:
+            self._recovery.checkpoint()
+            self.check_process_cancelled(process_id)
+
         try:
             # The elevated Windows backend may need to establish or refresh its
             # dedicated sandbox identities before the first process starts.
-            response = client.request("process/start", params, timeout_seconds=60)
+            response = client.request(
+                "process/start",
+                params,
+                timeout_seconds=self._recovery.setup_timeout_seconds(60),
+                on_submitted=submitted,
+                check_cancelled=check_start,
+            )
         except ExecServerError as exc:
             with state.condition:
                 observed = (
@@ -1142,23 +1931,41 @@ class CommandRuntime:
                     or state.snapshot.terminal()
                 )
             rejected = _known_setup_rejection(exc) and not observed
+            not_started = rejected or (exc.request_sent is False and not observed)
+            self._lifecycle.change(
+                process_id,
+                phase="finished" if not_started else "reconciling",
+                execution_result="not_started" if not_started else "unknown",
+                resource_state="not_created" if not_started else "unverified",
+                resource_evidence="explicit_start_rejection"
+                if rejected
+                else "not_submitted"
+                if not_started
+                else "start_unconfirmed",
+                reconciliation_required=not not_started,
+                failure="start_rejected" if rejected else "start_unconfirmed",
+            )
             with self._lock:
                 self._network_grants.discard(process_id)
-                if rejected:
+                if not_started:
                     self._processes.pop(process_id, None)
-                    self._sandbox_process_ids.discard(process_id)
-                else:
-                    if not state.snapshot.terminal():
-                        self._uncertain_starts.add(process_id)
             stderr = client.stderr_tail.strip()
             detail = f"{exc}; exec-server stderr: {stderr}" if stderr else str(exc)
             self._record_sandbox_failure("start", str(exc), operation=process_id)
             if evidence is not None:
                 self._sandbox_evidence.finish(evidence, detail)
-            if not rejected:
+            if not not_started:
                 self._publish_state(state)
+                if state.start_request is not None and state.start_request.event.is_set():
+                    self._start_completed(state)
+            if isinstance(exc.__cause__, ToolInvocationCancelled):
+                if not_started:
+                    self._finish(
+                        state, "cancelled", "cancelled_before_start", confirmed_not_started=True
+                    )
+                raise exc.__cause__ from None
             raise CommandRuntimeError(
-                "process_start_failed" if rejected else "process_start_outcome_unknown",
+                "process_start_failed" if not_started else "process_start_outcome_unknown",
                 detail,
                 safe_to_retry=rejected,
             ) from exc
@@ -1168,7 +1975,6 @@ class CommandRuntime:
         ):
             with self._lock:
                 self._network_grants.discard(process_id)
-                self._uncertain_starts.add(process_id)
             with suppress(ExecServerError):
                 client.request("process/terminate", {"processId": process_id}, timeout_seconds=5)
             self._finish(state, "runtime_lost", "sandbox_visibility_unavailable")
@@ -1181,10 +1987,23 @@ class CommandRuntime:
         if evidence is not None:
             self._sandbox_evidence.finish(evidence)
         with state.condition:
+            if not state.snapshot.terminal():
+                state.snapshot.status = "running"
+                state.snapshot.phase = "running"
             state.snapshot.sandbox_type = sandbox_type if isinstance(sandbox_type, str) else "none"
             state.snapshot.version += 1
+        record = self._lifecycle.get(process_id)
+        if record is not None and record.phase != "finished":
+            self._lifecycle.change(
+                process_id,
+                phase="running",
+                execution_result="unknown",
+                resource_state="active",
+                resource_evidence="start_acknowledged",
+            )
         self._diagnostics.record("start", "ok", operation=process_id, proxy=proxy)
         self._publish_state(state)
+        self.check_process_cancelled(process_id)
         return self._copy_snapshot(state.snapshot)
 
     @_recover_sandbox_call
@@ -1194,6 +2013,7 @@ class CommandRuntime:
         sandbox: Mapping[str, Any],
         *,
         operation_id: str = "",
+        check_cancelled: Callable[[], None] = lambda: None,
     ) -> None:
         """Synchronously warm a product-owned Windows cwd before a read-only launch."""
         if os.name != "nt":
@@ -1222,22 +2042,69 @@ class CommandRuntime:
                 break
         if not matched:
             return
+        check_cancelled()
+        preparation_id = f"prepare_{uuid4().hex}"
+        parent = self._lifecycle.get(operation_id)
+        self._lifecycle.begin(
+            preparation_id,
+            kind="prepare",
+            parent_operation_id=operation_id or None,
+            session_id=parent.session_id if parent else "",
+            run_id=parent.run_id if parent else "",
+            tool_call_id=parent.tool_call_id if parent else "",
+            phase="preparing",
+        )
+        client = self._ensure_client()
+
+        def submitted(request: ExecServerRequest) -> None:
+            self._lifecycle.change(
+                preparation_id,
+                resource_state="unverified",
+                resource_evidence="preparation_submitted",
+                executor_instance_id=client.instance_id,
+            )
+            self._pending_preparations[preparation_id] = (client, request)
+
         evidence = self._sandbox_evidence.begin("visibility") if os.name == "nt" else None
         try:
-            self._ensure_client().request(
+            client.request(
                 "fs/getMetadata",
                 {"path": target_uri, "sandbox": prepared},
                 timeout_seconds=60,
+                on_submitted=submitted,
+                check_cancelled=check_cancelled,
             )
         except ExecServerError as exc:
+            finished = exc.request_sent is False or _known_setup_rejection(exc)
+            self._lifecycle.change(
+                preparation_id,
+                phase="finished",
+                resource_state="closed" if finished else "unverified",
+                resource_evidence="preparation_rejected" if finished else "preparation_unconfirmed",
+                reconciliation_required=not finished,
+                failure="preparation_failed",
+            )
+            if finished:
+                self._pending_preparations.pop(preparation_id, None)
             self._record_sandbox_failure("visibility", str(exc), operation=operation_id)
             if evidence is not None:
                 self._sandbox_evidence.finish(evidence, str(exc))
+            if isinstance(exc.__cause__, ToolInvocationCancelled):
+                raise exc.__cause__ from None
             raise CommandRuntimeError(
                 "sandbox_visibility_unavailable",
                 f"failed to prepare product-owned read-only workdir {target_uri}: {exc}",
-                safe_to_retry=classify_setup_error(str(exc))[0] != "unknown",
+                safe_to_retry=_known_setup_rejection(exc),
             ) from exc
+        self._lifecycle.change(
+            preparation_id,
+            phase="finished",
+            resource_state="closed",
+            resource_evidence="builtin_preparation_finished",
+            reconciliation_required=False,
+        )
+        self._pending_preparations.pop(preparation_id, None)
+        check_cancelled()
         if evidence is not None:
             self._sandbox_evidence.finish(evidence)
 
@@ -1276,7 +2143,9 @@ class CommandRuntime:
         state = self._owned_state(process_id, session_id=session_id, run_id=run_id)
         if state.snapshot.mode != "streaming" or state.snapshot.terminal():
             raise CommandRuntimeError("process_not_interactive", "process is not interactive")
-        client = self._ensure_client()
+        client = state.client
+        if client is None:
+            raise CommandRuntimeError("process_write_failed", "original executor is unavailable")
         try:
             response = client.request(
                 "process/write",
@@ -1316,16 +2185,23 @@ class CommandRuntime:
         with state.condition:
             if state.snapshot.terminal():
                 return self._copy_snapshot(state.snapshot)
-            if state.termination_reason is None:
-                state.termination_reason = normalized_reason
+            if state.termination_rpc_status is None:
+                state.termination_reason = state.termination_reason or normalized_reason
                 state.termination_rpc_status = "requesting"
                 state.termination_error = None
                 should_request = True
             with self._lock:
                 self._network_grants.discard(process_id)
+        self._lifecycle.change(process_id, phase="stopping", stop_reason=state.termination_reason)
+        with state.condition:
+            state.snapshot.status = "stopping"
+        self._publish_state(state)
+        if state.client is None:
+            # Preparation owns the cancellation token even before process/start.
+            should_request = False
 
         if should_request:
-            client = self._client
+            client = state.client
             if client is None:
                 with state.condition:
                     if not state.snapshot.terminal():
@@ -1413,23 +2289,60 @@ class CommandRuntime:
             )
 
     def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            observer = self._resource_observer
+        self._resource_changed.set()
+        if observer is not None and observer is not threading.current_thread():
+            observer.join(timeout=2)
         self._recovery.close()
         with self._lock:
             self._network_grants.clear()
             states = tuple(self._processes.values())
-            client = self._client
+            clients = tuple(self._clients.values())
             self._client = None
+            self._host_client = None
         for state in states:
             if not state.snapshot.terminal():
                 self._finish(state, "runtime_lost", "runtime_closed")
-        if client is not None:
-            client.close()
+        for client in clients:
+            try:
+                client.close()
+            except (OSError, ExecServerError, subprocess.SubprocessError):
+                logger.warning("Command executor cleanup unconfirmed", exc_info=True)
+                continue
+            if client.resources_closed:
+                for record in self._lifecycle.records():
+                    # Pending native setup can escape through elevation; never
+                    # substitute an empty outer Job for its missing completion.
+                    if (
+                        record.executor_instance_id == client.instance_id
+                        and record.execution_result == "exited"
+                    ):
+                        with suppress(LifecycleUnavailable):
+                            self._lifecycle.change(
+                                record.operation_id,
+                                resource_state="closed",
+                                resource_evidence="owned_scope_closed",
+                                reconciliation_required=False,
+                            )
         self._diagnostics.flush()
+        self._lifecycle.close()
 
     def _ensure_client(self) -> ExecServerClient:
+        return self._ensure_domain_client("sandbox")
+
+    def _ensure_host_client(self) -> ExecServerClient:
+        return self._ensure_domain_client("host")
+
+    def _ensure_domain_client(self, domain: str) -> ExecServerClient:
         with self._lock:
-            if self._client is not None:
-                return self._client
+            if self._closed:
+                raise CommandRuntimeError("command_runtime_closed", "command runtime is closed")
+            attribute = "_client" if domain == "sandbox" else "_host_client"
+            existing = getattr(self, attribute)
+            if existing is not None:
+                return cast(ExecServerClient, existing)
             executable = self._codex_executable
             if self._exec_server_command is None and (
                 executable is None or not executable.is_file()
@@ -1449,13 +2362,18 @@ class CommandRuntime:
                 "--strict-config",
                 "--listen",
                 "stdio",
+                "--concurrent-requests",
+                "2",
             ]
             client = ExecServerClient(
                 command,
                 env=env,
-                notification=self._handle_notification,
+                notification=lambda method, params: self._handle_notification(
+                    method, params, source=client
+                ),
                 server_request=self._handle_server_request,
                 stderr_observer=self._observe_exec_stderr,
+                max_ordinary_requests=1,
             )
             evidence = self._sandbox_evidence.begin("connection") if os.name == "nt" else None
             try:
@@ -1467,7 +2385,8 @@ class CommandRuntime:
                 raise CommandRuntimeError("exec_server_start_failed", str(exc)) from exc
             if evidence is not None:
                 self._sandbox_evidence.finish(evidence)
-            self._client = client
+            setattr(self, attribute, client)
+            self._clients[client.instance_id] = client
             return client
 
     def _observe_exec_stderr(self, line: str) -> None:
@@ -1532,17 +2451,30 @@ class CommandRuntime:
         env.pop("CODEX_ACCESS_TOKEN", None)
         return env
 
-    def _handle_notification(self, method: str, params: dict[str, Any]) -> None:
+    def _handle_notification(
+        self, method: str, params: dict[str, Any], *, source: ExecServerClient | None = None
+    ) -> None:
         if method == "connection/lost":
             with self._lock:
-                self._network_grants.clear()
-                states = tuple(self._processes.values())
-                self._client = None
+                if (
+                    source is not None
+                    and source is not self._client
+                    and source is not self._host_client
+                ):
+                    return
+                states = tuple(
+                    state
+                    for state in self._processes.values()
+                    if source is None or state.client is source
+                )
+                for state in states:
+                    self._network_grants.discard(state.snapshot.process_id)
+                if source is None or source is self._client:
+                    self._client = None
+                if source is None or source is self._host_client:
+                    self._host_client = None
             for state in states:
                 if not state.snapshot.terminal():
-                    with self._lock:
-                        if state.snapshot.process_id in self._sandbox_process_ids:
-                            self._uncertain_starts.add(state.snapshot.process_id)
                     self._finish(state, "runtime_lost", str(params.get("reason") or "lost"))
             return
         process_id = params.get("processId")
@@ -1552,21 +2484,28 @@ class CommandRuntime:
             process_state = self._processes.get(process_id)
         if process_state is None:
             return
+        if source is not None and source is not process_state.client:
+            return
         if method == "process/output":
             self._handle_output(process_state, params)
         elif method == "process/exited":
             with self._lock:
                 self._network_grants.discard(process_id)
             with process_state.condition:
+                if process_state.snapshot.exit_code is not None or process_state.finalizing:
+                    return
                 code = params.get("exitCode")
                 process_state.snapshot.exit_code = code if isinstance(code, int) else None
                 process_state.snapshot.sandbox_denied = params.get("sandboxDenied") is True
                 process_state.snapshot.version += 1
                 process_state.condition.notify_all()
         elif method == "process/closed":
-            with self._lock:
-                self._uncertain_starts.discard(process_id)
+            # Root/output closure is not proof that descendants of an
+            # ambiguous start have been cleaned up. Keep its resource guard.
             with process_state.condition:
+                if process_state.root_closed:
+                    return
+                process_state.root_closed = True
                 termination_reason = (
                     process_state.termination_reason
                     if process_state.termination_rpc_status in {"requesting", "accepted"}
@@ -1578,9 +2517,11 @@ class CommandRuntime:
                     "timed_out" if termination_reason == "timeout" else "cancelled"
                 )
                 self._finish(process_state, status, termination_reason)
+
             else:
                 reason = "sandbox_denied" if sandbox_denied else "exited"
                 self._finish(process_state, "exited", reason)
+            self._schedule_resource_observation()
 
     def _handle_output(self, state: _ProcessState, params: dict[str, Any]) -> None:
         raw = params.get("chunk")
@@ -1594,6 +2535,8 @@ class CommandRuntime:
             return
         with state.condition:
             if state.finalizing or state.snapshot.terminal():
+                return
+            if isinstance(seq, int) and seq <= state.snapshot.output_seq:
                 return
             current = getattr(state.snapshot, f"{stream}_tail")
             combined = current + chunk
@@ -1610,12 +2553,35 @@ class CommandRuntime:
             state.condition.notify_all()
         self._schedule_publish(state, len(chunk))
 
-    def _finish(self, state: _ProcessState, status: CommandProcessStatus, reason: str) -> None:
+    def _finish(
+        self,
+        state: _ProcessState,
+        status: CommandProcessStatus,
+        reason: str,
+        *,
+        require_unobserved: bool = False,
+        confirmed_not_started: bool = False,
+    ) -> bool:
+        record = self._lifecycle.get(state.snapshot.process_id)
+        closed = record is not None and record.resource_state == "closed"
+        if (
+            status in {"cancelled", "timed_out"}
+            and os.name == "nt"
+            and not confirmed_not_started
+            and not closed
+        ):
+            status = "stopping"
         with self._lock:
             self._network_grants.discard(state.snapshot.process_id)
         with state.condition:
             if state.finalizing or state.snapshot.terminal():
-                return
+                return False
+            if require_unobserved and (
+                state.snapshot.output_seq > 0
+                or state.snapshot.exit_code is not None
+                or state.root_closed
+            ):
+                return False
             state.finalizing = True
             timer = state.publish_timer
             state.publish_timer = None
@@ -1623,8 +2589,28 @@ class CommandRuntime:
             final = replace(
                 state.snapshot,
                 status=status,
+                phase="stopping" if status == "stopping" else "finished",
+                execution_result="exited"
+                if state.snapshot.exit_code is not None
+                else "not_started"
+                if confirmed_not_started
+                else record.execution_result
+                if record is not None
+                else "unknown",
+                resource_state="not_created"
+                if confirmed_not_started
+                else "closed"
+                if closed
+                else "unverified",
+                resource_evidence="not_submitted"
+                if confirmed_not_started
+                else record.resource_evidence
+                if closed and record is not None
+                else "root_closed"
+                if status == "exited"
+                else "closure_unconfirmed",
                 terminal_reason=reason,
-                finished_at=datetime.now(UTC).isoformat(),
+                finished_at=None if status == "stopping" else datetime.now(UTC).isoformat(),
                 duration_seconds=max(0.0, time.monotonic() - state.started_monotonic),
                 version=state.snapshot.version + 1,
             )
@@ -1633,10 +2619,38 @@ class CommandRuntime:
         # A terminal waiter may immediately commit the formal tool result and
         # clean up its transient checkpoint. Make the final evidence snapshot
         # durable before exposing the terminal state to that waiter.
+        record = self._lifecycle.get(state.snapshot.process_id)
+        try:
+            if record is not None:
+                self._lifecycle.change(
+                    state.snapshot.process_id,
+                    phase=final.phase,
+                    execution_result=final.execution_result,
+                    exit_code=state.snapshot.exit_code,
+                    resource_state=final.resource_state,
+                    resource_evidence=final.resource_evidence,
+                    reconciliation_required=False
+                    if confirmed_not_started
+                    else record.reconciliation_required or status == "runtime_lost",
+                )
+        except LifecycleUnavailable:
+            # Keep the native owner and the fail-closed store, but wake waiters.
+            final = replace(
+                final,
+                status="runtime_lost",
+                resource_state="unverified",
+                resource_evidence="lifecycle_write_failed",
+                terminal_reason="lifecycle_write_failed",
+            )
+            status = "runtime_lost"
         self._publish_evidence(final)
         with state.condition:
             state.snapshot.status = status
-            state.snapshot.terminal_reason = reason
+            state.snapshot.phase = final.phase
+            state.snapshot.execution_result = final.execution_result
+            state.snapshot.resource_state = final.resource_state
+            state.snapshot.resource_evidence = final.resource_evidence
+            state.snapshot.terminal_reason = final.terminal_reason
             state.snapshot.finished_at = final.finished_at
             state.snapshot.duration_seconds = final.duration_seconds
             state.snapshot.version += 1
@@ -1645,6 +2659,7 @@ class CommandRuntime:
         self._publish_state(state, include_evidence=False)
         self._prune_terminal_processes()
         self._diagnostics.flush()
+        return True
 
     def _owned_state(self, process_id: str, *, session_id: str, run_id: str) -> _ProcessState:
         with self._lock:
@@ -1666,7 +2681,29 @@ class CommandRuntime:
                 logger.warning("command runtime listener failed", exc_info=True)
 
     def _publish_state(self, state: _ProcessState, *, include_evidence: bool = True) -> None:
+        record = self._lifecycle.get(state.snapshot.process_id)
         with state.condition:
+            if record is not None:
+                facts = (
+                    record.phase,
+                    record.execution_result,
+                    record.resource_state,
+                    record.resource_evidence,
+                )
+                previous = (
+                    state.snapshot.phase,
+                    state.snapshot.execution_result,
+                    state.snapshot.resource_state,
+                    state.snapshot.resource_evidence,
+                )
+                if facts != previous:
+                    (
+                        state.snapshot.phase,
+                        state.snapshot.execution_result,
+                        state.snapshot.resource_state,
+                        state.snapshot.resource_evidence,
+                    ) = facts
+                    state.snapshot.version += 1
             state.last_published_monotonic = time.monotonic()
             snapshot = self._copy_snapshot(state.snapshot)
         self._publish(snapshot)
@@ -1720,6 +2757,9 @@ class CommandRuntime:
                 process_id
                 for process_id, state in self._processes.items()
                 if state.snapshot.terminal()
+                and (record := self._lifecycle.get(process_id)) is not None
+                and record.resource_state in {"closed", "not_created"}
+                and not record.reconciliation_required
             ]
             for process_id in terminal_ids[:-MAX_RETAINED_TERMINAL_PROCESSES]:
                 self._processes.pop(process_id, None)

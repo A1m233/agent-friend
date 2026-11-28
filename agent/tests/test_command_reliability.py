@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from agent.command_runtime import CommandRuntime, CommandRuntimeError
 from agent.command_runtime.diagnostics import MAX_EVENTS, CommandDiagnostics, classify_setup_error
-from agent.command_runtime.exec_server import ExecServerClient, _PendingResponse
+from agent.command_runtime.exec_server import ExecServerClient, ExecServerRequest
 from agent.command_runtime.network import valid_network_request
 from agent.command_runtime.runtime import managed_network_request, sandbox_context
 from agent.command_runtime.windows_state import compatible_state, read_state
@@ -94,7 +94,7 @@ def test_unknown_rpc_method_keeps_pending_response(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client = ExecServerClient([], env={}, notification=lambda *a: None)
-    pending = _PendingResponse()
+    pending = ExecServerRequest(1, "process/start")
     client._pending[1] = pending
     written: list[dict[str, Any]] = []
     monkeypatch.setattr(client, "_write", written.append)
@@ -289,7 +289,7 @@ def test_repair_requires_both_execution_modes_and_filesystem_preparation(
         return SimpleNamespace(
             terminal=lambda: True,
             exit_code=1 if failure == process_id else 0,
-            stdout_tail=b"agent-friend-sandbox-ready",
+            stdout_tail=b"agent-friend-sandbox-ready\nhost\\offline\n",
         )
 
     monkeypatch.setattr(rt, "_ensure_client", lambda: SimpleNamespace(request=request))

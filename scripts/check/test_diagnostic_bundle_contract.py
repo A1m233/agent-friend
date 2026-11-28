@@ -677,6 +677,19 @@ def _build_bundle(
         "diagnostics/command-runtime.json": {
             "schemaVersion": 1,
             "status": "repair_required",
+            "lifecycle": {
+                "schemaVersion": 1,
+                "storageError": None,
+                "records": [
+                    {
+                        "operation": "private-id",
+                        "resourceState": "closed",
+                        "executionResult": "unknown",
+                        "firstFailure": "start_unconfirmed",
+                    }
+                ],
+                "recovery": {"result": "blocked"},
+            },
             "events": [
                 {"code": "helper_launch_failed"},
                 {"stage": "automatic_recovery", "code": "ok", "operation": "private-id"},
@@ -1086,6 +1099,9 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
         "recovery_resume:ok": 1,
     }
     assert "private-id" not in json.dumps(summary["commandRuntime"])
+    assert summary["commandRuntime"]["lifecycle"]["resources"] == {"closed": 1}
+    assert summary["commandRuntime"]["lifecycle"]["executionResults"] == {"unknown": 1}
+    assert summary["commandRuntime"]["lifecycle"]["recoveryResult"] == "blocked"
     assert summary["desktopApplications"]["statuses"] == {"accepted": 1}
     assert "private" not in json.dumps(summary["desktopApplications"])
     assert summary["installerAttempts"]["attempts"][0]["lastPhase"] == "extract-resources"

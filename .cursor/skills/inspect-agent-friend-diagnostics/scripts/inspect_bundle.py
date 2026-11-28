@@ -57,6 +57,7 @@ CAPABILITY_HANDLERS = {
     "managed-execution-environment-v1": "executionEnvironments",
     "command-runtime-health-v1": "commandRuntime",
     "command-runtime-health-v2": "commandRuntime",
+    "command-runtime-health-v3": "commandRuntime",
     "pet-input-evidence-v1": "petInputEvidence",
     "pet-input-evidence-v2": "petInputEvidence",
     "pet-render-evidence-v1": "petRenderEvidence",
@@ -2066,6 +2067,7 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 else None,
                 collected="command-runtime-health-v1" in capabilities
                 or "command-runtime-health-v2" in capabilities
+                or "command-runtime-health-v3" in capabilities
                 or "diagnostics/command-runtime.json" in names,
             ),
             "sandboxIncidents": summarize_sandbox_incidents(
@@ -2476,8 +2478,53 @@ def summarize_command_runtime(value: Any, *, collected: bool) -> dict[str, Any]:
         "eventCount": len(events),
         "codes": counts,
         "recovery": recovery_counts,
+        "lifecycle": summarize_command_lifecycle(value.get("lifecycle")),
         "invalidCount": invalid,
         "gapCount": len(value["gaps"]) if isinstance(value.get("gaps"), list) else None,
+    }
+
+
+def summarize_command_lifecycle(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {"evidence": "legacy-unverified"}
+    if (
+        not isinstance(value, dict)
+        or value.get("schemaVersion") != 1
+        or not isinstance(value.get("records"), list)
+        or len(value["records"]) > 512
+    ):
+        return {"evidence": "invalid"}
+    resources: dict[str, int] = {}
+    outcomes: dict[str, int] = {}
+    first_failures = 0
+    invalid = 0
+    for record in value["records"]:
+        if (
+            not isinstance(record, dict)
+            or not isinstance(record.get("resourceState"), str)
+            or not isinstance(record.get("executionResult"), str)
+            or record["resourceState"] not in {"not_created", "active", "closed", "unverified"}
+            or record["executionResult"] not in {"not_started", "unknown", "exited"}
+        ):
+            invalid += 1
+            continue
+        resource, outcome = record["resourceState"], record["executionResult"]
+        resources[resource] = resources.get(resource, 0) + 1
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+        first_failures += isinstance(record.get("firstFailure"), str)
+    recovery = value.get("recovery")
+    result = recovery.get("result") if isinstance(recovery, dict) else None
+    return {
+        "evidence": "collected",
+        "resources": resources,
+        "executionResults": outcomes,
+        "firstFailureCount": first_failures,
+        "invalidCount": invalid,
+        "storageAvailable": value.get("storageError") is None,
+        "recoveryResult": result
+        if isinstance(result, str)
+        and result in {"succeeded", "blocked", "failed", "cancelled", "interrupted"}
+        else "unknown",
     }
 
 

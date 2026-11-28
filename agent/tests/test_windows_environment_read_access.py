@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+from agent.command_runtime.lifecycle import helpers
 from agent.execution_environment import ManagedEnvironmentError, windows_read_access
 from agent.execution_environment.windows_read_access import prepare_read_access
 
@@ -30,7 +31,7 @@ def test_read_access_cache_checks_identity_acl_and_expiry(
         "agent.execution_environment.windows_read_access.time.monotonic", lambda: clock[0]
     )
     run = Mock()
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(helpers, "run_windows_helper", run)
     prepare_read_access([tmp_path])
     prepare_read_access([tmp_path])
     assert run.call_count == 1
@@ -51,8 +52,13 @@ def test_read_access_cache_checks_identity_acl_and_expiry(
 def test_failed_or_replaced_grant_is_never_cached(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    run = Mock(side_effect=[subprocess.CalledProcessError(5, ["icacls"]), None])
-    monkeypatch.setattr(subprocess, "run", run)
+    run = Mock(
+        side_effect=[
+            subprocess.CalledProcessError(5, ["icacls"]),
+            subprocess.CompletedProcess([], 0),
+        ]
+    )
+    monkeypatch.setattr(helpers, "run_windows_helper", run)
     with pytest.raises(ManagedEnvironmentError):
         prepare_read_access([tmp_path])
     assert not windows_read_access._prepared
@@ -62,7 +68,7 @@ def test_failed_or_replaced_grant_is_never_cached(
     monkeypatch.setattr(
         windows_read_access, "_identity", Mock(side_effect=[(1, 2, 0, b"acl"), (1, 3, 0, b"acl")])
     )
-    monkeypatch.setattr(subprocess, "run", Mock())
+    monkeypatch.setattr(helpers, "run_windows_helper", Mock())
     with pytest.raises(ManagedEnvironmentError):
         prepare_read_access([tmp_path])
     assert not windows_read_access._prepared
@@ -74,8 +80,12 @@ def test_read_access_prepares_concurrent_requests_once(
     import time
     from concurrent.futures import ThreadPoolExecutor
 
-    run = Mock(side_effect=lambda *args, **kwargs: time.sleep(0.02))
-    monkeypatch.setattr(subprocess, "run", run)
+    def complete(*args: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        time.sleep(0.02)
+        return subprocess.CompletedProcess([], 0, b"", b"")
+
+    run = Mock(side_effect=complete)
+    monkeypatch.setattr(helpers, "run_windows_helper", run)
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(lambda _: prepare_read_access([tmp_path]), range(4)))
     assert run.call_count == 1
@@ -85,7 +95,7 @@ def test_dacl_read_is_stable_and_does_not_grant_permissions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run = Mock()
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(helpers, "run_windows_helper", run)
     first = windows_read_access._read_dacl(tmp_path)
     assert first == windows_read_access._read_dacl(tmp_path)
     assert len(first) >= 20
@@ -100,7 +110,7 @@ def test_read_access_waits_for_rx_grant_without_resetting_permissions(
     first.mkdir()
     second.mkdir()
     run = Mock()
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(helpers, "run_windows_helper", run)
     prepare_read_access((first, second, first))
     assert run.call_count == 2
     for call, root in zip(run.call_args_list, (first, second), strict=True):
@@ -111,16 +121,15 @@ def test_read_access_waits_for_rx_grant_without_resetting_permissions(
             "CodexSandboxUsers:(OI)(CI)(RX)",
             "/Q",
         ]
-        assert call.kwargs["check"] is True
+        assert callable(call.kwargs["check_cancelled"])
         assert call.kwargs["timeout"] == 60
-        assert call.kwargs["creationflags"] == subprocess.CREATE_NO_WINDOW
 
 
 def test_read_access_failure_stops_preparation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run = Mock(side_effect=subprocess.CalledProcessError(5, ["icacls"]))
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(helpers, "run_windows_helper", run)
     with pytest.raises(ManagedEnvironmentError) as error:
         prepare_read_access((tmp_path, tmp_path / "next"))
     assert error.value.code == "managed_environment_read_access_failed"

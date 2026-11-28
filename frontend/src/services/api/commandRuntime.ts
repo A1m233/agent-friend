@@ -1,7 +1,11 @@
 import { http } from "@/services/http";
 
 export type ApprovalStatus = "pending" | "reviewing" | "approved" | "denied" | "expired" | "cancelled" | "aborted" | "timed_out" | "failed";
-export type CommandProcessStatus = "running" | "exited" | "cancelled" | "timed_out" | "runtime_lost";
+export type CommandProcessStatus = "queued" | "preparing" | "starting" | "running" | "stopping" | "exited" | "cancelled" | "timed_out" | "runtime_lost";
+
+export function isActiveCommandProcess(process: { status: CommandProcessStatus }): boolean {
+  return ["queued", "preparing", "starting", "running", "stopping"].includes(process.status);
+}
 export type ApprovalDecisionSource =
   | "user_once"
   | "user_enable_session_auto"
@@ -78,6 +82,11 @@ export interface CommandProcessSnapshot {
   mode: "buffered" | "streaming";
   recovery_mode?: "resident_only" | "queryable" | "reattachable";
   runtime_instance_id?: string;
+  executor_instance_id?: string;
+  phase?: "queued" | "preparing" | "starting" | "running" | "reconciling" | "stopping" | "finished";
+  execution_result?: "not_started" | "unknown" | "exited";
+  resource_state?: "not_created" | "active" | "closed" | "unverified";
+  resource_evidence?: string;
   status: CommandProcessStatus;
   started_at: string;
   finished_at?: string | null;
@@ -128,11 +137,36 @@ export interface MemoryApprovalRequest extends Omit<CommandApprovalRequest, "kin
 export type ExecutionApprovalRequest = CommandApprovalRequest | ApplicationApprovalRequest | SocialApprovalRequest | MemoryApprovalRequest;
 
 export interface CommandRuntimeStatus {
+  runtime_instance_id?: string;
+  recovery?: SandboxRecoverySnapshot | null;
   available: boolean;
   platform: "windows" | "other";
   sandbox_capability: SandboxCapabilitySnapshot;
   windows_sandbox_ready: boolean;
   requires_windows_sandbox_setup: boolean;
+}
+
+export interface SandboxRecoverySnapshot {
+  recovery_id: string;
+  runtime_instance_id?: string;
+  phase: "reconciling" | "stopping" | "repairing" | "verifying" | "finished";
+  result: "succeeded" | "blocked" | "failed" | "cancelled" | "interrupted" | null;
+  version: number;
+  created_at: number;
+  updated_at: number;
+  deadline_at: number;
+  cancel_requested: boolean;
+  error_code?: string | null;
+  available_actions: string[];
+  blockers: Array<{
+    operation_id: string | null;
+    session_id?: string;
+    run_id?: string;
+    executor_instance_id?: string | null;
+    version?: number;
+    reason: string;
+    available_actions: string[];
+  }>;
 }
 
 export type SandboxCapabilityState =
@@ -144,6 +178,8 @@ export type SandboxCapabilityState =
   | "repair_required";
 
 export interface SandboxCapabilitySnapshot {
+  runtime_instance_id?: string;
+  recovery?: SandboxRecoverySnapshot | null;
   state: SandboxCapabilityState;
   supported: boolean;
   ready: boolean;
@@ -173,12 +209,22 @@ export const commandRuntimeApi = {
     return await http.get("/v1/command-runtime/status") as CommandRuntimeStatus;
   },
 
-  async setupWindowsSandbox(): Promise<CommandRuntimeStatus> {
+  async setupWindowsSandbox(requestKey: string, recheck = false): Promise<SandboxRecoverySnapshot> {
     return await http.post(
-      "/v1/command-runtime/windows-sandbox/setup",
-      {},
-      { timeout: 310_000 },
-    ) as CommandRuntimeStatus;
+      "/v1/command-runtime/windows-sandbox/recoveries",
+      { request_key: requestKey, recheck },
+    ) as SandboxRecoverySnapshot;
+  },
+
+  async recovery(recoveryId: string): Promise<SandboxRecoverySnapshot> {
+    return await http.get(`/v1/command-runtime/windows-sandbox/recoveries/${encodeURIComponent(recoveryId)}`) as SandboxRecoverySnapshot;
+  },
+
+  async cancelRecovery(recovery: SandboxRecoverySnapshot): Promise<SandboxRecoverySnapshot> {
+    return await http.post(
+      `/v1/command-runtime/windows-sandbox/recoveries/${encodeURIComponent(recovery.recovery_id)}/cancel`,
+      { expected_version: recovery.version },
+    ) as SandboxRecoverySnapshot;
   },
 
   async decide(request: ExecutionApprovalRequest, allow: boolean): Promise<ExecutionApprovalRequest> {

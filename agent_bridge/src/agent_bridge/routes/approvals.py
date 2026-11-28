@@ -10,6 +10,8 @@ from agent.approvals import (
     ApprovalRequestStaleError,
 )
 from agent.command_runtime import CommandApprovalDecision, CommandRuntimeError
+from agent.command_runtime.lifecycle.store import LifecycleUnavailable
+from agent.command_runtime.recovery import RecoveryUnavailable
 from agent.sessions.reading import session_reader
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -52,6 +54,17 @@ class ReviewRetryBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str = Field(min_length=1)
     expected_version: int = Field(ge=1)
+
+
+class SandboxRecoveryBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_key: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._-]+$")
+    recheck: bool = False
+
+
+class CancelSandboxRecoveryBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=1, strict=True)
 
 
 def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
@@ -330,6 +343,44 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 detail={"error": exc.code, "message": str(exc)},
             ) from exc
 
+    @router.post("/command-runtime/windows-sandbox/recoveries", status_code=202)
+    def start_windows_sandbox_recovery(body: SandboxRecoveryBody) -> dict[str, object]:
+        if runtime.command_runtime is None:
+            raise HTTPException(status_code=503, detail="command runtime unavailable")
+        try:
+            return runtime.command_runtime.start_sandbox_recovery(
+                body.request_key, recheck=body.recheck
+            )
+        except (CommandRuntimeError, RecoveryUnavailable, LifecycleUnavailable) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": getattr(exc, "code", "recovery_unavailable"), "message": str(exc)},
+            ) from exc
+
+    @router.get("/command-runtime/windows-sandbox/recoveries/{recovery_id}")
+    def get_windows_sandbox_recovery(recovery_id: str) -> dict[str, object]:
+        if runtime.command_runtime is None:
+            raise HTTPException(status_code=503, detail="command runtime unavailable")
+        result = runtime.command_runtime.sandbox_recovery(recovery_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="recovery not found")
+        return result
+
+    @router.post("/command-runtime/windows-sandbox/recoveries/{recovery_id}/cancel")
+    def cancel_windows_sandbox_recovery(
+        recovery_id: str, body: CancelSandboxRecoveryBody
+    ) -> dict[str, object]:
+        if runtime.command_runtime is None:
+            raise HTTPException(status_code=503, detail="command runtime unavailable")
+        try:
+            return runtime.command_runtime.cancel_sandbox_recovery(
+                recovery_id, body.expected_version
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="recovery not found") from exc
+        except (RecoveryUnavailable, LifecycleUnavailable) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     @router.get("/command-runtime/diagnostics")
     def command_runtime_diagnostics() -> dict[str, object]:
         if runtime.command_runtime is None:
@@ -342,7 +393,9 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             raise HTTPException(status_code=503, detail="command runtime unavailable")
         try:
             snapshot = runtime.command_runtime.terminate(
-                process_id, session_id=session_id, run_id=run_id
+                process_id,
+                session_id=session_id,
+                run_id=run_id,
             )
         except CommandRuntimeError as exc:
             raise HTTPException(

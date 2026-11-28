@@ -57,7 +57,8 @@ def elevated_command(script: str, system_root: str) -> list[str]:
         "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"
         f"$p=Start-Process -FilePath {literal(str(powershell))} "
         "-ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',"
-        f"'{encoded}') -Verb RunAs -Wait -PassThru -WindowStyle Hidden;exit $p.ExitCode"
+        f"'{encoded}') -Verb RunAs -Wait -PassThru -WindowStyle Hidden;"
+        "[Console]::Out.WriteLine('AF_ELEVATED_WAIT_COMPLETED');exit $p.ExitCode"
     )
     return [
         str(powershell),

@@ -7,6 +7,7 @@ from collections.abc import Callable
 from uuid import uuid4
 
 TOOL_INVOCATION_CONTROL_ARG = "__agent_friend_tool_invocation_control"
+RECOVERY_WAIT_SECONDS = 480.0
 
 
 class ToolInvocationCancelled(Exception):
@@ -24,7 +25,7 @@ class ToolInvocationControl:
     def reserve_recovery_wait(self) -> None:
         """Host-only, one bounded allowance; never reset on repeated recovery."""
         with self._lock:
-            self._recovery_wait_seconds = 480.0
+            self._recovery_wait_seconds = RECOVERY_WAIT_SECONDS
 
     @property
     def recovery_wait_seconds(self) -> float:

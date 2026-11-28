@@ -49,6 +49,8 @@ export function PermissionPanel() {
   const settingUpSandbox = useCommandRuntimeStore((state) => state.settingUpSandbox);
   const setupError = useCommandRuntimeStore((state) => state.setupError);
   const setupWindowsSandbox = useCommandRuntimeStore((state) => state.setupWindowsSandbox);
+  const cancelSandboxRecovery = useCommandRuntimeStore((state) => state.cancelSandboxRecovery);
+  const recovery = runtimeStatus?.recovery ?? runtimeStatus?.sandbox_capability.recovery;
   const sandbox = statusReadFailed ? undefined : runtimeStatus?.sandbox_capability;
   useEffect(() => {
     // The store exposes failed reads beside the retry action.
@@ -210,6 +212,41 @@ export function PermissionPanel() {
             {sandbox?.last_error?.message || setupError}
           </p>
         ) : null}
+
+        {recovery ? <div className="space-y-3 text-sm" role="status" aria-live="polite">
+          <p>{recovery.result === null ? {
+            reconciling: "正在核对之前的任务与资源…",
+            stopping: "正在停止修复并确认资源收尾…",
+            repairing: "正在修复环境；可能需要 Windows 管理员确认…",
+            verifying: "正在执行沙箱验证命令…",
+            finished: "正在确认修复结果…",
+          }[recovery.phase] : {
+            succeeded: "沙箱已验证可用，可以重新发起命令。之前结果不明的命令不会自动重跑。",
+            blocked: "修复暂时受阻。处理下面的事项后，可以重新核对。",
+            failed: "本次修复未完成，可以重新核对或导出诊断。",
+            cancelled: "本次修复已取消；仍未确认结束的资源会继续列在下方。",
+            interrupted: "上次修复被中断，需重新核对资源状态。",
+          }[recovery.result]}</p>
+          {recovery.blockers.length ? <ul className="list-disc space-y-1 pl-5 text-muted">
+            {recovery.blockers.map((blocker, index) => <li key={blocker.operation_id ?? index}>
+              {blocker.reason === "active_command"
+                ? "仍有任务运行，请等待它完成，或回到对应会话停止该任务。"
+                : blocker.reason === "lifecycle_owner_active"
+                  ? "另一个应用实例正在使用这份沙箱状态，请先退出那个实例。"
+                  : blocker.reason.includes("elevated")
+                    ? "管理员准备操作尚未确认结束，请处理系统确认窗口后重新核对；仍无法确认时可重启 Windows。"
+                    : "旧操作的资源尚未确认结束。可重新核对；仍无法确认时，请保存工作后重启 Windows，或导出诊断。"}
+            </li>)}
+          </ul> : null}
+          <div className="flex flex-wrap justify-end gap-2">
+            {recovery.result === null ? <Button variant="outline" size="sm"
+              disabled={recovery.cancel_requested}
+              onClick={() => void cancelSandboxRecovery().catch((error) => setFeedback(String(error)))}>
+              {recovery.cancel_requested ? "正在取消" : "取消本次修复"}
+            </Button> : recovery.available_actions.includes("recheck") ? <Button variant="outline" size="sm"
+              disabled={settingUpSandbox} onClick={() => void setupWindowsSandbox(true)}>重新核对</Button> : null}
+          </div>
+        </div> : null}
 
       </SettingsGroup>
 
