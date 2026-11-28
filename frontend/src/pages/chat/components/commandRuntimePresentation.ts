@@ -12,7 +12,11 @@ const SANDBOX_SETUP_ERRORS = new Set([
   "windows_sandbox_helper_load_failed",
 ]);
 const COMMAND_PROCESS_STATUSES = new Set<CommandProcessStatus>([
+  "queued",
+  "preparing",
+  "starting",
   "running",
+  "stopping",
   "exited",
   "cancelled",
   "timed_out",
@@ -31,6 +35,7 @@ export interface CommandToolResultPresentation {
   stdout: string;
   stderr: string;
   pty: string;
+  resourceState: string;
 }
 
 export function commandNeedsSandboxPreparation(
@@ -72,6 +77,7 @@ export function parseCommandToolResult(result: string | undefined): CommandToolR
     error: typeof payload.error === "string" ? payload.error : "",
     message: typeof payload.message === "string" ? payload.message : "",
     status,
+    resourceState: typeof payload.resource_state === "string" ? payload.resource_state : "legacy_unverified",
     exitCode,
     sandboxDenied: typeof payload.sandbox_denied === "boolean"
       ? payload.sandbox_denied

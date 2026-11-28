@@ -25,7 +25,17 @@ CommandExecution = Literal["sandboxed", "host_user"]
 FilesystemAccess = Literal["read_only", "read_write", "unrestricted"]
 CwdSource = Literal["session_managed", "explicit", "skill_snapshot"]
 NetworkAccess = Literal["disabled", "enabled", "unrestricted"]
-CommandProcessStatus = Literal["running", "exited", "cancelled", "timed_out", "runtime_lost"]
+CommandProcessStatus = Literal[
+    "queued",
+    "preparing",
+    "starting",
+    "running",
+    "stopping",
+    "exited",
+    "cancelled",
+    "timed_out",
+    "runtime_lost",
+]
 
 
 def decode_process_output(value: bytes, *, fallback_encoding: str | None = None) -> str:
@@ -209,6 +219,11 @@ class CommandProcessSnapshot:
     evidence_ref: str | None = None
     recovery_mode: str = "resident_only"
     runtime_instance_id: str = ""
+    executor_instance_id: str = ""
+    phase: str = "running"
+    execution_result: str = "unknown"
+    resource_state: str = "unverified"
+    resource_evidence: str = "legacy_unverified"
     status: CommandProcessStatus = "running"
     started_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     finished_at: str | None = None
@@ -225,7 +240,7 @@ class CommandProcessSnapshot:
     version: int = 1
 
     def terminal(self) -> bool:
-        return self.status != "running"
+        return self.status in {"exited", "cancelled", "timed_out", "runtime_lost"}
 
     def to_dict(self, *, include_output: bool = True) -> dict[str, object]:
         value: dict[str, object] = {
@@ -237,6 +252,11 @@ class CommandProcessSnapshot:
             "mode": self.mode,
             "recovery_mode": self.recovery_mode,
             "runtime_instance_id": self.runtime_instance_id,
+            "executor_instance_id": self.executor_instance_id,
+            "phase": self.phase,
+            "execution_result": self.execution_result,
+            "resource_state": self.resource_state,
+            "resource_evidence": self.resource_evidence,
             "status": self.status,
             "process_status": self.status,
             "started_at": self.started_at,

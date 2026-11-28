@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 24,
+  "schemaRevision": 25,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -216,7 +216,7 @@
       ]
     },
     {
-      "id": "command-runtime-health-v2",
+      "id": "command-runtime-health-v3",
       "manifestFields": [],
       "requiredEntries": [
         "diagnostics/command-runtime.json"

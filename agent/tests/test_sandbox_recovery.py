@@ -231,7 +231,7 @@ def test_cancelled_last_waiter_keeps_flight_until_dispatched_repair_returns() ->
     assert next_phase == []
 
 
-@pytest.mark.parametrize("kind", ["rejected", "timeout", "disconnect", "observed"])
+@pytest.mark.parametrize("kind", ["rejected", "timeout", "disconnect", "observed", "unsent"])
 def test_runtime_only_retries_confirmed_unstarted_command(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
@@ -271,6 +271,7 @@ def test_runtime_only_retries_confirmed_unstarted_command(
             raise ExecServerError(
                 "exec_server_request_timeout" if kind == "timeout" else "fixture failure",
                 rpc_error=error if kind in {"rejected", "observed"} else None,
+                request_sent=False if kind == "unsent" else None,
             )
         return {"sandboxType": "windowsRestrictedToken"}
 
@@ -292,6 +293,14 @@ def test_runtime_only_retries_confirmed_unstarted_command(
     if kind == "rejected":
         runtime.start_process(**args)
         assert len(starts) == 2 and repairs == ["repair"]
+    elif kind == "unsent":
+        with pytest.raises(CommandRuntimeError) as caught:
+            runtime.start_process(**args)
+        assert caught.value.code == "process_start_failed"
+        assert not caught.value.safe_to_retry
+        assert len(starts) == 1 and not repairs
+        assert runtime._sandbox_idle()
+        assert starts[0] not in runtime._processes
     else:
         with pytest.raises(CommandRuntimeError) as caught:
             runtime.start_process(**args)

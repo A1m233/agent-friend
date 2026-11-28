@@ -12,6 +12,8 @@ write_lock = threading.Lock()
 live: set[str] = set()
 commands: dict[str, str] = {}
 network_requests: dict[object, str] = {}
+pending_rejections: dict[str, object] = {}
+pending_metadata: list[object] = []
 
 
 def send(value: dict[str, object]) -> None:
@@ -62,12 +64,28 @@ for raw_line in sys.stdin:
         send({"id": request_id, "result": {"protocolVersion": 1}})
     elif method == "initialized":
         continue
+    elif method == "fixture/release-rejections":
+        for pending_id in pending_rejections.values():
+            send(
+                {
+                    "id": pending_id,
+                    "error": {
+                        "code": -32603,
+                        "message": "windows sandbox failed: orchestrator_helper_launch_canceled: 1223",
+                    },
+                }
+            )
+        pending_rejections.clear()
+        notify("fixture/rejections-released", {})
     elif method == "process/start":
         process_id = params["processId"]
         command = params["argv"][-1]
         if command == "fake:disconnect":
             sys.stdout.close()
             break
+        if command == "fake:delayed-rejection":
+            pending_rejections[process_id] = request_id
+            continue
         live.add(process_id)
         commands[process_id] = command
         sandbox_type = (
@@ -100,7 +118,30 @@ for raw_line in sys.stdin:
             ).start()
         elif command == "fake:large":
             threading.Thread(target=finish, args=(process_id, b"x" * 128), daemon=True).start()
+    elif method == "process/read":
+        process_id = params["processId"]
+        if process_id in pending_rejections:
+            send({"id": request_id, "error": {"code": -32600, "message": "process is starting"}})
+        elif process_id in live:
+            send(
+                {
+                    "id": request_id,
+                    "result": {
+                        "chunks": [],
+                        "nextSeq": 1,
+                        "exited": False,
+                        "exitCode": None,
+                        "closed": False,
+                    },
+                }
+            )
+        else:
+            send({"id": request_id, "error": {"code": -32600, "message": "unknown process"}})
     elif method == "fs/getMetadata":
+        if "delay-metadata" in params.get("path", ""):
+            pending_metadata.append(request_id)
+            notify("fixture/metadata-pending", {})
+            continue
         send(
             {
                 "id": request_id,
@@ -113,6 +154,11 @@ for raw_line in sys.stdin:
                 },
             }
         )
+    elif method == "fixture/release-preparations":
+        for pending_id in pending_metadata:
+            send({"id": pending_id, "result": {"isDirectory": True}})
+        pending_metadata.clear()
+        notify("fixture/preparations-released", {})
     elif method == "process/write":
         process_id = params["processId"]
         if not isinstance(params.get("writeId"), str) or not params["writeId"]:

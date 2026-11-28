@@ -19,7 +19,7 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
-TOOL_EXECUTION_EVIDENCE_SCHEMA_VERSION = 1
+TOOL_EXECUTION_EVIDENCE_SCHEMA_VERSION = 2
 MAX_EVIDENCE_STREAM_BYTES = 256 * 1024
 MAX_EVIDENCE_FILE_BYTES = 8 * 1024 * 1024
 MAX_SESSION_EVIDENCE_BYTES = 100 * 1024 * 1024
@@ -71,6 +71,9 @@ class ToolExecutionEvidence:
     complete: bool = False
     captured_at: str = ""
     kind: str = "command_output"
+    resource_state: str = "legacy_unverified"
+    execution_result: str = "unknown"
+    resource_evidence: str = "legacy_unverified"
 
     @property
     def has_output(self) -> bool:
@@ -99,6 +102,9 @@ class ToolExecutionEvidence:
             "stderr": self.stderr,
             "pty": self.pty,
             "captured_at": self.captured_at,
+            "resource_state": self.resource_state,
+            "execution_result": self.execution_result,
+            "resource_evidence": self.resource_evidence,
         }
 
     def to_record(self) -> dict[str, object]:
@@ -113,7 +119,7 @@ class ToolExecutionEvidence:
     def from_record(cls, value: object) -> ToolExecutionEvidence:
         if not isinstance(value, dict):
             raise ToolExecutionEvidenceError("evidence record must be an object")
-        if value.get("schema_version") != TOOL_EXECUTION_EVIDENCE_SCHEMA_VERSION:
+        if value.get("schema_version") not in {1, TOOL_EXECUTION_EVIDENCE_SCHEMA_VERSION}:
             raise ToolExecutionEvidenceError("unsupported evidence schema version")
         if value.get("kind") not in {"command_output", "application_launch", "social_comment"}:
             raise ToolExecutionEvidenceError("unsupported evidence kind")
@@ -163,6 +169,17 @@ class ToolExecutionEvidence:
                 "dropped_bytes",
             )
         }
+        lifecycle = {
+            "resource_state": "legacy_unverified",
+            "execution_result": "unknown",
+            "resource_evidence": "legacy_unverified",
+        }
+        if value["schema_version"] == 2:
+            for key in lifecycle:
+                if not isinstance(value.get(key), str) or len(value[key]) > 256:
+                    raise ToolExecutionEvidenceError(f"invalid evidence field: {key}")
+                lifecycle[key] = value[key]
+                content[key] = value[key]
         expected_hash = value.get("content_sha256")
         if (
             not isinstance(expected_hash, str)
@@ -186,6 +203,7 @@ class ToolExecutionEvidence:
             pty=strings["pty"],
             captured_at=strings["captured_at"],
             kind=str(value["kind"]),
+            **lifecycle,
         )
         if evidence.output_bytes > MAX_EVIDENCE_STREAM_BYTES * 3:
             raise ToolExecutionEvidenceError("evidence output exceeds the bounded limit")
@@ -230,6 +248,9 @@ def evidence_from_process_snapshot(snapshot: object) -> ToolExecutionEvidence:
         operation_id=str(getattr(snapshot, "process_id", "")),
         tool_name=str(getattr(snapshot, "tool_name", "exec_command")),
         process_status=str(getattr(snapshot, "status", "unknown")),
+        resource_state=str(getattr(snapshot, "resource_state", "legacy_unverified")),
+        execution_result=str(getattr(snapshot, "execution_result", "unknown")),
+        resource_evidence=str(getattr(snapshot, "resource_evidence", "legacy_unverified")),
         output_seq=max(0, int(getattr(snapshot, "output_seq", 0))),
         dropped_bytes=max(0, int(dropped_bytes)) + extra_dropped,
         stdout=bounded["stdout"],
@@ -281,7 +302,7 @@ class ToolExecutionEvidenceStore:
             raise ToolExecutionEvidenceError("process snapshot has no session owner")
         output_seq = getattr(snapshot, "output_seq", 0)
         status = getattr(snapshot, "status", "unknown")
-        terminal = status != "running"
+        terminal = status in {"exited", "cancelled", "timed_out", "runtime_lost"}
         evidence = evidence_from_process_snapshot(snapshot)
         if not evidence.has_output:
             return False

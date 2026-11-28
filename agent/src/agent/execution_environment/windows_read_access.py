@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from .models import ManagedEnvironmentError
@@ -52,7 +52,9 @@ def _identity(root: Path) -> tuple[int, int, int, bytes]:
     return state.st_dev, state.st_ino, state.st_mtime_ns, _read_dacl(root)
 
 
-def prepare_read_access(roots: Iterable[Path]) -> None:
+def prepare_read_access(
+    roots: Iterable[Path], *, check_cancelled: Callable[[], None] = lambda: None
+) -> None:
     """Grant only RX on host-selected environment roots, after command approval.
 
     Codex 0.147.0 delegates read ACL propagation to a background helper. A cold
@@ -62,6 +64,8 @@ def prepare_read_access(roots: Iterable[Path]) -> None:
     """
     if sys.platform != "win32":
         return
+    from ..command_runtime.lifecycle.helpers import run_windows_helper
+
     system_root = os.environ.get("SYSTEMROOT")
     if not system_root:
         raise ManagedEnvironmentError(
@@ -72,7 +76,10 @@ def prepare_read_access(roots: Iterable[Path]) -> None:
     icacls = Path(system_root) / "System32" / "icacls.exe"
     for root in dict.fromkeys(roots):
         try:
-            with _prepare_lock:
+            while not _prepare_lock.acquire(timeout=0.05):
+                check_cancelled()
+            try:
+                check_cancelled()
                 key = os.path.normcase(os.path.abspath(root))
                 before = _identity(root)
                 cached = _prepared.get(key)
@@ -80,14 +87,12 @@ def prepare_read_access(roots: Iterable[Path]) -> None:
                     _prepared.move_to_end(key)
                     continue
                 _prepared.pop(key, None)
-                subprocess.run(
+                completed = run_windows_helper(
                     [str(icacls), str(root), "/grant", "CodexSandboxUsers:(OI)(CI)(RX)", "/Q"],
-                    stdin=subprocess.DEVNULL,
-                    capture_output=True,
-                    check=True,
                     timeout=60,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    check_cancelled=check_cancelled,
                 )
+                completed.check_returncode()
                 after = _identity(root)
                 if before[:2] != after[:2]:
                     raise ValueError(
@@ -96,6 +101,8 @@ def prepare_read_access(roots: Iterable[Path]) -> None:
                 _prepared[key] = (after, time.monotonic())
                 while len(_prepared) > _CACHE_LIMIT:
                     _prepared.popitem(last=False)
+            finally:
+                _prepare_lock.release()
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             raise ManagedEnvironmentError(
                 "managed_environment_read_access_failed",

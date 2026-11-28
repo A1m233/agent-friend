@@ -908,15 +908,27 @@ def main(argv: list[str] | None = None) -> int:
             "network-smoke",
             "skill-install-smoke",
             "home-smoke",
+            "lifecycle-probe",
         ),
     )
     parser.add_argument("--home", type=Path, help="Existing sandbox home for home-smoke only")
-    parser.add_argument("--report", type=Path, help="JSON evidence file for home-smoke only")
+    parser.add_argument(
+        "--report", type=Path, help="New JSON evidence file for home-smoke/lifecycle-probe"
+    )
     args = parser.parse_args(argv)
     if args.action == "home-smoke" and (args.home is None or args.report is None):
         parser.error("home-smoke requires --home and --report")
-    if args.action != "home-smoke" and (args.home is not None or args.report is not None):
-        parser.error("--home and --report are only accepted by home-smoke")
+    if args.action == "lifecycle-probe" and (args.report is None or args.home is not None):
+        parser.error("lifecycle-probe requires --report and does not accept --home")
+    if args.action not in {"home-smoke", "lifecycle-probe"} and (
+        args.home is not None or args.report is not None
+    ):
+        parser.error("--home/--report are only accepted by the corresponding probe")
+    if args.action == "lifecycle-probe" and os.name != "nt":
+        from lifecycle_probe.probe import run
+
+        print(json.dumps(run(Path(), args.report), ensure_ascii=False))
+        return 0
     if args.action in {"ensure", "prepare", "setup"}:
         try:
             executable = ensure_source_runtime(ROOT)
@@ -930,6 +942,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.action == "path":
         print(executable)
         return 0
+    if args.action == "lifecycle-probe":
+        from lifecycle_probe.probe import run
+
+        result = run(executable, args.report)
+        print(
+            json.dumps(
+                {
+                    "status": result["status"],
+                    "qualification": result["qualification"],
+                    "report": str(args.report),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0 if result["status"] == "completed" else 1
     if args.action == "home-smoke":
         from home_smoke import run
 

@@ -6,6 +6,8 @@ import {
   type MemoryApprovalRequest,
   type CommandProcessSnapshot,
   type SandboxCapabilitySnapshot,
+  type SandboxRecoverySnapshot,
+  type CommandRuntimeStatus,
 } from "@/services/api/commandRuntime";
 import type { PushEnvelope } from "@/types/push";
 import { preferNewerCommandRuntimeStatus, useCommandRuntimeStore } from "./commandRuntime";
@@ -19,10 +21,62 @@ vi.mock("@/services/api/commandRuntime", async (importOriginal) => {
       processes: vi.fn(),
       status: vi.fn(),
       setupWindowsSandbox: vi.fn(),
+      cancelRecovery: vi.fn(),
       decide: vi.fn(),
       cancel: vi.fn(),
     },
   };
+});
+
+describe("sandbox background recovery", () => {
+  const recovery = (version = 1, result: SandboxRecoverySnapshot["result"] = null): SandboxRecoverySnapshot => ({
+    recovery_id: "repair-a", runtime_instance_id: "runtime-a", phase: result ? "finished" : "repairing",
+    result, version, created_at: 1, updated_at: version, deadline_at: 481,
+    cancel_requested: false, blockers: [], available_actions: result ? ["recheck"] : ["cancel_recovery"],
+  });
+  const status = (item: SandboxRecoverySnapshot | null = null): CommandRuntimeStatus => ({
+    available: true, platform: "windows", runtime_instance_id: "runtime-a", recovery: item,
+    windows_sandbox_ready: false, requires_windows_sandbox_setup: true,
+    sandbox_capability: { supported: true, ready: false, state: item?.result === null ? "setting_up" : "repair_required", version: item?.version ?? 1 },
+  });
+  beforeEach(() => {
+    vi.resetAllMocks();
+    useCommandRuntimeStore.getState().clear();
+    useCommandRuntimeStore.setState({ runtimeStatus: status() });
+    vi.mocked(commandRuntimeApi.status).mockResolvedValue(status());
+  });
+  it("keeps the retry key when the POST response was lost", async () => {
+    vi.mocked(commandRuntimeApi.setupWindowsSandbox).mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(recovery(4, "blocked"));
+    await useCommandRuntimeStore.getState().setupWindowsSandbox();
+    await useCommandRuntimeStore.getState().setupWindowsSandbox();
+    expect(vi.mocked(commandRuntimeApi.setupWindowsSandbox).mock.calls[0][0])
+      .toBe(vi.mocked(commandRuntimeApi.setupWindowsSandbox).mock.calls[1][0]);
+  });
+  it("uses server state across reconnect and does not clear loading after acknowledgement", async () => {
+    vi.mocked(commandRuntimeApi.setupWindowsSandbox).mockResolvedValue(recovery(2));
+    vi.mocked(commandRuntimeApi.status).mockResolvedValue(status(recovery(3)));
+    await useCommandRuntimeStore.getState().setupWindowsSandbox();
+    expect(useCommandRuntimeStore.getState().settingUpSandbox).toBe(true);
+    useCommandRuntimeStore.getState().markDisconnected();
+    expect(useCommandRuntimeStore.getState().settingUpSandbox).toBe(true);
+    vi.mocked(commandRuntimeApi.status).mockResolvedValue(status(recovery(4, "blocked")));
+    await useCommandRuntimeStore.getState().refreshStatus();
+    expect(useCommandRuntimeStore.getState().settingUpSandbox).toBe(false);
+  });
+  it("ignores an older recovery reply and accepts a new runtime epoch", () => {
+    expect(preferNewerCommandRuntimeStatus(status(recovery(8)), status(recovery(2))).recovery?.version).toBe(8);
+    const restarted = { ...status(), runtime_instance_id: "runtime-b" };
+    expect(preferNewerCommandRuntimeStatus(status(recovery(8)), restarted)).toBe(restarted);
+  });
+  it("cancel acknowledgement stays active until the server finishes", async () => {
+    useCommandRuntimeStore.setState({ runtimeStatus: status(recovery(3)), settingUpSandbox: true });
+    const stopping = { ...recovery(4), phase: "stopping" as const, cancel_requested: true };
+    vi.mocked(commandRuntimeApi.cancelRecovery).mockResolvedValue(stopping);
+    vi.mocked(commandRuntimeApi.status).mockResolvedValue(status(stopping));
+    await useCommandRuntimeStore.getState().cancelSandboxRecovery();
+    expect(commandRuntimeApi.cancelRecovery).toHaveBeenCalledWith(recovery(3));
+    expect(useCommandRuntimeStore.getState().settingUpSandbox).toBe(true);
+  });
 });
 
 function approval(version = 1): CommandApprovalRequest {

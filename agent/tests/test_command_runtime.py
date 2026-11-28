@@ -1368,12 +1368,12 @@ def test_windows_setup_reports_uac_cancellation_without_clixml(
     )
     stderr = b"""#< CLIXML\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress"><MS><PR N="Record"><AV>Preparing modules for first use.</AV></PR></MS></Obj><S S="Error">Start-Process : The operation was canceled by the user._x000D__x000A_</S></Objs>"""
     monkeypatch.setattr(
-        "agent.command_runtime.runtime.subprocess.run",
+        "agent.command_runtime.runtime.run_windows_helper",
         lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, b"", stderr),
     )
 
     with pytest.raises(CommandRuntimeError) as cancelled:
-        runtime.setup_windows_sandbox()
+        runtime._setup_windows_sandbox()
 
     assert cancelled.value.code == "windows_sandbox_setup_cancelled"
     assert "CLIXML" not in str(cancelled.value)
@@ -1408,10 +1408,10 @@ def test_windows_setup_surfaces_and_removes_elevated_child_diagnostic(
         )
         return subprocess.CompletedProcess(["powershell"], 1, b"", b"")
 
-    monkeypatch.setattr("agent.command_runtime.runtime.subprocess.run", fail_setup)
+    monkeypatch.setattr("agent.command_runtime.runtime.run_windows_helper", fail_setup)
 
     with pytest.raises(CommandRuntimeError) as failed:
-        runtime.setup_windows_sandbox()
+        runtime._setup_windows_sandbox()
 
     assert failed.value.code == "windows_sandbox_setup_failed"
     assert "could not update the sandbox firewall rule" in str(failed.value)
@@ -1438,12 +1438,12 @@ def test_windows_setup_reports_missing_readiness_marker_after_success(
         },
     )
     monkeypatch.setattr(
-        "agent.command_runtime.runtime.subprocess.run",
+        "agent.command_runtime.runtime.run_windows_helper",
         lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, b"", b""),
     )
 
     with pytest.raises(CommandRuntimeError) as incomplete:
-        runtime.setup_windows_sandbox()
+        runtime._setup_windows_sandbox()
 
     assert incomplete.value.code == "windows_sandbox_setup_incomplete"
     assert "proxy port 15236" in str(incomplete.value)
@@ -1887,7 +1887,7 @@ def test_terminate_command_keeps_handle_when_rpc_fails(runtime: CommandRuntime) 
             run_id="run-a",
             timeout_seconds=0,
         ).status
-        == "running"
+        == "stopping"
     )
 
 
@@ -1913,7 +1913,7 @@ def test_runtime_termination_timeout_does_not_publish_false_cancelled(
             run_id="run-a",
             timeout_seconds=0,
         ).status
-        == "running"
+        == "stopping"
     )
 
 
@@ -1950,7 +1950,7 @@ def test_runtime_termination_keeps_first_reason_across_repeated_requests(
         reason="timeout",
         wait_for_terminal_seconds=0,
     )
-    assert first.status == repeated.status == "running"
+    assert first.status == repeated.status == "stopping"
 
     runtime._handle_notification(
         "process/exited",
@@ -1961,7 +1961,7 @@ def test_runtime_termination_keeps_first_reason_across_repeated_requests(
         started.process_id,
         session_id="session-a",
         run_id="run-a",
-        timeout_seconds=0,
+        timeout_seconds=1,
     )
 
     assert finished.status == "cancelled"
@@ -2727,7 +2727,10 @@ def test_environment_read_access_is_prepared_after_approval_before_launch(
     monkeypatch.setattr(tool, "_native_tools", native)
     events: list[str] = []
 
-    def prepare(roots: list[Path]) -> None:
+    def prepare(roots: list[Path], **kwargs: object) -> None:
+        check = kwargs["check_cancelled"]
+        assert callable(check)
+        check()
         assert roots == [native.root]
         events.append("acl")
         if acl_fails:

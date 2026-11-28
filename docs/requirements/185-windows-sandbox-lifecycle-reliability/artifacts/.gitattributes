@@ -1,0 +1,3 @@
+*.json -text
+*.zip -text
+MANIFEST.sha256 -text

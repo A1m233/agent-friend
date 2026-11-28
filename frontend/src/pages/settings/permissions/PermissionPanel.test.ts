@@ -43,7 +43,11 @@ function button(label: string) {
 it("can start sandbox repair even when the global approval query returns 422", async () => {
   const pending = vi.spyOn(commandRuntimeApi, "pending").mockRejectedValue({ status: 422 });
   vi.spyOn(commandRuntimeApi, "processes").mockResolvedValue([]);
-  const setup = vi.spyOn(commandRuntimeApi, "setupWindowsSandbox").mockResolvedValue(repairRequired);
+  const setup = vi.spyOn(commandRuntimeApi, "setupWindowsSandbox").mockResolvedValue({
+    recovery_id: "repair-1", phase: "finished", result: "blocked", version: 3,
+    created_at: 1, updated_at: 2, deadline_at: 481, cancel_requested: false,
+    blockers: [], available_actions: ["recheck"],
+  });
   await expect(useCommandRuntimeStore.getState().refresh()).rejects.toMatchObject({ status: 422 });
   await act(async () => root.render(createElement(PermissionPanel)));
   expect(container.textContent).toContain("需要修复");

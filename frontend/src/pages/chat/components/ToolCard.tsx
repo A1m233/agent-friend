@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { isActiveCommandProcess } from "@/services/api/commandRuntime";
 import { cn } from "@/utils/cn";
 import {
   Collapsible,
@@ -414,7 +415,7 @@ function CommandRuntimeCard({
     && commandNeedsSandboxPreparation(resultError, runtimeStatus, execution);
   const preferPersistedResult = block.status !== "running"
     && result.status !== undefined
-    && result.status !== "running";
+    && !isActiveCommandProcess({ status: result.status });
   const presentedProcess = preferPersistedResult ? undefined : process;
   const status = presentedProcess?.status ?? result.status;
   const exitCode = presentedProcess?.exit_code ?? result.exitCode;
@@ -424,7 +425,11 @@ function CommandRuntimeCard({
   let label = approval?.status === "pending" ? "等待授权" : "准备运行";
   let tone: StatusDotProps["tone"] = "warning";
   let pulse = approval?.status === "pending" && runActive;
-  if (status === "running") {
+  if (status === "queued" || status === "preparing" || status === "starting" || status === "stopping") {
+    label = { queued: "等待执行", preparing: "正在准备", starting: "正在启动", stopping: "正在停止，等待资源确认" }[status];
+    tone = "accent";
+    pulse = true;
+  } else if (status === "running") {
     label = details?.mode === "streaming" ? "交互式进程运行中" : "运行中";
     tone = "accent";
     pulse = true;
@@ -567,8 +572,8 @@ function CommandRuntimeCard({
         <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-2.5">
           <p className="text-fg">
             {sandboxCapability?.state === "repair_required"
-              ? "Windows 命令沙箱需要修复。命令会继续等待，不会自动触发管理员授权。"
-              : "首次运行前需要在全局系统权限中初始化 Windows 命令沙箱。命令会继续等待，不会自动触发管理员授权。"}
+              ? "Windows 命令沙箱需要修复。可在系统权限中查看修复进度和阻塞原因。"
+              : "Windows 命令沙箱尚未准备完成。可在系统权限中查看当前状态。"}
           </p>
           <p className="mt-1 text-muted">请在输入框上方打开系统权限。</p>
         </div>
@@ -581,10 +586,10 @@ function CommandRuntimeCard({
         <p className="mt-2 text-muted">
           授权已完成，正在启动进程；启动阶段超过 60 秒会明确失败，不会无限等待。
         </p>
-      ) : presentedProcess?.status === "running" && processRunActive ? (
+      ) : presentedProcess && isActiveCommandProcess(presentedProcess) && processRunActive ? (
         <div className="mt-3 flex justify-end">
-          <Button size="xs" variant="outline" onClick={() => void cancel(presentedProcess.process_id)}>
-            停止
+          <Button size="xs" variant="outline" disabled={presentedProcess.status === "stopping"} onClick={() => void cancel(presentedProcess.process_id)}>
+            {presentedProcess.status === "stopping" ? "正在停止" : "停止"}
           </Button>
         </div>
       ) : (
