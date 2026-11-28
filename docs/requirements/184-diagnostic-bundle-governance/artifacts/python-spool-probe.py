@@ -45,7 +45,7 @@ class Meter:
 for limit in (10, None):
     files = []
 
-    def factory():
+    def factory(files=files):
         meter = Meter()
         files.append(meter)
         return meter
@@ -59,13 +59,15 @@ for limit in (10, None):
         ):
             count += record["kind"] == "event"
         assert all(item.inner.closed for item in files)
-        observations.append({
-            "turnLimit": limit,
-            "events": count,
-            "peakPythonSpoolLogicalBytes": max(item.peak for item in files),
-            "elapsedMs": round((time.perf_counter() - started) * 1000, 2),
-            "closedAfterExport": True,
-        })
+        observations.append(
+            {
+                "turnLimit": limit,
+                "events": count,
+                "peakPythonSpoolLogicalBytes": max(item.peak for item in files),
+                "elapsedMs": round((time.perf_counter() - started) * 1000, 2),
+                "closedAfterExport": True,
+            }
+        )
     finally:
         export.TemporaryFile = original
 
