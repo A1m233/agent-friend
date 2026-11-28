@@ -2,13 +2,13 @@
 
 ## 总体状态
 
-COMPLETED（2026-11-29，本轮源码实现及验证已获用户验收；PV-1/PV-2 未执行项仍单独记录）
+COMPLETED（2026-11-29，本轮源码实现及验证已获用户验收；PV-1 已有包级证据，PV-2 未执行项仍单独记录）
 
 用户明确要求“一次性给我干完这个需求，自己规划清楚”。继续完成统一记录、执行域与原生监督、后台恢复及跨层投影、完整验证，不再按首条链路作为结束点。已刷新并无冲突 fast-forward 到 `03a095667e6088723ef19e2f80f45dea1f06fb7e`；主干修复了下文历史记录中的需求 184 lint/format 问题。
 
 本轮实现和项目门禁已完成。生命周期记录、准备前取消、原生 Job 所有者、沙箱/宿主执行域、迟到响应核对、后台恢复 API、前端进度和诊断投影已落地。最终后端 5111 passed / 6 skipped，前端 1668 tests 和生产构建通过，Rust 测试与 release check 通过。下面单独保留首条链路旧候选的历史记录；当前候选、原生证据和延期项各自独立记账。
 
-用户明确回复“开始吧”，授权按已确认 [技术方案](./design.md) 实施。后续同范围工作沿用本次授权；原生能力不足而需要后端改动时，按方案的回溯边界处理。安装版和 frozen runtime 的 PV-1 继续延期，不作为本次合入门槛。
+用户明确回复“开始吧”，授权按已确认 [技术方案](./design.md) 实施。后续同范围工作沿用本次授权；原生能力不足而需要后端改动时，按方案的回溯边界处理。安装版和 frozen runtime 的 PV-1 原先延期，不作为合入门槛；用户随后要求发布 0.4.2，包级验证结果记录于下文。
 
 2026-11-29 用户说明没有隔离测试环境并确认先跳过：真实沙箱账户、不同本地 SID、UAC 与 Windows 10 原生验证列为 PV-2，本轮不因这些环境缺口阻塞交付。没有把未执行项改称通过，也没有操作现有 production 沙箱或安装。
 
@@ -30,7 +30,7 @@ COMPLETED（2026-11-29，本轮源码实现及验证已获用户验收；PV-1/PV
 - [x] M3：本轮完整故障注入链与相邻场景回归、backend/frontend/rust 门禁和本机原生专项通过；真实沙箱/Windows 10 部分按 PV-2 延期。
 - [x] 用户验收：2026-11-29 用户明确要求合入主干并推送，随后构建正式包并发布 GitHub Release；本次正式版本指定为 0.4.2。
 
-本次源码交付验收完成。后续正式发布将执行冻结 runtime 和隔离安装矩阵，以包级报告记录 PV-1 的实际覆盖；不把构建请求当作已通过，也不因此把 PV-2 的真实沙箱账户/UAC/Windows 10 验证改成通过。
+本次源码交付验收完成。正式发布阶段已执行冻结 runtime 和隔离安装矩阵，以包级报告记录 PV-1 的实际覆盖；这些结果不把 PV-2 的真实沙箱账户/UAC/Windows 10 验证改成通过。
 
 ## AC 验证
 
@@ -48,10 +48,27 @@ COMPLETED（2026-11-29，本轮源码实现及验证已获用户验收；PV-1/PV
 | AC-10 后端能力验证 | 当前官方 payload 的宿主/协议专项 5 cases 重新运行，全部 Job 清理为 0；真实普通创建、stdin、NETCREDENTIALS_ONLY broker 在本机通过。后者不是不同本地 SID 或 UAC 证明，完整资格仍待验 |
 | AC-11 组合回归 | runtime/授权工具故障→恢复失败→迟到拒绝→手动修复→独立命令通过；准备取消和服务失联/宿主不受影响已补。业务协议与账户修复使用替身；真实沙箱整链未冒称通过 |
 | AC-12 项目检查与平台证据 | backend/frontend/rust 最终门禁全部通过。Windows 11 Home 10.0.26200 为本机实跑平台；Windows 10 / 真实不同本地身份 / UAC 按 PV-2 延期；POSIX 路由单测不外推为 macOS 实机通过 |
-| PV-1 安装版与 frozen runtime | 用户明确延期，未执行 |
+| PV-1 安装版与 frozen runtime | 0.4.2 发布阶段已在 Windows 11 完成正式冻结运行时 32 项自检和 15 项隔离安装矩阵；不涵盖 PV-2 的真实沙箱原生验证，也未执行现有 production 安装的覆盖升级 |
 | PV-2 隔离原生环境 | 用户 2026-11-29 确认先跳过，未执行；不阻塞本轮源码交付 |
 
 ## 实现日志
+
+### 0.4.2 正式包与发布（2026-11-29）
+
+用户明确指定版本 0.4.2。已通过保留 merge commit 的方式合入并推送主干 `e603a18b4dd1c9ce6ddd800a3630f522de622fe7`，合入树与需求分支一致。发布前同步 [Guide r133](https://github.com/A1m233/agent-friend-guide/releases/tag/agent-friend-guide-r133)，公开提交为 `2682498f1c16542a7b4dc46f68816f9611326bdc`，immutable 与两项 asset digest 已确认；离线基线为 committed，snapshot 为 `f06ccba1c45e5ef1bec66e840873da72f4a73973f88a21fffd9deb00f6fd42fa`。
+
+| 检查或制品 | 结果 |
+|---|---|
+| 源码检查复用 | 主干未前进且合入树等价，复用上述 backend/frontend/rust 结果；版本字段无业务变化。Guide 仅文本/metadata/pin 同步，catalog/loader/service 内容专项 21 passed / 2 skipped，旧 pin 断言随快照更新 |
+| 隔离候选 | `installer-smoke-build` 生成 `20261128T165813Z-e603a18b4dd1-498bbca9`，安装器 SHA-256 为 `4a90228187018195d79584c2d9a09cb7534f7b8f64b7bb781319d2f1d2e83ea7` |
+| 安装矩阵 | `installer-smoke` 的 15 项场景全部 passed：安装前检查、首次安装、启动失败诊断、中断重试、旧布局升级、静默退出码、同版本修复、降级拒绝、目录漂移拒绝、超长迁移回滚、显式迁移、运行中壳升级、孤儿 runtime 升级、文件占用失败重试、身份错配拒绝；7 轮安装后 doctor 均通过。测试身份与 production 隔离，结束后清理测试状态 |
+| 报告校验与复用 | `installer-smoke-verify` 通过；报告 `smoke-20261128T165813Z-e603a18b4dd1-498bbca9.json` 绑定 `packageInputSha256=bbb8a9b385a846406ccd51aac3556bf4087d72bbeca6774818523f696bda4be9`。正式构建以 full-matrix 等级成功复用，未手工豁免 |
+| 正式构建 | `all --release` 成功，构建编号 `20261128T175419Z-e603a18b4dd1-9c886cf7`；Windows x64 / production / ordinary / stable，publishable=true、sensitive=false，源码 clean；正式冻结运行时 32 项 doctor 检查通过 |
+| 正式安装器 | `agent-friend_0.4.2_windows_x64-setup.exe`，420853697 bytes；SHA-256 `797566835bd2600bee8ce0bfee905cd95fe914ffe9525a2e93a4f57b65c71c76`，与 `.sha256` 和 `release.json` 一致；`version-status` 已识别最新有效正式制品为 0.4.2 |
+| 私有符号 | 正式构建已成功归档并校验匹配 EXE/PDB；symbols manifest SHA-256 为 `9122c14e22d134c13839b9b535dc1e99041954e7e51c23b681735543b487501d`，不作为公开 Release 附件 |
+| GitHub Release | [v0.4.2](https://github.com/A1m233/agent-friend/releases/tag/v0.4.2) 已公开并设为 latest，draft=false、prerelease=false；标签解析到构建提交 `e603a18b4dd1c9ce6ddd800a3630f522de622fe7`。安装器和 `.sha256` 两项远端 asset 的大小、上传状态和 digest 均与本地一致；校验文件本身 SHA-256 为 `1bbf673757279b55105e3537ae52be13140a573885a016f21f5786eb8fc0b281` |
+
+全部 package 构建、smoke 和 verify 均绑定同一 Guide checkout/commit。报告和制品保存在标准 package runner 管理的仓库外目录。冻结自检中的沙箱恢复使用确定性替身，命令运行时条目含未注入执行的边界；这些检查不证明真实不同本地 SID、UAC 或 Windows 10 已通过。未调用真实 LLM，也未对现有 production 安装做覆盖升级。
 
 ### 当前冻结候选（2026-11-29）
 
@@ -70,7 +87,7 @@ COMPLETED（2026-11-29，本轮源码实现及验证已获用户验收；PV-1/PV
 
 中途的两次全量检查发现观察线程启动/关闭竞态、fixture metadata 参数兼容性问题，已修复并定向复验；中断运行不记为全量通过。随后为关闭后的记录写入和非 Windows 路由补了失败先行回归，再冻结当前候选并重新开始完整门禁。
 
-PV-1 / PV-2 均为用户明确延期；本轮没有调用外部 LLM、启动桌面视觉验收、操作现有 production 身份、构建安装包或执行 frozen runtime 验证。代码完成和本机门禁不等于延期环境已经通过。
+上述冻结候选的源码验收时，PV-1 / PV-2 均由用户明确延期，当时未构建安装包或执行 frozen runtime 验证；后续包级结果见上一节。代码门禁和包级自检均不替代 PV-2 原生环境验证。
 
 ### 历史实施记录
 
